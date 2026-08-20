@@ -2,8 +2,8 @@
 
 import logging
 
+from django.db import Error as DatabaseError
 from django.db import connections
-from django.db.utils import Error as DatabaseError
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 

@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---------------------------------------------------------------------------
 # Builder — resolve dependencies into a virtualenv we can copy wholesale.
 # ---------------------------------------------------------------------------

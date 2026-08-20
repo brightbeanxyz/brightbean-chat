@@ -40,6 +40,9 @@ services:
 
   migrate:
     build: .
+    # Naming the image lets CI reuse one it already built instead of building
+    # the same layers twice.
+    image: brightbean-chat:${IMAGE_TAG:-dev}
     command: python manage.py migrate --noinput
     environment: *app-environment
     env_file:
@@ -51,6 +54,7 @@ services:
 
   app:
     build: .
+    image: brightbean-chat:${IMAGE_TAG:-dev}
     ports:
       - "${APP_PORT:-8000}:8000"
     volumes:

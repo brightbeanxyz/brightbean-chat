@@ -191,6 +191,50 @@ jobs:
           echo "container uid: ${uid}"
           test "${uid}" != "0"
 
+      - name: docker compose up reaches the placeholder page
+        # The Layer-0 definition of done, checked on every PR rather than once
+        # by hand: a clean checkout with no .env boots Postgres, migrates, and
+        # serves both the placeholder page and a /healthz backed by a real
+        # database round-trip. IMAGE_TAG points compose at the image built
+        # above so it does not rebuild the same layers.
+        env:
+          IMAGE_TAG: ci
+        run: |
+          test ! -f .env  # prove nothing was configured first
+          docker compose up -d
+
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://localhost:8000/healthz > /tmp/healthz.json; then
+              break
+            fi
+            echo "waiting for the app (${attempt}/40)..."
+            sleep 3
+          done
+
+          echo "--- /healthz ---"
+          cat /tmp/healthz.json
+          grep -q '"status": "ok"' /tmp/healthz.json
+          grep -q '"database": "ok"' /tmp/healthz.json
+
+          echo "--- / ---"
+          curl -fsS http://localhost:8000/ | grep -q "BrightBean Chat"
+
+      - name: /healthz fails when the database is down
+        env:
+          IMAGE_TAG: ci
+        run: |
+          docker compose stop postgres
+          sleep 5
+          status="$(curl -s -o /tmp/healthz-down.json -w '%{http_code}' http://localhost:8000/healthz)"
+          echo "status=${status}"; cat /tmp/healthz-down.json
+          test "${status}" = "503"
+
+      - name: Tear down
+        if: always()
+        env:
+          IMAGE_TAG: ci
+        run: docker compose logs --no-color --tail=100 || true; docker compose down -v || true
+
   secrets-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
@@ -200,7 +244,10 @@ jobs:
     # license for GitHub organizations. The binary itself remains free
     # and open source under the MIT license.
     env:
-      GITLEAKS_VERSION: "8.24.3"
+      # 8.30.x is the first line verified against this repo's
+      # .gitleaks.toml, which uses the top-level [[allowlists]] block
+      # with targetRules.
+      GITLEAKS_VERSION: "8.30.1"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

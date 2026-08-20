@@ -1,7 +1,19 @@
 # gitleaks v8 config. Extends the default rule set.
 #
-# No project allowlist yet. Anything added here must name the file, quote the
-# matching text, and explain why it is not a credential.
+# Anything added to the allowlist must name the file, say what matches, and
+# explain why it is not a credential.
 
 [extend]
 useDefault = true
+
+# The log-scrubber's test fixtures are, by construction, strings shaped exactly
+# like Stripe keys, GitHub PATs, Slack tokens, AWS access-key ids and JWTs —
+# that is what they are there to prove gets redacted. They are literals in test
+# parameters, never read from an environment, and grant access to nothing.
+#
+# Scoped to the one file so a real secret committed anywhere else still fails
+# the scan. Matched rules: generic-api-key, stripe-access-token.
+[[allowlists]]
+description = "Log-scrubbing test fixtures — synthetic credential-shaped strings"
+targetRules = ["generic-api-key", "stripe-access-token"]
+paths = ['''apps/common/tests/test_logging\.py''']
