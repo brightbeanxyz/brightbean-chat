@@ -1,0 +1,42 @@
+# Keep the build context small and keep secrets, caches and build artefacts
+# out of the image entirely. Studio has no .dockerignore at all, so its image
+# carries .git and any local .env.
+.git
+.github
+.gitignore
+.dockerignore
+.pre-commit-config.yaml
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Build artefacts and local data
+staticfiles/
+media/
+test_media/
+node_modules/
+
+# Not needed at runtime
+docs/
+tests/
+conftest.py
+requirements-dev.txt
+Makefile
+docker-compose*.yml
+LICENSE
+README.md
+.DS_Store

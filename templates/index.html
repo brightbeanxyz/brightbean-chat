@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BrightBean Chat</title>
+  </head>
+  <body>
+    <h1>BrightBean Chat</h1>
+    <p>
+      The scaffold is running. This placeholder is replaced by the application
+      shell in issue #32.
+    </p>
+    <ul>
+      <li><a href="/healthz">/healthz</a> &mdash; health probe (database check)</li>
+      <li><a href="/admin/">/admin/</a> &mdash; Django admin</li>
+    </ul>
+    <p id="csp-probe">Content Security Policy: unverified.</p>
+    <!--
+      Proves the per-request CSP nonce reaches templates. Issue #32 keeps this
+      pattern for every inline script in the real shell.
+    -->
+    <script nonce="{{ request.csp_nonce }}">
+      document.getElementById("csp-probe").textContent =
+        "Content Security Policy: nonce accepted, inline scripts run.";
+    </script>
+  </body>
+</html>

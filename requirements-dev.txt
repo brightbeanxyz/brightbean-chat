@@ -1,0 +1,17 @@
+# Development and test tooling. Not installed into the runtime image.
+-r requirements.txt
+
+# Lint and format (ruff's S rules cover the Bandit checks — SECURITY-BASELINE §10)
+ruff==0.16.4
+
+# Type checking
+mypy==2.3.1                # django-stubs' compatible-mypy extra caps this at <2.4
+django-stubs==6.1.0
+
+# Tests
+pytest==9.1.1
+pytest-django==4.14.0
+pytest-cov==7.1.0
+
+# Dependency audit (SECURITY-BASELINE §10)
+pip-audit==2.10.1

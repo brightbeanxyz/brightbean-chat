@@ -1,0 +1,17 @@
+# Loaded automatically by `docker compose up`. Bind-mounts the working tree and
+# swaps gunicorn for runserver so edits reload without a rebuild.
+#
+# Studio's override also runs a node:20-slim `tailwind` service. There is no
+# Tailwind toolchain here yet — issue #32 adds theme/static_src and the npm
+# scripts — and a service pointing at a missing directory would break
+# `docker compose up` for everyone.
+
+services:
+  migrate:
+    volumes:
+      - .:/app
+
+  app:
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app

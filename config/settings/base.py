@@ -1,0 +1,330 @@
+"""Base settings shared by every environment.
+
+Layout, env handling and the storage switch follow BrightBean Studio's
+``config/settings/base.py``. Differences from Studio are marked inline.
+"""
+
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+import environ
+from csp.constants import NONCE, NONE, SELF, UNSAFE_EVAL, UNSAFE_INLINE
+from django.core.exceptions import ImproperlyConfigured
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+env = environ.Env(
+    DEBUG=(bool, False),
+    ALLOWED_HOSTS=(list, []),
+    APP_URL=(str, "http://localhost:8000"),
+    STORAGE_BACKEND=(str, "local"),
+    EMAIL_BACKEND_TYPE=(str, "smtp"),
+    SENTRY_DSN=(str, ""),
+)
+
+# ``DJANGO_ENV_FILE`` lets a deployment (or a test) point at a different file,
+# or at a path that does not exist to guarantee a pristine environment.
+environ.Env.read_env(env.str("DJANGO_ENV_FILE", default=str(BASE_DIR / ".env")), overwrite=False)
+
+DEBUG = env("DEBUG")
+ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+APP_URL = env("APP_URL")
+
+# ---------------------------------------------------------------------------
+# Secrets — enforced at boot, not lazily (SECURITY-BASELINE §8)
+# ---------------------------------------------------------------------------
+# Studio reads SECRET_KEY eagerly but validates ENCRYPTION_KEY_SALT lazily,
+# inside the first encrypted-field access. A deployment missing the salt
+# therefore boots green and only breaks when the first webhook tries to read a
+# credential. Here both are checked while settings are being imported, so a
+# misconfigured deploy fails immediately and visibly.
+#
+# DEBUG deployments get throwaway defaults so `manage.py` works on a fresh
+# clone with no .env; anything else must supply real values.
+_DEV_SECRET_KEY = "django-insecure-dev-only-do-not-use-in-production"  # noqa: S105
+_DEV_ENCRYPTION_KEY_SALT = "dev-only-encryption-salt-do-not-use-in-production"
+
+SECRET_KEY = env("SECRET_KEY", default="")
+_ENCRYPTION_KEY_SALT = env("ENCRYPTION_KEY_SALT", default="")
+
+if DEBUG:
+    SECRET_KEY = SECRET_KEY or _DEV_SECRET_KEY
+    _ENCRYPTION_KEY_SALT = _ENCRYPTION_KEY_SALT or _DEV_ENCRYPTION_KEY_SALT
+else:
+    _missing = [
+        name
+        for name, value in (
+            ("SECRET_KEY", SECRET_KEY),
+            ("ENCRYPTION_KEY_SALT", _ENCRYPTION_KEY_SALT),
+        )
+        if not value.strip()
+    ]
+    if _missing:
+        raise ImproperlyConfigured(
+            f"Missing required environment variable(s): {', '.join(_missing)}. "
+            f"Generate a random value for each and set them in the environment. "
+            f"Refusing to boot with DEBUG=False — see docs/SECURITY-BASELINE.md §8."
+        )
+
+# Encryption key derivation salt — consumed by apps.common.encryption.
+ENCRYPTION_KEY_SALT = _ENCRYPTION_KEY_SALT.encode("utf-8")
+
+# Application definition
+
+DJANGO_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "django.contrib.humanize",
+]
+
+THIRD_PARTY_APPS = [
+    "csp",
+]
+
+# Business apps land in their own issues: tenancy in #31, theme in #32, the
+# domain apps from Layer 2 onwards. Layer 0 ships apps.common and nothing else.
+LOCAL_APPS = [
+    "apps.common",
+]
+
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "csp.middleware.CSPMiddleware",
+]
+
+ROOT_URLCONF = "config.urls"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    },
+]
+
+WSGI_APPLICATION = "config.wsgi.application"
+
+# Cache. Postgres is the only datastore (SPEC §2: no Redis, ever), so the
+# local-memory backend is the default and deployments that want a shared cache
+# point CACHE_URL at a database or file backend.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
+
+# Database
+DATABASES = {
+    "default": env.db("DATABASE_URL", default="postgres://postgres:postgres@localhost:5432/brightbean_chat"),
+}
+
+# Password validation
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+]
+
+# Internationalization
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+USE_I18N = True
+USE_TZ = True
+
+# Static files
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_DIRS = [BASE_DIR / "static"]
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+# Media files. One STORAGE_BACKEND switch, generic S3_* names so any
+# S3-compatible endpoint (AWS, Cloudflare R2, MinIO) works unchanged.
+STORAGE_BACKEND = env("STORAGE_BACKEND")
+if STORAGE_BACKEND.lower() == "s3":
+    STORAGES["default"] = {
+        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+    }
+    AWS_S3_ENDPOINT_URL = env("S3_ENDPOINT_URL", default="")
+    AWS_ACCESS_KEY_ID = env("S3_ACCESS_KEY_ID", default="")
+    AWS_SECRET_ACCESS_KEY = env("S3_SECRET_ACCESS_KEY", default="")
+    AWS_STORAGE_BUCKET_NAME = env("S3_BUCKET_NAME", default="")
+    AWS_S3_CUSTOM_DOMAIN = env("S3_CUSTOM_DOMAIN", default="")
+    AWS_S3_REGION_NAME = env("S3_REGION_NAME", default="auto")
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_DEFAULT_ACL = "private"
+    AWS_QUERYSTRING_AUTH = True
+    AWS_QUERYSTRING_EXPIRE = 3600  # 1-hour expiry for presigned URLs
+    AWS_S3_OBJECT_PARAMETERS = {
+        "CacheControl": "max-age=86400",
+    }
+else:
+    # Local FS fallback so dev + test environments without S3 credentials can
+    # still call default_storage / save uploaded files.
+    STORAGES["default"] = {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    }
+    MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
+    MEDIA_URL = "/media/"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ---------------------------------------------------------------------------
+# Cookies and sessions (SECURITY-BASELINE §8)
+# ---------------------------------------------------------------------------
+# Secure defaults live here rather than only in production.py so that any new
+# settings module inherits them; development.py is the single place that
+# relaxes the Secure flag, because plain-HTTP localhost cannot set it.
+SESSION_ENGINE = "django.contrib.sessions.backends.db"
+SESSION_COOKIE_AGE = 14 * 24 * 60 * 60  # 14 days
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = True
+SESSION_SAVE_EVERY_REQUEST = True  # Sliding window
+# CSRF cookie is deliberately NOT HttpOnly: HTMX reads it to populate the
+# X-CSRFToken header on non-GET requests.
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = True
+
+# Email
+EMAIL_BACKEND_TYPE = env("EMAIL_BACKEND_TYPE")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@localhost")
+
+if EMAIL_BACKEND_TYPE == "smtp":
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST = env("EMAIL_HOST", default="localhost")
+    EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+    EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+    EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+    EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# ---------------------------------------------------------------------------
+# Content Security Policy (SECURITY-BASELINE §8)
+# ---------------------------------------------------------------------------
+# django-csp 4.x dict form. Studio is still on 3.x's module-level CSP_* names,
+# which 4.0 removed; a greenfield project has no reason to adopt the retired
+# spelling. Per-request nonces come from ``csp.constants.NONCE`` and are read
+# in templates as ``{{ request.csp_nonce }}``.
+#
+# 'unsafe-eval' in script-src is required by Alpine.js's standard build, which
+# evaluates x-* expressions at runtime. 'unsafe-inline' is confined to styles,
+# where Tailwind utility classes make it unavoidable.
+CSP_POLICY: dict[str, Any] = {
+    "DIRECTIVES": {
+        "default-src": [SELF],
+        "script-src": [SELF, UNSAFE_EVAL, NONCE],
+        "style-src": [SELF, UNSAFE_INLINE],
+        "img-src": [SELF, "data:", "blob:", "https:"],
+        "font-src": [SELF],
+        "connect-src": [SELF],
+        "media-src": [SELF, "blob:"],
+        "frame-ancestors": [NONE],
+        "form-action": [SELF],
+        "base-uri": [SELF],
+        "object-src": [NONE],
+    },
+}
+
+# Development swaps this for the report-only header, hence the optional type.
+CONTENT_SECURITY_POLICY: dict[str, Any] | None = CSP_POLICY
+
+# Allow media/images from the storage domain when media lives off-origin.
+if STORAGE_BACKEND.lower() == "s3":
+    _storage_origin = AWS_S3_CUSTOM_DOMAIN or AWS_S3_ENDPOINT_URL
+    if _storage_origin:
+        if not _storage_origin.startswith("https://"):
+            _storage_origin = f"https://{_storage_origin}"
+        _parsed = urlparse(_storage_origin)
+        _storage_origin = f"{_parsed.scheme}://{_parsed.hostname}"
+        CSP_POLICY["DIRECTIVES"]["media-src"].append(_storage_origin)
+        CSP_POLICY["DIRECTIVES"]["img-src"].append(_storage_origin)
+
+# ---------------------------------------------------------------------------
+# Logging (SECURITY-BASELINE §5)
+# ---------------------------------------------------------------------------
+# Studio defines LOGGING only in production.py, so its dev and test runs log
+# through Django's defaults. The scrubbing filter has to be everywhere — a
+# token leaked into a developer's terminal or a CI log is still leaked — so
+# LOGGING lives in base.py and every environment inherits it. The filter is
+# backed up by a global LogRecord factory installed in
+# ``apps.common.apps.CommonConfig.ready()``, which also covers handlers this
+# dict does not own (pytest's caplog, Sentry's breadcrumb handler, ...).
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "scrub_secrets": {
+            "()": "apps.common.logging.SecretScrubbingFilter",
+        },
+    },
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+            "filters": ["scrub_secrets"],
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "WARNING",
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "apps": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "gunicorn.error": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
+
+# Sentry
+SENTRY_DSN = env("SENTRY_DSN")
+if SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=0.1,
+        profiles_sample_rate=0.1,
+    )

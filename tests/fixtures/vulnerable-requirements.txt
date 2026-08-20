@@ -1,0 +1,11 @@
+# CI self-test fixture — NEVER installed, and never a real dependency.
+#
+# Issue #2 asks for proof that the dependency-audit gate actually bites: a
+# green audit step is only meaningful if a vulnerable pin would turn it red.
+# The `audit` job in .github/workflows/ci.yml runs pip-audit against this file
+# and fails the build if pip-audit reports it CLEAN.
+#
+# urllib3 1.26.4 carries CVE-2021-33503 (ReDoS in URL parsing), fixed in
+# 1.26.5. Chosen because it is old, uncontroversial, and will not age out of
+# the advisory databases.
+urllib3==1.26.4

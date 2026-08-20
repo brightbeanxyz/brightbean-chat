@@ -1,0 +1,45 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+# Django generates migrations with its own import ordering/formatting; don't
+# lint or format generated schema migrations.
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+# S = flake8-bandit. SECURITY-BASELINE §10 asks for "Bandit or ruff security
+# rules"; the ruff rules cover the same checks without a second tool.
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "S"]
+ignore = [
+    "E501",  # line too long (handled by ruff format)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert (S101) and build throwaway secrets (S105/S106) on purpose.
+"conftest.py" = ["S101"]
+"apps/*/tests/*" = ["S101", "S105", "S106"]
+"tests/*" = ["S101", "S105", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["apps", "config"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["mypy_django_plugin.main"]
+ignore_missing_imports = true
+
+[tool.django-stubs]
+# Studio points this at development settings, which forces every mypy run to
+# supply a SECRET_KEY from the environment. The test settings set their own
+# defaults, so CI's typecheck job needs no secrets at all.
+django_settings_module = "config.settings.test"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["tests.py", "test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["apps"]
+omit = ["*/migrations/*", "*/tests/*"]

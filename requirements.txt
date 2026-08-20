@@ -1,0 +1,29 @@
+# Runtime dependencies for BrightBean Chat.
+#
+# Exact pins, not ranges. Studio uses ranges and its own requirements.txt
+# documents the consequence: CI resolves the newest match while local
+# environments sit on an older one, so a release broke 509 tests in CI that
+# passed locally. Pinned versions also make `pip-audit` in CI mean something.
+# Dependabot (.github/dependabot.yml) is what moves these forward.
+#
+# Development and test tooling lives in requirements-dev.txt so the runtime
+# image does not ship pytest, ruff and mypy.
+
+# Core
+Django==5.2.17            # 5.2 is the LTS line (security fixes through Apr 2028)
+django-environ==0.14.0
+psycopg[binary]==3.3.4     # psycopg 3; Postgres is the only datastore (SPEC §2)
+gunicorn==26.1.0
+
+# Security
+django-csp==4.0            # 4.x dict-form config; see config/settings/base.py
+cryptography==50.0.0       # AES-256-GCM + HKDF for apps/common/encryption.py
+
+# Static files
+whitenoise==6.12.0
+
+# Storage (local disk or any S3-compatible endpoint, incl. Cloudflare R2)
+django-storages[s3]==1.14.6
+
+# Monitoring (inert unless SENTRY_DSN is set)
+sentry-sdk[django]==2.68.0

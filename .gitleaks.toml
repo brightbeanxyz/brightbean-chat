@@ -1,0 +1,7 @@
+# gitleaks v8 config. Extends the default rule set.
+#
+# No project allowlist yet. Anything added here must name the file, quote the
+# matching text, and explain why it is not a credential.
+
+[extend]
+useDefault = true

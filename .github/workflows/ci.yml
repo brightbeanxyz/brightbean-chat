@@ -1,0 +1,219 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Lets the full suite be exercised on a feature branch before a PR exists.
+  workflow_dispatch:
+
+# Principle of least privilege: default to read-only for every job.
+permissions:
+  contents: read
+
+# Cancel in-progress runs when a new commit is pushed to the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install ruff
+        # Pinned to the same version as requirements-dev.txt so a lint failure
+        # here is reproducible with `make lint` locally.
+        run: pip install "ruff==0.16.4"
+
+      - name: ruff check
+        # The S (flake8-bandit) rules are enabled in pyproject.toml, so this
+        # step is also the security lint required by SECURITY-BASELINE §10.
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+  typecheck:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: mypy
+        # django-stubs loads config.settings.test, which supplies its own
+        # SECRET_KEY / ENCRYPTION_KEY_SALT defaults — no secrets needed here.
+        run: mypy apps/ config/ tests/ --ignore-missing-imports
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        # Pulled via AWS's public mirror of Docker Hub official images to avoid
+        # anonymous Docker Hub pulls, whose rate limits break CI intermittently
+        # (the same workaround BrightBean Studio's CI carries).
+        image: public.ecr.aws/docker/library/postgres:16-alpine
+        env:
+          POSTGRES_DB: brightbean_chat
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/brightbean_chat
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: pytest
+        run: pytest --cov=apps --cov-report=term-missing
+
+  audit:
+    name: Dependency audit (pip-audit, npm audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Install pip-audit
+        run: pip install "pip-audit==2.10.1"
+
+      - name: pip-audit (runtime + dev dependencies)
+        # No waivers today. Any future one goes here as
+        # `--ignore-vuln GHSA-xxxx` with a comment naming the advisory, why it
+        # does not apply, and when it gets revisited (SECURITY-BASELINE §10).
+        run: pip-audit --strict --requirement requirements.txt --requirement requirements-dev.txt
+
+      - name: pip-audit gate self-test
+        # Proves the gate actually fails on a vulnerable pin rather than
+        # passing because the audit silently did nothing. Issue #2 asks for a
+        # deliberately vulnerable fixture; this is it, and it is never installed.
+        run: |
+          if pip-audit --no-deps --requirement tests/fixtures/vulnerable-requirements.txt; then
+            echo "::error::pip-audit reported the deliberately vulnerable fixture as clean — the audit gate is not working."
+            exit 1
+          fi
+          echo "pip-audit correctly rejected the vulnerable fixture."
+
+      - name: npm audit
+        # No JavaScript dependencies yet — the Tailwind toolchain arrives with
+        # issue #32. The step is wired now so that PR inherits a working gate.
+        run: npm audit --audit-level=low
+
+  build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint, typecheck, test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: brightbean-chat:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container runs as a non-root user
+        # SECURITY-BASELINE / Layer-0 gate item 4. Studio's image runs as root;
+        # this asserts ours does not regress to that.
+        run: |
+          uid="$(docker run --rm brightbean-chat:ci id -u)"
+          echo "container uid: ${uid}"
+          test "${uid}" != "0"
+
+  secrets-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # We invoke the gitleaks binary directly rather than using
+    # gitleaks/gitleaks-action, because that action now requires a paid
+    # license for GitHub organizations. The binary itself remains free
+    # and open source under the MIT license.
+    env:
+      GITLEAKS_VERSION: "8.24.3"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Run gitleaks
+        run: gitleaks detect --source . --redact --verbose --no-banner
