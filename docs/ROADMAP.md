@@ -6,18 +6,19 @@ Rule of thumb: an issue may depend on anything in **lower** layers (assume it me
 
 ## Execution model
 
-- **One issue = one agent = one branch = one PR** (`feat/l<n><letter>-<slug>` → `main`). Exceptions: #8, #9, #17 ship as **two sequential PRs by the same agent** (split noted in their bodies); Layer 1 is a three-issue mini-sequence (A first, then B ∥ C).
+- **One issue = one agent = one branch = one PR** (`feat/l<n><letter>-<slug>` → `main`). Exceptions: #8, #9, #17 ship as **two sequential PRs by the same agent** (split noted in their bodies).
 - **Layer gates**: Layer N+1 starts only when all Layer-N PRs are merged and CI is green on `main`. Each gate additionally requires: a security review over the layer's merged diff, the IDOR fuzz suite green, and dependency audits clean (SECURITY-BASELINE §11). The last-merged PR of a layer includes a small cross-workstream integration test where the layer's contracts meet; #30 automates the full matrix at the end.
+- **Parallel development vs merge order**: every workstream in a layer is developed *simultaneously*, coding against the written contracts below. Where a soft coupling exists, the "merge order inside layers" list below fixes only the **merge** sequence — it never means one agent waits for another to start. There is no exception to this: a workstream that genuinely cannot start until a sibling lands belongs in a lower layer, and if you find one, that is a plan bug to raise on the tracking issue.
 - **Per-PR bar**: tests included, code review pass, applicable SECURITY-BASELINE items satisfied, no scope beyond the issue's checklist (out-of-scope findings become new issues). No two same-layer workstreams touch the same Django app — that is what makes parallel merges and migrations safe.
-- **Critical path** (staff first, keep running): `L1-A → L1-B → L2-B/L2-D → L3-A → L3-B → L4-A → L4-B → L5 wave → L6-B → L7-E`. UI streams (L3-C, L4-C/D) and ports (L2-E, L2-F) are flex capacity. Peak useful parallelism ≈ 6 agents (Layers 2 and 5).
+- **Critical path** (staff first, keep running): `L0-A → L1-A → L2-B/L2-D → L3-A → L3-B → L4-A → L4-B → L5 wave → L6-B → L7-E`. UI streams (L3-C, L4-C/D) and ports (L2-E, L2-F) are flex capacity. Peak useful parallelism ≈ 6 agents (Layers 2 and 5).
 
 ## Layer map
 
 | Issue | Depends on | Delivers |
 |---|---|---|
-| **[L1-A](https://github.com/brightbeanxyz/brightbean-chat/issues/2)** Scaffold | — | Django project skeleton, settings, CI (incl. dependency audit + security lint), Docker dev, encrypted-field util, log-scrubbing filter, healthz, UUIDv7 base model |
-| **[L1-B](https://github.com/brightbeanxyz/brightbean-chat/issues/31)** Tenancy & auth | L1-A | org/workspace/membership, RBAC (Admin/Editor/Agent/Viewer), allauth, credential-resolution chain + override UI, workspace-scoped base manager, IDOR fuzz helper, auth rate limiting |
-| **[L1-C](https://github.com/brightbeanxyz/brightbean-chat/issues/32)** Theme & shell | L1-A | Tailwind token architecture, base.html shell with CSP nonces, layouts/components/htmx helpers ported from BrightBean Studio |
+| **[L0-A](https://github.com/brightbeanxyz/brightbean-chat/issues/2)** Scaffold | — | Django project skeleton, settings, CI (incl. dependency audit + security lint), Docker dev, encrypted-field util, log-scrubbing filter, healthz, UUIDv7 base model |
+| **[L1-A](https://github.com/brightbeanxyz/brightbean-chat/issues/31)** Tenancy & auth | L0 | org/workspace/membership, RBAC (Admin/Editor/Agent/Viewer), allauth, credential-resolution chain + override UI, workspace-scoped base manager, IDOR fuzz helper, auth rate limiting |
+| **[L1-B](https://github.com/brightbeanxyz/brightbean-chat/issues/32)** Theme & shell | L0 | Tailwind token architecture, base.html shell with CSP nonces, layouts/components/htmx helpers ported from BrightBean Studio |
 | **[L2-A](https://github.com/brightbeanxyz/brightbean-chat/issues/3)** Contacts domain | L1 | `contacts` app: contact, tag, custom fields, segments, condition/filter engine (contract 8) — ORM-only compilation, source registry |
 | **[L2-B](https://github.com/brightbeanxyz/brightbean-chat/issues/4)** Channels framework | L1 | `channels` app: channel_connection, Adapter interface, Capabilities, NormalizedEvent/OutboundMessage, block downgrading, webhook endpoints + signature framework + event log/dedup + inbound dispatch seam (contract 6), connection settings UI |
 | **[L2-C](https://github.com/brightbeanxyz/brightbean-chat/issues/5)** Task queue | L1 | `queueing` app: scheduled_action, worker, tick, backoff, zombie recovery, housekeeping-job registry, advisory-lock helpers |
@@ -49,7 +50,8 @@ Rule of thumb: an issue may depend on anything in **lower** layers (assume it me
 
 ### Merge order inside layers
 
-- **L1**: A → (B ∥ C).
+- **L0**: a single issue — nothing to order.
+- **L1**: A and B are fully parallel; they share only `config/settings/base.py` and `config/urls.py`, so expect one trivial rebase for whoever merges second.
 - **L2**: A before D (contract 8); C early (B's tests use the enqueue path); B, E, F free.
 - **L3**: A-PR1 → A-PR2 → B-PR1 → B-PR2; C any time after L2-D.
 - **L4**: A first (hook registry, trigger types, comment infra), then B (end-to-end proof); C/D/E free. Pull-forwards land here too: #28's prod-infra half, #30's phase-1 subset (both required at the L4 gate).
