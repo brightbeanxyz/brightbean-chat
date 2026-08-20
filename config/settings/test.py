@@ -5,6 +5,7 @@ import os
 # exercise the production code paths. (Studio uses the same ordering trick.)
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 os.environ.setdefault("ENCRYPTION_KEY_SALT", "test-salt-not-for-production")
+os.environ.setdefault("ALLOWED_HOSTS", "*")
 
 from .base import *  # noqa: E402, F401, F403
 

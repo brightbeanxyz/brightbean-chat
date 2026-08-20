@@ -40,6 +40,11 @@ APP_URL = env("APP_URL")
 # credential. Here both are checked while settings are being imported, so a
 # misconfigured deploy fails immediately and visibly.
 #
+# ALLOWED_HOSTS is checked here too. It is the likeliest thing to forget, and
+# forgetting it is invisible at boot: Django starts happily and then 400s every
+# request, including /healthz, so the container healthcheck fails with a
+# generic status and nothing says why.
+#
 # DEBUG deployments get throwaway defaults so `manage.py` works on a fresh
 # clone with no .env; anything else must supply real values.
 _DEV_SECRET_KEY = "django-insecure-dev-only-do-not-use-in-production"  # noqa: S105
@@ -60,11 +65,19 @@ else:
         )
         if not value.strip()
     ]
+    if not [host for host in ALLOWED_HOSTS if host.strip()]:
+        _missing.append("ALLOWED_HOSTS")
     if _missing:
+        _hints = {
+            "SECRET_KEY": 'generate one with: python -c "import secrets; print(secrets.token_urlsafe(50))"',
+            "ENCRYPTION_KEY_SALT": "generate a second, different random value the same way",
+            "ALLOWED_HOSTS": "comma-separated hostnames this deployment answers on, e.g. chat.example.com",
+        }
         raise ImproperlyConfigured(
-            f"Missing required environment variable(s): {', '.join(_missing)}. "
-            f"Generate a random value for each and set them in the environment. "
-            f"Refusing to boot with DEBUG=False — see docs/SECURITY-BASELINE.md §8."
+            "Refusing to boot with DEBUG=False. Missing required environment "
+            "variable(s):\n"
+            + "\n".join(f"  - {name}: {_hints[name]}" for name in _missing)
+            + "\nSee docs/SECURITY-BASELINE.md §8."
         )
 
 # Encryption key derivation salt — consumed by apps.common.encryption.
@@ -127,12 +140,17 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # Cache. Postgres is the only datastore (SPEC §2: no Redis, ever), so the
-# local-memory backend is the default and deployments that want a shared cache
-# point CACHE_URL at a database or file backend.
+# default is the local-memory backend.
+#
+# LocMemCache is PER PROCESS. Both the Dockerfile and the Procfile run gunicorn
+# with two workers, so anything that counts across requests — the auth rate
+# limiting SECURITY-BASELINE §8 requires of issue #31 above all — counts once
+# per worker and is evaded by landing on the other one. Any deployment relying
+# on such a counter must point CACHE_URL at a shared backend, e.g.
+# "dbcache://cache_table" (then run `manage.py createcachetable`), which keeps
+# the no-Redis rule while giving every worker one view of the data.
 CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-    }
+    "default": env.cache("CACHE_URL", default="locmemcache://"),
 }
 
 # Database
@@ -163,8 +181,18 @@ STORAGES = {
 
 # Media files. One STORAGE_BACKEND switch, generic S3_* names so any
 # S3-compatible endpoint (AWS, Cloudflare R2, MinIO) works unchanged.
+#
+# MEDIA_URL and MEDIA_ROOT are set for BOTH backends, not just local. Django
+# normalises an unset MEDIA_URL to "/", and config/urls.py feeds MEDIA_URL to
+# django.conf.urls.static.static() under DEBUG — with "/" that compiles to a
+# catch-all ^(?P<path>.*)$ route serving the working directory, which turns
+# every 404 into a filesystem read of the project (including .env).
+MEDIA_URL = "/media/"
+MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
+
 STORAGE_BACKEND = env("STORAGE_BACKEND")
-if STORAGE_BACKEND.lower() == "s3":
+STORAGE_IS_LOCAL = STORAGE_BACKEND.lower() != "s3"
+if not STORAGE_IS_LOCAL:
     STORAGES["default"] = {
         "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
     }
@@ -187,8 +215,6 @@ else:
     STORAGES["default"] = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     }
-    MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
-    MEDIA_URL = "/media/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -306,6 +332,16 @@ LOGGING = {
             "propagate": False,
         },
         "apps": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # runserver's access log. Without an explicit entry it inherits the
+        # "django" logger's WARNING level and every request line disappears —
+        # a regression Django's own default LOGGING does not have, and one
+        # this config would otherwise introduce by living in base.py rather
+        # than production.py.
+        "django.server": {
             "handlers": ["console"],
             "level": "INFO",
             "propagate": False,

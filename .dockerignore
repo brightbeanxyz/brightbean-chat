@@ -34,6 +34,7 @@ node_modules/
 docs/
 tests/
 conftest.py
+requirements-dev.in
 requirements-dev.txt
 Makefile
 docker-compose*.yml

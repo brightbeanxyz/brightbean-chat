@@ -154,18 +154,66 @@ class TestInstallation:
 class TestEncryptedFieldPlaintextNeverReachesLogs:
     """The acceptance test from issue #2: an encrypted field's plaintext must
     not survive a trip through the logging pipeline, including pytest's own
-    capture handler (which the LOGGING filters never see)."""
+    capture handler (which the LOGGING filters never see).
 
-    def test_plaintext_is_absent_from_captured_logs(self, caplog, secret_value):
+    ``secret_value`` is deliberately shapeless, so each case here can only pass
+    if the rule it names actually fires — no single pattern covers the set.
+    """
+
+    @pytest.mark.parametrize(
+        ("template", "rule"),
+        [
+            ("connected with access_token=%s", "key=value"),
+            ("Authorization: Bearer %s", "auth scheme"),
+            ("credentials: '%s'", "quoted key: value"),
+            ("payload=%r", "dict repr"),
+        ],
+    )
+    def test_plaintext_is_absent_from_captured_logs(self, caplog, secret_value, template, rule):
         probe = EncryptionProbe.objects.create(secret=secret_value)
         stored = EncryptionProbe.objects.get(pk=probe.pk).secret
         assert stored == secret_value  # the value really is the live credential
 
         logger = logging.getLogger("apps.common.tests")
         with caplog.at_level(logging.INFO):
-            logger.info("connected with access_token=%s", stored)
-            logger.warning("Authorization: Bearer %s", stored)
-            logger.error("payload=%r", {"client_secret": stored})
+            logger.info(template, {"client_secret": stored} if "%r" in template else stored)
+
+        assert secret_value not in caplog.text, f"the {rule} rule did not redact it"
+        assert REDACTED in caplog.text
+
+    def test_plaintext_is_absent_from_captured_tracebacks(self, caplog, secret_value):
+        """The commonest leak path: a credential inside an exception message."""
+        probe = EncryptionProbe.objects.create(secret=secret_value)
+        stored = EncryptionProbe.objects.get(pk=probe.pk).secret
+
+        logger = logging.getLogger("apps.common.tests")
+        with caplog.at_level(logging.ERROR):
+            try:
+                raise ValueError(f"upstream rejected api_key={stored}")
+            except ValueError:
+                logger.exception("send failed")
 
         assert secret_value not in caplog.text
-        assert caplog.text.count(REDACTED) >= 3
+        # The traceback still has to be there — scrubbing must not eat it.
+        assert "ValueError" in caplog.text
+        assert REDACTED in caplog.text
+
+    def test_plaintext_is_absent_when_the_format_string_is_broken(self, caplog, secret_value):
+        """A logging bug must not become a leak.
+
+        Handler.handleError writes the record's raw args to stderr when
+        formatting fails, so the args have to be scrubbed even on this path.
+        """
+        record = logging.LogRecord(
+            name="apps.common.tests",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="api_key=%s and %s",
+            args=(secret_value,),
+            exc_info=None,
+        )
+        SecretScrubbingFilter().filter(record)
+
+        assert all(secret_value not in str(arg) for arg in record.args)
+        assert secret_value not in str(record.msg)

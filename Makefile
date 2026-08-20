@@ -1,4 +1,4 @@
-.PHONY: help setup server worker migrate migrations test test-cov lint format typecheck audit \
+.PHONY: help setup lock server worker migrate migrations test test-cov lint format typecheck audit \
         docker-up docker-down docker-build docker-logs
 
 help: ## Show this help
@@ -8,11 +8,17 @@ help: ## Show this help
 
 setup: ## Initial project setup (copy env, install deps, migrate)
 	@test -f .env || cp .env.example .env
-	pip install -r requirements-dev.txt
+	pip install --require-hashes -r requirements-dev.txt
 	python manage.py migrate
 	@echo ""
 	@echo "Setup complete. Run 'python manage.py createsuperuser' to create an admin account."
 	@echo "Then run 'make server' to start the app."
+
+lock: ## Recompile requirements*.txt from requirements*.in (run after editing either)
+	pip-compile --generate-hashes --strip-extras --allow-unsafe \
+		--output-file requirements.txt requirements.in
+	pip-compile --generate-hashes --strip-extras --allow-unsafe \
+		--output-file requirements-dev.txt requirements-dev.in
 
 # Development
 

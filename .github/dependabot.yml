@@ -1,7 +1,13 @@
-# Dependabot keeps the exact pins in requirements*.txt, package.json and the
-# workflow action SHAs moving (SECURITY-BASELINE §10). The vulnerable fixture
-# under tests/fixtures/ is deliberately not registered here: it is a CI
-# self-test, not a dependency, and must stay on its vulnerable version.
+# Dependabot keeps the pins in requirements*.in / requirements*.txt,
+# package.json and the workflow action SHAs moving (SECURITY-BASELINE §10).
+#
+# The .in/.txt split is the pip-tools layout Dependabot recognises: it bumps
+# the .in and recompiles the hashed .txt in the same PR, so the "compiled
+# requirements are in sync" CI check stays green on its PRs.
+#
+# The vulnerable fixture under tests/fixtures/ is deliberately not registered
+# here: it is a CI self-test, not a dependency, and must stay on its
+# vulnerable version.
 version: 2
 updates:
   - package-ecosystem: "pip"

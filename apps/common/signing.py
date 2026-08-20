@@ -21,7 +21,14 @@ Three properties the wrappers add over raw ``django.core.signing``:
 
 versioning
     Every payload carries ``"v"``. An unknown version is rejected rather than
-    silently reinterpreted, which is what makes a future format change safe.
+    silently reinterpreted, and ``accept_versions`` takes a *set*, so a format
+    change is a rollout rather than a cutover: mint v2 while still accepting
+    v1, and drop v1 once the old tokens have aged out. Tokens minted with
+    ``max_age=None`` — unsubscribe links, which sit in inboxes forever — never
+    age out, so for those the old version stays accepted indefinitely. A
+    single-version reader would turn every one of them into a 404 the day the
+    format changed, and an unsubscribe link that 404s is a compliance problem,
+    not a broken link.
 
 generic failure
     ``unsign_or_404`` turns *every* rejection — bad signature, wrong purpose,
@@ -31,6 +38,7 @@ generic failure
     ``constant_time_compare``), so a caller learns nothing from a failure.
 """
 
+from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
 
@@ -78,20 +86,28 @@ def unsign(
     *,
     purpose: str,
     max_age: int | timedelta | None = None,
-    version: int = CURRENT_VERSION,
+    accept_versions: Collection[int] = (CURRENT_VERSION,),
 ) -> dict[str, Any]:
     """Verify ``token`` and return its payload without the version key.
 
     Raises ``InvalidTokenError`` on any failure. ``max_age`` (seconds or a
     ``timedelta``) bounds the token's lifetime; pass ``None`` only where the use
     case genuinely has no expiry, such as unsubscribe links.
+
+    ``accept_versions`` lists the payload versions this call site still honours.
+    During a format migration, pass every version still in circulation; the
+    returned payload does not say which one matched, so a call site that needs
+    to branch should read the version itself via a wider accept list and its own
+    check.
     """
     try:
         data = signing.loads(token, salt=purpose, max_age=max_age)
-    except (signing.BadSignature, signing.SignatureExpired, ValueError, TypeError) as exc:
+    except (signing.BadSignature, ValueError, TypeError) as exc:
+        # SignatureExpired subclasses BadSignature, so expiry lands here too —
+        # deliberately indistinguishable from every other rejection.
         raise InvalidTokenError from exc
 
-    if not isinstance(data, dict) or data.get(_VERSION_KEY) != version:
+    if not isinstance(data, dict) or data.get(_VERSION_KEY) not in set(accept_versions):
         raise InvalidTokenError
 
     return {key: value for key, value in data.items() if key != _VERSION_KEY}
@@ -102,7 +118,7 @@ def unsign_or_404(
     *,
     purpose: str,
     max_age: int | timedelta | None = None,
-    version: int = CURRENT_VERSION,
+    accept_versions: Collection[int] = (CURRENT_VERSION,),
 ) -> dict[str, Any]:
     """``unsign``, but every failure becomes a bare ``Http404``.
 
@@ -110,6 +126,6 @@ def unsign_or_404(
     token must be indistinguishable to the client.
     """
     try:
-        return unsign(token, purpose=purpose, max_age=max_age, version=version)
+        return unsign(token, purpose=purpose, max_age=max_age, accept_versions=accept_versions)
     except InvalidTokenError:
         raise Http404 from None

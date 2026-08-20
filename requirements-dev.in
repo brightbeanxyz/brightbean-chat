@@ -1,0 +1,25 @@
+# Development and test tooling. Not installed into the runtime image.
+#
+# This file lists DIRECT dependencies and is the one humans edit. What gets
+# installed is requirements-dev.txt, compiled from this file by `make lock`:
+# the full transitive tree, pinned and hashed. After changing anything here,
+# run `make lock` and commit both.
+-r requirements.in
+
+# Lint and format (ruff's S rules cover the Bandit checks — SECURITY-BASELINE §10)
+ruff==0.16.4
+
+# Type checking
+mypy==2.3.1                # django-stubs' compatible-mypy extra caps this at <2.4
+django-stubs==6.1.0
+
+# Tests
+pytest==9.1.1
+pytest-django==4.14.0
+pytest-cov==7.1.0
+
+# Dependency audit (SECURITY-BASELINE §10)
+pip-audit==2.10.1
+
+# Lockfile generation — regenerates requirements*.lock (`make lock`)
+pip-tools==7.6.1

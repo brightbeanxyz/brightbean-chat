@@ -67,6 +67,39 @@ class TestRejection:
             unsign(token, purpose="click")
 
 
+class TestVersionMigration:
+    """A format change has to be a rollout, not a cutover.
+
+    Unsubscribe links are minted with ``max_age=None`` and live in recipients'
+    inboxes indefinitely, so the day CURRENT_VERSION moves, the previous
+    version must keep verifying or every one of those links 404s.
+    """
+
+    def test_a_reader_can_accept_more_than_one_version(self):
+        old = sign({"contact": "abc"}, purpose="unsubscribe", version=1)
+        new = sign({"contact": "abc"}, purpose="unsubscribe", version=2)
+
+        assert unsign(old, purpose="unsubscribe", accept_versions=(1, 2)) == {"contact": "abc"}
+        assert unsign(new, purpose="unsubscribe", accept_versions=(1, 2)) == {"contact": "abc"}
+
+    def test_dropping_a_version_from_the_accept_list_rejects_it(self):
+        old = sign({"contact": "abc"}, purpose="unsubscribe", version=1)
+
+        with pytest.raises(InvalidTokenError):
+            unsign(old, purpose="unsubscribe", accept_versions=(2,))
+
+    def test_the_default_accepts_only_the_current_version(self):
+        old = sign({"contact": "abc"}, purpose="unsubscribe", version=CURRENT_VERSION + 1)
+
+        with pytest.raises(InvalidTokenError):
+            unsign(old, purpose="unsubscribe")
+
+    def test_or_404_honours_the_accept_list(self):
+        old = sign({"contact": "abc"}, purpose="unsubscribe", version=1)
+
+        assert unsign_or_404(old, purpose="unsubscribe", accept_versions=(1, 2)) == {"contact": "abc"}
+
+
 class TestGeneric404:
     def test_valid_token_passes_through(self):
         token = sign({"contact": "abc"}, purpose="click")

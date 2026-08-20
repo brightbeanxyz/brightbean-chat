@@ -21,6 +21,16 @@ Two installation points, on purpose:
 
 Scrubbing is idempotent, so a record passing through both is harmless.
 
+Coverage is the whole message a handler will emit, not just the format
+string: the formatted message, the exception traceback, and the stack info.
+Tracebacks matter most — an exception's ``str()`` routinely carries the URL,
+connection string or header that caused it, and ``logger.exception`` plus
+Django's own ``django.request`` 500 handler are the commonest way a credential
+reaches a log at all. Because ``exc_info`` is rendered by the *handler's*
+formatter, long after any filter runs, the traceback is formatted here and
+cached on ``record.exc_text``, which every stdlib formatter reuses instead of
+re-rendering.
+
 One tradeoff worth knowing about: scrubbing has to run on the *formatted*
 message, because the key and its value routinely live in different places
 ("token=%s", secret). So the record's args are folded into ``record.msg`` and
@@ -35,8 +45,10 @@ backtracks badly here would be a denial-of-service vector rather than a
 performance nit.
 """
 
+import io
 import logging
 import re
+import traceback
 from collections.abc import Callable
 from typing import Any
 
@@ -108,18 +120,68 @@ def scrub(text: str) -> str:
     return text
 
 
+def _redact_args(args: Any) -> Any:
+    """Replace every value in a record's ``args``, preserving its shape.
+
+    Used only when %-formatting failed. Scrubbing the args *individually* is
+    not enough there: the key name lives in the template ("api_key=%s") while
+    the value lives in the args, so an argument inspected on its own has no
+    context to match against and a shapeless secret sails straight through.
+
+    The record cannot be emitted anyway — the handler will hit the same
+    formatting error and hand it to ``handleError``, which writes the args to
+    stderr — so there is nothing to lose by redacting all of them. The arity is
+    preserved, and arity is the part that actually diagnoses the bug.
+    """
+    if isinstance(args, dict):
+        return dict.fromkeys(args, REDACTED)
+    if isinstance(args, tuple):
+        return (REDACTED,) * len(args)
+    return REDACTED
+
+
+def _format_exception(exc_info: Any) -> str:
+    """Render an ``exc_info`` triple exactly as ``logging.Formatter`` would."""
+    sio = io.StringIO()
+    traceback.print_exception(exc_info[0], exc_info[1], exc_info[2], None, sio)
+    text = sio.getvalue()
+    sio.close()
+    return text.removesuffix("\n")
+
+
 def _scrub_record(record: logging.LogRecord) -> None:
-    """Format, scrub and flatten a record in place."""
+    """Format, scrub and flatten a record in place.
+
+    Covers the message, the exception traceback and the stack info — every
+    part a formatter will concatenate into the emitted line.
+    """
     try:
         message = record.getMessage()
     except (TypeError, ValueError):
-        # Broken %-formatting: scrub the raw template and leave args alone, so
-        # a logging bug never becomes a leak.
+        # Broken %-formatting. getMessage() will fail again inside the handler,
+        # and Handler.handleError writes "Message: %r / Arguments: %s" straight
+        # to stderr — so the args have to go too, not just be skipped.
         record.msg = scrub(str(record.msg))
-        return
+        record.args = _redact_args(record.args)
+    else:
+        record.msg = scrub(message)
+        record.args = ()
 
-    record.msg = scrub(message)
-    record.args = ()
+    # Exception text: pre-render it so the scrubbed copy is what every
+    # formatter emits. Formatter.format() only calls formatException() when
+    # exc_text is empty, so filling it in here is what makes this stick.
+    if record.exc_info:
+        if not record.exc_text:
+            try:
+                record.exc_text = _format_exception(record.exc_info)
+            except Exception:  # noqa: BLE001 - a broken traceback must not break logging
+                record.exc_text = "[unformattable traceback]"
+        record.exc_text = scrub(record.exc_text)
+    elif record.exc_text:
+        record.exc_text = scrub(record.exc_text)
+
+    if record.stack_info:
+        record.stack_info = scrub(record.stack_info)
 
 
 class SecretScrubbingFilter(logging.Filter):

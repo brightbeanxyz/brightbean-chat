@@ -10,6 +10,14 @@ key derived for Chat can never decrypt a Studio ciphertext or vice versa.
 
 Every credential or token this project persists goes in one of these fields —
 never a plain column (SECURITY-BASELINE §5).
+
+**These fields cannot be used in queryset lookups.** Every write encrypts under
+a fresh random nonce, so the same plaintext produces different ciphertext every
+time and ``.filter(secret=value)`` compares two unrelated strings. It does not
+raise — it silently matches nothing, which reads as "no such row" and is
+miserable to debug. To look a record up by a secret (resolving an inbound
+webhook to its connection, say), store a separate deterministic column
+alongside — an HMAC of the value under ``SECRET_KEY`` — and query that.
 """
 
 import base64
@@ -17,6 +25,7 @@ import binascii
 import json
 import logging
 import os
+from functools import lru_cache
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
@@ -35,6 +44,25 @@ HKDF_INFO = b"brightbean-chat-field-encryption"
 NONCE_BYTES = 12
 
 
+@lru_cache(maxsize=8)
+def _hkdf(secret: bytes, salt: bytes) -> bytes:
+    """HKDF-SHA256 over (secret, salt), memoised.
+
+    Studio re-derives on every single field read and write, so listing a
+    thousand rows with an encrypted column performs a thousand derivations of
+    a key that is constant for the life of the process. Keying the cache on
+    the inputs rather than memoising a no-argument function keeps
+    ``override_settings`` and the ``settings`` fixture working: change either
+    input and you get a different entry, not a stale key.
+    """
+    return HKDF(
+        algorithm=SHA256(),
+        length=32,
+        salt=salt,
+        info=HKDF_INFO,
+    ).derive(secret)
+
+
 def _derive_key() -> bytes:
     """Derive a 256-bit encryption key from SECRET_KEY via HKDF-SHA256."""
     secret = settings.SECRET_KEY.encode("utf-8")
@@ -46,13 +74,7 @@ def _derive_key() -> bytes:
         )
     if isinstance(salt, str):
         salt = salt.encode("utf-8")
-    hkdf = HKDF(
-        algorithm=SHA256(),
-        length=32,
-        salt=salt,
-        info=HKDF_INFO,
-    )
-    return hkdf.derive(secret)
+    return _hkdf(secret, salt)
 
 
 def encrypt_value(plaintext: str) -> str:
@@ -75,7 +97,11 @@ def decrypt_value(encrypted: str) -> str:
 
 
 class EncryptedTextField(models.TextField):
-    """A TextField that encrypts its value at rest using AES-256-GCM."""
+    """A TextField that encrypts its value at rest using AES-256-GCM.
+
+    Not usable in queryset lookups — ``.filter()``/``.get()`` on this field
+    silently match nothing. See the module docstring.
+    """
 
     def get_prep_value(self, value: Any) -> str | None:
         if value is None:
@@ -98,7 +124,11 @@ class EncryptedTextField(models.TextField):
 
 
 class EncryptedJSONField(models.TextField):
-    """A field that stores JSON data encrypted at rest using AES-256-GCM."""
+    """A field that stores JSON data encrypted at rest using AES-256-GCM.
+
+    Not usable in queryset lookups — ``.filter()``/``.get()`` on this field
+    silently match nothing. See the module docstring.
+    """
 
     def get_prep_value(self, value: Any) -> str | None:
         if value is None:

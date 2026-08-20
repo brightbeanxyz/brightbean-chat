@@ -37,6 +37,20 @@ make server
 
 `make help` lists every target.
 
+### Dependencies
+
+`requirements.in` and `requirements-dev.in` list direct dependencies and are
+the files you edit. `requirements.txt` and `requirements-dev.txt` are compiled
+from them and are what actually gets installed: they pin the whole transitive
+tree with hashes, so `pip install --require-hashes` verifies every artefact
+rather than just naming a version. After changing either input:
+
+```bash
+make lock
+```
+
+Commit the recompiled files with the change — CI fails if they are stale.
+
 ## Development
 
 ```bash

@@ -10,9 +10,12 @@ import pytest
 
 @pytest.fixture
 def secret_value() -> str:
-    """A token-shaped string for encryption and log-scrubbing tests.
+    """An opaque high-entropy secret with no recognisable credential shape.
 
-    Shaped like a real credential (a Telegram bot token) so the scrubbing tests
-    exercise the same patterns production traffic would.
+    Deliberately shapeless. An earlier version of this fixture was a
+    Telegram-style ``<bot_id>:<secret>`` token, which meant the log-scrubbing
+    test passed on that one pattern alone — gutting every key-name rule left it
+    green. A value only the surrounding ``token=`` / ``Bearer`` context can
+    identify makes the test exercise the rule it claims to.
     """
-    return "8123456789:AAH-thisIsNotARealTelegramBotToken-0123456"
+    return "Zq4tPmXk9BvRnLwCyHsDfGjKaEuT7NbM2VxQ"

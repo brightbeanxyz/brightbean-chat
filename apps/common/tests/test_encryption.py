@@ -3,6 +3,7 @@
 import base64
 
 import pytest
+from cryptography.exceptions import InvalidTag
 from django.db import connection
 
 from apps.common.encryption import decrypt_value, encrypt_value
@@ -33,7 +34,10 @@ class TestValueHelpers:
         raw[-1] ^= 0xFF  # flip a bit in the GCM tag
         tampered = base64.b64encode(bytes(raw)).decode("ascii")
 
-        with pytest.raises(Exception):  # noqa: B017 - InvalidTag from cryptography
+        # InvalidTag specifically: a bare Exception would also pass if some
+        # unrelated line threw, which would hide AES-GCM authentication
+        # silently breaking.
+        with pytest.raises(InvalidTag):
             decrypt_value(tampered)
 
     def test_missing_salt_is_refused(self, settings, secret_value):
@@ -46,7 +50,7 @@ class TestValueHelpers:
         ciphertext = encrypt_value(secret_value)
         settings.ENCRYPTION_KEY_SALT = b"a-completely-different-salt"
 
-        with pytest.raises(Exception):  # noqa: B017 - InvalidTag from cryptography
+        with pytest.raises(InvalidTag):
             decrypt_value(ciphertext)
 
 
@@ -83,6 +87,20 @@ class TestEncryptedFields:
         assert secret_value not in raw_secret
         assert secret_value not in raw_payload
         assert decrypt_value(raw_secret) == secret_value
+
+    def test_lookups_on_encrypted_fields_never_match(self, secret_value):
+        """Documents a footgun every later issue will otherwise walk into.
+
+        Each write uses a fresh nonce, so the same plaintext encrypts to
+        different ciphertext each time and a lookup compares two unrelated
+        strings. It does not raise — it silently returns nothing, which reads
+        as "no such row". Look records up by a separate deterministic column
+        (an HMAC of the value) instead.
+        """
+        EncryptionProbe.objects.create(secret=secret_value)
+
+        assert EncryptionProbe.objects.filter(secret=secret_value).count() == 0
+        assert not EncryptionProbe.objects.filter(secret__contains=secret_value).exists()
 
     def test_corrupted_column_raises_on_read(self, secret_value):
         probe = EncryptionProbe.objects.create(secret=secret_value)
