@@ -20,6 +20,19 @@ Two installation points, on purpose:
     picture, which is the only place that covers all of them.
 
 Scrubbing is idempotent, so a record passing through both is harmless.
+
+One tradeoff worth knowing about: scrubbing has to run on the *formatted*
+message, because the key and its value routinely live in different places
+("token=%s", secret). So the record's args are folded into ``record.msg`` and
+cleared. Anything downstream that groups by the unformatted template — Sentry's
+fingerprinting, for one — sees the formatted string instead. Losing a little
+grouping fidelity is the right side of that trade when the alternative is
+shipping credentials to an error tracker.
+
+The patterns below are deliberately free of nested quantifiers: log messages
+carry attacker-controlled content (SECURITY-BASELINE §2), so a regex that
+backtracks badly here would be a denial-of-service vector rather than a
+performance nit.
 """
 
 import logging

@@ -2,6 +2,7 @@
 
 import importlib
 import logging
+import time
 
 import pytest
 
@@ -81,6 +82,20 @@ class TestScrub:
         once = scrub("access_token=abcdef123456")
 
         assert scrub(once) == once
+
+    def test_stays_linear_on_hostile_input(self):
+        """Log lines carry attacker-controlled content (baseline §2).
+
+        A pattern that backtracks badly would turn every inbound message into
+        a denial-of-service lever, so pathological input has to stay fast.
+        """
+        hostile = "token=" + ("a" * 20_000) + " " + ("'" * 5_000) + " Bearer " + ("x" * 20_000)
+
+        start = time.perf_counter()
+        scrub(hostile)
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 1.0, f"scrub() took {elapsed:.2f}s on 45k characters"
 
 
 class TestFilter:
