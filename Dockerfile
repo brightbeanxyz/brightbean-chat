@@ -38,6 +38,13 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app . .
 
+# WORKDIR creates /app as root and COPY --chown only covers the files it
+# copies, so the app user could not create staticfiles/ at build time or write
+# uploads at runtime. Creating both here also gives the compose media volume
+# the right ownership when Docker seeds it from the image.
+RUN mkdir -p /app/staticfiles /app/media \
+    && chown app:app /app /app/staticfiles /app/media
+
 USER app
 
 # Static files are baked in so the container needs no writable volume for
