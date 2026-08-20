@@ -52,7 +52,7 @@ DELIBERATE DEVIATIONS FROM STUDIO — these are the traps; do not copy them:
 ALSO NOTE (carry forward, don't fix now): RBACMiddleware assumes one org per user (`.first()`); keep the assumption but document it in the middleware docstring. The archived-workspace asymmetry in Studio (the `last_workspace_id` fallback filters `is_archived=False` but URL resolution does not) is a bug — fix it in your port.
 
 CONSTRAINTS:
-- Branch `feat/l1b-tenancy-rbac` off `main`; one PR; `Closes #31`.
+- Branch `feat/l1a-tenancy-rbac` off `main`; one PR; `Closes #31`.
 - Do not touch `theme/`, `templates/base.html`, `templates/layouts/`, `templates/components/` — issue #32 owns them.
 - Tests required: role enforcement (Viewer cannot POST anywhere; Agent blocked from flow routes; Editor cannot manage members), credential resolution across all three levels, invitation escalation rules (cannot invite as a higher tier, cannot remove the last admin, cannot remove yourself), auth rate limiting, and the IDOR helper.
 - Follow `docs/SECURITY-BASELINE.md`.
@@ -92,7 +92,7 @@ DELIBERATE DEVIATIONS FROM STUDIO — do not copy these:
 8. Rebrand all strings/logo slots to **BrightBean Chat**. No dark mode (Studio is light-only by design; don't invent one).
 
 CONSTRAINTS:
-- Branch `feat/l1c-theme-shell` off `main`; one PR; `Closes #32`.
+- Branch `feat/l1b-theme-shell` off `main`; one PR; `Closes #32`.
 - Every inline `<script>` carries `nonce="{{ request.csp_nonce }}"` (SECURITY-BASELINE §8). No inline event handlers — that is what the CSP-safe hover utility classes are for.
 - No hardcoded colors outside the Layer-1 token block.
 - The Tailwind build must be deterministic in CI and run before `collectstatic` in the Docker image.

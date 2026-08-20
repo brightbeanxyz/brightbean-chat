@@ -43,7 +43,7 @@ DELIBERATE DEVIATIONS FROM STUDIO — do not copy these:
 - Studio has no `handler403`/`403.html`; add simple, unstyled error templates now (#32 restyles them).
 
 CONSTRAINTS:
-- Branch `feat/l1a-scaffold` off `main`; one PR; `Closes #2` in the body.
+- Branch `feat/l0a-scaffold` off `main`; one PR; `Closes #2` in the body.
 - Tests accompany the work (pytest, Studio's conventions). CI must be green.
 - Migrations: none expected beyond Django's built-ins.
 - Follow `docs/SECURITY-BASELINE.md` for anything you touch, and do not weaken it "temporarily".
