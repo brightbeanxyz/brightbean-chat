@@ -77,8 +77,12 @@ _AUTH_SCHEMES = r"Bearer|Basic|Token|Digest"
 
 # Ordered: the first pattern that matches a region wins.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Authorization header values: scheme followed by the credential.
-    (re.compile(rf"(?i)\b({_AUTH_SCHEMES})\s+[A-Za-z0-9._~+/=\-]{{8,}}"), rf"\1 {REDACTED}"),
+    # Authorization header values: scheme followed by the credential. No
+    # minimum length — an explicit auth scheme is unambiguous context, and a
+    # short credential ("Basic YTpi" is user:pass base64-encoded) is still a
+    # credential. Requiring 8+ characters left those in the clear, because the
+    # key=value rule below deliberately skips values that start with a scheme.
+    (re.compile(rf"(?i)\b({_AUTH_SCHEMES})\s+[A-Za-z0-9._~+/=\-]+"), rf"\1 {REDACTED}"),
     # key = value / key: value. The left boundary breaks on "_" and "-" as well
     # as whitespace, so "access_token=" matches on "token". The key may be
     # quoted (JSON, dict reprs) and so may the value; an unquoted value runs to
@@ -89,7 +93,12 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(
             rf"(?i)(?<![A-Za-z0-9])({_SECRET_KEY_NAMES})\b([\"']?\s*[=:]\s*)"
             rf"(?!(?:{_AUTH_SCHEMES})\b|{re.escape(REDACTED)})"
-            rf"(\"[^\"]*\"|'[^']*'|[^\s,;&)}}\]]+)",
+            # Unrolled so an escaped quote inside a JSON or dict-repr value does
+            # not end the match early — {"password": "abc\\"tail"} used to redact
+            # only up to the backslash and emit `tail`. Written as
+            # [^"\\]*(?:\\.[^"\\]*)* rather than (?:[^"\\]|\\.)* so it cannot
+            # backtrack quadratically on attacker-controlled log content.
+            rf"(\"[^\"\\]*(?:\\.[^\"\\]*)*\"|'[^'\\]*(?:\\.[^'\\]*)*'|[^\s,;&)}}\]]+)",
         ),
         rf"\1\2{REDACTED}",
     ),

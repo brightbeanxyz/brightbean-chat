@@ -1,4 +1,19 @@
-from .base import *  # noqa: F401, F403
+import os
+
+# Set before importing base, not after. base.py decides at import time whether
+# to enforce the secret/host checks, and it decides off the environment's DEBUG
+# value — so a stray DEBUG=true (which .env.example ships, and `make setup`
+# copies) would send it down the development path: the hardcoded, repo-public
+# SECRET_KEY and ENCRYPTION_KEY_SALT, no ALLOWED_HOSTS check, and then this
+# module quietly setting DEBUG=False again afterwards. The result boots looking
+# healthy while signing every token and encrypting every credential under a key
+# anyone can read out of the repository.
+#
+# Forced rather than setdefault: this module *is* production. DEBUG=True here
+# is never something the environment gets to ask for.
+os.environ["DEBUG"] = "false"
+
+from .base import *  # noqa: E402, F401, F403
 
 DEBUG = False
 

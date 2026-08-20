@@ -10,7 +10,13 @@
 
 x-app-environment: &app-environment
   DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
-  DATABASE_URL: ${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/brightbean_chat}
+  # Deliberately NOT ${DATABASE_URL}. .env.example ships a host-local URL
+  # (…@localhost:5432) because that is what a non-Docker `make server` needs —
+  # and inside these containers "localhost" is the container itself, so
+  # interpolating it makes `docker compose up` fail to migrate or start for
+  # anyone who ran `make setup` first. Compose gets its own knob; the value in
+  # .env still reaches the container through env_file and is overridden here.
+  DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/brightbean_chat}
   SECRET_KEY: ${SECRET_KEY:-}
   ENCRYPTION_KEY_SALT: ${ENCRYPTION_KEY_SALT:-}
   ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}

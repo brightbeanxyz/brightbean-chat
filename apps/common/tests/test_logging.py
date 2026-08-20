@@ -78,6 +78,35 @@ class TestScrub:
     def test_ordinary_messages_are_untouched(self, text):
         assert scrub(text) == text
 
+    @pytest.mark.parametrize(
+        ("text", "secret"),
+        [
+            # A JSON-encoded value containing a quote: the value pattern used
+            # to stop at the escaped quote and emit everything after it.
+            (r'{"password": "abc\"remaining-secret"}', "remaining-secret"),
+            (r"{'api_key': 'abc\'tail-secret'}", "tail-secret"),
+            (r'{"token": "a\\"}', "a\\"),
+        ],
+    )
+    def test_escaped_quotes_do_not_end_the_value_early(self, text, secret):
+        assert secret not in scrub(text)
+
+    @pytest.mark.parametrize(
+        ("text", "secret"),
+        [
+            # "Basic YTpi" is base64 for "a:b" — short, and still a credential.
+            ("Authorization: Basic YTpi", "YTpi"),
+            ("Authorization: Bearer abc", "abc"),
+            ("Authorization: Token x1", "x1"),
+        ],
+    )
+    def test_short_authorization_credentials_are_redacted(self, text, secret):
+        """An explicit auth scheme is unambiguous context; length is irrelevant."""
+        result = scrub(text)
+
+        assert secret not in result
+        assert REDACTED in result
+
     def test_is_idempotent(self):
         once = scrub("access_token=abcdef123456")
 

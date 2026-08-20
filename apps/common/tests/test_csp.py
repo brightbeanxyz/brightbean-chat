@@ -46,3 +46,36 @@ class TestContentSecurityPolicy:
         assert "'unsafe-inline'" not in directives["script-src"]
         assert "'unsafe-inline'" in directives["style-src"]
         assert "'unsafe-eval'" not in directives["style-src"]
+
+
+class TestStorageOrigin:
+    """CSP sources derived from S3_CUSTOM_DOMAIN / S3_ENDPOINT_URL.
+
+    Studio prepends "https://" to anything not already starting with it and
+    then rebuilds the origin from ``.hostname``, so an http:// MinIO endpoint
+    becomes "https://http://localhost:9000" and any non-default port is lost —
+    either way the source never matches the media URLs the page loads and the
+    browser blocks every image.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("http://localhost:9000", "http://localhost:9000"),
+            ("https://minio.example.com:9000", "https://minio.example.com:9000"),
+            ("https://cdn.example.com", "https://cdn.example.com"),
+            # A bare domain is the usual shape of S3_CUSTOM_DOMAIN.
+            ("cdn.example.com", "https://cdn.example.com"),
+            # Userinfo is not part of a CSP source, and would be a credential
+            # published in a response header.
+            ("https://key:secret@cdn.example.com", "https://cdn.example.com"),
+            # IPv6 literals keep their brackets or the port cannot be parsed.
+            ("http://[::1]:9000", "http://[::1]:9000"),
+            ("", None),
+            ("   ", None),
+        ],
+    )
+    def test_origin_keeps_scheme_and_port(self, value, expected):
+        from config.settings.base import csp_origin
+
+        assert csp_origin(value) == expected

@@ -34,15 +34,25 @@ repos:
         args: ["--fix"]
       - id: ruff-format
 
-  # mypy: static type checking for Python
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.18.2
+  # mypy: static type checking for Python.
+  #
+  # Runs as a system hook against the installed dev environment rather than in
+  # pre-commit's isolated venv. django-stubs' plugin loads
+  # config.settings.test, which imports Django plus django-environ, django-csp
+  # and cryptography — an isolated env holding only mypy and django-stubs fails
+  # during plugin initialisation instead of type-checking anything. Listing
+  # those runtime packages under additional_dependencies would work but would
+  # duplicate pins that requirements.txt already owns, and they would drift.
+  # `make setup` installs what this needs.
+  - repo: local
     hooks:
       - id: mypy
+        name: mypy
+        entry: mypy
+        language: system
+        types: [python]
         files: ^(apps|config|tests)/
         args: ["--ignore-missing-imports"]
-        additional_dependencies:
-          - django-stubs
 
   # gitleaks: block commits that contain secrets
   - repo: https://github.com/gitleaks/gitleaks

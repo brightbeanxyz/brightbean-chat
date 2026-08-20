@@ -14,3 +14,6 @@ class CommonConfig(AppConfig):
         from apps.common.logging import install_scrubbing_record_factory
 
         install_scrubbing_record_factory()
+
+        # Registers the deploy-safety checks by import side effect.
+        from apps.common import checks  # noqa: F401

@@ -95,6 +95,49 @@ def test_production_boots_when_everything_is_present():
     assert "System check identified no issues" in result.stdout
 
 
+@pytest.mark.parametrize("debug_value", ["true", "True", "1", "yes"])
+def test_debug_in_the_environment_cannot_unlock_production(debug_value):
+    """Production must not inherit DEBUG from the environment.
+
+    base.py picks the development branch — the hardcoded, repo-public key and
+    salt, no host check — off the environment's DEBUG value at import time,
+    and production.py used to set DEBUG=False only afterwards. Since
+    .env.example ships DEBUG=true and `make setup` copies it, the documented
+    path produced a "production" process signing tokens and encrypting
+    credentials with a key committed to this repository.
+    """
+    env = {**_clean_env(), "DEBUG": debug_value}
+
+    result = _check("config.settings.production", env)
+
+    assert result.returncode != 0, result.stdout
+    assert "ImproperlyConfigured" in result.stderr
+    for name in _COMPLETE:
+        assert name in result.stderr
+
+
+def test_production_never_runs_on_the_development_placeholders():
+    """The system-check backstop, for an import order base.py cannot see.
+
+    A settings module that does `from .base import *` and only then sets
+    DEBUG = False gets the development defaults silently. The checks read the
+    fully-loaded settings, so they catch it however the module was assembled.
+    """
+    probe = BASE_DIR / "config" / "settings" / "_ordering_probe.py"
+    probe.write_text("from config.settings.base import *  # noqa: F401, F403\n\nDEBUG = False\n")
+    try:
+        env = {**_clean_env(), "DEBUG": "true", "ALLOWED_HOSTS": "example.com"}
+        result = _check("config.settings._ordering_probe", env)
+    finally:
+        probe.unlink()
+
+    # SystemCheckError goes to stderr; be indifferent to which stream.
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "common.E001" in output  # SECRET_KEY placeholder
+    assert "common.E002" in output  # ENCRYPTION_KEY_SALT placeholder
+
+
 def test_development_boots_with_no_secrets_at_all():
     """A fresh clone must run ``manage.py`` before anyone has written a .env."""
     result = _check("config.settings.development", _clean_env())

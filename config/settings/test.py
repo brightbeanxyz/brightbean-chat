@@ -3,6 +3,10 @@ import os
 # Set before importing base: base.py refuses to boot with DEBUG=False and no
 # secrets, and the test settings deliberately run with DEBUG=False so tests
 # exercise the production code paths. (Studio uses the same ordering trick.)
+# Forced, not setdefault: the suite asserts production-path behaviour, so a
+# developer with DEBUG=true exported must not silently get the DEBUG branch.
+os.environ["DEBUG"] = "false"
+
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 os.environ.setdefault("ENCRYPTION_KEY_SALT", "test-salt-not-for-production")
 os.environ.setdefault("ALLOWED_HOSTS", "*")

@@ -40,6 +40,12 @@ APP_URL = env("APP_URL")
 # credential. Here both are checked while settings are being imported, so a
 # misconfigured deploy fails immediately and visibly.
 #
+# This runs at import time, off the DEBUG value in the environment, so a
+# settings module that means production must say so BEFORE importing this one —
+# see config/settings/production.py. apps.common.checks re-validates the
+# fully-loaded settings as a backstop, because an import-order mistake here is
+# silent and expensive.
+#
 # ALLOWED_HOSTS is checked here too. It is the likeliest thing to forget, and
 # forgetting it is invisible at boot: Django starts happily and then 400s every
 # request, including /healthz, so the container healthcheck fails with a
@@ -47,15 +53,17 @@ APP_URL = env("APP_URL")
 #
 # DEBUG deployments get throwaway defaults so `manage.py` works on a fresh
 # clone with no .env; anything else must supply real values.
-_DEV_SECRET_KEY = "django-insecure-dev-only-do-not-use-in-production"  # noqa: S105
-_DEV_ENCRYPTION_KEY_SALT = "dev-only-encryption-salt-do-not-use-in-production"
+# Exported (no leading underscore) so apps.common.checks can recognise them in
+# the fully-loaded settings and refuse to run on them outside DEBUG.
+DEV_INSECURE_SECRET_KEY = "django-insecure-dev-only-do-not-use-in-production"  # noqa: S105
+DEV_INSECURE_ENCRYPTION_KEY_SALT = "django-insecure-dev-only-salt-not-for-production"
 
 SECRET_KEY = env("SECRET_KEY", default="")
 _ENCRYPTION_KEY_SALT = env("ENCRYPTION_KEY_SALT", default="")
 
 if DEBUG:
-    SECRET_KEY = SECRET_KEY or _DEV_SECRET_KEY
-    _ENCRYPTION_KEY_SALT = _ENCRYPTION_KEY_SALT or _DEV_ENCRYPTION_KEY_SALT
+    SECRET_KEY = SECRET_KEY or DEV_INSECURE_SECRET_KEY
+    _ENCRYPTION_KEY_SALT = _ENCRYPTION_KEY_SALT or DEV_INSECURE_ENCRYPTION_KEY_SALT
 else:
     _missing = [
         name
@@ -279,14 +287,39 @@ CSP_POLICY: dict[str, Any] = {
 # Development swaps this for the report-only header, hence the optional type.
 CONTENT_SECURITY_POLICY: dict[str, Any] | None = CSP_POLICY
 
+
 # Allow media/images from the storage domain when media lives off-origin.
+def csp_origin(value: str) -> str | None:
+    """Reduce a storage endpoint or custom domain to a CSP source expression.
+
+    Keeps the scheme and the port, both of which matter. Studio prepends
+    "https://" to anything not already starting with it, so an http:// MinIO
+    endpoint becomes "https://http://localhost:9000"; and it builds the origin
+    from ``.hostname``, dropping any non-default port, which yields a source
+    that never matches the media URLs the page actually loads — the browser
+    then blocks every image. Userinfo is dropped: it is not part of a CSP
+    source, and it would be a credential in a response header.
+    """
+    value = value.strip()
+    if not value:
+        return None
+    # A bare domain ("cdn.example.com") is the usual form for a custom domain.
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    if not parsed.hostname:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:  # malformed port
+        return None
+    # .hostname strips the brackets an IPv6 literal needs to keep, and without
+    # them the port is unparseable: "https://::1:9000" is not a valid source.
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return f"{parsed.scheme}://{host}{f':{port}' if port else ''}"
+
+
 if STORAGE_BACKEND.lower() == "s3":
-    _storage_origin = AWS_S3_CUSTOM_DOMAIN or AWS_S3_ENDPOINT_URL
+    _storage_origin = csp_origin(AWS_S3_CUSTOM_DOMAIN or AWS_S3_ENDPOINT_URL)
     if _storage_origin:
-        if not _storage_origin.startswith("https://"):
-            _storage_origin = f"https://{_storage_origin}"
-        _parsed = urlparse(_storage_origin)
-        _storage_origin = f"{_parsed.scheme}://{_parsed.hostname}"
         CSP_POLICY["DIRECTIVES"]["media-src"].append(_storage_origin)
         CSP_POLICY["DIRECTIVES"]["img-src"].append(_storage_origin)
 
