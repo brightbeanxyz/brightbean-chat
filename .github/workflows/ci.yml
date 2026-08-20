@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/l0a-scaffold]
+    branches: [main]
   pull_request:
     branches: [main]
   # Lets the full suite be exercised on a feature branch before a PR exists.
