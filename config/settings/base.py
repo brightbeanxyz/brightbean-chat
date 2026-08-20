@@ -12,6 +12,8 @@ import environ
 from csp.constants import NONCE, NONE, SELF, UNSAFE_EVAL, UNSAFE_INLINE
 from django.core.exceptions import ImproperlyConfigured
 
+from apps.common.placeholders import is_placeholder_secret
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 env = environ.Env(
@@ -75,17 +77,32 @@ else:
     ]
     if not [host for host in ALLOWED_HOSTS if host.strip()]:
         _missing.append("ALLOWED_HOSTS")
-    if _missing:
+
+    # A placeholder is as dangerous as a blank value and looks fine to the
+    # "is it set?" test above: .env.example ships one, and `make setup` copies
+    # that file verbatim.
+    _placeholders = [
+        name
+        for name, value in (
+            ("SECRET_KEY", SECRET_KEY),
+            ("ENCRYPTION_KEY_SALT", _ENCRYPTION_KEY_SALT),
+        )
+        if is_placeholder_secret(value)
+    ]
+
+    if _missing or _placeholders:
         _hints = {
             "SECRET_KEY": 'generate one with: python -c "import secrets; print(secrets.token_urlsafe(50))"',
             "ENCRYPTION_KEY_SALT": "generate a second, different random value the same way",
             "ALLOWED_HOSTS": "comma-separated hostnames this deployment answers on, e.g. chat.example.com",
         }
+        _problems = [f"  - {name} is not set: {_hints[name]}" for name in _missing]
+        _problems += [
+            f"  - {name} is still a placeholder, which is published in this repository: {_hints[name]}"
+            for name in _placeholders
+        ]
         raise ImproperlyConfigured(
-            "Refusing to boot with DEBUG=False. Missing required environment "
-            "variable(s):\n"
-            + "\n".join(f"  - {name}: {_hints[name]}" for name in _missing)
-            + "\nSee docs/SECURITY-BASELINE.md §8."
+            "Refusing to boot with DEBUG=False.\n" + "\n".join(_problems) + "\nSee docs/SECURITY-BASELINE.md §8."
         )
 
 # Encryption key derivation salt — consumed by apps.common.encryption.
@@ -217,6 +234,11 @@ if not STORAGE_IS_LOCAL:
     AWS_S3_OBJECT_PARAMETERS = {
         "CacheControl": "max-age=86400",
     }
+    # Signing for the custom-domain delivery path. django-storages only signs
+    # custom-domain URLs when BOTH of these are set; without them a private
+    # bucket behind S3_CUSTOM_DOMAIN hands out URLs that 403 (common.W001).
+    AWS_CLOUDFRONT_KEY_ID = env("S3_CLOUDFRONT_KEY_ID", default="")
+    AWS_CLOUDFRONT_KEY = env("S3_CLOUDFRONT_KEY", default="")
 else:
     # Local FS fallback so dev + test environments without S3 credentials can
     # still call default_storage / save uploaded files.
@@ -387,13 +409,11 @@ LOGGING = {
     },
 }
 
-# Sentry
+# Sentry. Configured through apps.common.sentry so error reports get the same
+# credential scrubbing as logs — Sentry builds events from exception objects
+# and never touches the logging pipeline. See that module for the details.
 SENTRY_DSN = env("SENTRY_DSN")
 if SENTRY_DSN:
-    import sentry_sdk
+    from apps.common.sentry import configure_sentry
 
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        traces_sample_rate=0.1,
-        profiles_sample_rate=0.1,
-    )
+    configure_sentry(SENTRY_DSN)

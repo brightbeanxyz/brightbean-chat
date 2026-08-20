@@ -16,7 +16,9 @@ Django runs them before ``runserver`` and every management command.
 from typing import Any
 
 from django.conf import settings
-from django.core.checks import CheckMessage, Error, Tags, register
+from django.core.checks import CheckMessage, Error, Tags, Warning, register
+
+from apps.common.placeholders import is_placeholder_secret
 
 
 @register(Tags.security)
@@ -27,30 +29,28 @@ def check_production_secrets(app_configs: Any = None, **kwargs: Any) -> list[Che
 
     errors: list[CheckMessage] = []
 
-    dev_secret_key = getattr(settings, "DEV_INSECURE_SECRET_KEY", None)
-    if dev_secret_key and dev_secret_key == settings.SECRET_KEY:
+    if is_placeholder_secret(settings.SECRET_KEY):
         errors.append(
             Error(
-                "SECRET_KEY is the development placeholder, but DEBUG is False.",
+                "SECRET_KEY is a placeholder, but DEBUG is False.",
                 hint=(
-                    "This value is committed to the repository, so every session cookie, "
-                    "signed token and encrypted credential would be forgeable by anyone "
-                    "who can read it. Set a real SECRET_KEY. If you expected the "
-                    "development default, note that a settings module must set DEBUG "
-                    "before importing config.settings.base, not after."
+                    "Placeholder values ship in this repository (.env.example, and the "
+                    "DEBUG defaults), so every session cookie, signed token and encrypted "
+                    "credential would be forgeable by anyone who can read it. Set a real "
+                    "SECRET_KEY. If you expected the development default, note that a "
+                    "settings module must set DEBUG before importing "
+                    "config.settings.base, not after."
                 ),
                 id="common.E001",
             )
         )
 
-    dev_salt = getattr(settings, "DEV_INSECURE_ENCRYPTION_KEY_SALT", "")
-    dev_salt_bytes = dev_salt.encode("utf-8") if dev_salt else b""
-    if dev_salt_bytes and dev_salt_bytes == settings.ENCRYPTION_KEY_SALT:
+    if is_placeholder_secret(settings.ENCRYPTION_KEY_SALT):
         errors.append(
             Error(
-                "ENCRYPTION_KEY_SALT is the development placeholder, but DEBUG is False.",
+                "ENCRYPTION_KEY_SALT is a placeholder, but DEBUG is False.",
                 hint=(
-                    "Field encryption would derive its key from a salt committed to the "
+                    "Field encryption would derive its key from a salt published in this "
                     "repository. Set a real ENCRYPTION_KEY_SALT."
                 ),
                 id="common.E002",
@@ -67,3 +67,49 @@ def check_production_secrets(app_configs: Any = None, **kwargs: Any) -> list[Che
         )
 
     return errors
+
+
+@register(Tags.security)
+def check_s3_custom_domain_signing(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """Warn when a custom S3 domain silently disables URL signing.
+
+    django-storages' ``url()`` branches on ``custom_domain`` *before* it
+    reaches the S3 presigner, and on that branch it signs only when a
+    CloudFront signer is configured::
+
+        if self.custom_domain:
+            url = "...custom domain..."
+            if self.querystring_auth and self.cloudfront_signer:
+                return self.cloudfront_signer.generate_presigned_url(...)
+            return url
+
+    So ``AWS_QUERYSTRING_AUTH = True`` plus a private ACL plus a custom domain
+    yields an *unsigned* URL to a private object: every ``default_storage.url()``
+    is a 403. It fails closed rather than leaking, but it fails silently and at
+    delivery time, and SECURITY-BASELINE §9 requires media delivery URLs to be
+    signed — so the media library (#16) would be building links that cannot
+    work. Either drop S3_CUSTOM_DOMAIN and let the S3 presigner run, or supply
+    AWS_CLOUDFRONT_KEY_ID / AWS_CLOUDFRONT_KEY.
+    """
+    if getattr(settings, "STORAGE_BACKEND", "local").lower() != "s3":
+        return []
+    if not getattr(settings, "AWS_S3_CUSTOM_DOMAIN", ""):
+        return []
+    if not getattr(settings, "AWS_QUERYSTRING_AUTH", False):
+        # Public-read delivery is a deliberate choice; unsigned URLs are the point.
+        return []
+    if getattr(settings, "AWS_CLOUDFRONT_KEY_ID", "") and getattr(settings, "AWS_CLOUDFRONT_KEY", ""):
+        return []
+
+    return [
+        Warning(
+            "S3_CUSTOM_DOMAIN is set with AWS_QUERYSTRING_AUTH, but no CloudFront signer is configured.",
+            hint=(
+                "django-storages returns UNSIGNED urls on the custom-domain path unless "
+                "AWS_CLOUDFRONT_KEY_ID and AWS_CLOUDFRONT_KEY are both set, so private "
+                "objects will 403. Either unset S3_CUSTOM_DOMAIN so the S3 presigner runs, "
+                "or configure the CloudFront signer."
+            ),
+            id="common.W001",
+        )
+    ]

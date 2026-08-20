@@ -138,6 +138,33 @@ def test_production_never_runs_on_the_development_placeholders():
     assert "common.E002" in output  # ENCRYPTION_KEY_SALT placeholder
 
 
+def test_env_example_values_are_refused_in_production():
+    """`make setup` copies .env.example verbatim; production must not take it.
+
+    The values are non-blank, so the "is it set?" check passes them happily.
+    They are also published in this repository, which makes them exactly as
+    dangerous as no key at all.
+    """
+    example = dict(
+        line.split("=", 1)
+        for line in (BASE_DIR / ".env.example").read_text().splitlines()
+        if line and not line.startswith("#") and "=" in line
+    )
+    env = {
+        **_clean_env(),
+        "SECRET_KEY": example["SECRET_KEY"],
+        "ENCRYPTION_KEY_SALT": example["ENCRYPTION_KEY_SALT"],
+        "ALLOWED_HOSTS": "chat.example.com",
+    }
+
+    result = _check("config.settings.production", env)
+
+    assert result.returncode != 0, result.stdout
+    assert "placeholder" in result.stderr
+    assert "SECRET_KEY" in result.stderr
+    assert "ENCRYPTION_KEY_SALT" in result.stderr
+
+
 def test_development_boots_with_no_secrets_at_all():
     """A fresh clone must run ``manage.py`` before anyone has written a .env."""
     result = _check("config.settings.development", _clean_env())
