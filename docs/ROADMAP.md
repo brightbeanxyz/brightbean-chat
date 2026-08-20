@@ -1,57 +1,83 @@
 # BrightBean Chat — Build Roadmap
 
-Implementation of `docs/SPEC.md`, decomposed into **layers** (sequential) and **workstreams** (parallel inside a layer, non-blocking, touching disjoint Django apps/files wherever possible). Tracking issue: [#1](https://github.com/brightbeanxyz/brightbean-chat/issues/1). Every GitHub issue is titled `[L<layer>-<workstream>] …`.
+Implementation of `docs/SPEC.md`, decomposed into **layers** (sequential) and **workstreams** (parallel inside a layer, non-blocking, touching disjoint Django apps/files wherever possible). Tracking issue: [#1](https://github.com/brightbeanxyz/brightbean-chat/issues/1). Every GitHub issue is titled `[L<layer>-<workstream>] …`. Security requirements for every PR: `docs/SECURITY-BASELINE.md`.
 
-Rule of thumb: an issue may depend on anything in **lower** layers (assume it merged), must not depend on code from a **same-layer** sibling except through the interface contracts written down below, and must never depend on a higher layer.
+Rule of thumb: an issue may depend on anything in **lower** layers (assume it merged), must not depend on code from a **same-layer** sibling except through the interface contracts written down below, and must never depend on a higher layer. A same-layer dependency beyond the contracts is a plan bug — stop and flag it on the tracking issue instead of importing a sibling branch.
+
+## Execution model
+
+- **One issue = one agent = one branch = one PR** (`feat/l<n><letter>-<slug>` → `main`). Exceptions: #8, #9, #17 ship as **two sequential PRs by the same agent** (split noted in their bodies); Layer 1 is a three-issue mini-sequence (A first, then B ∥ C).
+- **Layer gates**: Layer N+1 starts only when all Layer-N PRs are merged and CI is green on `main`. Each gate additionally requires: a security review over the layer's merged diff, the IDOR fuzz suite green, and dependency audits clean (SECURITY-BASELINE §11). The last-merged PR of a layer includes a small cross-workstream integration test where the layer's contracts meet; #30 automates the full matrix at the end.
+- **Per-PR bar**: tests included, code review pass, applicable SECURITY-BASELINE items satisfied, no scope beyond the issue's checklist (out-of-scope findings become new issues). No two same-layer workstreams touch the same Django app — that is what makes parallel merges and migrations safe.
+- **Critical path** (staff first, keep running): `L1-A → L1-B → L2-B/L2-D → L3-A → L3-B → L4-A → L4-B → L5 wave → L6-B → L7-E`. UI streams (L3-C, L4-C/D) and ports (L2-E, L2-F) are flex capacity. Peak useful parallelism ≈ 6 agents (Layers 2 and 5).
 
 ## Layer map
 
 | Issue | Depends on | Delivers |
 |---|---|---|
-| **[L1-A](https://github.com/brightbeanxyz/brightbean-chat/issues/2)** Foundation | — | Django scaffold, settings, CI, Docker dev, tenancy (org/workspace/membership), RBAC (Admin/Editor/Agent/Viewer), auth, encrypted fields, Tailwind theme + base UI shell ported from BrightBean Studio |
-| **[L2-A](https://github.com/brightbeanxyz/brightbean-chat/issues/3)** Contacts domain | L1 | `contacts` app: contact, tag, custom fields, segments, condition/filter engine (spec §11.4 schema) |
-| **[L2-B](https://github.com/brightbeanxyz/brightbean-chat/issues/4)** Channels framework | L1 | `channels` app: channel_connection, Adapter interface, Capabilities, NormalizedEvent/OutboundMessage, block downgrading, webhook endpoints + signature framework + event log/dedup, connection settings UI |
-| **[L2-C](https://github.com/brightbeanxyz/brightbean-chat/issues/5)** Task queue | L1 | `queueing` app: scheduled_action, worker, tick, backoff, zombie recovery, housekeeping, advisory-lock helpers |
-| **[L2-D](https://github.com/brightbeanxyz/brightbean-chat/issues/6)** Flows core | L1 | `flows` app (no engine): flow/flow_version models, graph JSON schema for all node types (spec §11), server-side validation, versioning/publish, flow list UI, builder data API (§16) |
+| **[L1-A](https://github.com/brightbeanxyz/brightbean-chat/issues/2)** Scaffold | — | Django project skeleton, settings, CI (incl. dependency audit + security lint), Docker dev, encrypted-field util, log-scrubbing filter, healthz, UUIDv7 base model |
+| **[L1-B](https://github.com/brightbeanxyz/brightbean-chat/issues/31)** Tenancy & auth | L1-A | org/workspace/membership, RBAC (Admin/Editor/Agent/Viewer), allauth, credential-resolution chain + override UI, workspace-scoped base manager, IDOR fuzz helper, auth rate limiting |
+| **[L1-C](https://github.com/brightbeanxyz/brightbean-chat/issues/32)** Theme & shell | L1-A | Tailwind token architecture, base.html shell with CSP nonces, layouts/components/htmx helpers ported from BrightBean Studio |
+| **[L2-A](https://github.com/brightbeanxyz/brightbean-chat/issues/3)** Contacts domain | L1 | `contacts` app: contact, tag, custom fields, segments, condition/filter engine (contract 8) — ORM-only compilation, source registry |
+| **[L2-B](https://github.com/brightbeanxyz/brightbean-chat/issues/4)** Channels framework | L1 | `channels` app: channel_connection, Adapter interface, Capabilities, NormalizedEvent/OutboundMessage, block downgrading, webhook endpoints + signature framework + event log/dedup + inbound dispatch seam (contract 6), connection settings UI |
+| **[L2-C](https://github.com/brightbeanxyz/brightbean-chat/issues/5)** Task queue | L1 | `queueing` app: scheduled_action, worker, tick, backoff, zombie recovery, housekeeping-job registry, advisory-lock helpers |
+| **[L2-D](https://github.com/brightbeanxyz/brightbean-chat/issues/6)** Flows core | L1 (+contract 8 from L2-A) | `flows` app (no engine): flow/flow_version models, graph JSON schema for all node types, server-side validation with size/depth caps, versioning/publish, flow list UI, builder data API |
 | **[L2-E](https://github.com/brightbeanxyz/brightbean-chat/issues/7)** Notifications | L1 | in-app + email notification engine ported from Studio |
-| **[L3-A](https://github.com/brightbeanxyz/brightbean-chat/issues/8)** Messaging spine | L2 | contact_channel_identity, conversation, message models; inbound persistence pipeline; window bookkeeping; compliance engine `can_send`; send pipeline with idempotency; Postgres token buckets |
-| **[L3-B](https://github.com/brightbeanxyz/brightbean-chat/issues/9)** Flow engine runtime | L2 | executions, runner loop, StepResult, locking, wait/resume semantics, retry/failure policy, loop cap; nodes: send_message, action, condition, smart_delay, randomizer, start_flow, data_collection, note |
-| **[L3-C](https://github.com/brightbeanxyz/brightbean-chat/issues/10)** Flow builder UI | L2 | React Flow canvas island, node palette + config panels from the shared schema, autosave, publish |
-| **[L4-A](https://github.com/brightbeanxyz/brightbean-chat/issues/11)** Triggers & routing | L3 | trigger model + matcher, inbound routing order (§9.3/§10), inline-vs-enqueue decision + budget (§7.1), keyword/ref_url/welcome/default_reply/api types |
-| **[L4-B](https://github.com/brightbeanxyz/brightbean-chat/issues/12)** Telegram | L3 | Telegram adapter end-to-end, connection UI, "test on Telegram" preview |
+| **[L2-F](https://github.com/brightbeanxyz/brightbean-chat/issues/16)** Media library | L1 | media library ported from Studio (folders, S3/local, upload hardening, signed delivery URLs, picker endpoint) — consumed by L3-B rendering and L3-C picker |
+| **[L3-A](https://github.com/brightbeanxyz/brightbean-chat/issues/8)** Messaging spine (2 PRs) | L2 | identities (incl. consent audit fields), conversations, messages, inbound persistence + window bookkeeping (PR 1); compliance engine, token buckets, send pipeline with idempotency, messaging service facade (PR 2) |
+| **[L3-B](https://github.com/brightbeanxyz/brightbean-chat/issues/9)** Flow engine (2 PRs) | L2 | runner, StepResult, locking, failure policy, loop cap, node/action/verb registries, SSTI-safe renderer, simple nodes (PR 1); wait/resume + send_message/smart_delay/data_collection (PR 2) |
+| **[L3-C](https://github.com/brightbeanxyz/brightbean-chat/issues/10)** Flow builder UI | L2 | React Flow canvas island, schema-driven config panels, media picker (L2-F), autosave, publish, capability warnings surfaced |
+| **[L4-A](https://github.com/brightbeanxyz/brightbean-chat/issues/11)** Triggers & routing | L3 | trigger model + matcher + CRUD UI, ordered inbound-hook registry (contract 6), inline-vs-enqueue budget, keyword/ref_url (+QR codes)/welcome/default_reply/api types, platform-agnostic comment-trigger infra |
+| **[L4-B](https://github.com/brightbeanxyz/brightbean-chat/issues/12)** Telegram | L3 | Telegram adapter end-to-end, connection UI, "test on Telegram" draft preview |
 | **[L4-C](https://github.com/brightbeanxyz/brightbean-chat/issues/13)** Contacts CRM UI | L3 | contact list/detail, tag/field editors, segment builder UI, CSV import/export |
-| **[L4-D](https://github.com/brightbeanxyz/brightbean-chat/issues/14)** Inbox v1 | L3 | conversation list + thread, agent reply, assignment, open/done, automation pause, HTMX polling with 304s |
-| **[L4-E](https://github.com/brightbeanxyz/brightbean-chat/issues/15)** External Request node | L3 | external_request node, SSRF guard |
-| **[L4-F](https://github.com/brightbeanxyz/brightbean-chat/issues/16)** Media library | L1 | media library app ported from Studio (org/ws scoped, folders, S3/local) |
-| **[L5-A](https://github.com/brightbeanxyz/brightbean-chat/issues/17)** Instagram | L4 | IG adapter (Instagram Login), DMs, postbacks, deletions, HUMAN_AGENT rules, private replies, comment/story_mention/story_reply/follow triggers |
-| **[L5-B](https://github.com/brightbeanxyz/brightbean-chat/issues/18)** Messenger | L4 | Messenger adapter, message tags, m.me referrals, delivery/read receipts, FB comment trigger |
-| **[L5-C](https://github.com/brightbeanxyz/brightbean-chat/issues/19)** WhatsApp | L4 | Cloud API adapter, whatsapp_template CRUD + status polling, NeedsTemplate path |
-| **[L5-D](https://github.com/brightbeanxyz/brightbean-chat/issues/20)** SMS (Twilio) | L4 | SMS adapter in+out, STOP/HELP core handling, send_sms node |
-| **[L5-E](https://github.com/brightbeanxyz/brightbean-chat/issues/21)** Email | L4 | Email adapter (SMTP/Resend/SES), unsubscribe + suppression, bounces, send_email node, open/click routes |
-| **[L6-A](https://github.com/brightbeanxyz/brightbean-chat/issues/22)** Sequences + rule triggers | L5 | sequences models/worker/UI, internal event bus, rule trigger type |
-| **[L6-B](https://github.com/brightbeanxyz/brightbean-chat/issues/23)** Broadcasts | L5 | composer, eligibility filter, fanout, live counters, cancellation |
-| **[L6-C](https://github.com/brightbeanxyz/brightbean-chat/issues/24)** Inbox v2 | L5 | labels, inbox rules engine, reminders, scheduled replies, internal notes |
-| **[L6-D](https://github.com/brightbeanxyz/brightbean-chat/issues/25)** Public API + webhooks | L5 | django-ninja API v1, api_key auth + rate limit, outbound webhooks with HMAC + retries |
-| **[L7-A](https://github.com/brightbeanxyz/brightbean-chat/issues/26)** Analytics | L6 | node_stat_daily, click tracking, builder stats overlay, broadcast stats page |
+| **[L4-D](https://github.com/brightbeanxyz/brightbean-chat/issues/14)** Inbox v1 | L3 | conversation list + thread, agent reply, assignment, automation pause (via facade), HTMX polling with 304s, hostile-content XSS suite |
+| **[L4-E](https://github.com/brightbeanxyz/brightbean-chat/issues/15)** External Request node | L3 | external_request node + the shared SSRF guard |
+| **[L5-A](https://github.com/brightbeanxyz/brightbean-chat/issues/17)** Instagram (2 PRs) | L4 | OAuth + DM adapter, deletions, HUMAN_AGENT policy (PR 1); comment-to-DM + story/follow triggers + post picker (PR 2, may slip to L6) |
+| **[L5-B](https://github.com/brightbeanxyz/brightbean-chat/issues/18)** Messenger | L4 | Messenger adapter, message tags, m.me referrals, delivery/read receipts, FB comment matcher |
+| **[L5-C](https://github.com/brightbeanxyz/brightbean-chat/issues/19)** WhatsApp | L4 | Cloud API adapter, whatsapp_template CRUD + status polling, NeedsTemplate path, cost-hint settings |
+| **[L5-D](https://github.com/brightbeanxyz/brightbean-chat/issues/20)** SMS (Twilio) | L4 | SMS adapter in+out, STOP/HELP via the hard_optout hook, send_sms node, A2P checklist |
+| **[L5-E](https://github.com/brightbeanxyz/brightbean-chat/issues/21)** Email | L4 | Email adapter (SMTP/Resend/SES), unsubscribe + suppression, bounces, send_email node (open/click routes live in L7-A) |
+| **[L5-F](https://github.com/brightbeanxyz/brightbean-chat/issues/25)** Public API + webhooks | L4 | django-ninja API v1, api_key auth + rate limit, outbound webhooks (event-catalog consumers, contract 7) with HMAC + retries |
+| **[L6-A](https://github.com/brightbeanxyz/brightbean-chat/issues/22)** Sequences + rule triggers | L5 | sequences models/worker/UI, rule trigger type (event-catalog consumer), sequence condition-source + action verbs registered |
+| **[L6-B](https://github.com/brightbeanxyz/brightbean-chat/issues/23)** Broadcasts | L5 | HTMX composer (single-node graph_json — no React embed), eligibility filter, fanout, live counters, cancellation |
+| **[L6-C](https://github.com/brightbeanxyz/brightbean-chat/issues/24)** Inbox v2 | L5 | labels, inbox rules (pre_trigger hook), reminders, scheduled replies, notes |
+| **[L7-A](https://github.com/brightbeanxyz/brightbean-chat/issues/26)** Analytics | L6 | node_stat_daily, `/c/` click + `/o/` pixel routes for all channels, builder stats overlay, broadcast stats page |
 | **[L7-B](https://github.com/brightbeanxyz/brightbean-chat/issues/27)** Flow export/import | L6 | flow JSON export/import incl. triggers, template sharing |
-| **[L7-C](https://github.com/brightbeanxyz/brightbean-chat/issues/28)** Deployment & docs | L6 | docker-compose.prod, Heroku/Render/Railway, healthz, self-hosting + per-platform setup docs |
-| **[L7-D](https://github.com/brightbeanxyz/brightbean-chat/issues/29)** GDPR & security | L6 | contact hard delete + export, redaction audit, security pass |
-| **[L7-E](https://github.com/brightbeanxyz/brightbean-chat/issues/30)** Acceptance suite | L6 | cross-system tests for spec §21 criteria (idempotency, interleaving, budgets, loop cap, broadcast counts) |
+| **[L7-C](https://github.com/brightbeanxyz/brightbean-chat/issues/28)** Deployment & docs | L6 (infra half may land after L2) | secure-by-default docker-compose.prod, Heroku/Render/Railway, healthz, hardening checklist, self-hosting + per-platform docs |
+| **[L7-D](https://github.com/brightbeanxyz/brightbean-chat/issues/29)** GDPR & security | L6 | contact hard delete + export (incl. consent records), redaction audit, baseline-traceability verification, pen-test runbook |
+| **[L7-E](https://github.com/brightbeanxyz/brightbean-chat/issues/30)** Acceptance suite | L6 (phase-1 subset lands at the L4 gate) | cross-system tests for spec §21 criteria (idempotency, interleaving, budgets, loop cap, broadcast counts) |
+
+### Merge order inside layers
+
+- **L1**: A → (B ∥ C).
+- **L2**: A before D (contract 8); C early (B's tests use the enqueue path); B, E, F free.
+- **L3**: A-PR1 → A-PR2 → B-PR1 → B-PR2; C any time after L2-D.
+- **L4**: A first (hook registry, trigger types, comment infra), then B (end-to-end proof); C/D/E free. Pull-forwards land here too: #28's prod-infra half, #30's phase-1 subset (both required at the L4 gate).
+- **L5**: adapters independent (contract 4); D early (exercises the hard_optout hook); F after A-PR1 or any adapter exists for realistic message tests.
+- **L6**: A, B, C independent (event catalog + hook registry already exist).
+- **L7**: E finishes last; D verifies the finished system; A/B/C free.
 
 ## Same-layer interface contracts
 
 Workstreams in the same layer code against these signatures without importing each other's unmerged code; integration is verified by the next layer (and L7-E).
 
-1. **Send pipeline (L3-A provides, L3-B consumes):**
-   `messaging.services.send_outbound(*, workspace, contact, connection, outbound: OutboundMessage, source: str, idempotency_key: str) -> Message` — applies compliance (`can_send`), inserts the message row first (idempotent), calls the adapter, returns the `Message` with status. Raises nothing for compliance denials; returns the message with `status=failed` + machine-readable error code. L3-B's send_message node calls only this.
-2. **Graph schema (L2-D provides, L3-B/L3-C consume):** the shared node-config JSON-schema module in `flows/schema/` is the single source of truth; server validation and React config panels both generate from it. Changing it after L2-D requires touching both consumers.
-3. **Routing hooks (L3-A provides fields, L4-A consumes):** `conversation.automation_paused_until`, `identity.window_expires_at`, `identity.opted_out_at` are written only by L3-A code paths; the trigger matcher only reads them.
-4. **Adapter registry (L2-B provides, L4-B/L5-* consume):** each platform adds one module in `channels/providers/` and registers `platform -> Adapter` plus a compliance policy entry (window_hours, tags, rate default). Additive only — parallel channel workstreams never edit shared files beyond a one-line registry entry.
-5. **Node registry (L3-B provides, L4-E/L5-D/L5-E consume):** new node types register `type -> NodeClass` and add their config schema to the L2-D schema module. Additive only.
+1. **Messaging service facade (L3-A provides; L3-B, L4-D, L5-F consume):** module `messaging/services.py` exposing:
+   - `send_outbound(*, workspace, contact, connection, outbound: OutboundMessage, source: str, idempotency_key: str) -> Message` — applies compliance (`can_send`), inserts the message row first (idempotent), calls the adapter, returns the `Message` with status. Compliance denials never raise; they return the message with `status=failed` + machine-readable error code. When `source="agent"`, also sets `conversation.automation_paused_until = now + 30 min`.
+   - `upsert_contact_identity(contact, platform, address, *, source: str, opt_in: bool) -> ContactChannelIdentity` — creates/refreshes an identity recording `opt_in_at` + `opt_in_source` (consent audit, SPEC §11.8). Connection resolution: one identity row per active connection of that platform; if none exists at capture time, a connection-less pending record is upgraded lazily at first send.
+   - `open_conversation / close_conversation / assign_conversation(...)` and `pause_automation(conversation, until)`.
+   L3-B's nodes and L4-D's inbox mutate messaging state **only** through this facade.
+2. **Graph schema (L2-D provides, L3-B/L3-C consume):** the shared node-config JSON-schema module in `flows/schema/` is the single source of truth; server validation and React config panels both generate from it. New node types (L4-E, L5-D/E) append entries; changing existing entries after L2-D requires touching both consumers.
+3. **Routing fields (L3-A owns, others read):** `conversation.automation_paused_until`, `identity.window_expires_at`, `identity.opted_out_at` are written **only via the messaging service facade / ingest pipeline**; the trigger matcher and every other consumer only read them.
+4. **Adapter registry + platform policy (L2-B provides, L4-B/L5-* consume, L2-D reads statically):** each platform adds one module in `channels/providers/` and one registry entry `platform -> (Adapter, PlatformPolicy)`. `PlatformPolicy` is fixed now: `window_hours: int|None`, `outside_window: "blocked" | NeedsTag(tags: list, allowed_use_text: str) | "needs_template"`, `human_agent_days: int|None` (agent sends only), `broadcast_allowed: bool`, `rate_default: float`. The static per-platform **Capabilities table** (SPEC §6.1 fields) also lives in the registry so L2-D's validation can emit capability warnings without importing adapter code. The compliance engine (`can_send`) consumes policy entries as data — Layer-5 adapters never patch it. Additive only.
+5. **Node & verb registries (L3-B provides; L4-E, L5-D/E, L6-A consume):** new flow-node types register `type -> NodeClass`; action-node verbs register in an **action-verb registry** (L6-A adds `subscribe_sequence`/`unsubscribe_sequence`); both additive, with config schemas appended to the L2-D module.
+6. **Inbound pipeline (L2-B seam + L4-A stages):** L2-B's webhook endpoint does verify → dedup → raw-persist → `dispatch(NormalizedEvent)` against a pluggable processor registration point (default no-op). L3-A registers persistence; L4-A replaces the tail with an **ordered hook registry with named stages**: `hard_optout → post_persist → resume → trigger → default_reply`. Later streams register hooks instead of editing routing code: L5-D registers STOP/HELP at `hard_optout`, L6-C registers inbox rules at `post_persist`, L6-A's rule triggers consume the event catalog (contract 7), not this pipeline.
+7. **Internal event catalog (emitters in lower layers; L6-A rule triggers and L5-F outbound webhooks consume):** Django signals with fixed names + payload shapes: `contact.created`, `contact.tag_added`, `contact.tag_removed`, `contact.field_changed` (emitted by L2-A services), `message.received` (L3-A ingest), `execution.completed` (L3-B), `sequence.subscribed`/`sequence.unsubscribed` (L6-A), `broadcast.finished` (L6-B). Payloads carry workspace id, contact id, and event-specific ids only (no message bodies).
+8. **Condition engine (L2-A provides; L2-D, L3-B, L6-* consume):** `contacts/conditions.py` exposes `CONDITION_SCHEMA` (the §11.4 JSON-schema fragment), `evaluate(contact, filter_json) -> bool`, `queryset(workspace, filter_json)`, and a pluggable **source registry** (tag/custom_field/system_field/segment built-in; L3-A registers `window`, L6-A registers `sequence`). L2-D embeds `CONDITION_SCHEMA` for the condition node; L3-B's condition node calls `evaluate()` — no re-implementation anywhere.
 
 ## Conventions for every issue
 
 - Frontend follows BrightBean Studio: Django templates + HTMX + Alpine.js + Tailwind 4. Reuse Studio's `theme/static_src` token architecture, `templates/base.html` shell, `templates/layouts/`, `templates/components/`, and `apps/common/htmx.py` helpers. The only React is the flow builder island.
+- **Security**: every PR satisfies the applicable items in `docs/SECURITY-BASELINE.md`; security-critical issues (#4, #15, #16, #25, every adapter) get a dedicated security review at PR time; every layer gate runs one over the merged diff.
 - Tests accompany every issue (pytest, same conventions as Studio's `conftest.py` + per-app `tests/`).
 - No AI features, no billing, no TikTok — do not stub them.
 - Product name in UI/docs: **BrightBean Chat**.

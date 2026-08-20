@@ -101,7 +101,7 @@ All PKs are UUIDv7. All tenant tables have `workspace_id` FK with index. Timesta
 
 ### contacts
 - `contact`: workspace_id, first_name, last_name, locale, timezone, email, phone, status (active, deleted), last_interaction_at. Index (workspace_id, last_interaction_at).
-- `contact_channel_identity`: contact_id, channel_connection_id, platform, platform_user_id, opt_in (bool), opted_out_at, window_expires_at (nullable timestamptz), last_inbound_at, extra json (username, profile pic url). Unique (channel_connection_id, platform_user_id). Index (contact_id).
+- `contact_channel_identity`: contact_id, channel_connection_id, platform, platform_user_id, opt_in (bool), opt_in_at (nullable timestamptz), opt_in_source (text: message_in, data_collection, import, api, manual — consent audit per 11.8), opted_out_at, window_expires_at (nullable timestamptz), last_inbound_at, extra json (username, profile pic url). Unique (channel_connection_id, platform_user_id). Index (contact_id).
 - `tag`: workspace_id, name. Unique (workspace_id, name).
 - `contact_tag`: contact_id, tag_id. Unique together.
 - `custom_field`: workspace_id, name, type (text, number, date, datetime, boolean). Unique (workspace_id, name).
