@@ -268,6 +268,14 @@ class TestToastHost:
 
         assert "DOMParser()" in body
 
+    def test_a_flattened_error_page_is_not_shown_verbatim(self, client, member):
+        """Under DEBUG a Django technical 500 page flattens to the exception and
+        its traceback. Studio's handler renders whatever it extracts."""
+        body = client.get("/dashboard/").content.decode()
+
+        assert "message.length > 300" in body
+        assert "Something went wrong. Please try again." in body
+
     def test_the_opt_outs_survive_the_merge(self, client, member):
         body = client.get("/dashboard/").content.decode()
 

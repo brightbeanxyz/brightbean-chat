@@ -99,8 +99,11 @@ Carried over unchanged, because each exists for a reason:
         var parsed = new DOMParser().parseFromString(responseText, 'text/html').body;
         var message = ((parsed && parsed.textContent) || '').trim();
         if (!message || message.length > 300) {
-            // A full HTML error page flattens to paragraphs of boilerplate;
-            // show something a user can act on instead.
+            // A short body is a real message a view wrote for the user. Anything
+            // longer is a whole HTML error page flattened to text — paragraphs of
+            // boilerplate the user cannot act on, and under DEBUG the exception
+            // and traceback from Django's technical 500 page. Neither belongs in
+            // a toast. Studio renders whatever it gets.
             message = 'Something went wrong. Please try again.';
         }
 
