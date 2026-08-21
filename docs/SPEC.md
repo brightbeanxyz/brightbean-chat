@@ -40,21 +40,32 @@ Identical conventions to brightbean-studio. Where this spec is silent, copy the 
 - Deploy targets: Docker Compose (reference), one-click Heroku / Render / Railway
 - Credential encryption at rest: reuse Studio's encrypted field implementation
 
-Repo layout (Django apps):
+Repo layout (Django apps). Packages live under `apps/` — `apps/contacts/`,
+`apps/flows/` and so on. A top-level `channels/` would shadow the `channels`
+PyPI package the way `calendar/` and `email/` shadow the standard library, and
+`core` was split into `organizations` / `workspaces` / `members` / `accounts` /
+`credentials` when it landed (issue #31):
 
 ```
-config/            settings, urls, wsgi
-core/              org, workspace, membership, RBAC (port from Studio)
-channels/          adapters, channel_connection, webhook endpoints
-contacts/          contact, identity, tags, fields, segments, import/export
-flows/             flow, versions, triggers, engine, nodes
-messaging/         conversation, message, compliance engine, send pipeline
-campaigns/         sequences, broadcasts
-inbox/             inbox UI views
-queueing/          scheduled_action, worker, tick
-api/               public REST API, outbound webhooks
-analytics/         counters and stats views
+config/                 settings, urls, wsgi
+apps/common/            shared utils: encryption, BaseModel, signing, scoped managers
+apps/organizations/     organization
+apps/workspaces/        workspace
+apps/members/           org + workspace membership, invitations, RBAC (port from Studio)
+apps/accounts/          user, auth, provisioning
+apps/credentials/       platform app credentials
+apps/channels/          adapters, channel_connection, webhook endpoints
+apps/contacts/          contact, identity, tags, fields, segments, import/export
+apps/flows/             flow, versions, triggers, engine, nodes
+apps/messaging/         conversation, message, compliance engine, send pipeline
+apps/campaigns/         sequences, broadcasts
+apps/inbox/             inbox UI views
+apps/queueing/          scheduled_action, worker, tick
+apps/api/               public REST API, outbound webhooks
+apps/analytics/         counters and stats views
 ```
+
+App packages live under `apps/` (settled in PR #35). Bare top-level names are avoided because `channels`, `calendar` and `email` would shadow a PyPI package or the standard library.
 
 ---
 
@@ -74,18 +85,54 @@ Single invariant that everything relies on: at most one flow step executes at a 
 
 ## 4. Multi-tenancy and RBAC
 
-Port Studio's model unchanged: Organization -> Workspace -> Membership. All tenant data carries `workspace_id`. Channel connections are per workspace. Platform app credentials resolve in order: workspace-level override (if set) -> organization-level (Django admin) -> deployment env vars.
+Port Studio's model unchanged: Organization -> Workspace, with **two membership tiers and two permission tables** — the architecture of Studio's `apps/members`. All tenant data carries `workspace_id`. Channel connections are per workspace. Platform app credentials resolve in order: workspace-level override (if set) -> organization-level (Django admin) -> deployment env vars.
 
-Roles (map to Studio roles):
+### 4.1 Organization tier
 
-| Role | Capabilities |
-|---|---|
-| Admin | everything, including channel connections and member management |
-| Editor | create/edit/publish flows, sequences, broadcasts, CRM |
-| Agent | inbox only: read/reply/assign conversations, edit contact fields and tags |
-| Viewer | read-only everywhere |
+`org_membership(user, organization, org_role)`. Roles: **owner**, **admin**, **member**. Everything that spans workspaces, or governs who may enter one, lives here.
 
-No seat limits. Agent assignment and inbox features are available to any member with Agent role or above.
+`ORG_PERMISSION_KEYS` — a set-based table, as in Studio's `BUILTIN_ORG_PERMISSIONS`:
+
+| Key | owner | admin | member |
+|---|:--:|:--:|:--:|
+| `manage_members` — invite, remove, change org roles, assign workspace memberships | ✓ | ✓ | |
+| `manage_workspaces` — create and archive workspaces | ✓ | ✓ | |
+| `manage_platform_credentials` — org-level platform app credentials | ✓ | ✓ | |
+| `manage_api_keys` — issue and revoke API keys for any workspace in the org | ✓ | ✓ | |
+
+Owner and admin hold the same set; they differ through role-hierarchy checks rather than the table — only an owner may change an owner, the last owner cannot be removed or demoted, and nobody may grant a tier at or above their own. Resolution helper: `has_org_permission(membership, key) -> bool`.
+
+**Member management is organization-level, not workspace-level.** An invitation carries an `org_role` plus a list of workspace assignments (`[{workspace_id, role}]`), so a single invite places a person in the organization and in the workspaces they need. Member-management routes are mounted outside the workspace URL prefix.
+
+### 4.2 Workspace tier
+
+`workspace_membership(user, workspace, workspace_role)`. Roles: **admin**, **editor**, **agent**, **viewer**. Everything scoped to one workspace's data lives here.
+
+`PERMISSION_KEYS` — a dict-of-bools table, as in Studio's `BUILTIN_ROLE_PERMISSIONS`:
+
+| Key | admin | editor | agent | viewer |
+|---|:--:|:--:|:--:|:--:|
+| `use_inbox` | ✓ | ✓ | ✓ | ✓ |
+| `view_analytics` | ✓ | ✓ | ✓ | ✓ |
+| `reply_in_inbox` | ✓ | ✓ | ✓ | |
+| `edit_contact_fields` | ✓ | ✓ | ✓ | |
+| `manage_crm` | ✓ | ✓ | | |
+| `edit_flows` | ✓ | ✓ | | |
+| `send_broadcasts` | ✓ | ✓ | | |
+| `manage_channels` | ✓ | | | |
+| `manage_workspace_settings` | ✓ | | | |
+
+Resolution: `WorkspaceMembership.effective_permissions -> dict[str, bool]`. This property is the **only** protocol consumers use — the public API (§17) duck-types a `VirtualMembership` exposing just `effective_permissions`, exactly as Studio's `apps/api/auth.py` does.
+
+An **org owner is treated as a workspace admin in every workspace of their org**; an org admin is bounded by actual workspace membership. Port that rule from Studio's `members/services.py` together with its escalation guards.
+
+### 4.3 Enforcement
+
+Four decorators, Studio's signatures unchanged: `require_org_role(min_role)`, `require_org_permission(key)`, `require_workspace_role(min_role)`, `require_permission(key)`. The role hierarchies live in one module and are imported wherever needed — Studio duplicates them across two files with a "must match" comment; do not repeat that. Denials raise `PermissionDenied`; cross-tenant object access returns 404, never 403.
+
+Note the deliberate name overlap: `OrgRole.ADMIN` and `WorkspaceRole.ADMIN` are different roles at different tiers. Prose always qualifies ("org admin" / "workspace admin"); in code the enum and decorator names disambiguate.
+
+No seat limits anywhere. Inbox features are available to any member with the workspace agent role or above.
 
 ---
 
@@ -94,7 +141,10 @@ No seat limits. Agent assignment and inbox features are available to any member 
 All PKs are UUIDv7. All tenant tables have `workspace_id` FK with index. Timestamps `created_at`, `updated_at` everywhere (omitted below). JSON columns are `jsonb`.
 
 ### core
-- `organization`, `workspace`, `membership(user, workspace, role)` — port from Studio.
+- `organization`, `workspace` — port from Studio.
+- `org_membership`: user, organization, org_role (owner/admin/member), invited_at, accepted_at. Unique (user, organization).
+- `workspace_membership`: user, workspace, workspace_role (admin/editor/agent/viewer), added_at. Unique (user, workspace).
+- `invitation`: organization, email, org_role, workspace_assignments json (`[{workspace_id, role}]`), invited_by, token (unique), expires_at, accepted_at. Invitations are org-level (§4.1).
 
 ### channels
 - `channel_connection`: workspace_id, platform (enum: telegram, instagram, messenger, whatsapp, sms, email), display_name, external_id (page id / IG user id / WABA phone number id / bot id / Twilio number / sending domain), credentials (encrypted json), status (active, needs_reauth, disabled), capabilities_cache json, webhook_secret. Unique (platform, external_id). Index (workspace_id, platform).

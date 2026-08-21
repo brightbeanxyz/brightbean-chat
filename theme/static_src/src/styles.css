@@ -593,6 +593,89 @@ img.sidebar-logo-mark {
   background: var(--border);
 }
 
+/* Auth-page form styling, applied by scope rather than by class.
+   allauth ships its own templates for password reset, email confirmation,
+   provider connections and the rest, and renders their widgets itself — we do
+   not control those elements' attributes without forking every template. One
+   override of allauth/layouts/base.html plus these rules styles all of them.
+   Every declaration mirrors .form-input-styled; keep the two in step. */
+.auth-card input[type="text"],
+.auth-card input[type="email"],
+.auth-card input[type="password"],
+.auth-card input[type="url"],
+.auth-card input[type="tel"],
+.auth-card select,
+.auth-card textarea {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  padding: 0.625rem 0.875rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.auth-card input:focus,
+.auth-card select:focus,
+.auth-card textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.auth-card input[readonly] {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+.auth-card input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  accent-color: var(--brand-green-500);
+}
+.auth-card button[type="submit"]:not([class]) {
+  /* allauth's own submit buttons carry no class of their own. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.5rem;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  background: var(--primary);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-primary);
+  transition: all var(--dur-base) var(--ease-out);
+}
+.auth-card button[type="submit"]:not([class]):hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+/* Body copy inside an allauth page: its templates emit bare <p>, <ul> and <a>. */
+.auth-prose { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.6; }
+.auth-prose h1, .auth-prose h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+.auth-prose p { margin-bottom: 1rem; }
+.auth-prose a { color: var(--primary); }
+.auth-prose ul { margin: 0 0 1rem 1.125rem; list-style: disc; }
+.auth-prose label { display: block; font-weight: 500; color: var(--text-primary); margin-bottom: 0.375rem; }
+.auth-prose .errorlist {
+  list-style: none;
+  margin: 0.375rem 0 0;
+  padding: 0;
+  color: var(--error-700);
+  font-size: 0.75rem;
+}
+
 /* Auth card */
 .auth-card {
   background: var(--surface-0);
@@ -1079,3 +1162,107 @@ span.flatpickr-weekday {
   to   { opacity: 1; transform: translateY(0); }
 }
 .anim-collapse { animation: bb-collapse-in var(--dur-base) ease; }
+
+/* ═══════════════════════════════════════════════════════════════
+   UNCLASSED CONTENT DEFAULTS
+   Issue #31 shipped its pages as plain semantic HTML on the
+   understanding that #32 would style them. Rather than fork
+   seventeen templates, these give bare <table>, <form>, <h*> and
+   friends a sensible look inside the app's main content area.
+
+   IN @layer base ON PURPOSE. Everything else in this file is
+   unlayered and therefore beats Tailwind's utilities — which is the
+   right call for a component class a caller must not override by
+   accident, and exactly the wrong call here. These are defaults: the
+   moment a later issue rewrites one of those pages with real classes,
+   its utilities and component classes must win without a fight. Base
+   sits below both.
+   ═══════════════════════════════════════════════════════════════ */
+@layer base {
+  .app-content h1 { font-size: 1.125rem; font-weight: 600; color: var(--text-primary); }
+  .app-content h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem; }
+  .app-content h3 { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+  .app-content p { font-size: 0.875rem; color: var(--text-secondary); }
+  .app-content a { color: var(--primary); }
+  .app-content hr { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+
+  .app-content table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+  }
+  .app-content th {
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-ghost);
+    padding: 0 0.75rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .app-content td {
+    padding: 0.75rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  .app-content label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 0.375rem;
+  }
+  .app-content input[type="text"],
+  .app-content input[type="email"],
+  .app-content input[type="password"],
+  .app-content input[type="url"],
+  .app-content select,
+  .app-content textarea {
+    font-family: var(--font-body);
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-0);
+    color: var(--text-primary);
+    max-width: 26rem;
+    width: 100%;
+  }
+  .app-content input:focus,
+  .app-content select:focus,
+  .app-content textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-ring);
+  }
+  .app-content input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--brand-green-500);
+  }
+  .app-content button:not([class]),
+  .app-content input[type="submit"]:not([class]) {
+    font-family: var(--font-body);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface-0);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all var(--dur-fast) ease;
+  }
+  .app-content button:not([class]):hover,
+  .app-content input[type="submit"]:not([class]):hover {
+    background: var(--surface-1);
+    border-color: var(--border-hover);
+  }
+  .app-content ul:not([class]) { margin: 0 0 1rem 1.125rem; list-style: disc; font-size: 0.875rem; color: var(--text-secondary); }
+  .app-content form { margin-bottom: 1rem; }
+  .app-content .errorlist { list-style: none; margin: 0.375rem 0 0; padding: 0; color: var(--error-700); font-size: 0.75rem; }
+}

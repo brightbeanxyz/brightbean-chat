@@ -309,8 +309,11 @@ jobs:
           grep -q '"status": "ok"' /tmp/healthz.json
           grep -q '"database": "ok"' /tmp/healthz.json
 
+          # "/" is the authenticated router now (issue #31): anonymous
+          # visitors are redirected to the sign-in page, so follow it. This
+          # exercises allauth and the template chain rather than a static page.
           echo "--- / ---"
-          curl -fsS http://localhost:8000/ | grep -q "BrightBean Chat"
+          curl -fsSL http://localhost:8000/ | grep -q "BrightBean Chat"
 
       - name: /healthz fails when the database is down
         env:

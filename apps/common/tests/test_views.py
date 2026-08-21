@@ -47,9 +47,17 @@ class TestHealthz:
 
 
 @pytest.mark.django_db
-class TestPlaceholderPage:
-    def test_renders(self, client):
+class TestRoot:
+    """Layer 0's placeholder page is gone; "/" routes people now (issue #31)."""
+
+    def test_anonymous_is_sent_to_the_login_page(self, client):
         response = client.get("/")
+
+        assert response.status_code == 302
+        assert response.headers["Location"] == "/accounts/login/"
+
+    def test_the_login_page_renders(self, client):
+        response = client.get("/accounts/login/")
 
         assert response.status_code == 200
         assert b"BrightBean Chat" in response.content

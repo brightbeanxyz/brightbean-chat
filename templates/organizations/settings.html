@@ -1,0 +1,31 @@
+{% extends "layouts/settings.html" %}
+{% block title %}Organization · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Organization</h1>{% endblock %}
+
+{% block content %}
+  {% if can_manage %}
+    <form method="post" action="{% url 'organizations:update_settings' %}">
+      {% csrf_token %}
+      <p>
+        <label for="org-name">Name</label><br />
+        <input id="org-name" type="text" name="name" value="{{ request.org.name }}" maxlength="100" required />
+      </p>
+      <p>
+        <label for="org-tz">Default timezone</label><br />
+        <input id="org-tz" type="text" name="default_timezone"
+               value="{{ request.org.default_timezone }}" maxlength="63" />
+      </p>
+      <p>
+        <label for="org-logo">Logo URL</label><br />
+        <input id="org-logo" type="url" name="logo_url" value="{{ request.org.logo_url }}" />
+      </p>
+      <button type="submit">Save</button>
+    </form>
+  {% else %}
+    <dl>
+      <dt>Name</dt><dd>{{ request.org.name }}</dd>
+      <dt>Default timezone</dt><dd>{{ request.org.default_timezone }}</dd>
+    </dl>
+    <p class="muted">Only organization admins can change these.</p>
+  {% endif %}
+{% endblock %}

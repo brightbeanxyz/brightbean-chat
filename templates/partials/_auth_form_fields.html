@@ -1,0 +1,37 @@
+{% comment %}
+Renders a Django form with the design system's input styling.
+
+Shared by login, signup and the invite pages so the three cannot drift, and so
+error presentation is identical everywhere.
+
+Checkboxes are laid out inline. The generic label-above-input shape is wrong
+for them — allauth's "Remember Me" rendered as a heading with a stray box
+underneath — and a form partial that gets one field type visibly wrong is worse
+than no partial.
+{% endcomment %}
+{% if form.non_field_errors %}
+<div class="alert-error mb-4">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+</div>
+{% endif %}
+{% for field in form %}
+{% if field.field.widget.input_type == "checkbox" %}
+<label class="flex items-center gap-2 mb-4 text-sm cursor-pointer" style="color: var(--text-secondary);">
+    {{ field }}
+    <span>{{ field.label }}</span>
+</label>
+{% else %}
+<div class="mb-4">
+    <label for="{{ field.id_for_label }}" class="block text-sm font-medium mb-1.5" style="color: var(--text-primary);">
+        {{ field.label }}
+    </label>
+    {{ field }}
+    {% if field.help_text %}
+    <p class="text-xs mt-1.5" style="color: var(--text-tertiary);">{{ field.help_text }}</p>
+    {% endif %}
+</div>
+{% endif %}
+{% for error in field.errors %}
+<p class="text-xs -mt-3 mb-4" style="color: var(--error-700);">{{ error }}</p>
+{% endfor %}
+{% endfor %}

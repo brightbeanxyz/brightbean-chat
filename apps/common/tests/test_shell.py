@@ -10,92 +10,105 @@ from django.urls import resolve
 NONCE_ATTR_RE = re.compile(r'nonce="([A-Za-z0-9+/=]+)"')
 INLINE_SCRIPT_RE = re.compile(r"<(script|style)(?![^>]*\bsrc=)([^>]*)>", re.I)
 
-SHELL_URLS = ["/", "/ui/", "/dashboard/", "/inbox/", "/settings/profile/", "/settings/workspace/tags/"]
+
+@pytest.fixture
+def tenant_client(tenancy, client_for):
+    """A signed-in owner with a workspace, so base.html renders the shell.
+
+    Uses issue #31's `tenancy` fixture rather than building a user here: the
+    shell's nav is workspace-scoped now, so a user without an organization
+    renders a shell with no navigation at all.
+    """
+    return client_for(tenancy.owner)
 
 
 @pytest.fixture
-def member(client, django_user_model):
-    """A signed-in user, so base.html renders the shell branch.
+def shell_url(tenancy):
+    """One representative shell page: the workspace dashboard."""
+    return f"/w/{tenancy.workspace.id}/"
 
-    The identifying field is read off the model rather than hardcoded as
-    ``username=``. Issue #31 swaps in a User with ``USERNAME_FIELD = "email"``
-    and no username field at all, at which point ``create_user(username=...)``
-    raises and takes roughly forty tests with it — during the sibling
-    workstream's rebase, which is the worst possible moment to be debugging a
-    fixture.
-    """
-    field = django_user_model.USERNAME_FIELD
-    identifier = "member@example.com" if "email" in field else "member"
-    credentials = {field: identifier, "password": "pw-for-tests-only"}
-    # An email-based User still declares EMAIL_FIELD; fill it when it is a
-    # separate required field so create_user does not trip over a blank.
-    email_field = getattr(django_user_model, "EMAIL_FIELD", "email")
-    if email_field != field:
-        credentials.setdefault(email_field, "member@example.com")
-    user = django_user_model.objects.create_user(**credentials)
-    client.force_login(user)
-    return user
+
+@pytest.fixture
+def shell_urls(tenancy):
+    """Pages that render the full shell, across both settings layouts."""
+    ws = tenancy.workspace.id
+    return [
+        "/ui/",
+        f"/w/{ws}/",
+        f"/w/{ws}/inbox/",
+        "/accounts/settings/",
+        "/organization/settings/",
+        f"/w/{ws}/settings/tags/",
+    ]
 
 
 @pytest.mark.django_db
-class TestPublicRoot:
+class TestPublicEntryPoint:
     """CI boots the compose stack from a checkout with no .env and runs
-    `curl -fsS / | grep -q "BrightBean Chat"`. curl -fsS follows no redirect and
-    fails on any non-2xx, so all three properties below are load-bearing."""
+    `curl -fsSL / | grep -q "BrightBean Chat"`.
 
-    def test_root_is_reachable_without_a_session(self, client):
+    Issue #31 made `/` a router that sends anonymous visitors to the login
+    page, and added `-L` so the assertion follows that redirect. So the string
+    has to survive on the login page — which this workstream restyles — rather
+    than on a landing page of its own.
+    """
+
+    def test_the_root_sends_anonymous_visitors_to_login(self, client):
         response = client.get("/")
 
-        assert response.status_code == 200
+        assert response.status_code == 302
+        assert response.headers["Location"] == "/accounts/login/"
 
-    def test_root_carries_the_product_name(self, client):
-        assert b"BrightBean Chat" in client.get("/").content
+    def test_the_login_page_carries_the_product_name(self, client):
+        """What CI's grep actually lands on after following the redirect."""
+        assert b"BrightBean Chat" in client.get("/accounts/login/").content
 
-    def test_root_does_not_redirect_to_a_login(self, client):
-        assert client.get("/").status_code not in (301, 302, 303, 307, 308)
+    def test_following_the_redirect_reaches_a_200(self, client):
+        """`curl -fsSL` fails on a non-2xx even after following."""
+        assert client.get("/", follow=True).status_code == 200
 
-    def test_anonymous_root_uses_the_auth_layout_not_the_shell(self, client):
-        body = client.get("/").content.decode()
+    def test_the_login_page_uses_the_auth_layout_not_the_shell(self, client):
+        body = client.get("/accounts/login/").content.decode()
 
         assert "auth-card" in body
         assert "<aside" not in body
-        assert 'class="mb-1 sidebar-nav-item' not in body
 
 
 @pytest.mark.django_db
 class TestContentSecurityPolicy:
-    def test_every_inline_script_and_style_carries_a_nonce(self, client, member):
+    def test_every_inline_script_and_style_carries_a_nonce(self, tenant_client, shell_urls):
         """SECURITY-BASELINE §8. script-src has no 'unsafe-inline', so an inline
         block without a nonce is silently dead in the browser."""
-        for url in SHELL_URLS:
-            body = client.get(url).content.decode()
+        for url in shell_urls:
+            body = tenant_client.get(url).content.decode()
             for tag, attrs in INLINE_SCRIPT_RE.findall(body):
                 assert "nonce=" in attrs, f"<{tag}> without a nonce on {url}: {attrs[:120]}"
 
-    def test_the_anonymous_root_still_has_a_nonced_inline_script(self, client):
+    def test_the_anonymous_login_page_still_has_a_nonced_inline_script(self, client):
         """The toast host sits outside the authenticated/anonymous branch, which
-        is what keeps a nonce on every page including the landing page."""
-        body = client.get("/").content.decode()
+        is what keeps a nonce on every page including the login page — and what
+        test_csp.py's nonce assertion lands on."""
+        body = client.get("/accounts/login/").content.decode()
 
         assert NONCE_ATTR_RE.search(body)
 
-    def test_no_inline_event_handler_attributes_anywhere(self, client, member):
+    def test_no_inline_event_handler_attributes_anywhere(self, tenant_client, shell_urls):
         """That is what the CSP-safe hover utility classes exist for."""
-        for url in SHELL_URLS:
-            body = client.get(url).content.decode().lower()
+        for url in shell_urls:
+            body = tenant_client.get(url).content.decode().lower()
             for handler in ["onclick=", "onload=", "onerror=", "onmouseover=", "onsubmit=", "onchange="]:
                 assert handler not in body, f"{handler} on {url}"
 
     @pytest.mark.parametrize("origin", ["jsdelivr", "unpkg", "cdnjs", "fonts.googleapis", "//cdn."])
-    def test_no_cdn_origin_survives_in_any_rendered_page(self, client, member, origin):
+    def test_no_cdn_origin_survives_in_any_rendered_page(self, tenant_client, shell_urls, origin):
         """Deviation 6. Includes HTML comments — a note explaining that a CDN was
         removed still puts that hostname in the response."""
-        for url in [*SHELL_URLS, "/no-such-page"]:
-            assert origin not in client.get(url).content.decode(), f"{origin} on {url}"
+        for url in [*shell_urls, "/no-such-page"]:
+            assert origin not in tenant_client.get(url).content.decode(), f"{origin} on {url}"
 
-    def test_every_script_src_is_same_origin(self, client, member):
-        for url in SHELL_URLS:
-            for src in re.findall(r'<script[^>]*\bsrc="([^"]+)"', client.get(url).content.decode()):
+    def test_every_script_src_is_same_origin(self, tenant_client, shell_urls):
+        for url in shell_urls:
+            for src in re.findall(r'<script[^>]*\bsrc="([^"]+)"', tenant_client.get(url).content.decode()):
                 assert src.startswith("/static/"), src
 
 
@@ -103,33 +116,33 @@ class TestContentSecurityPolicy:
 class TestSidebarCollapse:
     """The no-flash mechanism only works if all three layers ship together."""
 
-    def test_the_pre_paint_script_stamps_the_html_element(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_the_pre_paint_script_stamps_the_html_element(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "localStorage.getItem('sidebarCollapsed')" in body
         assert "classList.add('sidebar-is-collapsed')" in body
 
-    def test_the_css_mirrors_the_collapsed_state_before_alpine_boots(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_the_css_mirrors_the_collapsed_state_before_alpine_boots(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
 
         assert ".sidebar-initial" in body
         assert "html.sidebar-is-collapsed .sidebar-initial" in body
         assert "[x-cloak]" in body
 
-    def test_alpine_persists_the_state_and_takes_over_the_classes(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_alpine_persists_the_state_and_takes_over_the_classes(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "x-effect=\"localStorage.setItem('sidebarCollapsed', sidebarCollapsed)\"" in body
         assert "classList.remove('sidebar-initial')" in body
         assert "documentElement.classList.remove('sidebar-is-collapsed')" in body
 
-    def test_the_aside_ships_with_the_pre_alpine_class(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_the_aside_ships_with_the_pre_alpine_class(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
         aside = body[body.index("<aside") : body.index("</aside>")]
 
         assert "sidebar-initial" in aside
 
-    def test_the_pre_paint_css_targets_only_classes_the_shell_renders(self, client, member):
+    def test_the_pre_paint_css_targets_only_classes_the_shell_renders(self, tenant_client, shell_urls, shell_url):
         """The three layers have to stay in step.
 
         A `.sidebar-initial .sidebar-foo` rule whose `sidebar-foo` no longer
@@ -141,7 +154,7 @@ class TestSidebarCollapse:
         are conditional: the section-label wrapper only appears on a nav with
         group headings, and the badge only when a count is non-zero.
         """
-        pages = [client.get(url).content.decode() for url in ["/dashboard/", "/settings/profile/"]]
+        pages = [tenant_client.get(url).content.decode() for url in [shell_url, "/accounts/settings/"]]
 
         head_style = pages[0][pages[0].index("<style") : pages[0].index("</style>")]
         targeted = set(re.findall(r"\.(sidebar-[a-z-]+)", head_style))
@@ -266,117 +279,119 @@ class TestWorkspaceSwitcher:
     because the branch never ran.
     """
 
-    def _render(self, **overrides):
+    def _render(self, tenancy, **overrides):
+        """Render the shell for a real signed-in owner, then override.
+
+        The switcher reads real membership data since issue #31 merged, so the
+        base context comes from the context processor rather than being
+        hand-built — that is what keeps this test honest about the contract the
+        template actually depends on.
+        """
         from django.template.loader import render_to_string
 
         from apps.common.context_processors import navigation_context
 
-        request = RequestFactory().get("/dashboard/")
-        request.resolver_match = resolve("/dashboard/")
+        path = f"/w/{tenancy.workspace.id}/"
+        request = RequestFactory().get(path)
+        request.resolver_match = resolve(path)
+        request.workspace = tenancy.workspace
+        request.org_membership = None
+        request.user = tenancy.owner
         context = navigation_context(request)
-        context.update(
-            {
-                "sidebar_workspaces": [
-                    {"name": "Acme Support", "url": "/w/acme/", "is_current": True},
-                    {"name": "Beta Co", "url": "/w/beta/", "is_current": False},
-                ],
-                "current_workspace": {"name": "Acme Support"},
-                "can_create_workspace": True,
-            }
-        )
+        context["can_create_workspace"] = True
         context.update(overrides)
         return render_to_string("base.html", context, request=request)
 
-    def test_every_workspace_row_has_a_real_href(self):
-        html = self._render()
+    def test_every_workspace_row_has_a_real_href(self, tenancy):
+        html = self._render(tenancy)
 
-        assert 'href="/w/acme/"' in html
-        assert 'href="/w/beta/"' in html
+        assert f'href="/w/{tenancy.workspace.id}/"' in html
 
-    def test_the_create_link_has_a_real_href(self):
+    def test_the_create_link_has_a_real_href(self, tenancy):
         """An undefined variable renders as "" and `href=""` reloads the current
         page — a dead control that looks alive."""
-        html = self._render()
+        html = self._render(tenancy)
 
         assert "New workspace" in html
         assert 'href=""' not in html
 
-    def test_no_anchor_in_the_shell_has_an_empty_href(self):
+    def test_no_anchor_in_the_shell_has_an_empty_href(self, tenancy):
         """Catches the whole class, not just the two known instances."""
-        html = self._render()
+        html = self._render(tenancy)
 
         assert not re.findall(r'<a\s[^>]*href=""', html)
 
-    def test_workspace_names_are_escaped(self):
+    def test_workspace_names_are_escaped(self, tenancy):
         html = self._render(
-            sidebar_workspaces=[{"name": "<script>alert(1)</script>", "url": "/w/x/", "is_current": False}]
+            tenancy,
+            sidebar_workspaces=[{"name": "<script>alert(1)</script>", "url": "/w/x/", "is_current": False}],
         )
 
         assert "<script>alert(1)</script>" not in html
         assert "&lt;script&gt;" in html
 
-    def test_the_switcher_is_absent_when_there_are_no_workspaces(self):
-        html = self._render(sidebar_workspaces=[], can_create_workspace=False)
+    def test_the_switcher_is_absent_when_there_are_no_workspaces(self, tenancy):
+        html = self._render(tenancy, sidebar_workspaces=[], can_create_workspace=False)
 
         assert "New workspace" not in html
 
 
 @pytest.mark.django_db
 class TestToastHost:
-    def test_the_host_is_on_every_page_with_no_per_page_include(self, client, member):
+    def test_the_host_is_on_every_page_with_no_per_page_include(self, tenant_client, shell_urls):
         """Deviation 2. Studio's host is a partial each template must remember."""
-        for url in [*SHELL_URLS]:
-            assert 'id="bb-toast-host"' in client.get(url).content.decode(), url
+        for url in shell_urls:
+            assert 'id="bb-toast-host"' in tenant_client.get(url).content.decode(), url
 
     def test_the_host_is_present_for_anonymous_visitors_too(self, client):
-        assert 'id="bb-toast-host"' in client.get("/").content.decode()
+        assert 'id="bb-toast-host"' in client.get("/accounts/login/").content.decode()
 
-    def test_it_listens_for_both_hx_trigger_toasts_and_htmx_errors(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_it_listens_for_both_hx_trigger_toasts_and_htmx_errors(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "addEventListener('showToast'" in body
         assert "addEventListener('htmx:responseError'" in body
 
-    def test_server_text_is_written_with_textcontent_only(self, client, member):
+    def test_server_text_is_written_with_textcontent_only(self, tenant_client, shell_urls, shell_url):
         """SECURITY-BASELINE §2: toast bodies carry platform-supplied content."""
-        body = client.get("/dashboard/").content.decode()
+        body = tenant_client.get(shell_url).content.decode()
 
         assert ".textContent = detail.title" in body
         assert "innerHTML = detail" not in body
 
-    def test_error_bodies_are_parsed_inertly(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_error_bodies_are_parsed_inertly(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "DOMParser()" in body
 
-    def test_a_flattened_error_page_is_not_shown_verbatim(self, client, member):
+    def test_a_flattened_error_page_is_not_shown_verbatim(self, tenant_client, shell_urls, shell_url):
         """Under DEBUG a Django technical 500 page flattens to the exception and
         its traceback. Studio's handler renders whatever it extracts."""
-        body = client.get("/dashboard/").content.decode()
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "message.length > 300" in body
         assert "Something went wrong. Please try again." in body
 
-    def test_the_opt_outs_survive_the_merge(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_the_opt_outs_survive_the_merge(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "data-no-error-toast" in body
         assert "data-inline-error" in body
 
-    def test_init_is_idempotent_because_htmx_reruns_swapped_in_scripts(self, client, member):
-        assert "__bbToastInit" in client.get("/dashboard/").content.decode()
+    def test_init_is_idempotent_because_htmx_reruns_swapped_in_scripts(self, tenant_client, shell_urls, shell_url):
+        assert "__bbToastInit" in tenant_client.get(shell_url).content.decode()
 
-    def test_the_host_is_not_itself_a_live_region(self, client, member):
+    def test_the_host_is_not_itself_a_live_region(self, tenant_client, shell_urls, shell_url):
         """Each toast carries its own role, which IS a live region. Announcing
         the host as well made a screen reader read every toast twice."""
-        body = client.get("/dashboard/").content.decode()
+        body = tenant_client.get(shell_url).content.decode()
 
         assert '<div id="bb-toast-host"></div>' in body
 
-    def test_errors_interrupt_and_quiet_tones_do_not(self, client, member):
+    def test_errors_interrupt_and_quiet_tones_do_not(self, tenant_client, shell_urls, shell_url):
         """Politeness per tone is the reason the roles live on the toasts
         rather than as one aria-live on the container."""
-        body = client.get("/dashboard/").content.decode()
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "tone === 'error' ? 'alert' : 'status'" in body
 
@@ -401,14 +416,14 @@ class TestToastHost:
 
 @pytest.mark.django_db
 class TestCsrfWiring:
-    def test_htmx_requests_get_the_token_injected(self, client, member):
-        body = client.get("/dashboard/").content.decode()
+    def test_htmx_requests_get_the_token_injected(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "htmx:configRequest" in body
         assert "X-CSRFToken" in body
         assert "csrfmiddlewaretoken" in body
 
-    def test_the_token_is_gated_on_a_same_origin_check(self, client, member):
+    def test_the_token_is_gated_on_a_same_origin_check(self, tenant_client, shell_urls, shell_url):
         """htmx will issue a cross-origin request happily, and an unconditional
         header hands the session's CSRF token to whatever host an hx-* points
         at. From Layer 3 this template renders platform-supplied content
@@ -419,7 +434,7 @@ class TestCsrfWiring:
         against same-origin, cross-origin, protocol-relative, other-port and
         unparseable targets; only the same-origin ones received the header.
         """
-        body = client.get("/dashboard/").content.decode()
+        body = tenant_client.get(shell_url).content.decode()
 
         assert "target.origin !== window.location.origin" in body
         # The check has to come before the header is set, or it guards nothing.
@@ -528,32 +543,69 @@ class TestLogoSizing:
 
 @pytest.mark.django_db
 class TestSettingsLayouts:
-    def test_the_settings_layout_replaces_the_nav_wholesale(self, client, member):
+    def test_the_settings_layout_replaces_the_nav_wholesale(self, tenant_client, shell_urls):
         """Studio's convention, kept: a settings section is a sidebar_nav
         override, not a tab bar or a second column."""
-        body = client.get("/settings/profile/").content.decode()
+        body = tenant_client.get("/accounts/settings/").content.decode()
 
         assert "Account" in body and "Organization" in body
         assert "Broadcasts" not in body
 
-    def test_the_two_settings_layouts_carry_different_scopes(self, client, member):
+    def test_the_two_settings_layouts_carry_different_scopes(self, tenant_client, shell_urls, tenancy):
         """Not cosmetic: once issue #31 lands RBAC an Editor reaches workspace
         settings without being able to see org settings, so one shared nav would
         advertise pages the viewer cannot open."""
-        account = client.get("/settings/profile/").content.decode()
-        workspace = client.get("/settings/workspace/tags/").content.decode()
+        account = tenant_client.get("/accounts/settings/").content.decode()
+        workspace = tenant_client.get(f"/w/{tenancy.workspace.id}/settings/tags/").content.decode()
 
         assert "Team Members" in account
         assert "Team Members" not in workspace
         assert "Tags" in workspace
         assert "Tags" not in account
 
-    def test_no_view_supplied_settings_active_string_is_needed(self, client, member):
+    def test_no_view_supplied_settings_active_string_is_needed(self, tenant_client, shell_urls):
         """Deviation 4: the layouts read the same nav structure the main nav
         does. Studio needs 11 views to each remember a `settings_active` key."""
-        body = client.get("/settings/preferences/").content.decode()
+        body = tenant_client.get("/accounts/preferences/").content.decode()
 
         assert 'sidebar-nav-item active"' in body
+
+
+class TestTemplateHygiene:
+    def test_no_short_comment_spans_more_than_one_line(self):
+        """Django's `{# #}` is single-line only. A multi-line one is not a
+        comment at all — it renders as visible text on the page.
+
+        This has now bitten the project twice: issue #31's base.html carries a
+        note about a three-line `{# #}` that showed up in the sidebar, and this
+        workstream did the same thing in a note about cascade layers, which
+        appeared verbatim above the team-members table. `{% comment %}` is the
+        multi-line form.
+        """
+        offenders = []
+        for path in (Path(__file__).parents[3] / "templates").rglob("*.html"):
+            src = path.read_text()
+            for match in re.finditer(r"\{#", src):
+                rest = src[match.start() :]
+                close = rest.find("#}")
+                if close == -1 or "\n" in rest[:close]:
+                    line = src[: match.start()].count("\n") + 1
+                    offenders.append(f"{path.name}:{line}")
+
+        assert not offenders, f"multi-line {{# #}} renders as text: {offenders}"
+
+    @pytest.mark.django_db
+    def test_no_rendered_page_leaks_a_comment(self, tenant_client, shell_urls):
+        """The symptom the rule above prevents, checked on real responses.
+
+        Only comment syntax: the style guide at /ui/ legitimately displays
+        `{% templatetag openblock %} ui_select ...` as documentation, so a blanket
+        ban on `{%` would fail on a page doing exactly what it should.
+        """
+        for url in shell_urls:
+            body = tenant_client.get(url).content.decode()
+            for token in ["{#", "#}", "{% comment %}", "{% endcomment %}"]:
+                assert token not in body, f"{token!r} leaked into {url}"
 
 
 @pytest.mark.django_db

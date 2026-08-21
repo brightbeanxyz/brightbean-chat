@@ -1,9 +1,16 @@
-"""Views owned by the shell: the landing page, the UI style guide, the health
-probe, and the "coming soon" stubs behind the sidebar navigation."""
+"""Views owned by ``apps.common``: the health probe, the UI style guide, and
+the "coming soon" stubs behind the sidebar navigation.
+
+There is no landing page here. ``/`` is ``apps.accounts.views.root``, which
+sends anonymous visitors to the login page — the shell's own placeholder
+existed only while there was no way to log in.
+"""
 
 import logging
-from typing import cast
+from collections.abc import Callable
+from typing import Any, cast
 
+from django.contrib.auth.decorators import login_required
 from django.db import Error as DatabaseError
 from django.db import connections
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -12,19 +19,9 @@ from django.views.decorators.http import require_POST
 
 from apps.common.context_processors import navigation_context
 from apps.common.htmx import Tone, toast_response
+from apps.members.decorators import require_permission
 
 logger = logging.getLogger(__name__)
-
-
-def index(request: HttpRequest) -> HttpResponse:
-    """The landing page, and the app shell once there is a session.
-
-    ``base.html`` branches on ``show_app_shell``: an authenticated visitor gets
-    the sidebar shell, everyone else gets the centred ``auth_content`` layout.
-    This route stays reachable unauthenticated and returns 200 — CI boots the
-    compose stack from a checkout with no ``.env`` and asserts exactly that.
-    """
-    return render(request, "index.html")
 
 
 def healthz(request: HttpRequest) -> JsonResponse:
@@ -106,7 +103,14 @@ _LAYOUTS = {
 }
 
 
-def coming_soon(request: HttpRequest, *, section: str, issue: str, layout: str = "app") -> HttpResponse:
+def coming_soon(
+    request: HttpRequest,
+    *,
+    section: str,
+    issue: str,
+    layout: str = "app",
+    workspace_id: str | None = None,
+) -> HttpResponse:
     """Placeholder for a sidebar destination a later issue owns.
 
     The navigation is complete from day one so the shell can be reviewed and so
@@ -117,6 +121,34 @@ def coming_soon(request: HttpRequest, *, section: str, issue: str, layout: str =
     settings routes exercise ``layouts/settings.html`` and
     ``layouts/workspace_settings.html`` without the template name ever being a
     function of request data. An unknown key falls back to the app shell.
+
+    ``workspace_id`` is accepted but unused: the workspace-scoped stubs live
+    under ``/w/<uuid:workspace_id>/`` so they land where their real views will,
+    and RBACMiddleware resolves the workspace from that kwarg before this runs.
     """
     context = {"section": section, "issue": issue, "layout": _LAYOUTS.get(layout, _LAYOUTS["app"])}
     return render(request, "coming_soon.html", context)
+
+
+def workspace_stub(permission: str) -> Callable[..., HttpResponse]:
+    """A ``coming_soon`` guarded by a workspace permission.
+
+    Every workspace-scoped placeholder is a real endpoint under
+    ``/w/<uuid:workspace_id>/``, so it is bound by SECURITY-BASELINE §1 like
+    any other: a member of a different workspace must get a 404, never a 403,
+    and the IDOR sweep in ``tests/idor.py`` walks it automatically. Gating on
+    the permission the real view will use means the placeholder and its
+    replacement refuse the same people.
+    """
+
+    @login_required
+    @require_permission(permission)
+    def view(request: HttpRequest, workspace_id: str, **kwargs: Any) -> HttpResponse:
+        return coming_soon(request, workspace_id=workspace_id, **kwargs)
+
+    return view
+
+
+def account_stub(request: HttpRequest, **kwargs: Any) -> HttpResponse:
+    """A ``coming_soon`` for a route that is not workspace-scoped."""
+    return login_required(lambda r: coming_soon(r, **kwargs))(request)

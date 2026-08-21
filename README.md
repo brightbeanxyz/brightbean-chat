@@ -3,9 +3,11 @@
 Open-source, self-hostable chat-marketing automation — Django 5, HTMX, Alpine,
 Tailwind 4 and PostgreSQL, with no Redis and no message broker.
 
-> **Status: early.** The project skeleton (issue #2) and the UI shell and design
-> system (issue #32) are in. Tenancy and every domain feature land in the issues
-> tracked from [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: early.** The skeleton (issue #2), multi-tenancy, RBAC,
+> authentication and the platform-credential store (issue #31), and the UI shell
+> and design system (issue #32) have landed — you can sign up, invite a team and
+> switch workspaces, in the real interface. Every domain feature follows in the
+> issues tracked from [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Documentation
 
@@ -14,6 +16,7 @@ Tailwind 4 and PostgreSQL, with no Redis and no message broker.
 | [`docs/SPEC.md`](docs/SPEC.md) | The engineering specification — authoritative |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
 | [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Tenant scoping, the IDOR suite, URL and RBAC conventions |
 
 ## Quickstart (Docker)
 
@@ -24,6 +27,10 @@ docker compose up
 That builds the image, waits for Postgres, runs migrations and serves the app
 on <http://localhost:8000>. No `.env` is required — every setting has a
 development default. `/healthz` reports the database round-trip.
+
+Sign up at `/accounts/signup/`; the first account gets its own organization and
+workspace and lands on `/w/<workspace-id>/`. In development, email goes to the
+console, so the verification message appears in `docker compose logs`.
 
 ## Quickstart (local Python)
 
@@ -116,6 +123,12 @@ them:
 |---|---|
 | `SECRET_KEY` | Django's signing key; also the input to field encryption |
 | `ENCRYPTION_KEY_SALT` | HKDF salt for the AES-256-GCM encrypted fields |
+
+Optional but worth knowing about: `GOOGLE_AUTH_CLIENT_ID` / `_SECRET` enable the
+Google sign-in button, `TRUSTED_PROXIES` tells the auth rate limiter which peers
+may set `X-Forwarded-For`, and `PLATFORM_<PLATFORM>_<KEY>` supplies the
+deployment-level fallback in the credential chain (workspace override →
+organization → environment).
 
 Generate each with `python -c "import secrets; print(secrets.token_urlsafe(50))"`.
 Losing `SECRET_KEY` or `ENCRYPTION_KEY_SALT` makes every stored credential

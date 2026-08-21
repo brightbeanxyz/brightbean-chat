@@ -230,7 +230,12 @@
                 {% endfor %}
             </div>
             {% endif %}
-            <div class="flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden">
+            {% comment %}
+              .app-content gives unclassed markup a sensible default look — see
+              the note in styles.css for why those rules are in @layer base and
+              these ones are not.
+            {% endcomment %}
+            <div class="app-content flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden">
             {% block content %}{% endblock %}
             </div>
         </main>

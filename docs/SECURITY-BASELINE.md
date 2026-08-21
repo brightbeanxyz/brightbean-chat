@@ -5,9 +5,9 @@ This is the per-PR security checklist for every implementation issue. **Every PR
 Threat model in one paragraph: a self-hosted deployment exposes webhook endpoints and public token routes to the internet from day one; message content, usernames, comment bodies, and media URLs arrive from **strangers** (attacker-controlled); users author automations that make server-side HTTP requests; multiple workspaces share one database; the encrypted platform credentials are the crown jewels.
 
 ## 1. Tenancy isolation
-- Every queryset on tenant data goes through the workspace-scoped base manager (from L1-B). No `.objects.all()` on tenant models in views/APIs.
+- Every queryset on tenant data goes through the workspace-scoped base manager (from L1-A). No `.objects.all()` on tenant models in views/APIs.
 - Cross-workspace access to any object returns **404** (never 403 — no existence oracle).
-- Any PR that adds views or API endpoints must extend the IDOR fuzz suite (helper from L1-B): every new endpoint is hit as an authenticated user of a *different* workspace and must 404.
+- Any PR that adds views or API endpoints must extend the IDOR fuzz suite (helper from L1-A): every new endpoint is hit as an authenticated user of a *different* workspace and must 404.
 
 ## 2. Untrusted inbound content
 - All platform-delivered content — message text, usernames, profile fields, comment bodies, attachment/media URLs — is attacker-controlled. Escape on render, never `mark_safe`, never render platform-supplied HTML raw.

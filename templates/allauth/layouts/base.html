@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{# The single override that puts every allauth page inside this project's shell. #}
+{# allauth's own templates (password reset, email confirmation, provider        #}
+{# connections, ...) all extend this layout, so overriding it once means we do  #}
+{# not have to fork each of them — and wrapping it in .auth-card here is what   #}
+{# styles all of them at once. The input styling is a scoped rule in            #}
+{# styles.css rather than a class per widget, because allauth renders its own   #}
+{# form fields and we do not control their attributes.                          #}
+{# Django requires the extends tag to come first, hence these short-form        #}
+{# comments rather than a comment block.                                        #}
+
+{% block auth_content %}
+<div class="auth-card">
+  {% include "partials/_auth_brand.html" with heading=allauth_heading|default:"BrightBean Chat" %}
+  <div class="auth-prose">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

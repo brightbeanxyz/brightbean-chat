@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% load socialaccount %}
+
+{% block title %}Sign in · BrightBean Chat{% endblock %}
+
+{% block auth_content %}
+<div class="auth-card">
+  {% include "partials/_auth_brand.html" with heading="Sign in" subheading="Welcome back to BrightBean Chat." %}
+
+  {% comment %}
+  The provider button is a POST form, not a link: SOCIALACCOUNT_LOGIN_ON_GET is
+  False so a GET-initiated flow would only reach allauth's interstitial, and a
+  GET-initiated login is CSRF-forgeable. Studio's shared provider element
+  renders an <a> and has exactly that inconsistency.
+  {% endcomment %}
+  {% if google_configured %}
+    {% get_providers as socialaccount_providers %}
+    {% for provider in socialaccount_providers %}
+      {% provider_login_url provider process="login" as provider_url %}
+      <form method="post" action="{{ provider_url }}">
+        {% csrf_token %}
+        {% if redirect_field_value %}
+          <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}" />
+        {% endif %}
+        <button type="submit" class="btn-social">Continue with {{ provider.name }}</button>
+      </form>
+    {% endfor %}
+    <div class="divider-text my-5">or</div>
+  {% endif %}
+
+  <form method="post" action="{% url 'account_login' %}">
+    {% csrf_token %}
+    {% include "partials/_auth_form_fields.html" %}
+    {{ redirect_field }}
+    <button type="submit" class="btn-brand mt-1">Sign in</button>
+  </form>
+
+  <p class="text-center text-sm mt-5" style="color: var(--text-secondary);">
+    No account yet? <a href="{% url 'account_signup' %}" style="color: var(--primary);">Create one</a>.
+  </p>
+</div>
+{% endblock %}
