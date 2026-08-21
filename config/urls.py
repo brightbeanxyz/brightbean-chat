@@ -57,6 +57,10 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     # No trailing slash: SPEC §20 specifies /healthz, and probes are literal.
     path("healthz", views.healthz, name="healthz"),
+    # The queue's HTTP drain, for hosts with no always-on worker process
+    # (SPEC §15). Not workspace-scoped: it is a deployment-level operations
+    # endpoint authenticated by TICK_TOKEN, and it 404s when that is unset.
+    path("", include("apps.queueing.urls")),
     # The design system's living style guide. Static markup with no database
     # access and no side effects; see apps.common.views.ui_demo.
     path("ui/", views.ui_demo, name="ui_demo"),

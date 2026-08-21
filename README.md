@@ -113,6 +113,26 @@ pre-commit hooks to catch most of it before pushing:
 pip install pre-commit && pre-commit install
 ```
 
+## Background work
+
+Delays, retries, sequence steps, broadcast fanout and hourly housekeeping are
+rows in one Postgres table, claimed by a worker ([`docs/SPEC.md`](docs/SPEC.md)
+§15 — there is no Redis, and there never will be). Without one of the two options below, `runserver`
+alone serves pages and schedules nothing.
+
+```bash
+make worker
+```
+
+Run as many as you like: the claim statement uses `FOR UPDATE SKIP LOCKED`, so
+concurrent workers take disjoint batches. `Procfile` and `docker-compose.yml`
+both carry a worker process already.
+
+On a host with no always-on process, set `TICK_TOKEN` and point a cron service
+or uptime pinger at `https://your-host/internal/tick?token=…` once a minute
+instead. The route 404s while `TICK_TOKEN` is unset, so leaving it empty exposes
+nothing.
+
 ## Configuration
 
 Copy [`.env.example`](.env.example) to `.env` and edit. Two variables are
@@ -126,9 +146,10 @@ them:
 
 Optional but worth knowing about: `GOOGLE_AUTH_CLIENT_ID` / `_SECRET` enable the
 Google sign-in button, `TRUSTED_PROXIES` tells the auth rate limiter which peers
-may set `X-Forwarded-For`, and `PLATFORM_<PLATFORM>_<KEY>` supplies the
-deployment-level fallback in the credential chain (workspace override →
-organization → environment).
+may set `X-Forwarded-For`, `TICK_TOKEN` enables the cron-driven queue drain
+described above, and `PLATFORM_<PLATFORM>_<KEY>` supplies the deployment-level
+fallback in the credential chain (workspace override → organization →
+environment).
 
 Generate each with `python -c "import secrets; print(secrets.token_urlsafe(50))"`.
 Losing `SECRET_KEY` or `ENCRYPTION_KEY_SALT` makes every stored credential
