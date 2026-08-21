@@ -1,0 +1,16 @@
+<h2>You have been invited to {{ invitation.organization.name }}</h2>
+
+{% if error %}<p class="messages">{{ error }}</p>{% endif %}
+
+{% if needs_login %}
+  <p>Create an account or sign in with {{ invitation.email }} to accept.</p>
+  <p>
+    <a href="{% url 'account_signup' %}">Create an account</a> ·
+    <a href="{% url 'account_login' %}">Sign in</a>
+  </p>
+{% else %}
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit">Join {{ invitation.organization.name }}</button>
+  </form>
+{% endif %}

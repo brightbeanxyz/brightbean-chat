@@ -37,3 +37,7 @@ django-storages[s3]==1.14.6
 
 # Monitoring (inert unless SENTRY_DSN is set)
 sentry-sdk[django]==2.68.0
+
+# Auth
+django-allauth[socialaccount]==65.19.1   # 65.x API: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS
+bcrypt==5.0.0             # BCryptSHA256PasswordHasher's runtime dep; Django does not declare it

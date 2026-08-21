@@ -1,0 +1,24 @@
+{% comment %}
+Minimal navigation for the L1-A pages. Issue #32 replaces this with the real
+sidebar (Dashboard, Contacts, Flows, Inbox, Sequences, Broadcasts, Settings)
+built from a context processor.
+{% endcomment %}
+<nav>
+  <ul>
+    {% if request.workspace %}
+      <li><a href="{% url 'workspaces:dashboard' workspace_id=request.workspace.id %}">Dashboard</a></li>
+      <li><a href="{% url 'workspaces:settings' workspace_id=request.workspace.id %}">Workspace settings</a></li>
+      <li><a href="{% url 'credentials:list' workspace_id=request.workspace.id %}">Platform credentials</a></li>
+    {% endif %}
+    <li><a href="{% url 'organizations:settings' %}">Organization</a></li>
+    <li><a href="{% url 'organizations:workspaces' %}">Workspaces</a></li>
+    <li><a href="{% url 'members:list' %}">Team members</a></li>
+    <li><a href="{% url 'accounts:settings' %}">Account</a></li>
+    <li>
+      <form method="post" action="{% url 'account_logout' %}">
+        {% csrf_token %}
+        <button type="submit">Sign out</button>
+      </form>
+    </li>
+  </ul>
+</nav>

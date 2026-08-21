@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% load socialaccount %}
+
+{% block title %}Create your account · BrightBean Chat{% endblock %}
+
+{% block auth_content %}
+  <h2>Create your account</h2>
+
+  {% if invited_email_locked %}
+    <p class="muted">
+      You were invited to join an organization. Signing up here adds you to it.
+    </p>
+  {% endif %}
+
+  {% if google_configured %}
+    {% get_providers as socialaccount_providers %}
+    {% for provider in socialaccount_providers %}
+      {% provider_login_url provider process="login" as provider_url %}
+      <form method="post" action="{{ provider_url }}">
+        {% csrf_token %}
+        <button type="submit">Continue with {{ provider.name }}</button>
+      </form>
+    {% endfor %}
+    <p class="muted">or</p>
+  {% endif %}
+
+  <form method="post" action="{% url 'account_signup' %}">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}
+      <p>
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label><br />
+        {% if field.name == "email" and invited_email_locked %}
+          {# Convenience only. The invitation token is the authorization — see #}
+          {# apps/accounts/views_signup.py for why the server does not enforce a match. #}
+          <input type="email" name="{{ field.html_name }}" id="{{ field.id_for_label }}"
+                 value="{{ field.value|default:'' }}" readonly required />
+        {% else %}
+          {{ field }}
+        {% endif %}
+        {{ field.errors }}
+      </p>
+    {% endfor %}
+    {{ redirect_field }}
+    <button type="submit">Create account</button>
+  </form>
+
+  <p>Already have an account? <a href="{% url 'account_login' %}">Sign in</a>.</p>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ request.workspace.name }} · BrightBean Chat{% endblock %}
+
+{% block page_header %}<h1>{{ request.workspace.name }}</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Signed in as {{ request.user.display_name }} —
+    {{ request.workspace_membership.get_workspace_role_display }} in this workspace.
+  </p>
+  <p>
+    The dashboard fills in from Layer 2 onwards. Tenancy, roles, authentication
+    and the credential store are in place.
+  </p>
+
+  <h2>Switch workspace</h2>
+  <ul>
+    {% for membership in request.user.workspace_memberships.all %}
+      {% if not membership.workspace.is_archived %}
+        <li>
+          <form method="post" action="{% url 'workspaces:switch' workspace_id=membership.workspace_id %}">
+            {% csrf_token %}
+            <button type="submit">
+              {{ membership.workspace.icon }} {{ membership.workspace.name }}
+              ({{ membership.get_workspace_role_display }})
+            </button>
+          </form>
+        </li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+{% endblock %}

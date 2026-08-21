@@ -1,18 +1,16 @@
-"""Views owned by the scaffold: the placeholder page and the health probe."""
+"""Views owned by ``apps.common``: the health probe.
+
+The Layer-0 placeholder page is gone — ``/`` is now the authenticated router in
+``apps.accounts.views.root``.
+"""
 
 import logging
 
 from django.db import Error as DatabaseError
 from django.db import connections
-from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.http import HttpRequest, JsonResponse
 
 logger = logging.getLogger(__name__)
-
-
-def index(request: HttpRequest) -> HttpResponse:
-    """Placeholder landing page. Issue #32 replaces this with the real shell."""
-    return render(request, "index.html")
 
 
 def healthz(request: HttpRequest) -> JsonResponse:

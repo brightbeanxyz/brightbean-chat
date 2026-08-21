@@ -1,0 +1,201 @@
+"""The IDOR fuzz suite (SECURITY-BASELINE §1).
+
+**Every PR that adds an endpoint extends this file.** That is not a convention
+kept by good intentions: :func:`iter_tenant_routes` walks the *registered URL
+patterns*, and a route carrying a tenant-shaped id it does not know how to build
+raises rather than being skipped. Adding ``/w/<uuid:workspace_id>/contacts/<uuid:contact_id>/``
+without registering a ``contact_id`` resolver turns the suite red, which is the
+whole mechanism.
+
+What it proves: hitting a route with **another tenant's** object ids, as a fully
+privileged member of a different organization, answers **404** — never 403, never
+200. A 403 would confirm the id names something real, which over a UUID space is
+the only information an attacker was missing.
+
+The contract per route, per method:
+
+* every method answers 404 or 405, and
+* at least one method answers 404.
+
+The 405 allowance is for POST-only views: the stacking convention puts
+``@require_POST`` innermost, so a GET is rejected on the method before the view
+body runs — and a 405 there is returned for real and fake ids alike, so it tells
+an attacker nothing. Requiring at least one 404 is what stops a route from
+passing merely because nothing ever reached it.
+
+Routes with no tenant-identifying kwarg (``/organization/members/``, say) are
+not URL-addressable across tenants at all: they operate on ``request.org``,
+which the middleware resolves from the signed-in user. They are skipped here and
+covered by the per-app permission tests.
+"""
+
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from typing import Any
+
+from django.urls import URLPattern, URLResolver, get_resolver, reverse
+
+from tests.support import Tenancy
+
+# ---------------------------------------------------------------------------
+# Registry — the part later PRs extend
+# ---------------------------------------------------------------------------
+
+#: URL kwargs whose value names an object owned by one tenant. A route carrying
+#: any of these is fuzzed. Each resolver returns the **victim's** value.
+TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
+    "workspace_id": lambda t: t.workspace.pk,
+    # apps.organizations.views.set_workspace_archived deliberately avoids the
+    # name ``workspace_id`` so RBACMiddleware does not 404 archived workspaces
+    # before the view can restore them; it scopes to request.org instead.
+    "target_id": lambda t: t.workspace.pk,
+    "membership_id": lambda t: t.org_membership.pk,
+    "invitation_id": lambda t: _victim_invitation(t).pk,
+}
+
+#: Kwargs that need *a* value but do not identify a tenant. A route made only of
+#: these is not fuzzed.
+NEUTRAL_KWARG_VALUES: dict[str, Any] = {
+    "platform": "instagram",
+}
+
+#: Routes exempt from the sweep, each with the reason. A waiver is a reviewed
+#: line in this dict; there is no silent skip.
+WAIVED_ROUTES: dict[str, str] = {
+    "accept_invite": (
+        "Public by design: the invitation token IS the credential, and the page "
+        "renders the same 404 body for unknown, expired and accepted tokens. "
+        "Covered by apps/members/tests/test_invitations.py."
+    ),
+}
+
+
+def _victim_invitation(tenancy: Tenancy) -> Any:
+    """A pending invitation owned by the victim, created on demand."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.members.models import Invitation
+
+    invitation = Invitation.objects.filter(organization=tenancy.organization).first()
+    if invitation is None:
+        invitation = Invitation.objects.create(
+            organization=tenancy.organization,
+            email=f"pending@{tenancy.slug}.test",
+            invited_by=tenancy.owner,
+            expires_at=timezone.now() + timedelta(days=7),
+        )
+    return invitation
+
+
+# ---------------------------------------------------------------------------
+# Route discovery
+# ---------------------------------------------------------------------------
+
+
+class UnregisteredRouteKwargError(AssertionError):
+    """A tenant route carries a kwarg the suite does not know how to build."""
+
+
+@dataclass(frozen=True)
+class TenantRoute:
+    name: str
+    kwargs: tuple[str, ...]
+
+    def url_for(self, tenancy: Tenancy) -> str:
+        values = {}
+        for kwarg in self.kwargs:
+            resolver = TENANT_KWARG_RESOLVERS.get(kwarg)
+            values[kwarg] = resolver(tenancy) if resolver else NEUTRAL_KWARG_VALUES[kwarg]
+        return reverse(self.name, kwargs=values)
+
+
+def _pattern_kwargs(pattern: Any) -> tuple[str, ...]:
+    converters = getattr(pattern, "converters", None)
+    if converters is not None:
+        return tuple(converters)
+    regex = getattr(pattern, "regex", None)
+    return tuple(regex.groupindex) if regex is not None else ()
+
+
+def _walk(resolver: URLResolver, prefix: tuple[str, ...], namespace: str | None) -> Iterator[TenantRoute]:
+    for entry in resolver.url_patterns:
+        kwargs = prefix + _pattern_kwargs(entry.pattern)
+        if isinstance(entry, URLResolver):
+            child_ns = ":".join(part for part in (namespace, entry.namespace) if part) or None
+            yield from _walk(entry, kwargs, child_ns)
+        elif isinstance(entry, URLPattern) and entry.name:
+            yield TenantRoute(name=":".join(part for part in (namespace, entry.name) if part), kwargs=kwargs)
+
+
+def iter_tenant_routes(urlconf: str | None = None) -> list[TenantRoute]:
+    """Every registered route that names a tenant object in its URL.
+
+    Raises :class:`UnregisteredRouteKwargError` when such a route carries a kwarg
+    with no resolver — the mechanism that makes new endpoints extend this file
+    instead of quietly escaping it.
+    """
+    routes: list[TenantRoute] = []
+    for route in _walk(get_resolver(urlconf), (), None):
+        if route.name in WAIVED_ROUTES:
+            continue
+        if not any(kwarg in TENANT_KWARG_RESOLVERS for kwarg in route.kwargs):
+            continue
+        unknown = [k for k in route.kwargs if k not in TENANT_KWARG_RESOLVERS and k not in NEUTRAL_KWARG_VALUES]
+        if unknown:
+            raise UnregisteredRouteKwargError(
+                f"Route {route.name!r} takes {unknown}, which the IDOR suite cannot build. "
+                f"Register a resolver in tests/idor.py (TENANT_KWARG_RESOLVERS for an id that "
+                f"identifies a tenant's object, NEUTRAL_KWARG_VALUES otherwise), or waive the "
+                f"route in WAIVED_ROUTES with a reason. See docs/SECURITY-BASELINE.md §1."
+            )
+        routes.append(route)
+    return sorted(routes, key=lambda r: r.name)
+
+
+# ---------------------------------------------------------------------------
+# The sweep
+# ---------------------------------------------------------------------------
+
+METHODS = ("get", "post")
+
+
+def check_route_is_isolated(client: Any, route: TenantRoute, victim: Tenancy) -> list[str]:
+    """Hit one route with the victim's ids. Returns a list of failure strings."""
+    url = route.url_for(victim)
+    failures: list[str] = []
+    statuses: list[int] = []
+
+    for method in METHODS:
+        response = getattr(client, method)(url)
+        statuses.append(response.status_code)
+        if response.status_code not in (404, 405):
+            failures.append(
+                f"{route.name} [{method.upper()} {url}] returned {response.status_code}; "
+                f"cross-tenant access must be indistinguishable from 'no such thing' (404)."
+            )
+
+    if not failures and 404 not in statuses:
+        failures.append(
+            f"{route.name} [{url}] never returned 404 (saw {statuses}); the request was rejected "
+            f"before tenancy was ever checked, so this route is not actually covered."
+        )
+    return failures
+
+
+def assert_cross_tenant_isolation(client: Any, victim: Tenancy, *, urlconf: str | None = None) -> None:
+    """Sweep every tenant route with ``victim``'s ids using an outsider's client.
+
+    ``client`` must be logged in as a user with **maximum** privilege in a
+    different organization — an org owner and workspace admin. Testing with a
+    low-privilege outsider would prove nothing: they would be refused on their
+    role before tenancy was ever consulted.
+    """
+    failures: list[str] = []
+    routes = iter_tenant_routes(urlconf)
+    assert routes, "The IDOR sweep found no tenant routes at all — the walker is broken."
+    for route in routes:
+        failures.extend(check_route_is_isolated(client, route, victim))
+
+    assert not failures, "Cross-tenant isolation failures:\n  " + "\n  ".join(failures)

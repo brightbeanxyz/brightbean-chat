@@ -6,16 +6,21 @@ import pytest
 
 NONCE_RE = re.compile(r"nonce-([A-Za-z0-9+/=]+)")
 
+# A page that actually renders a template. "/" is the authenticated router and
+# answers 302 for anonymous clients, and django-csp only mints a nonce when a
+# template asks for one.
+PAGE = "/accounts/login/"
+
 
 @pytest.mark.django_db
 class TestContentSecurityPolicy:
     def test_header_is_sent(self, client):
-        response = client.get("/")
+        response = client.get(PAGE)
 
         assert "Content-Security-Policy" in response.headers
 
     def test_template_nonce_matches_the_header_nonce(self, client):
-        response = client.get("/")
+        response = client.get(PAGE)
 
         header = response.headers["Content-Security-Policy"]
         header_nonce = NONCE_RE.search(header)
@@ -24,13 +29,13 @@ class TestContentSecurityPolicy:
         assert f'nonce="{header_nonce.group(1)}"'.encode() in response.content
 
     def test_nonce_changes_per_request(self, client):
-        first = NONCE_RE.search(client.get("/").headers["Content-Security-Policy"])
-        second = NONCE_RE.search(client.get("/").headers["Content-Security-Policy"])
+        first = NONCE_RE.search(client.get(PAGE).headers["Content-Security-Policy"])
+        second = NONCE_RE.search(client.get(PAGE).headers["Content-Security-Policy"])
 
         assert first.group(1) != second.group(1)
 
     def test_policy_directives(self, client):
-        header = client.get("/").headers["Content-Security-Policy"]
+        header = client.get(PAGE).headers["Content-Security-Policy"]
 
         assert "default-src 'self'" in header
         assert "frame-ancestors 'none'" in header
@@ -39,7 +44,7 @@ class TestContentSecurityPolicy:
 
     def test_unsafe_eval_is_scoped_to_scripts_and_unsafe_inline_to_styles(self, client):
         """Alpine's standard build needs eval; inline styles are Tailwind's."""
-        header = client.get("/").headers["Content-Security-Policy"]
+        header = client.get(PAGE).headers["Content-Security-Policy"]
         directives = {part.split(" ", 1)[0]: part.split(" ", 1)[1] for part in header.split("; ") if " " in part}
 
         assert "'unsafe-eval'" in directives["script-src"]

@@ -113,3 +113,74 @@ def check_s3_custom_domain_signing(app_configs: Any = None, **kwargs: Any) -> li
             id="common.W001",
         )
     ]
+
+
+@register(Tags.models)
+def check_workspace_scoped_models(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """Every tenant model must keep the plain manager as its default.
+
+    ``WorkspaceScopedModel`` relies on declaration order: ``all_objects`` is
+    created before ``objects``, so Django picks it as ``_default_manager``, and
+    the admin, serialization and reverse related access keep working while
+    ``Model.objects`` stays enforcing.
+
+    That is a one-line invariant with no syntax to protect it. Swap the two
+    declarations and everything still imports; what breaks is
+    ``workspace.contacts.all()`` at runtime, in whichever later layer happens to
+    touch it first. This check turns that into a failed build.
+    """
+    from django.apps import apps as django_apps
+
+    from apps.common.scoping import WorkspaceScopedManager, WorkspaceScopedModel
+
+    errors: list[CheckMessage] = []
+    for model in django_apps.get_models():
+        if not issubclass(model, WorkspaceScopedModel):
+            continue
+        if isinstance(model._meta.default_manager, WorkspaceScopedManager):
+            errors.append(
+                Error(
+                    f"{model._meta.label}'s default manager is the enforcing workspace-scoped one.",
+                    hint=(
+                        "Django's admin, serialization and reverse related managers all go "
+                        "through _default_manager, and the enforcing manager raises "
+                        "UnscopedQueryError there. Declare `all_objects = models.Manager()` "
+                        "before `objects = WorkspaceScopedManager()` (apps/common/scoping.py), "
+                        "or set Meta.default_manager_name = 'all_objects'."
+                    ),
+                    id="common.E004",
+                )
+            )
+    return errors
+
+
+@register(Tags.compatibility)
+def check_platform_env_slugs(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """``PLATFORM_ENV_SLUGS`` must match the ``Platform`` enum.
+
+    A settings module cannot import model code, so the slugs the
+    ``PLATFORM_*`` environment scan uses are written out a second time in
+    ``config/settings/base.py``. The failure mode of a mismatch is silent: a
+    platform added to the enum but not the tuple simply never picks up its
+    deployment credentials, and the operator sees "not configured" while looking
+    straight at the env var they set.
+    """
+    from apps.common.platforms import Platform
+
+    declared = set(getattr(settings, "PLATFORM_ENV_SLUGS", ()))
+    known = {choice.value for choice in Platform}
+    if declared == known:
+        return []
+
+    return [
+        Error(
+            "PLATFORM_ENV_SLUGS does not match apps.common.platforms.Platform.",
+            hint=(
+                f"Only in settings: {sorted(declared - known) or 'none'}. "
+                f"Only in the enum: {sorted(known - declared) or 'none'}. "
+                "Deployment credentials for a platform missing from the settings tuple are "
+                "silently ignored."
+            ),
+            id="common.E005",
+        )
+    ]

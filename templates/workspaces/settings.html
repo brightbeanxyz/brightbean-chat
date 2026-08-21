@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Workspace settings · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Workspace settings</h1>{% endblock %}
+
+{% block content %}
+  <form method="post" action="{% url 'workspaces:update_settings' workspace_id=request.workspace.id %}">
+    {% csrf_token %}
+    <p>
+      <label for="ws-name">Name</label><br />
+      <input id="ws-name" type="text" name="name" value="{{ request.workspace.name }}" maxlength="100" required />
+    </p>
+    <p>
+      <label for="ws-icon">Icon (one emoji)</label><br />
+      <input id="ws-icon" type="text" name="icon" value="{{ request.workspace.icon }}" maxlength="8" />
+    </p>
+    <p>
+      <label for="ws-description">Description</label><br />
+      <input id="ws-description" type="text" name="description"
+             value="{{ request.workspace.description }}" maxlength="500" />
+    </p>
+    <p>
+      <label for="ws-timezone">Timezone</label><br />
+      <input id="ws-timezone" type="text" name="timezone" value="{{ request.workspace.timezone }}" maxlength="63" />
+      <span class="muted">Blank uses the organization default ({{ request.org.default_timezone }}).</span>
+    </p>
+    <p>
+      <label for="ws-primary">Primary colour</label><br />
+      <input id="ws-primary" type="text" name="primary_color"
+             value="{{ request.workspace.primary_color }}" placeholder="#F97316" maxlength="7" />
+    </p>
+    <p>
+      <label for="ws-secondary">Secondary colour</label><br />
+      <input id="ws-secondary" type="text" name="secondary_color"
+             value="{{ request.workspace.secondary_color }}" placeholder="#0F172A" maxlength="7" />
+    </p>
+    <button type="submit">Save</button>
+  </form>
+
+  <p><a href="{% url 'credentials:list' workspace_id=request.workspace.id %}">Platform credentials</a></p>
+{% endblock %}
