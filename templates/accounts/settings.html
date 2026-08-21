@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Account · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Account</h1>{% endblock %}
+
+{% block content %}
+  <form method="post" action="{% url 'accounts:settings' %}">
+    {% csrf_token %}
+    <p>
+      <label for="account-name">Display name</label><br />
+      <input id="account-name" type="text" name="name" value="{{ request.user.name }}" maxlength="255" />
+    </p>
+    <p class="muted">Signed in as {{ request.user.email }}.</p>
+    <button type="submit">Save</button>
+  </form>
+
+  <ul>
+    <li><a href="{% url 'account_change_password' %}">Change password</a></li>
+    <li><a href="{% url 'account_email' %}">Email addresses</a></li>
+  </ul>
+{% endblock %}

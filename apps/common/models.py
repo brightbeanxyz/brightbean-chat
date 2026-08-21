@@ -1,4 +1,4 @@
-"""Abstract models shared by every app in the project."""
+"""Models shared by every app in the project."""
 
 from django.db import models
 
@@ -27,3 +27,24 @@ class BaseModel(models.Model):
 
     class Meta:
         abstract = True
+
+
+class RateLimitCounter(BaseModel):
+    """One rate-limit counter, for one key, for one window.
+
+    The algorithm — and the reasoning about why this is a table rather than a
+    cache entry — lives in :mod:`apps.common.ratelimit`. The model is here
+    because Django only discovers models declared in (or imported by)
+    ``models.py``.
+    """
+
+    key = models.CharField(max_length=200, unique=True)
+    count = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "common_rate_limit_counter"
+        indexes = [models.Index(fields=["expires_at"], name="ratelimit_expires_idx")]
+
+    def __str__(self) -> str:
+        return f"{self.key} ({self.count})"

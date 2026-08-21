@@ -30,3 +30,16 @@ paths = [
     '''apps/common/tests/test_sentry\.py''',
     '''apps/common/tests/test_checks\.py''',
 ]
+
+# Credential-shaped fixtures for the platform-credential store: fake client ids
+# and secrets used to prove the encryption round trip, the masking helper, the
+# admin-form corruption regression and the three-level resolution chain. All are
+# literals in test files, grant access to nothing, and are the inputs that make
+# those tests mean something.
+[[allowlists]]
+description = "Synthetic platform-credential test fixtures"
+targetRules = ["generic-api-key"]
+paths = [
+    '''apps/credentials/tests/.*\.py''',
+    '''tests/support\.py''',
+]

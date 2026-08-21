@@ -75,6 +75,11 @@ _SECRET_KEY_NAMES = (
 # word "Bearer".
 _AUTH_SCHEMES = r"Bearer|Basic|Token|Digest"
 
+# URL path prefixes whose next segment is a bearer credential. Extend this when
+# a new unauthenticated token route lands; the shared signer's docstring
+# (apps/common/signing.py) lists the ones still to come.
+_TOKEN_PATH_PREFIXES = r"invite"  # noqa: S105 - URL prefixes, not a credential
+
 # Ordered: the first pattern that matches a region wins.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # Authorization header values: scheme followed by the credential. No
@@ -116,6 +121,14 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
     # Telegram bot tokens: <bot_id>:<35-char secret>.
     (re.compile(r"\b\d{6,12}:[A-Za-z0-9_\-]{30,}"), REDACTED),
+    # Bearer credentials carried in a URL path. An invitation link is a
+    # capability — anyone holding it joins the organization — and it reaches
+    # logs through the request line rather than through any key=value pair:
+    # runserver's access log prints every path at INFO, and django.request logs
+    # the path on a 500. Neither is a place a live credential belongs
+    # (SECURITY-BASELINE §5). Registered here rather than in the members app so
+    # every later token route (/u/, /c/, /o/) can add its prefix in one place.
+    (re.compile(rf"(?i)(/(?:{_TOKEN_PATH_PREFIXES})/)[A-Za-z0-9._~+/=\-]{{8,}}"), rf"\1{REDACTED}"),
 )
 
 

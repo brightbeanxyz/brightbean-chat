@@ -11,7 +11,12 @@ key derived for Chat can never decrypt a Studio ciphertext or vice versa.
 Every credential or token this project persists goes in one of these fields —
 never a plain column (SECURITY-BASELINE §5).
 
-**These fields cannot be used in queryset lookups.** Every write encrypts under
+Where a row has to be found *by* a secret rather than by its owner, use
+:func:`hmac_digest` to store a deterministic sidecar column and query that. It
+is keyed on ``SECRET_KEY``, so a stolen database gives up neither the values nor
+the ability to recompute them without the key.
+
+**These encrypted fields cannot be used in queryset lookups.** Every write encrypts under
 a fresh random nonce, so the same plaintext produces different ciphertext every
 time and ``.filter(secret=value)`` compares two unrelated strings. It does not
 raise — it silently matches nothing, which reads as "no such row" and is
@@ -22,6 +27,8 @@ alongside — an HMAC of the value under ``SECRET_KEY`` — and query that.
 
 import base64
 import binascii
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -40,6 +47,10 @@ logger = logging.getLogger(__name__)
 # Domain separation for the derived key. Do not change: it would make every
 # stored ciphertext undecryptable.
 HKDF_INFO = b"brightbean-chat-field-encryption"
+
+# Separate domain for the lookup digest, so a digest can never collide with, or
+# be mistaken for, key material derived for encryption.
+HKDF_DIGEST_INFO = b"brightbean-chat-lookup-digest"
 
 NONCE_BYTES = 12
 
@@ -75,6 +86,39 @@ def _derive_key() -> bytes:
     if isinstance(salt, str):
         salt = salt.encode("utf-8")
     return _hkdf(secret, salt)
+
+
+def hmac_digest(value: str) -> str:
+    """A deterministic, queryable fingerprint of a secret.
+
+    Encrypted columns cannot be filtered (see above), so a table that has to be
+    looked up *by* a credential — an invitation token arriving in a URL, a
+    webhook secret arriving in a header — stores this alongside, or instead of,
+    the value itself.
+
+    HMAC-SHA256 keyed on a value derived from ``SECRET_KEY``, not a bare hash:
+    an unkeyed digest of a token is offline-guessable at whatever rate the
+    token's entropy allows, and gives an attacker holding a database dump a
+    verification oracle. Keyed, the dump alone is useless.
+
+    Deterministic by design, which is the whole point — the same input always
+    produces the same digest, so it can carry a unique constraint and an index.
+    """
+    key = _hkdf(settings.SECRET_KEY.encode("utf-8"), _digest_salt())
+    return hmac.new(key, value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _digest_salt() -> bytes:
+    """The HKDF salt for lookup digests. Same source as the encryption salt."""
+    salt = getattr(settings, "ENCRYPTION_KEY_SALT", None)
+    if not salt:
+        raise ValueError(
+            "ENCRYPTION_KEY_SALT must be set. Generate a random value and add it "
+            "to your environment variables. This is required for secure encryption."
+        )
+    if isinstance(salt, str):
+        salt = salt.encode("utf-8")
+    return salt + HKDF_DIGEST_INFO
 
 
 def encrypt_value(plaintext: str) -> str:

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Workspaces · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Workspaces</h1>{% endblock %}
+
+{% block content %}
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Status</th><th>Your access</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for workspace in workspaces %}
+        <tr>
+          <td>{{ workspace.icon }} {{ workspace.name }}</td>
+          <td>{% if workspace.is_archived %}Archived{% else %}Active{% endif %}</td>
+          <td>
+            {% if workspace.id in member_workspace_ids %}
+              {% if not workspace.is_archived %}
+                <a href="{% url 'workspaces:dashboard' workspace_id=workspace.id %}">Open</a>
+              {% else %}Member{% endif %}
+            {% else %}<span class="muted">No access</span>{% endif %}
+          </td>
+          <td>
+            {% if can_manage %}
+              <form method="post" action="{% url 'organizations:set_workspace_archived' target_id=workspace.id %}">
+                {% csrf_token %}
+                <input type="hidden" name="archived" value="{% if workspace.is_archived %}0{% else %}1{% endif %}" />
+                <button type="submit">{% if workspace.is_archived %}Restore{% else %}Archive{% endif %}</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="muted">No workspaces yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if can_manage %}
+    <h2>Create a workspace</h2>
+    <form method="post" action="{% url 'organizations:create_workspace' %}">
+      {% csrf_token %}
+      <label for="new-workspace">Name</label>
+      <input id="new-workspace" type="text" name="name" maxlength="100" required />
+      <button type="submit">Create</button>
+    </form>
+  {% endif %}
+{% endblock %}

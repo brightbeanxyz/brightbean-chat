@@ -4,6 +4,7 @@ Layout, env handling and the storage switch follow BrightBean Studio's
 ``config/settings/base.py``. Differences from Studio are marked inline.
 """
 
+import os
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -118,16 +119,29 @@ DJANGO_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.humanize",
+    # Required by django-allauth even though the Google provider is configured
+    # from settings rather than a SocialApp row: allauth builds absolute URLs
+    # and email copy from the current Site.
+    "django.contrib.sites",
 ]
 
 THIRD_PARTY_APPS = [
     "csp",
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.google",
 ]
 
-# Business apps land in their own issues: tenancy in #31, theme in #32, the
-# domain apps from Layer 2 onwards. Layer 0 ships apps.common and nothing else.
+# Domain apps arrive from Layer 2 onwards; these five are the tenancy, auth and
+# credential substrate (issue #31).
 LOCAL_APPS = [
     "apps.common",
+    "apps.accounts",
+    "apps.organizations",
+    "apps.workspaces",
+    "apps.members",
+    "apps.credentials",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -135,10 +149,18 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Before sessions and CSRF on purpose: a credential-stuffing spray with no
+    # CSRF token should still burn its budget rather than getting a free 403.
+    "apps.accounts.middleware.AuthRateLimitMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # allauth requires this immediately after AuthenticationMiddleware.
+    "allauth.account.middleware.AccountMiddleware",
+    # Reads request.user, so it has to come after authentication. Resolves the
+    # workspace named by the URL and 404s the ones the user cannot reach.
+    "apps.members.middleware.RBACMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "csp.middleware.CSPMiddleware",
@@ -157,6 +179,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "apps.accounts.context_processors.auth_providers",
             ],
         },
     },
@@ -164,18 +187,25 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# Cache. Postgres is the only datastore (SPEC §2: no Redis, ever), so the
-# default is the local-memory backend.
+# Cache. Postgres is the only datastore (SPEC §2: no Redis, ever) and it is
+# also the rate limiter (SPEC §22).
 #
-# LocMemCache is PER PROCESS. Both the Dockerfile and the Procfile run gunicorn
-# with two workers, so anything that counts across requests — the auth rate
-# limiting SECURITY-BASELINE §8 requires of issue #31 above all — counts once
-# per worker and is evaded by landing on the other one. Any deployment relying
-# on such a counter must point CACHE_URL at a shared backend, e.g.
-# "dbcache://cache_table" (then run `manage.py createcachetable`), which keeps
-# the no-Redis rule while giving every worker one view of the data.
+# The default is the DATABASE cache, not LocMemCache, because LocMemCache is per
+# process and both the Dockerfile and the Procfile run gunicorn with two
+# workers: anything counted there is counted once per worker and is evaded by
+# landing on the other one. A per-process default is a trap for the next thing
+# that needs to count across requests, so the shared backend is the default and
+# the single-process case is the override. The table is created by
+# apps/common/migrations/0001_cache_table.py, so `manage.py migrate` is enough
+# and there is no second deploy step to forget.
+#
+# Auth rate limiting does NOT use this. Django's cache API has no atomic
+# increment on a database backend — DatabaseCache inherits BaseCache.incr, which
+# is a get followed by a set — so counting through it loses attempts under
+# concurrency. apps/common/ratelimit.py counts in a row under select_for_update
+# instead (SPEC §22: "Postgres is ... the rate limiter").
 CACHES = {
-    "default": env.cache("CACHE_URL", default="locmemcache://"),
+    "default": env.cache("CACHE_URL", default="dbcache://cache_table"),
 }
 
 # Database
@@ -183,10 +213,130 @@ DATABASES = {
     "default": env.db("DATABASE_URL", default="postgres://postgres:postgres@localhost:5432/brightbean_chat"),
 }
 
-# Password validation
+# ---------------------------------------------------------------------------
+# Authentication (SECURITY-BASELINE §8)
+# ---------------------------------------------------------------------------
+AUTH_USER_MODEL = "accounts.User"
+
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
+]
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
 ]
+
+# bcrypt(sha256) first, PBKDF2 retained so existing hashes still verify and are
+# upgraded transparently. Requires the `bcrypt` package (requirements.in).
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+]
+
+# Sites framework. allauth reads the current Site for email copy; the domain is
+# set from APP_URL by a data migration in apps/accounts.
+SITE_ID = 1
+
+# ---------------------------------------------------------------------------
+# django-allauth
+# ---------------------------------------------------------------------------
+# 65.x spellings: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS replaced the old
+# ACCOUNT_AUTHENTICATION_METHOD / ACCOUNT_EMAIL_REQUIRED pair.
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*", "password1*"]
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
+ACCOUNT_ADAPTER = "apps.accounts.adapters.AccountAdapter"
+ACCOUNT_EMAIL_SUBJECT_PREFIX = "[BrightBean Chat] "
+
+# "optional", not Studio's "none" and not "mandatory". A verification email goes
+# out at signup, and nothing is ever gated on it — so a self-hoster who has not
+# configured SMTP is never locked out of their own instance, while a deployment
+# that has configured it gets the audit trail. The account adapter additionally
+# swallows send failures, because an SMTPException inside signup would lock them
+# out just as hard.
+ACCOUNT_EMAIL_VERIFICATION = "optional"
+
+LOGIN_REDIRECT_URL = "/"
+ACCOUNT_LOGOUT_REDIRECT_URL = "/accounts/login/"
+
+# The Google app is configured here rather than in a SocialApp database row, so
+# a self-hoster sets two env vars instead of clicking through the admin.
+GOOGLE_AUTH_CLIENT_ID = env("GOOGLE_AUTH_CLIENT_ID", default="")
+GOOGLE_AUTH_CLIENT_SECRET = env("GOOGLE_AUTH_CLIENT_SECRET", default="")
+
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "APP": {"client_id": GOOGLE_AUTH_CLIENT_ID, "secret": GOOGLE_AUTH_CLIENT_SECRET},
+        "SCOPE": ["profile", "email"],
+        "AUTH_PARAMS": {"access_type": "online"},
+        "VERIFIED_EMAIL": True,
+    },
+}
+SOCIALACCOUNT_AUTO_SIGNUP = True
+# Provider flows must be initiated by POST: a GET-initiated login is
+# CSRF-forgeable, which is how an attacker logs a victim into the attacker's
+# account.
+SOCIALACCOUNT_LOGIN_ON_GET = False
+SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.SocialAccountAdapter"
+
+# Studio sets SOCIALACCOUNT_EMAIL_AUTHENTICATION and
+# ..._AUTO_CONNECT, which silently link a Google login to any existing local
+# account with the same address. Deliberately NOT ported. Studio can afford it;
+# we cannot, because ACCOUNT_EMAIL_VERIFICATION is "optional" here, so local
+# accounts exist with unverified addresses — and auto-connect then reads as:
+# register locally as victim@example.com, wait for the victim's first Google
+# login, inherit their session. Unlinked Google logins go through allauth's
+# ordinary signup/connect flow instead.
+
+# ---------------------------------------------------------------------------
+# Reverse proxies (consumed by apps.common.net.get_client_ip)
+# ---------------------------------------------------------------------------
+# Which peers are allowed to speak for someone else via X-Forwarded-For.
+# Defaults to nothing: the header is attacker-controlled unless a proxy you own
+# wrote it, and trusting it by default turns the auth rate limiter off.
+# Accepts addresses or CIDR ranges, e.g. "10.0.0.0/8,127.0.0.1".
+#
+# Orthogonal to development.py's SECURE_PROXY_SSL_HEADER / USE_X_FORWARDED_HOST:
+# those decide the request's scheme and host for tunnelled webhook development.
+# This decides the *client's identity* for rate limiting, where being wrong
+# disables a security control rather than breaking a redirect. Behind a tunnel,
+# set TRUSTED_PROXIES=127.0.0.1 to get per-caller buckets back.
+TRUSTED_PROXIES = env.list("TRUSTED_PROXIES", default=[])
+
+# ---------------------------------------------------------------------------
+# Deployment-level platform credentials — the bottom of the SPEC §4 chain
+# ---------------------------------------------------------------------------
+# PLATFORM_<PLATFORM>_<KEY> in the environment, e.g.
+#   PLATFORM_INSTAGRAM_CLIENT_ID / PLATFORM_INSTAGRAM_CLIENT_SECRET
+# becomes {"instagram": {"client_id": ..., "client_secret": ...}}.
+#
+# The slugs are duplicated from apps.common.platforms.Platform rather than
+# imported, because a settings module must not import model code — the app
+# registry does not exist yet. apps.common.checks.check_platform_env_slugs fails
+# the build if the two ever disagree.
+PLATFORM_ENV_SLUGS = ("telegram", "instagram", "messenger", "whatsapp", "sms", "email")
+
+
+def _platform_credentials_from_env() -> dict[str, dict[str, str]]:
+    """Group PLATFORM_* environment variables by platform.
+
+    Longest slug first so a future two-word platform cannot be mis-split by a
+    shorter one that happens to be a prefix.
+    """
+    collected: dict[str, dict[str, str]] = {}
+    for slug in sorted(PLATFORM_ENV_SLUGS, key=len, reverse=True):
+        prefix = f"PLATFORM_{slug.upper()}_"
+        for name, value in os.environ.items():
+            if not name.startswith(prefix) or not value.strip():
+                continue
+            collected.setdefault(slug, {})[name[len(prefix) :].lower()] = value.strip()
+    return collected
+
+
+PLATFORM_CREDENTIALS_FROM_ENV = _platform_credentials_from_env()
 
 # Internationalization
 LANGUAGE_CODE = "en-us"

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Team members · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Team members</h1>{% endblock %}
+
+{% block content %}
+  <table>
+    <thead><tr><th>Member</th><th>Organization role</th><th>Workspaces</th><th></th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.membership.user.display_name }}<br /><span class="muted">{{ row.membership.user.email }}</span></td>
+          <td>
+            {% if is_admin and row.can_manage %}
+              <form method="post" action="{% url 'members:update_role' membership_id=row.membership.id %}">
+                {% csrf_token %}
+                <select name="org_role" aria-label="Organization role">
+                  {% for value, label in org_role_choices %}
+                    <option value="{{ value }}" {% if row.membership.org_role == value %}selected{% endif %}>
+                      {{ label }}
+                    </option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Update</button>
+              </form>
+            {% else %}
+              {{ row.membership.get_org_role_display }}
+            {% endif %}
+          </td>
+          <td><a href="{% url 'members:manage_workspaces' membership_id=row.membership.id %}">Manage access</a></td>
+          <td>
+            {% if is_admin and row.can_manage %}
+              <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}">
+                {% csrf_token %}
+                <button type="submit">Remove</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Pending invitations</h2>
+  <table>
+    <thead><tr><th>Email</th><th>Role</th><th>Expires</th><th></th></tr></thead>
+    <tbody>
+      {% for invite in invitations %}
+        <tr>
+          <td>{{ invite.email }}</td>
+          <td>{{ invite.get_org_role_display }}</td>
+          <td>{{ invite.expires_at }}</td>
+          <td>
+            {% if is_admin %}
+              <form method="post" action="{% url 'members:resend_invite' invitation_id=invite.id %}">
+                {% csrf_token %}<button type="submit">Resend</button>
+              </form>
+              <form method="post" action="{% url 'members:revoke_invite' invitation_id=invite.id %}">
+                {% csrf_token %}<button type="submit">Revoke</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="muted">No pending invitations.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if can_invite %}
+    <h2>Invite someone</h2>
+    <form method="post" action="{% url 'members:invite' %}">
+      {% csrf_token %}
+      <p>
+        <label for="invite-email">Email</label><br />
+        <input id="invite-email" type="email" name="email" required />
+      </p>
+      <p>
+        <label for="invite-role">Organization role</label><br />
+        <select id="invite-role" name="org_role">
+          {% for value, label in org_role_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
+      </p>
+      <fieldset>
+        <legend>Workspace access</legend>
+        {% for workspace in workspaces %}
+          <p>
+            <label>
+              <input type="checkbox" name="ws_{{ workspace.id }}" value="1" /> {{ workspace.name }}
+            </label>
+            <select name="ws_role_{{ workspace.id }}" aria-label="Role in {{ workspace.name }}">
+              {% for value, label in workspace_roles %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+          </p>
+        {% empty %}
+          <p class="muted">You cannot manage members in any workspace yet.</p>
+        {% endfor %}
+      </fieldset>
+      <button type="submit">Send invitation</button>
+    </form>
+  {% endif %}
+{% endblock %}

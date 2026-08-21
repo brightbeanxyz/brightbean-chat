@@ -1,0 +1,19 @@
+<h2>You have been invited to {{ invitation.organization.name }}</h2>
+
+{% if error %}<p class="messages">{{ error }}</p>{% endif %}
+
+{% if needs_login %}
+  {# Both links carry ?next back to this page. Without it an existing account #}
+  {# lands on / after signing in, and since user_signed_up never fires for a  #}
+  {# login the invitation is silently never accepted.                          #}
+  <p>Create an account or sign in with {{ invitation.email }} to accept.</p>
+  <p>
+    <a href="{% url 'account_signup' %}?next={{ request.path|urlencode:"" }}">Create an account</a> ·
+    <a href="{% url 'account_login' %}?next={{ request.path|urlencode:"" }}">Sign in</a>
+  </p>
+{% else %}
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit">Join {{ invitation.organization.name }}</button>
+  </form>
+{% endif %}

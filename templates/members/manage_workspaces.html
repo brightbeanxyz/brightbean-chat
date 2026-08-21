@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Workspace access · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Workspace access for {{ membership.user.display_name }}</h1>{% endblock %}
+
+{% block content %}
+  {% comment %}
+  Only workspaces the signed-in user may manage are listed, and omission means
+  removal — so this form must always render every workspace it is allowed to
+  change, never a filtered subset of them.
+  {% endcomment %}
+  <form method="post" action="{% url 'members:manage_workspaces' membership_id=membership.id %}">
+    {% csrf_token %}
+    {% for row in rows %}
+      <p>
+        <label>
+          <input type="checkbox" name="ws_{{ row.workspace.id }}" value="1" {% if row.selected %}checked{% endif %} />
+          {{ row.workspace.name }}
+        </label>
+        <select name="ws_role_{{ row.workspace.id }}" aria-label="Role in {{ row.workspace.name }}">
+          {% for value, label in workspace_roles %}
+            <option value="{{ value }}" {% if row.role == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </p>
+    {% empty %}
+      <p class="muted">You cannot manage members in any workspace.</p>
+    {% endfor %}
+    <button type="submit">Save access</button>
+  </form>
+
+  <p><a href="{% url 'members:list' %}">Back to team members</a></p>
+{% endblock %}

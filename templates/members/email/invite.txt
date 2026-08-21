@@ -1,0 +1,6 @@
+{{ invited_by.display_name|default:"Someone" }} invited you to join {{ org_name }} on BrightBean Chat.
+
+Accept the invitation:
+{{ accept_url }}
+
+This link expires in 7 days. If you were not expecting it, you can ignore this email.

@@ -40,7 +40,11 @@ Identical conventions to brightbean-studio. Where this spec is silent, copy the 
 - Deploy targets: Docker Compose (reference), one-click Heroku / Render / Railway
 - Credential encryption at rest: reuse Studio's encrypted field implementation
 
-Repo layout (Django apps):
+Repo layout (Django apps). Packages live under `apps/` — `apps/contacts/`,
+`apps/flows/` and so on. A top-level `channels/` would shadow the `channels`
+PyPI package the way `calendar/` and `email/` shadow the standard library, and
+`core` was split into `organizations` / `workspaces` / `members` / `accounts` /
+`credentials` when it landed (issue #31):
 
 ```
 config/                 settings, urls, wsgi
