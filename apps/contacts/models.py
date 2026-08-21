@@ -1,0 +1,366 @@
+"""The CRM core: contacts, tags, custom fields and segments (SPEC §5).
+
+Every model here is tenant data, so every one inherits
+:class:`apps.common.scoping.WorkspaceScopedModel` — including the two join
+tables. ``contact_tag`` and ``custom_field_value`` carry a ``workspace`` column
+that SPEC §5 does not list, and it is not redundant bookkeeping: the condition
+engine filters them inside correlated ``Exists()`` subqueries, and a subquery is
+*compiled* rather than executed, so ``WorkspaceScopedQuerySet``'s guard never
+fires on one (:mod:`apps.contacts.conditions` explains at length). Carrying the
+column means those subqueries can be scoped for real instead of resting on a
+join back to ``contact``.
+
+Deliberately **not** here:
+
+* ``contact_channel_identity`` — SPEC §5 files it under contacts, but it hangs
+  off a channel connection, so it lands with the messaging spine (issue #8).
+* Hard delete and export. ``status`` is a soft-delete flag; GDPR erasure is
+  issue #29, which needs identities and message bodies to mean anything.
+* CSV import/export and the contact detail page — issue #13.
+
+Four shape decisions, each argued in the PR:
+
+1. ``Tag.name`` and ``CustomField.name`` are unique **case-insensitively**,
+   stricter than SPEC's ``unique (workspace_id, name)``. A CRM where "VIP" and
+   "vip" are two tags is a data-quality bug visible in the first tag picker, and
+   a service-layer check for it races with itself.
+2. The five typed columns on ``CustomFieldValue`` are all nullable, ``value_text``
+   included. Django discourages nullable text because it creates two empty
+   states — but that is the point here: NULL means "this row is not a text row",
+   a different fact from "the text is empty", and it is what makes the
+   exactly-one-populated check expressible at all.
+3. That check **is** a ``CheckConstraint`` — the project's first. Prose would not
+   do: if a writer ever put a number into ``value_text``, the condition engine
+   would read ``value_number``, find NULL, and silently return the wrong set of
+   contacts. A broadcast then goes to the wrong people with nothing raising
+   anywhere. The database is the only place that can catch it.
+4. ``Contact`` has no ``Meta.ordering``. Ordering on a model the condition
+   engine filters set-wise would attach an ``ORDER BY`` to every query it builds,
+   counts included, for no benefit. The list views order explicitly. The two
+   join tables skip it for a sharper reason: an ``ordering`` that spans a
+   relation (``["tag__name"]``) would drag a JOIN into every ``Exists()``
+   subquery.
+"""
+
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxLengthValidator
+from django.db import models
+from django.db.models.functions import Lower
+
+from apps.common.scoping import WorkspaceScopedModel
+from apps.contacts.errors import WorkspaceMismatchError
+
+
+class ContactStatus(models.TextChoices):
+    ACTIVE = "active", "Active"
+    DELETED = "deleted", "Deleted"
+
+
+class CustomFieldType(models.TextChoices):
+    """The value types a custom field can hold (SPEC §5, SPEC §11.4)."""
+
+    TEXT = "text", "Text"
+    NUMBER = "number", "Number"
+    DATE = "date", "Date"
+    DATETIME = "datetime", "Date and time"
+    BOOLEAN = "boolean", "True or false"
+
+
+#: Which column on ``CustomFieldValue`` holds a value of each field type.
+#:
+#: The condition engine builds ORM lookups by joining a name from this table to
+#: an operator from its own allowlist, so a user-supplied field key can never
+#: become part of a query kwarg. The check constraint below is generated from
+#: the same table, so the two cannot drift.
+VALUE_COLUMNS: dict[str, str] = {
+    CustomFieldType.TEXT.value: "value_text",
+    CustomFieldType.NUMBER.value: "value_number",
+    CustomFieldType.DATE.value: "value_date",
+    CustomFieldType.DATETIME.value: "value_datetime",
+    CustomFieldType.BOOLEAN.value: "value_bool",
+}
+
+ALL_VALUE_COLUMNS: tuple[str, ...] = tuple(VALUE_COLUMNS[t] for t in CustomFieldType.values)
+
+#: Cap on a stored text value (SECURITY-BASELINE §7). The condition engine caps
+#: a *filter* value lower, at 500: a value can be longer than anything anyone
+#: would sensibly compare it against in full.
+MAX_TEXT_VALUE_CHARS = 2000
+
+
+def exactly_one_value_populated() -> models.Q:
+    """Exactly one of the five typed columns is non-NULL.
+
+    Written as a plain ``Q`` rather than ``num_nonnulls(...)`` in raw SQL:
+    SECURITY-BASELINE §7 bans string-built SQL, and a ``RawSQL`` check would be
+    exactly that. Generated from :data:`ALL_VALUE_COLUMNS` so adding a field type
+    cannot leave the constraint behind.
+    """
+    clauses = models.Q()
+    for populated in ALL_VALUE_COLUMNS:
+        clause = models.Q(**{f"{populated}__isnull": False})
+        for other in ALL_VALUE_COLUMNS:
+            if other != populated:
+                clause &= models.Q(**{f"{other}__isnull": True})
+        clauses |= clause
+    return clauses
+
+
+class Contact(WorkspaceScopedModel):
+    """One person in a workspace's CRM."""
+
+    first_name = models.CharField(max_length=150, blank=True, default="")
+    last_name = models.CharField(max_length=150, blank=True, default="")
+    locale = models.CharField(max_length=16, blank=True, default="")
+    timezone = models.CharField(max_length=63, blank=True, default="")
+    # Not unique and not checked for deliverability: a contact's email is
+    # whatever the platform or the operator supplied. Identity uniqueness is the
+    # messaging spine's (issue #8), deliverability the email adapter's (#21).
+    email = models.EmailField(max_length=254, blank=True, default="")
+    phone = models.CharField(max_length=32, blank=True, default="")
+    status = models.CharField(max_length=16, choices=ContactStatus.choices, default=ContactStatus.ACTIVE)
+    last_interaction_at = models.DateTimeField(null=True, blank=True)
+
+    # Read-only by convention. ``contact.tags.add(tag)`` works and is WRONG: it
+    # writes a ContactTag without emitting ``contact.tag_added``, so issue #22's
+    # rule triggers and #25's webhooks never fire.
+    # :func:`apps.contacts.services.add_tag` is the only writer.
+    tags = models.ManyToManyField("contacts.Tag", through="contacts.ContactTag", related_name="contacts", blank=True)
+
+    class Meta:
+        db_table = "contacts_contact"
+        indexes = [
+            # SPEC §5 names this one: the CRM list and every recency-ordered
+            # sweep read it.
+            models.Index(fields=["workspace", "last_interaction_at"], name="contact_ws_last_seen_idx"),
+            # Every condition query opens with `workspace_id = %s AND status =
+            # 'active'` (see conditions.queryset), so this one is on the hot path
+            # of the whole engine.
+            models.Index(fields=["workspace", "status"], name="contact_ws_status_idx"),
+            # The two system_field sources most likely to carry an equality
+            # filter at 10k+ rows.
+            models.Index(fields=["workspace", "email"], name="contact_ws_email_idx"),
+            models.Index(fields=["workspace", "phone"], name="contact_ws_phone_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return self.display_name
+
+    @property
+    def display_name(self) -> str:
+        """A label that is never empty, so a list never renders a blank row."""
+        name = f"{self.first_name} {self.last_name}".strip()
+        return name or self.email or self.phone or f"Contact {str(self.pk)[:8]}"
+
+
+class Tag(WorkspaceScopedModel):
+    """A label an operator or a flow can attach to a contact."""
+
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        db_table = "contacts_tag"
+        ordering = ["name"]
+        constraints = [
+            # Lower(name) rather than SPEC's plain (workspace, name): see the
+            # module docstring. full_clean() validates expression constraints,
+            # so forms and the admin report the clash rather than a 500.
+            models.UniqueConstraint(Lower("name"), "workspace", name="tag_unique_name_per_workspace"),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class ContactScopedModel(WorkspaceScopedModel):
+    """Abstract base for rows that hang off a ``Contact`` and inherit its tenancy.
+
+    ``workspace`` on these tables is a denormalisation the enforcing manager
+    requires — ``for_workspace()`` filters ``workspace_id`` — and a
+    denormalisation is a chance for three columns to disagree.
+    ``ContactTag.workspace``, ``.contact.workspace`` and ``.tag.workspace`` are
+    three separate answers to "whose row is this?", and a row where they differ
+    is a tenancy bug no test stumbles over by accident.
+
+    So ``workspace`` is **derived, never set by a caller** — the same discipline
+    ``CredentialMixin.save()`` uses for ``is_configured``, ``update_fields``
+    branch and all — and the peer foreign key is checked against the same
+    contact.
+
+    The stronger guarantee, a composite foreign key
+    ``(workspace_id, contact_id) REFERENCES contacts_contact (workspace_id, id)``,
+    is genuinely better and genuinely unavailable: Django 5.2 has no composite
+    foreign key to non-primary-key columns, so it would mean hand-written
+    ``RunSQL`` plus two extra unique indexes. Not worth it while the write path
+    is one function.
+
+    Not covered: ``bulk_create``, which bypasses ``save()``. Nothing in this app
+    bulk-creates; issue #13's CSV importer must set ``workspace`` itself if it
+    does.
+
+    Declares no managers, so ``all_objects`` keeps the lowest creation counter
+    and ``apps.common.checks`` (``common.E004``) stays satisfied.
+    """
+
+    #: Name of the foreign key whose workspace must agree with the contact's.
+    peer_field: ClassVar[str] = ""
+
+    if TYPE_CHECKING:
+        # Declared by every concrete subclass. Annotated rather than assigned
+        # so Django's model machinery never sees a non-field attribute here.
+        contact: Any
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        self.workspace_id = self.contact.workspace_id
+        peer = getattr(self, self.peer_field)
+        if peer.workspace_id != self.contact.workspace_id:
+            raise WorkspaceMismatchError(
+                f"That {peer._meta.verbose_name} belongs to a different workspace than the contact."
+            )
+        if kwargs.get("update_fields") is not None:
+            kwargs["update_fields"] = {*kwargs["update_fields"], "workspace"}
+        super().save(*args, **kwargs)
+
+
+class ContactTag(ContactScopedModel):
+    """The contact ↔ tag join. Written only through :mod:`apps.contacts.services`."""
+
+    peer_field = "tag"
+
+    contact = models.ForeignKey(Contact, on_delete=models.CASCADE, related_name="contact_tags")
+    tag = models.ForeignKey(Tag, on_delete=models.CASCADE, related_name="contact_tags")
+
+    class Meta:
+        db_table = "contacts_contact_tag"
+        constraints = [
+            # SPEC §5's unique-together, and also the index the condition
+            # engine's correlated probe rides: `contact_id = c.id AND tag_id =
+            # %s` is equality on both leading columns. Do not reorder it.
+            models.UniqueConstraint(fields=["contact", "tag"], name="contacttag_unique_contact_tag"),
+        ]
+        indexes = [
+            # The other direction — "everyone with tag X". Covering, so Postgres
+            # can run the EXISTS as an index-only semi-join. workspace leads
+            # because the compiled subquery always carries `workspace_id = %s`.
+            models.Index(fields=["workspace", "tag", "contact"], name="contacttag_ws_tag_contact_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.contact} · {self.tag}"
+
+
+class CustomField(WorkspaceScopedModel):
+    """A workspace-defined attribute that contacts can carry."""
+
+    name = models.CharField(max_length=100)
+    type = models.CharField(max_length=16, choices=CustomFieldType.choices)
+
+    class Meta:
+        db_table = "contacts_custom_field"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(Lower("name"), "workspace", name="customfield_unique_name_per_workspace"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.get_type_display()})"
+
+    @property
+    def value_column(self) -> str:
+        """The ``CustomFieldValue`` column this field's values live in."""
+        return VALUE_COLUMNS[self.type]
+
+
+class CustomFieldValue(ContactScopedModel):
+    """One contact's value for one custom field.
+
+    Exactly one of the five typed columns is populated, chosen by the field's
+    ``type``, and the database enforces the "exactly one" half. The database
+    cannot enforce *which* one, because the deciding type lives on another table
+    — that half is held by :func:`apps.contacts.services.set_field_value` (the
+    only write path, which clears the other four on every write) and by
+    ``clean()``. Clearing a value deletes the row rather than nulling it, which
+    is what keeps "exactly one" true rather than "at most one".
+    """
+
+    peer_field = "field"
+
+    contact = models.ForeignKey(Contact, on_delete=models.CASCADE, related_name="field_values")
+    field = models.ForeignKey(CustomField, on_delete=models.CASCADE, related_name="values")
+
+    value_text = models.TextField(null=True, blank=True, validators=[MaxLengthValidator(MAX_TEXT_VALUE_CHARS)])
+    value_number = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True)
+    value_date = models.DateField(null=True, blank=True)
+    value_datetime = models.DateTimeField(null=True, blank=True)
+    value_bool = models.BooleanField(null=True, blank=True)
+
+    class Meta:
+        db_table = "contacts_custom_field_value"
+        constraints = [
+            models.UniqueConstraint(fields=["contact", "field"], name="customfieldvalue_unique_contact_field"),
+            models.CheckConstraint(
+                condition=exactly_one_value_populated(),
+                name="customfieldvalue_exactly_one_value",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["workspace", "field", "contact"], name="cfv_ws_field_contact_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.contact} · {self.field}"
+
+    @property
+    def value(self) -> Any:
+        """The populated column's value, whichever one it is."""
+        return getattr(self, self.field.value_column)
+
+    def clean(self) -> None:
+        populated = [column for column in ALL_VALUE_COLUMNS if getattr(self, column) is not None]
+        if len(populated) != 1:
+            raise ValidationError(
+                f"A custom field value populates exactly one column; this row populates {len(populated)}."
+            )
+        expected = self.field.value_column
+        if populated[0] != expected:
+            raise ValidationError(f"A {self.field.get_type_display().lower()} field stores its value in {expected}.")
+
+
+class Segment(WorkspaceScopedModel):
+    """A saved condition filter over a workspace's contacts (SPEC §5, §11.4).
+
+    ``filter_json`` uses the same schema as the flow Condition node, and
+    ``clean()`` validates it through :mod:`apps.contacts.conditions`, so neither
+    a form nor the Django admin can store a filter the engine would later refuse
+    to compile.
+    """
+
+    name = models.CharField(max_length=100)
+    filter_json = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "contacts_segment"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(Lower("name"), "workspace", name="segment_unique_name_per_workspace"),
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+    def clean(self) -> None:
+        # Imported here rather than at module scope: conditions.py reads these
+        # models, so a top-level import would be a cycle.
+        from apps.contacts.conditions import ConditionValidationError, validate
+
+        if self.workspace_id is None:
+            return
+        try:
+            validate(self.workspace_id, self.filter_json, exclude_segment_id=self.pk)
+        except ConditionValidationError as exc:
+            raise ValidationError({"filter_json": str(exc)}) from exc

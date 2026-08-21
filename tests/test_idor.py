@@ -51,13 +51,26 @@ class TestCrossTenantIsolation:
         names = {route.name for route in iter_tenant_routes()}
 
         assert {
-            "contacts",
             "flows",
             "inbox",
             "sequences",
             "broadcasts",
-            "settings_ws_fields",
-            "settings_ws_tags",
+        } <= names
+
+    def test_the_sweep_covers_the_contacts_routes(self):
+        """Issue #3 replaced three of the shell placeholders with real views."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "contacts:list",
+            "contacts:tag_list",
+            "contacts:tag_create",
+            "contacts:tag_rename",
+            "contacts:tag_delete",
+            "contacts:field_list",
+            "contacts:field_create",
+            "contacts:field_rename",
+            "contacts:field_delete",
         } <= names
 
     def test_every_waiver_states_a_reason(self):

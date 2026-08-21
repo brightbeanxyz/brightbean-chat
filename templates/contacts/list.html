@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Contacts · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Contacts</h1>{% endblock %}
+
+{% block content %}
+  {% comment %}
+  Read-only on purpose. Issue #13 (L4-C) owns the CRM — detail pages, inline
+  editing, search, CSV import and export. What this page adds beyond a list is
+  the segment selector, which puts the condition engine's set-wise path
+  (ROADMAP contract 8) in front of a human rather than only in a test.
+  {% endcomment %}
+
+  {% if segments %}
+    <form method="get">
+      <label for="segment">Segment</label>
+      <select id="segment" name="segment">
+        <option value="">Everyone</option>
+        {% for segment in segments %}
+          <option value="{{ segment.id }}" {% if segment.id|stringformat:"s" == selected_segment %}selected{% endif %}>
+            {{ segment.name }}
+          </option>
+        {% endfor %}
+      </select>
+      <button type="submit">Apply</button>
+    </form>
+  {% endif %}
+
+  {% if segment_error %}
+    <p class="alert-warning">
+      This segment could not be applied, so every contact is shown: {{ segment_error }}
+    </p>
+  {% endif %}
+
+  {% if page.object_list %}
+    <table>
+      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Tags</th><th>Last interaction</th></tr></thead>
+      <tbody>
+        {% for contact in page.object_list %}
+          <tr>
+            <td>{{ contact.display_name }}</td>
+            <td>{{ contact.email|default:"—" }}</td>
+            <td>{{ contact.phone|default:"—" }}</td>
+            <td>{% for tag in contact.tags.all %}{{ tag.name }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</td>
+            <td>{{ contact.last_interaction_at|default:"—" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <p class="muted">
+      Page {{ page.number }} of {{ page.paginator.num_pages }} — {{ page.paginator.count }} contact{{ page.paginator.count|pluralize }}.
+      {% if page.has_previous %}
+        <a href="?segment={{ selected_segment }}&amp;page={{ page.previous_page_number }}">Previous</a>
+      {% endif %}
+      {% if page.has_next %}
+        <a href="?segment={{ selected_segment }}&amp;page={{ page.next_page_number }}">Next</a>
+      {% endif %}
+    </p>
+  {% else %}
+    <p class="muted">
+      {% if selected_segment %}No contacts match this segment.
+      {% else %}No contacts yet. They arrive when someone messages a connected channel.{% endif %}
+    </p>
+  {% endif %}
+{% endblock %}
