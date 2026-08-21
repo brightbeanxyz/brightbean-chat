@@ -27,7 +27,7 @@ from typing import Any
 
 from django.db import transaction
 
-from apps.notifications import events, queue
+from apps.notifications import action_urls, events, queue
 from apps.notifications.mail import send_delivery
 from apps.notifications.models import (
     Channel,
@@ -128,6 +128,19 @@ def _payload(workspace: Any, event: events.NotificationEvent, context: dict[str,
     ``jsonb`` and a UUID is not JSON-serialisable.
     """
     payload: dict[str, Any] = {key: value for key, value in context.items() if _json_safe(value)}
+
+    # action_url is the one context key that becomes a link rather than text,
+    # so it is the one that has to be checked rather than merely escaped —
+    # escaping does nothing to a scheme. Enforced here, at the single write
+    # path, so the bell, the history page and the email button all inherit it
+    # instead of each remembering. See apps.notifications.action_urls.
+    if "action_url" in payload:
+        safe = action_urls.safe_path(payload["action_url"])
+        if safe is None:
+            del payload["action_url"]
+        else:
+            payload["action_url"] = safe
+
     payload["workspace_id"] = str(getattr(workspace, "pk", workspace)) if workspace is not None else None
     payload["workspace_name"] = getattr(workspace, "name", "")
     payload["icon"] = event.icon

@@ -23,32 +23,26 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.notifications import action_urls
+from apps.notifications.action_urls import app_url
 from apps.notifications.models import DeliveryStatus, NotificationDelivery
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["app_url", "send_delivery"]
-
-
-def app_url() -> str:
-    """The deployment's base URL, without a trailing slash."""
-    return str(getattr(settings, "APP_URL", "http://localhost:8000")).rstrip("/")
+__all__ = ["send_delivery"]
 
 
 def _action_url(notification: Any) -> str:
     """Where the email's button goes.
 
-    ``payload["action_url"]`` is written by whichever layer called ``notify()``
-    and may be absolute already; anything else falls back to the notification
-    list, which always exists.
+    ``notify()`` already reduced ``payload["action_url"]`` to a same-origin path
+    (or dropped it), so this re-checks rather than validates: a row edited in
+    the admin, or written before this rule existed, must not be able to put an
+    off-site link in an email that carries this product's branding. One policy,
+    in :mod:`apps.notifications.action_urls`, applied at both ends.
     """
     raw = notification.payload.get("action_url") if isinstance(notification.payload, dict) else None
-    if isinstance(raw, str) and raw.startswith(("http://", "https://")):
-        return raw
-    base = app_url()
-    if isinstance(raw, str) and raw.startswith("/"):
-        return f"{base}{raw}"
-    return f"{base}{reverse('notifications:list')}"
+    return action_urls.absolute(action_urls.safe_path(raw))
 
 
 def send_delivery(delivery: NotificationDelivery) -> bool:
