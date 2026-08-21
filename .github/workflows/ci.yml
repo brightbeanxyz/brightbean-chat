@@ -112,6 +112,22 @@ jobs:
         # --require-hashes: CI installs exactly the artefacts the lock records.
         run: pip install --require-hashes -r requirements-dev.txt
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Build the Tailwind bundle
+        # The suite asserts that every {% static %} reference in a template
+        # resolves through a finder — which is what stops a typo reaching the
+        # image build, where CompressedManifestStaticFilesStorage turns it into
+        # a hard failure. css/dist/styles.css is a build artefact, so without
+        # this step that assertion could only ever be made vacuous.
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build:css
+
       - name: pytest
         run: pytest --cov=apps --cov-report=term-missing
 
