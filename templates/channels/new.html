@@ -1,0 +1,36 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Add a channel · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Add a channel</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    This creates the connection and its webhook secret. Credentials are entered
+    in each platform's own connect flow, which arrives with that platform's
+    adapter.
+  </p>
+
+  <form method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <p>
+      <label for="{{ form.platform.id_for_label }}">Platform</label><br />
+      {{ form.platform }}
+      {{ form.platform.errors }}
+    </p>
+    <p>
+      <label for="{{ form.display_name.id_for_label }}">{{ form.display_name.label }}</label><br />
+      {{ form.display_name }}
+      <span class="muted">{{ form.display_name.help_text }}</span>
+      {{ form.display_name.errors }}
+    </p>
+    <p>
+      <label for="{{ form.external_id.id_for_label }}">{{ form.external_id.label }}</label><br />
+      {{ form.external_id }}
+      <span class="muted">{{ form.external_id.help_text }}</span>
+      {{ form.external_id.errors }}
+    </p>
+    <button type="submit">Create channel</button>
+  </form>
+
+  <p><a href="{% url 'channels:list' workspace_id=request.workspace.id %}">Back to channels</a></p>
+{% endblock %}

@@ -86,7 +86,8 @@ class TestActiveFlag:
             ("/organization/workspaces/", "settings_nav_groups", "org_workspaces"),
             ("WS/settings/", "workspace_settings_nav_groups", "ws_general"),
             ("WS/settings/tags/", "workspace_settings_nav_groups", "ws_tags"),
-            ("WS/settings/credentials/", "workspace_settings_nav_groups", "ws_channels"),
+            ("WS/settings/credentials/", "workspace_settings_nav_groups", "ws_credentials"),
+            ("WS/settings/channels/", "workspace_settings_nav_groups", "ws_channels"),
         ],
     )
     def test_exactly_one_settings_item_is_active_per_route(self, path, key, expected, tenancy):

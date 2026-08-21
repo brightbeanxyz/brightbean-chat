@@ -198,6 +198,17 @@ SETTINGS_NAV: list[NavGroup] = [
                 key="ws_channels",
                 label="Channels",
                 icon="channels",
+                url_name="channels:list",
+                url_names=frozenset({"channels:list", "channels:create", "channels:detail"}),
+                workspace_scoped=True,
+            ),
+            # Renamed from "Channels" by issue #4, which took that name for the
+            # connection list above. The page's own heading has always read
+            # "Platform credentials"; the nav row now agrees with it.
+            NavItem(
+                key="ws_credentials",
+                label="Platform credentials",
+                icon="key",
                 url_name="credentials:list",
                 workspace_scoped=True,
             ),

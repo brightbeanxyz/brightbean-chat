@@ -1,0 +1,214 @@
+"""Workspace settings → Channels (SPEC §5, issue #4).
+
+Admin-only: ``manage_channels`` is one of ``_ADMIN_ONLY_KEYS`` in
+``apps.members.roles``, and this page mints the secret a platform authenticates
+with.
+
+**Minimal by design.** The issue says so — "per-platform placeholder connect
+panels (real flows arrive with each adapter)" — and the reason is that each
+platform's connect flow is genuinely different: a BotFather token pasted into a
+field, a Meta OAuth round trip, Twilio credentials plus a number. Building one
+form that pretends they are the same shape means building it wrong six times.
+What ships here is the frame every adapter will hang its flow on: the row, its
+status, its webhook URL and its secret.
+
+**The webhook secret is shown exactly once.** It is rendered in the response to
+the POST that created or rotated it, and never again — no redirect, no
+``messages`` framework. That is not fussiness: ``messages`` is stored in the
+session, which for this project is a database table, so a redirect-then-show
+would leave a live platform credential sitting in ``django_session`` in plain
+text for the life of the session (SECURITY-BASELINE §5). Post/Redirect/Get is
+worth giving up for that; the double-submit it protects against would just mint
+another secret.
+"""
+
+from typing import Any
+
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.http import HttpResponse
+from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_GET, require_POST
+
+from apps.channels.capabilities import capabilities_for
+from apps.channels.forms import ChannelConnectionForm
+from apps.channels.models import ChannelConnection, ConnectionStatus
+from apps.channels.policy import policy_for
+from apps.channels.registry import has_adapter
+from apps.common.platforms import Platform
+from apps.common.shortcuts import get_scoped_object_or_404
+from apps.members.decorators import require_permission
+from apps.members.requests import WorkspaceRequest
+
+PLATFORM_LABELS = dict(Platform.choices)
+
+#: Which issue delivers each platform's real connect flow. Shown on the
+#: placeholder panels so an operator looking at an empty page knows whether they
+#: have misconfigured something or are simply early.
+CONNECT_FLOW_ISSUES: dict[str, str] = {
+    Platform.TELEGRAM: "#12 (L4-B)",
+    Platform.INSTAGRAM: "#17 (L5-A)",
+    Platform.MESSENGER: "#18 (L5-B)",
+    Platform.WHATSAPP: "#19 (L5-C)",
+    Platform.SMS: "#20 (L5-D)",
+    Platform.EMAIL: "#21 (L5-E)",
+}
+
+#: Statuses an operator may set by hand. ``needs_reauth`` is absent because an
+#: adapter sets it from a platform's own rejection — letting a human declare it
+#: would mean a connection stuck in a state nothing clears.
+SETTABLE_STATUSES = frozenset({ConnectionStatus.ACTIVE, ConnectionStatus.DISABLED})
+
+
+def _webhook_url(request: WorkspaceRequest, connection: ChannelConnection) -> str:
+    """The URL to paste into the platform's console (SPEC §7.1).
+
+    Per-connection for SMS and email, one shared URL per platform for the rest.
+    Absolute, because that is the form the operator has to type somewhere else.
+    """
+    if connection.platform == Platform.SMS:
+        path = reverse("webhook_sms", kwargs={"connection_id": connection.pk})
+    elif connection.platform == Platform.EMAIL:
+        path = reverse("webhook_email", kwargs={"provider": "smtp", "connection_id": connection.pk})
+    else:
+        path = reverse("webhook_platform", kwargs={"platform": connection.platform})
+    return request.build_absolute_uri(path)
+
+
+def _connection_context(request: WorkspaceRequest, connection: ChannelConnection) -> dict[str, Any]:
+    """Everything one connection's row or detail panel needs.
+
+    Capabilities and policy come from the static tables rather than the adapter,
+    so the page is complete for a platform whose adapter has not shipped —
+    which, in this layer, is all of them (ROADMAP contract 4).
+    """
+    return {
+        "connection": connection,
+        "label": PLATFORM_LABELS.get(connection.platform, connection.platform),
+        "webhook_url": _webhook_url(request, connection),
+        "capabilities": capabilities_for(connection.platform),
+        "policy": policy_for(connection.platform),
+        "adapter_ready": has_adapter(connection.platform),
+        "connect_flow_issue": CONNECT_FLOW_ISSUES.get(connection.platform, ""),
+    }
+
+
+@login_required
+@require_permission("manage_channels")
+@require_GET
+def connection_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Every channel this workspace has connected."""
+    connections = ChannelConnection.objects.for_workspace(request.workspace)
+    return render(
+        request,
+        "channels/list.html",
+        {
+            "rows": [_connection_context(request, connection) for connection in connections],
+            "platforms": [
+                {
+                    "value": value,
+                    "label": label,
+                    "adapter_ready": has_adapter(value),
+                    "issue": CONNECT_FLOW_ISSUES.get(value, ""),
+                }
+                for value, label in Platform.choices
+            ],
+        },
+    )
+
+
+@login_required
+@require_permission("manage_channels")
+def connection_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Add a connection and show its webhook secret, once."""
+    if request.method == "POST":
+        form = ChannelConnectionForm(request.POST)
+        if form.is_valid():
+            connection = form.save(commit=False)
+            connection.workspace = request.workspace
+            secret = connection.rotate_webhook_secret()
+            connection.save()
+            return _render_secret(request, connection, secret, created=True)
+    else:
+        form = ChannelConnectionForm()
+
+    return render(
+        request,
+        "channels/new.html",
+        {"form": form, "platforms": Platform.choices, "connect_flow_issues": CONNECT_FLOW_ISSUES},
+    )
+
+
+@login_required
+@require_permission("manage_channels")
+@require_GET
+def connection_detail(request: WorkspaceRequest, workspace_id: str, connection_id: str) -> HttpResponse:
+    """One connection: status, webhook URL, what the platform can carry.
+
+    Never renders the secret — see the module docstring.
+    """
+    connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
+    return render(request, "channels/detail.html", _connection_context(request, connection))
+
+
+@login_required
+@require_permission("manage_channels")
+@require_POST
+def connection_set_status(request: WorkspaceRequest, workspace_id: str, connection_id: str) -> HttpResponse:
+    """Enable or disable a connection.
+
+    A disabled connection stops ingesting: ``_connection_by_id`` in the webhook
+    view excludes it, so the platform's deliveries get the same 403 as an
+    unknown connection. Switching a channel off has to actually switch it off.
+    """
+    connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
+    status = request.POST.get("status", "")
+    if status not in SETTABLE_STATUSES:
+        messages.error(request, "That is not a status you can set by hand.")
+    else:
+        connection.status = status
+        connection.save(update_fields=["status", "updated_at"])
+        messages.success(request, f"{connection.display_name} is now {connection.get_status_display().lower()}.")
+    return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
+
+
+@login_required
+@require_permission("manage_channels")
+@require_POST
+def connection_rotate_secret(request: WorkspaceRequest, workspace_id: str, connection_id: str) -> HttpResponse:
+    """Mint a new webhook secret and show it once.
+
+    Rotating invalidates the old one immediately, which means inbound deliveries
+    fail with a 403 until the new secret is configured at the platform. The
+    template says so before the operator clicks.
+    """
+    connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
+    secret = connection.rotate_webhook_secret()
+    connection.save(update_fields=["webhook_secret", "webhook_secret_digest", "updated_at"])
+    return _render_secret(request, connection, secret, created=False)
+
+
+@login_required
+@require_permission("manage_channels")
+@require_POST
+def connection_delete(request: WorkspaceRequest, workspace_id: str, connection_id: str) -> HttpResponse:
+    """Remove a connection and, by cascade, its webhook event log."""
+    connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
+    name = connection.display_name
+    connection.delete()
+    messages.success(request, f"Disconnected {name}.")
+    return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
+
+
+def _render_secret(
+    request: WorkspaceRequest,
+    connection: ChannelConnection,
+    secret: str,
+    *,
+    created: bool,
+) -> HttpResponse:
+    """Render the one and only view of a webhook secret."""
+    context = _connection_context(request, connection)
+    context.update({"secret": secret, "created": created})
+    return render(request, "channels/secret.html", context)

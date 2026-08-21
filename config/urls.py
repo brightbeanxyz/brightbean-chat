@@ -76,7 +76,13 @@ urlpatterns = [
     # RBACMiddleware's resolution contract; do not rename it.
     path("w/<uuid:workspace_id>/", include("apps.workspaces.urls")),
     path("w/<uuid:workspace_id>/settings/credentials/", include("apps.credentials.urls")),
+    path("w/<uuid:workspace_id>/settings/channels/", include("apps.channels.urls")),
     *[_ws_stub(*stub) for stub in _WORKSPACE_STUBS],
+    # Inbound webhooks (SPEC §7.1). Unauthenticated and deliberately NOT under
+    # /w/<workspace_id>/: a platform posting an event has no session, and
+    # RBACMiddleware would try to resolve a membership for it. The signature is
+    # the credential; see apps/channels/views_webhooks.py.
+    path("webhooks/", include("apps.channels.urls_webhooks")),
     path("", account_views.root, name="index"),
 ]
 
