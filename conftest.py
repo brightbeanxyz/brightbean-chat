@@ -28,6 +28,48 @@ def _isolate_cache(request: Any) -> Any:
     cache.clear()
 
 
+#: What ``frozen_rate_limit_window`` pins the limiter's clock to. Arbitrary:
+#: what matters is that it does not move, not where it stops.
+FROZEN_RATE_LIMIT_CLOCK = 1_700_000_000.0
+
+
+@pytest.fixture
+def frozen_rate_limit_window(monkeypatch: Any) -> float:
+    """Stop the rate limiter's clock, so a burst cannot straddle a window.
+
+    ``apps.common.ratelimit.window_key`` puts the window number in the key —
+    ``int(time.time() // window_seconds)`` — which is what makes the window
+    *fixed* rather than sliding, and is deliberate: it is what makes the
+    ``Retry-After`` the limiter hands out truthful. Read that module before
+    reaching for a change there instead of here.
+
+    The consequence lands on tests. One that fires ``limit + 1`` requests in a
+    tight loop passes only while that sub-second burst stays inside one window;
+    when it happens to cross a boundary the hits split across two counters —
+    eight and three, say — neither trips the limit, and the assertion that the
+    last request is refused fails with a bare ``assert 200 == 429``. It cost
+    about one full-suite run in five before this fixture existed.
+
+    Frozen rather than merely placed mid-window, because with no elapsed time
+    there is no boundary to cross whatever the window size is — so this stays
+    correct for issue #25's per-API-key limit and #4's signature-failure
+    throttle, which use the same helpers with different windows.
+
+    The stand-in replaces the *module's* ``time`` reference rather than patching
+    the stdlib module in place: only ``apps.common.ratelimit`` sees a stopped
+    clock, and Django, the test client and everything else keep the real one.
+    """
+    from apps.common import ratelimit
+
+    class _StoppedClock:
+        @staticmethod
+        def time() -> float:
+            return FROZEN_RATE_LIMIT_CLOCK
+
+    monkeypatch.setattr(ratelimit, "time", _StoppedClock)
+    return FROZEN_RATE_LIMIT_CLOCK
+
+
 @pytest.fixture
 def secret_value() -> str:
     """An opaque high-entropy secret with no recognisable credential shape.

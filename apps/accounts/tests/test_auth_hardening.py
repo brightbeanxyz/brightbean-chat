@@ -13,6 +13,13 @@ SIGNUP = "/accounts/signup/"
 RESET = "/accounts/password/reset/"
 
 
+# The clock is frozen for the whole class, not just for the tests that count to
+# the limit today. Five of them do, and the next one somebody adds will too —
+# the flake this prevents is invisible until an unlucky run, so opting in per
+# test means opting out by accident. The tests here that never reach the limit,
+# and the ones that pass ``window_key`` an explicit ``now=``, are unaffected
+# either way — a stopped clock changes nothing for them.
+@pytest.mark.usefixtures("frozen_rate_limit_window")
 @pytest.mark.django_db
 class TestAuthRateLimiting:
     def test_posts_are_capped(self, client):
@@ -41,6 +48,31 @@ class TestAuthRateLimiting:
     def test_unrelated_paths_are_untouched(self, client):
         for _ in range(AUTH_RATE_LIMIT + 5):
             assert client.get("/healthz").status_code == 200
+
+    def test_the_whole_burst_counts_against_one_window(self, client):
+        """The property whose absence made this class flaky, asserted directly.
+
+        A burst that crosses a window boundary writes a second counter row and
+        splits its hits across the two, so neither reaches the limit. One row
+        means one window, which is the precondition every test above relies on.
+        """
+        from apps.common.models import RateLimitCounter
+
+        assert RateLimitCounter.objects.count() == 0
+
+        for _ in range(AUTH_RATE_LIMIT + 1):
+            client.post(LOGIN, {})
+
+        assert RateLimitCounter.objects.count() == 1
+
+    def test_the_limiter_reads_the_frozen_clock(self, frozen_rate_limit_window):
+        """Proof the fixture reaches the code path the middleware uses."""
+        live = window_key(RATE_LIMIT_NAMESPACE, "203.0.113.1", window_seconds=AUTH_RATE_WINDOW)
+        pinned = window_key(
+            RATE_LIMIT_NAMESPACE, "203.0.113.1", window_seconds=AUTH_RATE_WINDOW, now=frozen_rate_limit_window
+        )
+
+        assert live == pinned
 
     def test_the_bucket_rotates_with_the_clock(self):
         """The window number is part of the key, so the window starts on the
