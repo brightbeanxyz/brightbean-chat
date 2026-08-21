@@ -1,0 +1,8 @@
+{
+  "name": "brightbean-chat",
+  "private": true,
+  "description": "Placeholder manifest. The Tailwind 4 toolchain and npm scripts arrive with issue #32; this exists so the `npm audit` gate in CI is wired from Layer 0 onwards.",
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {},
+  "devDependencies": {}
+}

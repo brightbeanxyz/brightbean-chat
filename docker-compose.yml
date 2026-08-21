@@ -1,0 +1,92 @@
+# Local development stack: Postgres, a one-shot migrate, and the app.
+#
+# Every value below has a working default, so `docker compose up` succeeds on a
+# fresh clone with no .env — Studio's compose hard-requires `env_file: .env`
+# and fails immediately without one. Compose reads .env from the project root
+# for interpolation, so copying .env.example over still overrides everything.
+#
+# This is the dev-grade stack. The hardened production compose (gunicorn
+# tuning, Caddy, TLS) belongs to issue #28.
+
+x-app-environment: &app-environment
+  DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-config.settings.development}
+  # Deliberately NOT ${DATABASE_URL}. .env.example ships a host-local URL
+  # (…@localhost:5432) because that is what a non-Docker `make server` needs —
+  # and inside these containers "localhost" is the container itself, so
+  # interpolating it makes `docker compose up` fail to migrate or start for
+  # anyone who ran `make setup` first. Compose gets its own knob; the value in
+  # .env still reaches the container through env_file and is overridden here.
+  DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgres://postgres:postgres@postgres:5432/brightbean_chat}
+  SECRET_KEY: ${SECRET_KEY:-}
+  ENCRYPTION_KEY_SALT: ${ENCRYPTION_KEY_SALT:-}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+  APP_URL: ${APP_URL:-http://localhost:8000}
+  # A local .env reaches the container through `env_file` below (and through
+  # the dev bind-mount). Point the settings loader away from the file so the
+  # environment is the single source of truth inside the container.
+  DJANGO_ENV_FILE: /nonexistent
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-brightbean_chat}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # Local development only. A production deployment supplies its own.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Loopback only. Published on 0.0.0.0 this would put a Postgres holding
+      # contacts and encrypted platform credentials, with a well-known default
+      # password, on every network the developer's machine joins.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    # Naming the image lets CI reuse one it already built instead of building
+    # the same layers twice.
+    image: brightbean-chat:${IMAGE_TAG:-dev}
+    command: python manage.py migrate --noinput
+    environment: *app-environment
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    build: .
+    image: brightbean-chat:${IMAGE_TAG:-dev}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    volumes:
+      - media_data:/app/media
+    environment: *app-environment
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  media_data:

@@ -1,0 +1,32 @@
+# gitleaks v8 config. Extends the default rule set.
+#
+# Anything added to the allowlist must name the files, say what matches, and
+# explain why it is not a credential.
+#
+# Why paths rather than inline `# gitleaks:allow` markers, which would be more
+# precise: CI scans full history (fetch-depth: 0). An inline marker applies
+# only to the commit that carries it, so every earlier commit of the same line
+# still fails the scan. A path allowlist is the only form that holds across
+# history.
+
+[extend]
+useDefault = true
+
+# Fixtures deliberately shaped like credentials — Stripe keys, GitHub PATs,
+# Slack tokens, AWS access-key ids, JWTs, and high-entropy strings standing in
+# for a real secret so a negative case means something. They are the inputs
+# that prove the log scrubber, the Sentry event scrubber and the placeholder
+# checks actually fire; without them those tests assert nothing. All are
+# literals in test parameters, never read from an environment, and grant
+# access to nothing.
+#
+# Scoped to these three files and to the two rules they trip, so a real secret
+# committed anywhere else — or a differently-shaped one here — still fails.
+[[allowlists]]
+description = "Synthetic credential-shaped test fixtures"
+targetRules = ["generic-api-key", "stripe-access-token"]
+paths = [
+    '''apps/common/tests/test_logging\.py''',
+    '''apps/common/tests/test_sentry\.py''',
+    '''apps/common/tests/test_checks\.py''',
+]

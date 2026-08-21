@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- BrightBean Chat ---
+# Django collected static files and user uploads
+staticfiles/
+media/
+test_media/
+
+# Node (the Tailwind toolchain arrives with issue #32)
+node_modules/
+
+# Tooling caches
+.ruff_cache/
+
+# macOS
+.DS_Store
