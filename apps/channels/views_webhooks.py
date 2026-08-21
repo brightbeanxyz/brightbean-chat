@@ -28,8 +28,10 @@ Bad signature                403     The only 403. Also: unknown connection, so 
 Malformed JSON body          400     SPEC §7.1: "malformed payloads per platform
                                      requirements".
 No adapter deployed yet      503     Honest, and makes the platform retry after the
-                                     adapter ships. Cannot be confused with a signature
-                                     failure in the logs.
+                                     adapter ships. Decided before any connection is
+                                     looked up, so every id on that platform gets it —
+                                     see _ingest_for_connection on why that ordering is
+                                     a security property.
 Anything else, including a   200     "Never return 5xx for business-logic failures."
 processor blowing up
 ===========================  ======  ==================================================
@@ -85,7 +87,12 @@ def platform_webhook(request: HttpRequest, platform: str) -> HttpResponse:
     if request.method == "GET":
         return _hub_challenge(request, platform)
     early = _reject_early(request, connection_id=None)
-    return early if early is not None else _ingest(request, platform=platform, connection=None)
+    if early is not None:
+        return early
+    adapter = _adapter_or_none(platform)
+    if adapter is None:
+        return _unavailable(platform)
+    return _ingest(request, platform=platform, adapter=adapter, connection=None)
 
 
 @csrf_exempt
@@ -159,13 +166,27 @@ def _ingest_for_connection(request: HttpRequest, connection_id: UUID, *, platfor
     if early is not None:
         return early
 
+    # The adapter is resolved BEFORE the connection, and the order is a
+    # security property rather than a performance one. These routes take the
+    # connection id in the URL, so "does this id name something real" is a
+    # question an unauthenticated caller can ask by watching the status code.
+    # Looking the connection up first would answer it: with no adapter
+    # deployed, a real id reached the 503 below while an unknown one had
+    # already been refused with 403. Resolving the adapter first means this
+    # route answers 503 to *every* id while its platform has no adapter, and
+    # 403 to every id once it does — indistinguishable either way, which is
+    # what lets tests/idor.py waive it from the cross-tenant sweep.
+    adapter = _adapter_or_none(platform)
+    if adapter is None:
+        return _unavailable(platform)
+
     connection = _connection_by_id(connection_id, platform)
     if connection is None:
         # Same answer as a bad signature, on purpose: a distinguishable "no such
         # connection" would confirm which ids are real (SECURITY-BASELINE §1).
         security.record_signature_failure(request, connection_id)
         return _forbidden()
-    return _ingest(request, platform=platform, connection=connection)
+    return _ingest(request, platform=platform, adapter=adapter, connection=connection)
 
 
 def _connection_by_id(connection_id: UUID, platform: str) -> ChannelConnection | None:
@@ -184,12 +205,20 @@ def _connection_by_id(connection_id: UUID, platform: str) -> ChannelConnection |
     )
 
 
-def _ingest(request: HttpRequest, *, platform: str, connection: ChannelConnection | None) -> HttpResponse:
+def _ingest(
+    request: HttpRequest,
+    *,
+    platform: str,
+    adapter: Adapter,
+    connection: ChannelConnection | None,
+) -> HttpResponse:
     """verify → dedup → raw-persist → dispatch (ROADMAP contract 6).
 
-    Callers run :func:`_reject_early` first — it is not repeated here, because
-    the ban check is a query and running it twice per request would double the
-    cost of the cheapest step.
+    Callers run :func:`_reject_early` and resolve the adapter first — neither is
+    repeated here. The ban check is a query, and running it twice per request
+    would double the cost of the cheapest step; the adapter has to be resolved
+    by the caller anyway, so that the per-connection routes can do it before
+    they touch the database (see :func:`_ingest_for_connection`).
     """
     try:
         raw_body = request.body
@@ -199,14 +228,6 @@ def _ingest(request: HttpRequest, *, platform: str, connection: ChannelConnectio
         return HttpResponse("Payload too large", status=413)
     if len(raw_body) > security.max_body_bytes():
         return HttpResponse("Payload too large", status=413)
-
-    try:
-        adapter = adapter_for(platform)
-    except AdapterNotRegisteredError:
-        # Our gap, not the caller's. 503 makes the platform retry once the
-        # adapter ships, and never counts against anyone's throttle.
-        logger.warning("Webhook for %s arrived with no adapter registered", platform)
-        return HttpResponse("Channel not available", status=503)
 
     if connection is None:
         connection = adapter.resolve_connection(request, raw_body)
@@ -258,6 +279,26 @@ def _reject_early(request: HttpRequest, *, connection_id: Any) -> HttpResponse |
 def _forbidden() -> HttpResponse:
     """The one 403. Identical for a bad signature and an unknown connection."""
     return HttpResponse("Forbidden", status=403)
+
+
+def _adapter_or_none(platform: str) -> Adapter | None:
+    """An adapter instance, or None because that platform has none yet."""
+    try:
+        return adapter_for(platform)
+    except AdapterNotRegisteredError:
+        return None
+
+
+def _unavailable(platform: str) -> HttpResponse:
+    """503 for a platform whose adapter has not shipped.
+
+    Our gap, not the caller's: it makes the platform retry once the adapter
+    ships, and it never counts against anyone's throttle. Returned before
+    anything about a specific connection has been looked at, so it carries no
+    information about which connection ids exist.
+    """
+    logger.warning("Webhook for %s arrived with no adapter registered", platform)
+    return HttpResponse("Channel not available", status=503)
 
 
 def _parse_events(adapter: Adapter, request: HttpRequest, connection: ChannelConnection) -> list[NormalizedEvent]:

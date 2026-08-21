@@ -12,8 +12,13 @@ resolve and the request gets the same 403 as any other unidentifiable delivery.
 
 Every route is named, which ``tests/idor.py`` requires — and the two carrying a
 ``connection_id`` are waived there, with the reason, because an unauthenticated
-endpoint has no session tenant to compare against and deliberately answers an
-identical 403 for an unknown connection and a bad signature.
+endpoint has no session tenant to compare against. What replaces the sweep's
+guarantee is that these routes answer the *same* status to every connection id:
+403 for both an unknown connection and a bad signature once the platform has an
+adapter, and 503 for every id while it does not. ``views_webhooks`` resolves the
+adapter before the connection to make the second half true;
+``apps/channels/tests/test_webhooks.py::TestIdIndistinguishability`` holds both
+halves.
 """
 
 from django.urls import path

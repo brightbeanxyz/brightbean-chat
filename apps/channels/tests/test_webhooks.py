@@ -18,7 +18,7 @@ import pytest
 from django.db import connection as db_connection
 from django.test import Client
 from django.test.utils import override_settings
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 
 from apps.channels import ingest
 from apps.channels.models import ChannelConnection, WebhookEventLog, WebhookEventStatus
@@ -28,6 +28,13 @@ from apps.common.platforms import Platform
 pytestmark = pytest.mark.django_db
 
 TELEGRAM_URL = "/webhooks/telegram/"
+
+
+def _route_for(platform: str, connection_id: Any) -> str:
+    """The per-connection webhook URL for a platform that has one."""
+    if platform == Platform.EMAIL:
+        return reverse("webhook_email", kwargs={"provider": "resend", "connection_id": connection_id})
+    return reverse("webhook_sms", kwargs={"connection_id": connection_id})
 
 
 def body_for(*event_ids: str, text: str = "hello") -> bytes:
@@ -241,6 +248,178 @@ class TestSignatureFailures:
         with registered(Platform.SMS):
             url = reverse("webhook_sms", kwargs={"connection_id": "11111111-1111-1111-1111-111111111111"})
             assert post(client, url, body_for("e1"), secret="anything").status_code == 403
+
+
+class TestIdIndistinguishability:
+    """The property that stands in for the IDOR sweep on these two routes.
+
+    ``tests/idor.py`` waives ``webhook_sms`` and ``webhook_email`` because an
+    unauthenticated endpoint has no session tenant to compare a connection
+    against, and cannot answer 404 without breaking ingestion. What replaces
+    that guarantee is this: **the response must not depend on whether the
+    connection id names something real.** If this class is deleted, the waiver
+    has to go with it.
+
+    Both states are covered, because the interesting one is the state this
+    layer actually ships in. With no adapter registered — every platform, right
+    now — an earlier version of the pipeline looked the connection up first, so
+    a real id reached a 503 while an unknown id had already been refused with
+    403. That is an unauthenticated existence oracle for connection ids, and it
+    is why ``_ingest_for_connection`` resolves the adapter before it touches the
+    database.
+    """
+
+    @staticmethod
+    def _pair(client: Client, url_for_real: str, url_for_unknown: str, secret: str) -> tuple[Any, Any]:
+        body = body_for("e1")
+        return (
+            post(client, url_for_real, body, secret=secret, signature="sha256=" + "0" * 64),
+            post(client, url_for_unknown, body, secret=secret, signature="sha256=" + "0" * 64),
+        )
+
+    @pytest.mark.parametrize("platform", [Platform.SMS, Platform.EMAIL])
+    def test_a_real_and_an_unknown_id_look_identical_with_an_adapter(
+        self, client: Client, connection: ChannelConnection, platform: str
+    ) -> None:
+        real = ChannelConnection(
+            workspace=connection.workspace,
+            platform=platform,
+            display_name="Real",
+            external_id=f"real-{platform}",
+        )
+        secret = real.rotate_webhook_secret()
+        real.save()
+
+        with registered(platform):
+            real_response, unknown_response = self._pair(
+                client,
+                _route_for(platform, real.pk),
+                _route_for(platform, "11111111-1111-1111-1111-111111111111"),
+                secret,
+            )
+
+        assert real_response.status_code == unknown_response.status_code == 403
+        assert real_response.content == unknown_response.content
+
+    @pytest.mark.parametrize("platform", [Platform.SMS, Platform.EMAIL])
+    def test_a_real_and_an_unknown_id_look_identical_without_an_adapter(
+        self, client: Client, connection: ChannelConnection, platform: str
+    ) -> None:
+        """The state this layer ships in: no adapter exists for any platform."""
+        real = ChannelConnection(
+            workspace=connection.workspace,
+            platform=platform,
+            display_name="Real",
+            external_id=f"real-{platform}",
+        )
+        secret = real.rotate_webhook_secret()
+        real.save()
+
+        real_response, unknown_response = self._pair(
+            client,
+            _route_for(platform, real.pk),
+            _route_for(platform, "11111111-1111-1111-1111-111111111111"),
+            secret,
+        )
+
+        assert real_response.status_code == unknown_response.status_code == 503
+        assert real_response.content == unknown_response.content
+
+    @pytest.mark.parametrize("platform", [Platform.SMS, Platform.EMAIL])
+    def test_a_disabled_connection_is_indistinguishable_from_an_unknown_one(
+        self, client: Client, connection: ChannelConnection, platform: str
+    ) -> None:
+        """Otherwise the status leaks whether a real id is switched on."""
+        disabled = ChannelConnection(
+            workspace=connection.workspace,
+            platform=platform,
+            display_name="Disabled",
+            external_id=f"disabled-{platform}",
+            status="disabled",
+        )
+        secret = disabled.rotate_webhook_secret()
+        disabled.save()
+
+        with registered(platform):
+            disabled_response, unknown_response = self._pair(
+                client,
+                _route_for(platform, disabled.pk),
+                _route_for(platform, "11111111-1111-1111-1111-111111111111"),
+                secret,
+            )
+
+        assert disabled_response.status_code == unknown_response.status_code == 403
+        assert disabled_response.content == unknown_response.content
+
+
+class TestEmailRoute:
+    """SPEC §6.7's bounce/delivery callback. Outbound-only platform, inbound route.
+
+    The ``provider`` segment (resend / ses / smtp) selects a payload shape, not a
+    tenant's object: it is not a credential and is not used for lookup, so an
+    unknown value simply reaches an adapter that will not recognise the body.
+    """
+
+    @staticmethod
+    def _connection(workspace: Any) -> tuple[ChannelConnection, str]:
+        connection = ChannelConnection(
+            workspace=workspace,
+            platform=Platform.EMAIL,
+            display_name="Sending domain",
+            external_id="mail.example.test",
+        )
+        secret = connection.rotate_webhook_secret()
+        connection.save()
+        return connection, secret
+
+    def test_a_valid_delivery_is_logged_and_dispatched(
+        self, client: Client, connection: ChannelConnection, collected: list[Any]
+    ) -> None:
+        email, secret = self._connection(connection.workspace)
+        with registered(Platform.EMAIL):
+            url = reverse("webhook_email", kwargs={"provider": "resend", "connection_id": email.pk})
+            response = post(client, url, body_for("bounce-1"), secret=secret)
+
+        assert response.status_code == 200
+        assert WebhookEventLog.objects.get().connection == email
+        assert [event.provider_event_id for event in collected] == ["bounce-1"]
+
+    def test_a_bad_signature_is_403_and_writes_nothing(self, client: Client, connection: ChannelConnection) -> None:
+        email, secret = self._connection(connection.workspace)
+        with registered(Platform.EMAIL):
+            url = reverse("webhook_email", kwargs={"provider": "resend", "connection_id": email.pk})
+            response = post(client, url, body_for("e1"), secret=secret, signature="sha256=" + "0" * 64)
+
+        assert response.status_code == 403
+        assert WebhookEventLog.objects.count() == 0
+
+    @pytest.mark.parametrize("provider", ["resend", "ses", "smtp", "unknown-provider", "../../etc"])
+    def test_the_provider_segment_does_not_change_who_is_authorised(
+        self, client: Client, connection: ChannelConnection, provider: str
+    ) -> None:
+        """It selects a body shape; the connection id and the signature decide access."""
+        email, secret = self._connection(connection.workspace)
+        with registered(Platform.EMAIL):
+            try:
+                url = reverse("webhook_email", kwargs={"provider": provider, "connection_id": email.pk})
+            except NoReverseMatch:
+                # A segment the URL converter will not build is not routable at
+                # all, which is the strongest possible answer.
+                return
+            assert post(client, url, body_for("e1"), secret=secret).status_code == 200
+
+    def test_a_get_is_not_allowed(self, client: Client, connection: ChannelConnection) -> None:
+        email, _ = self._connection(connection.workspace)
+        url = reverse("webhook_email", kwargs={"provider": "resend", "connection_id": email.pk})
+        assert client.get(url).status_code == 405
+
+    def test_a_disabled_connection_stops_ingesting(self, client: Client, connection: ChannelConnection) -> None:
+        email, secret = self._connection(connection.workspace)
+        email.status = "disabled"
+        email.save(update_fields=["status"])
+        with registered(Platform.EMAIL):
+            url = reverse("webhook_email", kwargs={"provider": "resend", "connection_id": email.pk})
+            assert post(client, url, body_for("e1"), secret=secret).status_code == 403
 
 
 class TestThrottle:

@@ -68,10 +68,15 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
 _WEBHOOK_WAIVER = (
     "Unauthenticated public endpoint (SPEC §7.1). There is no session tenant to "
     "compare the connection against — the caller is a messaging platform, not a "
-    "user — so 'belongs to another workspace' is not a question it can ask. It "
-    "answers an identical 403 for an unknown connection and for a bad signature, "
-    "which is the no-existence-oracle property this sweep exists to enforce, "
-    "reached by a different route. Covered by apps/channels/tests/test_webhooks.py."
+    "user — so 'belongs to another workspace' is not a question it can ask, and "
+    "404 is not an answer it can give without breaking ingestion. What stands in "
+    "for the sweep is that the route answers the SAME status to every connection "
+    "id, real or not: 403 for both an unknown connection and a bad signature once "
+    "the platform has an adapter, and 503 for every id while it has none — which "
+    "is why apps/channels/views_webhooks.py resolves the adapter before it looks "
+    "a connection up. Both halves are asserted by "
+    "apps/channels/tests/test_webhooks.py::TestIdIndistinguishability; if that "
+    "class is ever deleted, this waiver must be too."
 )
 
 #: Routes exempt from the sweep, each with the reason. A waiver is a reviewed
