@@ -125,7 +125,7 @@ class TestExactlyOnce:
         ScheduledAction.objects.unscoped().filter(id__in=killed).update(
             updated_at=timezone.now() - ZOMBIE_AFTER - timedelta(minutes=1)
         )
-        assert reset_zombie_actions() == "reset 50 zombie action(s)"
+        assert reset_zombie_actions().startswith("reset 50 zombie action(s)")
 
         with temporary_handler(PROBE, record):
             _drain_concurrently(["worker-1", "worker-2"])

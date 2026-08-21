@@ -34,7 +34,7 @@ class TestZombieRecovery:
         action = make_action(tenancy.workspace, status=ActionStatus.RUNNING, attempts=1)
         _stale(action, ZOMBIE_AFTER + timedelta(minutes=1))
 
-        assert reset_zombie_actions() == "reset 1 zombie action(s)"
+        assert reset_zombie_actions().startswith("reset 1 zombie action(s)")
 
         action.refresh_from_db()
         assert action.status == ActionStatus.PENDING
@@ -63,7 +63,33 @@ class TestZombieRecovery:
         for workspace in (tenancy.workspace, other_tenancy.workspace, None):
             _stale(make_action(workspace, status=ActionStatus.RUNNING), timedelta(hours=1))
 
-        assert reset_zombie_actions() == "reset 3 zombie action(s)"
+        assert reset_zombie_actions().startswith("reset 3 zombie action(s)")
+
+    def test_an_abandoned_action_out_of_attempts_becomes_terminal(self, tenancy: Tenancy) -> None:
+        """A row that kills its worker never reaches _record_failure.
+
+        The claim is the only thing that counts its attempts, so resetting it
+        unconditionally meant claim, die, reset, claim, die — forever, with
+        max_attempts never applying to the failure mode that most needs it.
+        """
+        poison = make_action(tenancy.workspace, status=ActionStatus.RUNNING, attempts=5, max_attempts=5)
+        _stale(poison, timedelta(hours=1))
+
+        summary = reset_zombie_actions()
+
+        poison.refresh_from_db()
+        assert poison.status == ActionStatus.FAILED
+        assert "out of attempts" in poison.last_error
+        assert "failed 1 out of attempts" in summary
+
+    def test_an_abandoned_action_with_budget_left_still_comes_back(self, tenancy: Tenancy) -> None:
+        survivor = make_action(tenancy.workspace, status=ActionStatus.RUNNING, attempts=2, max_attempts=5)
+        _stale(survivor, timedelta(hours=1))
+
+        reset_zombie_actions()
+
+        survivor.refresh_from_db()
+        assert survivor.status == ActionStatus.PENDING
 
     def test_the_clock_can_be_driven_from_the_call_site(self, tenancy: Tenancy) -> None:
         """Lets the sweep be tested at an arbitrary moment without freezing time."""
@@ -140,17 +166,35 @@ class TestJobRegistry:
         assert jobs == {}
         assert "no callable" in caplog.text
 
+    def test_a_module_whose_own_import_fails_is_reported_as_broken(self, monkeypatch: Any, caplog: Any) -> None:
+        """import_module raises ImportError for "absent" AND for "present but
+        its own import failed". Filing the second under "not landed yet" hid a
+        broken installation at debug level and memoised it off for the process.
+        """
+        monkeypatch.setattr(
+            housekeeping,
+            "OPTIONAL_JOB_PATHS",
+            (("broken", "apps.queueing.tests.broken_import_probe.job"),),
+        )
+        with only_housekeeping_jobs(), caplog.at_level("ERROR", logger="apps.queueing.housekeeping"):
+            jobs = housekeeping_jobs()
+
+        assert jobs == {}
+        assert "could not be imported" in caplog.text
+
     def test_an_absent_module_is_only_looked_up_once(self, monkeypatch: Any) -> None:
         """Python does not cache failed imports, so an unmemoised bridge would
         redo a full sys.path search on every sweep."""
         attempts: list[str] = []
 
-        def counting_import(name: str) -> Any:
+        def counting_find_spec(name: str) -> Any:
             attempts.append(name)
-            raise ImportError(name)
+            return None
 
         monkeypatch.setattr(housekeeping, "OPTIONAL_JOB_PATHS", (("absent", "apps.nope.module.job"),))
-        monkeypatch.setattr(housekeeping.importlib, "import_module", counting_import)
+        # find_spec is what decides "absent" now; import_module is never
+        # reached for a module that is not there.
+        monkeypatch.setattr(housekeeping.importlib.util, "find_spec", counting_find_spec)
 
         with only_housekeeping_jobs():
             housekeeping_jobs()
@@ -216,6 +260,25 @@ class TestTheChain:
         assert chain.pk != decoy.pk
         assert chain.workspace_id is None
 
+    def test_a_stale_running_sweep_does_not_suppress_the_chain_forever(self) -> None:
+        """The deadlock: a worker dies holding the sweep.
+
+        The row stays `running` and nothing can move it — the claim only looks
+        at pending, and the only thing that resets abandoned rows is zombie
+        recovery, which is a job inside the sweep that is now stuck. Accepting
+        a stale running row here stopped housekeeping permanently while every
+        worker start reported it healthy.
+        """
+        stuck = ensure_housekeeping_scheduled()
+        ScheduledAction.objects.unscoped().filter(pk=stuck.pk).update(
+            status=ActionStatus.RUNNING, updated_at=timezone.now() - ZOMBIE_AFTER - timedelta(minutes=1)
+        )
+
+        revived = ensure_housekeeping_scheduled()
+
+        assert revived.pk != stuck.pk
+        assert revived.status == ActionStatus.PENDING
+
     def test_bootstrapping_leaves_a_running_sweep_alone(self) -> None:
         running = ensure_housekeeping_scheduled()
         ScheduledAction.objects.unscoped().filter(pk=running.pk).update(status=ActionStatus.RUNNING)
@@ -235,22 +298,52 @@ class TestTheChain:
         )
         assert timedelta(minutes=59) <= successor.run_at - timezone.now() <= timedelta(minutes=61)
 
-    def test_a_sweep_that_throws_still_leaves_a_successor(self) -> None:
-        """Otherwise one bad hour ends housekeeping forever — including zombie recovery."""
+    def test_a_failing_job_does_not_roll_back_the_successor(self, tenancy: Tenancy) -> None:
+        """The sweep runs inside process_action's transaction.
+
+        Raising to "retry with backoff" rolled back everything the sweep had
+        just done — the successor row and every job that had already
+        succeeded, zombie recovery included. One permanently broken job ended
+        all housekeeping.
+        """
+        zombie = make_action(tenancy.workspace, status=ActionStatus.RUNNING)
+        _stale(zombie, timedelta(hours=1))
+        sweep = ensure_housekeeping_scheduled()
+        ScheduledAction.objects.unscoped().filter(pk=sweep.pk).update(run_at=timezone.now() - timedelta(seconds=1))
+
+        def bad() -> str:
+            raise RuntimeError("nope")
+
+        # Through the real worker, so the handler runs inside the transaction
+        # that made raising destructive.
+        with only_housekeeping_jobs(bad=bad, zombies=reset_zombie_actions):
+            claimed = next(row for row in claim_batch() if row.pk == sweep.pk)
+            assert process_action(claimed) == ActionStatus.DONE
+
+        # The successor survived...
+        assert (
+            ScheduledAction.objects.unscoped()
+            .filter(type=ActionType.HOUSEKEEPING, status=ActionStatus.PENDING)
+            .exclude(pk=sweep.pk)
+            .exists()
+        )
+        # ...and so did the work the healthy job did alongside the broken one.
+        zombie.refresh_from_db()
+        assert zombie.status == ActionStatus.PENDING
+
+    def test_a_failing_job_is_logged_loudly(self, caplog: Any) -> None:
         action = ensure_housekeeping_scheduled()
 
         def bad() -> str:
             raise RuntimeError("nope")
 
-        with only_housekeeping_jobs(bad=bad), pytest.raises(RuntimeError, match="Housekeeping jobs failed"):
+        with (
+            only_housekeeping_jobs(bad=bad),
+            caplog.at_level("ERROR", logger="apps.queueing.housekeeping"),
+        ):
             handle_housekeeping({}, action)
 
-        assert (
-            ScheduledAction.objects.unscoped()
-            .filter(type=ActionType.HOUSEKEEPING, status=ActionStatus.PENDING)
-            .exclude(pk=action.pk)
-            .exists()
-        )
+        assert "bad" in caplog.text
 
     def test_two_sweeps_in_one_hour_converge_on_one_successor(self) -> None:
         """Per-hour idempotency keys: two workers and a tick cannot fan the chain out."""

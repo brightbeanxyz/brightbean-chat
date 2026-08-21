@@ -1,5 +1,6 @@
 """Claiming, running, retrying and failing (SPEC §15, §9.5)."""
 
+import time
 import uuid
 from datetime import timedelta
 from typing import Any
@@ -327,6 +328,53 @@ class TestBatches:
             result = drain(batch_size=2, should_stop=lambda: True)
 
         assert result.claimed == 0
+
+    def test_each_action_stamps_updated_at_before_it_runs(self, tenancy: Tenancy) -> None:
+        """The claim stamps the whole batch at once and actions run serially.
+
+        Without a per-action stamp, the last row of a slow batch still carries
+        the batch's claim time, so another worker's zombie sweep returns live
+        work to pending and runs it a second time. Contact locks only serialise
+        that duplicate; rows with no contact are not locked at all.
+        """
+        seen: dict[str, Any] = {}
+        make_action(tenancy.workspace, type=PROBE)
+        claimed = claim_batch()[0]
+        # Backdate the claim stamp to what a long batch would leave behind.
+        stale = timezone.now() - timedelta(hours=1)
+        ScheduledAction.objects.unscoped().filter(pk=claimed.pk).update(updated_at=stale)
+
+        def observe(payload: dict[str, Any], action: ScheduledAction) -> None:
+            seen["updated_at"] = ScheduledAction.objects.unscoped().get(pk=action.pk).updated_at
+
+        with temporary_handler(PROBE, observe):
+            process_action(claimed)
+
+        assert seen["updated_at"] > stale, "the row still looked abandoned while it was running"
+
+    def test_a_drain_out_of_budget_releases_unstarted_rows(self, tenancy: Tenancy) -> None:
+        """They were claimed but never handed to a handler.
+
+        Leaving them `running` stranded them until zombie recovery ten minutes
+        later; the HTTP tick has a real budget (gunicorn kills the request), so
+        this is the difference between a 502 with stuck rows and a clean hand-back.
+        """
+        for _ in range(5):
+            make_action(tenancy.workspace, type=PROBE)
+
+        def slow(payload: dict[str, Any], action: ScheduledAction) -> None:
+            time.sleep(0.05)
+
+        with temporary_handler(PROBE, slow):
+            # A budget that expires during the batch, not between batches.
+            result = run_batch(5, deadline=time.monotonic() + 0.06)
+
+        pending = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(status=ActionStatus.PENDING)
+        assert pending.exists(), "unstarted rows should be back in the queue, not left running"
+        assert not ScheduledAction.objects.unscoped().filter(status=ActionStatus.RUNNING).exists()
+        # Released rows give their attempt back: nobody ran them.
+        assert all(action.attempts == 0 for action in pending)
+        assert result.claimed == result.done
 
     def test_batch_result_adds_up(self) -> None:
         total = BatchResult()

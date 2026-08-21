@@ -42,6 +42,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from apps.common.logging import scrub
@@ -203,6 +204,52 @@ def _error_text(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _mark_alive(action: ScheduledAction) -> None:
+    """Stamp ``updated_at`` as this action starts, in its own committed write.
+
+    Zombie recovery decides a row is abandoned from ``updated_at``, and the
+    claim stamps that once for the **whole batch**. Actions then run serially,
+    so the last row of a 50-row batch still carries the timestamp from when the
+    batch was claimed — and a batch that takes longer than ``ZOMBIE_AFTER``
+    lets another worker's sweep return live work to ``pending`` and run it a
+    second time. Contact locks do not save it: they serialise the duplicate,
+    they do not prevent it, and rows with no contact are not locked at all.
+
+    Committed separately (autocommit, before the handler's transaction opens)
+    because a stamp inside that transaction is invisible to the sweeping worker
+    until the handler finishes — which is exactly the window that needs
+    covering. The cost is one UPDATE per action; the alternative is
+    at-least-once turning into at-least-twice whenever handlers are slow.
+
+    A single handler that runs longer than ``ZOMBIE_AFTER`` on its own is still
+    the documented contract: it has to checkpoint by touching this column.
+    """
+    # Cross-tenant on purpose: the worker drains every workspace's queue.
+    ScheduledAction.objects.unscoped().filter(pk=action.pk).update(updated_at=timezone.now())
+
+
+def _release(actions: list[ScheduledAction]) -> int:
+    """Hand claimed-but-unstarted rows straight back, rather than stranding them.
+
+    Used when a drain runs out of budget partway through a batch. The rows were
+    claimed but never given to a handler, so returning them to ``pending``
+    immediately is strictly better than leaving them ``running`` for zombie
+    recovery to notice ten minutes later. ``attempts`` is given back too — the
+    claim incremented it, and an attempt nobody made should not burn budget.
+
+    Guarded on ``status='running'`` so a row some other path has already moved
+    is left alone.
+    """
+    if not actions:
+        return 0
+    # Cross-tenant on purpose: same drain, same reason as the claim.
+    return (
+        ScheduledAction.objects.unscoped()
+        .filter(pk__in=[action.pk for action in actions], status=ActionStatus.RUNNING)
+        .update(status=ActionStatus.PENDING, attempts=F("attempts") - 1, updated_at=timezone.now())
+    )
+
+
 def _mark_done(action: ScheduledAction) -> None:
     action.status = ActionStatus.DONE
     action.last_error = ""
@@ -249,6 +296,7 @@ def process_action(action: ScheduledAction) -> str:
         return _record_failure(action, message, permanent=True)
 
     started = time.monotonic()
+    _mark_alive(action)
     lock: AbstractContextManager[Any] = contact_lock(action.contact_id) if action.contact_id else nullcontext()
     try:
         with transaction.atomic(), lock:
@@ -280,12 +328,28 @@ def process_action(action: ScheduledAction) -> str:
     return str(ActionStatus.DONE)
 
 
-def run_batch(batch_size: int = DEFAULT_BATCH_SIZE) -> BatchResult:
-    """Claim one batch and process every row in it."""
+def run_batch(batch_size: int = DEFAULT_BATCH_SIZE, *, deadline: float | None = None) -> BatchResult:
+    """Claim one batch and process it, stopping at ``deadline`` if given.
+
+    ``deadline`` is a ``time.monotonic()`` reading. It is checked between
+    actions rather than only between batches, because a batch of slow handlers
+    is exactly what overruns a caller's budget — and the HTTP tick's budget is
+    a real one: gunicorn kills the request at 30s. Rows not yet started are
+    released back to ``pending`` rather than abandoned mid-flight.
+    """
     batch_size = positive_int(batch_size)
     actions = claim_batch(batch_size)
     result = BatchResult(claimed=len(actions))
-    for action in actions:
+    for index, action in enumerate(actions):
+        # `index` guarantees forward progress: a caller whose budget is already
+        # spent still runs one action rather than claiming a batch, handing it
+        # straight back, and churning. One handler is the smallest unit that
+        # can be bounded at all.
+        if index and deadline is not None and time.monotonic() >= deadline:
+            released = _release(actions[index:])
+            result.claimed -= released
+            logger.info("Drain budget reached; released %s unstarted action(s) back to pending", released)
+            break
         try:
             status = process_action(action)
         except Exception:  # noqa: BLE001 - a row that cannot even record its own failure
@@ -323,10 +387,11 @@ def drain(
     while True:
         if should_stop is not None and should_stop():
             break
-        result = run_batch(batch_size)
+        result = run_batch(batch_size, deadline=deadline)
         total += result
         if result.claimed < batch_size:
-            # A short batch means the queue came up empty.
+            # A short batch means the queue came up empty — or the budget ran
+            # out mid-batch and the remainder went back to pending.
             break
         if deadline is not None and time.monotonic() >= deadline:
             break

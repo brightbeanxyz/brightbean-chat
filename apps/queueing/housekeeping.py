@@ -34,13 +34,14 @@ tenant, and a NULL workspace is invisible to every ``.for_workspace()`` query.
 """
 
 import importlib
+import importlib.util
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
 from apps.queueing.locks import advisory_lock
@@ -127,22 +128,33 @@ def _resolve_optional_jobs() -> None:
         if name in _JOBS or path in _RESOLUTION_ATTEMPTED:
             continue
         module_path, _, attribute = path.rpartition(".")
+
+        # "Not landed yet" and "installed but broken" both surface as
+        # ImportError from import_module — the second one when a module the
+        # target itself imports is missing. Treating them alike would file a
+        # broken installation under "expected", at debug level, and memoise it
+        # so the job stays silently off for the life of the process. find_spec
+        # answers the question that actually distinguishes them: is the module
+        # *there*.
         try:
-            module = importlib.import_module(module_path)
-        except ImportError:
-            # The owning app has not landed, or is not installed here. Expected,
-            # and the whole reason this bridge is tolerant.
+            spec = importlib.util.find_spec(module_path)
+        except (ImportError, ValueError):
+            # A missing parent package also means absent.
+            spec = None
+        if spec is None:
             _RESOLUTION_ATTEMPTED.add(path)
             logger.debug("Optional housekeeping job %s not available yet (%s)", name, path)
             continue
+
+        try:
+            module = importlib.import_module(module_path)
         except Exception:  # noqa: BLE001 - see below; this must not reach the caller
-            # The module exists but blew up on import — a misconfiguration, a
-            # bad setting, a circular import. Distinguishing this from "not
-            # landed yet" matters twice over: it is a real fault somebody has to
-            # see, and letting it propagate would abort the whole sweep from
-            # outside run_housekeeping_jobs' per-job guard, taking zombie
-            # recovery with it. Zombie recovery is what makes the queue
-            # self-healing, so a broken sibling must never be able to stop it.
+            # The module is there and blew up on import — a misconfiguration, a
+            # bad setting, a circular import, or one of its own imports missing.
+            # A real fault somebody has to see, and one that must not propagate:
+            # this runs outside run_housekeeping_jobs' per-job guard, so letting
+            # it escape would abort the whole sweep and take zombie recovery
+            # with it. Zombie recovery is what makes the queue self-healing.
             _RESOLUTION_ATTEMPTED.add(path)
             logger.exception("Optional housekeeping job %s could not be imported from %s", name, path)
             continue
@@ -185,14 +197,31 @@ def reset_zombie_actions(now: datetime | None = None) -> str:
     cutoff = (now or timezone.now()) - ZOMBIE_AFTER
     # Cross-tenant on purpose: abandoned work belongs to whichever workspace
     # owned it, and housekeeping sweeps the whole deployment.
-    reset = (
-        ScheduledAction.objects.unscoped()
-        .filter(status=ActionStatus.RUNNING, updated_at__lt=cutoff)
-        .update(status=ActionStatus.PENDING, updated_at=timezone.now())
+    abandoned = ScheduledAction.objects.unscoped().filter(status=ActionStatus.RUNNING, updated_at__lt=cutoff)
+
+    # Budget first. An action that kills its worker — a segfault, an OOM kill —
+    # never reaches _record_failure, so the only thing that ever counts its
+    # attempts is the claim. Resetting it unconditionally means claim, die,
+    # reset, claim, die, forever: max_attempts stops applying to exactly the
+    # failure mode that most deserves it, and one poisonous row takes down a
+    # worker every ten minutes indefinitely.
+    exhausted = abandoned.filter(attempts__gte=F("max_attempts")).update(
+        status=ActionStatus.FAILED,
+        last_error=(
+            "Abandoned while running and out of attempts: the worker holding it died "
+            "without recording a failure. See docs/SPEC.md §15 (zombie recovery)."
+        ),
+        updated_at=timezone.now(),
     )
+    reset = abandoned.filter(attempts__lt=F("max_attempts")).update(
+        status=ActionStatus.PENDING, updated_at=timezone.now()
+    )
+
     if reset:
         logger.warning("Zombie recovery returned %s abandoned action(s) to pending", reset)
-    return f"reset {reset} zombie action(s)"
+    if exhausted:
+        logger.error("Zombie recovery failed %s abandoned action(s) that were out of attempts", exhausted)
+    return f"reset {reset} zombie action(s), failed {exhausted} out of attempts"
 
 
 # Registered by call rather than as a decorator: the decorator narrows the name
@@ -238,18 +267,32 @@ def _schedule_run(run_at: datetime) -> ScheduledAction:
 
 @register_handler(ActionType.HOUSEKEEPING)
 def handle_housekeeping(payload: dict[str, Any], action: ScheduledAction) -> None:
-    """Run the sweep, having first guaranteed there will be a next one."""
-    # Before the jobs, deliberately. If a job explodes, the action retries with
-    # backoff *and* next hour's row already exists — the chain and the retry are
-    # independent, so neither a bad job nor a hung worker can end housekeeping.
+    """Run the sweep, having first guaranteed there will be a next one.
+
+    **This must not raise on a failed job**, and the reason is the transaction
+    it runs inside. ``process_action`` wraps the handler in ``atomic()``, so an
+    exception here rolls back everything the sweep just did — the successor row
+    scheduled on the first line included. Raising to "retry with backoff" would
+    therefore destroy the very chain that line exists to guarantee, along with
+    every job that had already succeeded, zombie recovery among them. One
+    permanently broken job would end all housekeeping.
+
+    So failures are logged and the sweep completes. That is also the right
+    semantics for a periodic job: the retry for an hourly sweep is the next
+    hourly sweep, not a backoff ladder, and every job is required to be
+    idempotent precisely so re-running it costs nothing.
+    """
+    # Before the jobs, deliberately: the successor is committed with the rest of
+    # this transaction, so the chain survives anything the jobs do.
     following = _schedule_run(timezone.now() + HOUSEKEEPING_INTERVAL)
     logger.debug("Next housekeeping sweep scheduled for %s (%s)", following.run_at, following.pk)
 
     failures = run_housekeeping_jobs()
     if failures:
-        # Raising retries the whole sweep with backoff. Jobs are required to be
-        # idempotent precisely so the ones that already succeeded can re-run.
-        raise RuntimeError(f"Housekeeping jobs failed: {', '.join(failures)}")
+        logger.error(
+            "Housekeeping jobs failed and will be retried by the next hourly sweep: %s",
+            ", ".join(failures),
+        )
 
 
 def ensure_housekeeping_scheduled() -> ScheduledAction:
@@ -284,10 +327,20 @@ def _live_or_new_chain() -> ScheduledAction:
     # reusing the name. The system chain would then never be created, and every
     # worker, tick and HTTP tick would report it healthy while zombie recovery
     # and every registered prune silently never ran.
+    #
+    # A RUNNING row only counts as live while it is *fresh*. If the worker
+    # holding the sweep dies, the row stays running forever and nothing else
+    # can move it: the claim only looks at pending rows, and the one thing that
+    # resets abandoned rows is zombie recovery — which is a housekeeping job,
+    # inside the sweep that is now stuck. Accepting a stale running row here
+    # closed that loop and stopped all housekeeping permanently, with every
+    # worker start reporting the chain healthy. Past ZOMBIE_AFTER it no longer
+    # suppresses a fresh chain, and the new chain's first sweep reclaims it.
+    fresh_enough = timezone.now() - ZOMBIE_AFTER
     live = (
         ScheduledAction.objects.unscoped()
         .filter(type=ActionType.HOUSEKEEPING, workspace__isnull=True)
-        .filter(Q(status=ActionStatus.PENDING) | Q(status=ActionStatus.RUNNING))
+        .filter(Q(status=ActionStatus.PENDING) | Q(status=ActionStatus.RUNNING, updated_at__gte=fresh_enough))
         .order_by("run_at")
         .first()
     )

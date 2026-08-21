@@ -30,7 +30,7 @@ from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.queueing.housekeeping import ensure_housekeeping_scheduled
-from apps.queueing.worker import DEFAULT_BATCH_SIZE, drain
+from apps.queueing.worker import drain
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,16 @@ logger = logging.getLogger(__name__)
 #: The budget is checked between batches, so the real ceiling is this plus one
 #: batch.
 MAX_SECONDS = 20
+
+#: Smaller than the worker's 50, because this budget is enforced by gunicorn.
+#:
+#: drain() checks the deadline between actions, so the overrun is bounded by
+#: one slow handler rather than a whole batch — but the claim itself is still
+#: work this request has taken responsibility for, and a smaller claim means
+#: less to hand back when the budget runs out. A deployment whose handlers are
+#: slow enough for this to matter wants a real worker process; this endpoint is
+#: the fallback for hosts that cannot run one.
+BATCH_SIZE = 10
 
 
 @csrf_exempt  # Token-authenticated, not session-authenticated: an external pinger has no CSRF cookie.
@@ -80,7 +90,7 @@ def internal_tick(request: HttpRequest) -> HttpResponse:
 
     started = time.monotonic()
     ensure_housekeeping_scheduled()
-    result = drain(batch_size=DEFAULT_BATCH_SIZE, max_seconds=MAX_SECONDS)
+    result = drain(batch_size=BATCH_SIZE, max_seconds=MAX_SECONDS)
     duration_ms = int((time.monotonic() - started) * 1000)
 
     logger.info(

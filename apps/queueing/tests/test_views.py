@@ -121,6 +121,7 @@ class TestDrain:
         assert body["claimed"] == 2
         assert body["done"] == 2
         assert body["failed"] == 0
+        assert body["stranded"] == 0
         assert "duration_ms" in body
         assert ScheduledAction.objects.for_workspace(tenancy.workspace).filter(status=ActionStatus.DONE).count() == 2
 
@@ -135,6 +136,15 @@ class TestDrain:
 
         assert response.status_code == 405
         assert response["Allow"] == "GET, POST"
+
+    def test_the_http_path_claims_a_smaller_batch_than_the_worker(self) -> None:
+        """gunicorn's 30s timeout is a real budget, and drain() takes
+        responsibility for every row it claims."""
+        from apps.queueing import views
+        from apps.queueing.worker import DEFAULT_BATCH_SIZE
+
+        assert views.BATCH_SIZE < DEFAULT_BATCH_SIZE
+        assert views.MAX_SECONDS < 30
 
     def test_it_bootstraps_the_housekeeping_chain(self, client: Client, url: str, settings: Any) -> None:
         """A cron-only host never runs the worker, so the tick has to do this."""
