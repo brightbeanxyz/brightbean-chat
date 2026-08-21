@@ -22,9 +22,9 @@ Every one of these binds all six agents. None of it existed when the issue bodie
 **1. Tenant models inherit `WorkspaceScopedModel`** (`apps/common/scoping.py`), not a plain model plus a remembered filter. Its `objects` manager hands out querysets that **refuse to execute until scoped**:
 
 ```python
-Contact.objects.filter(status="active")        # raises UnscopedQueryError
+Contact.objects.filter(status="active")  # raises UnscopedQueryError
 Contact.objects.for_workspace(ws).filter(...)  # fine
-Contact.objects.unscoped().count()             # fine, and greppable
+Contact.objects.unscoped().count()  # fine, and greppable
 ```
 
 The guard fires at execution, not at `.filter()`, and covers `count()`, `exists()`, `update()`, `delete()`, `aggregate()` and `iterator()` — not just iteration. `Meta.default_manager_name`/`base_manager_name` point at the plain `all_objects` so admin, cascades and reverse managers keep working. Non-tenant models inherit `apps.common.models.BaseModel` (UUIDv7 pk + `created_at`/`updated_at`).
