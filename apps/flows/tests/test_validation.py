@@ -108,6 +108,23 @@ class TestInputLimits:
     def test_a_value_that_is_not_json_at_all_is_refused(self):
         assert codes({"schema": 1, "nodes": {"not", "json"}, "edges": []}) == ["malformed_graph"]
 
+    def test_non_finite_numbers_are_refused(self):
+        """CPython's decoder accepts bare NaN/Infinity and overflows 1e999 to
+        inf. Postgres jsonb refuses all three, so storing one turns an
+        authenticated save into a 500."""
+        graph = _single_node_graph()
+        graph["nodes"][0]["position"]["x"] = float("inf")
+
+        assert codes(graph) == ["malformed_graph"]
+
+    def test_non_finite_numbers_are_refused_on_the_fast_path_too(self):
+        """The known_size short-circuit skips serialising, which is where the
+        first check lives — so the walk has to catch it as well."""
+        graph = _single_node_graph()
+        graph["nodes"][0]["position"]["y"] = float("nan")
+
+        assert codes(graph, known_size=64) == ["non_finite_number"]
+
 
 class TestEnvelope:
     def test_a_graph_must_be_an_object(self):
@@ -243,6 +260,36 @@ class TestConfigs:
         graph["nodes"][0]["config"]["rules"][0]["op"] = "regex"
 
         assert codes(graph) == ["invalid_config_value"]
+
+    def test_a_smart_delay_must_carry_the_payload_its_mode_names(self):
+        """Only `mode` used to be required, so {"mode": "duration"} published
+        cleanly and reached the engine with nothing to compute run_at from."""
+        graph = _single_node_graph("smart_delay")
+        graph["nodes"][0]["config"] = {"mode": "duration"}
+
+        assert codes(graph) == ["missing_required_config"]
+
+    def test_a_smart_delay_rejects_the_other_mode_payload(self):
+        graph = _single_node_graph("smart_delay")
+        graph["nodes"][0]["config"] = {"mode": "date", "duration": {"value": 5, "unit": "minutes"}}
+
+        assert "unknown_config_key" in codes(graph)
+
+    def test_a_date_smart_delay_needs_a_field_or_a_datetime(self):
+        graph = _single_node_graph("smart_delay")
+        graph["nodes"][0]["config"] = {"mode": "date", "date": {}}
+
+        assert codes(graph) == ["missing_required_config"]
+
+    def test_both_smart_delay_modes_validate_when_complete(self):
+        for config in (
+            {"mode": "duration", "duration": {"value": 5, "unit": "minutes"}},
+            {"mode": "date", "date": {"field": "birthday"}},
+            {"mode": "date", "date": {"datetime": "2026-01-01T00:00:00Z"}},
+        ):
+            graph = _single_node_graph("smart_delay")
+            graph["nodes"][0]["config"] = config
+            assert codes(graph) == [], config
 
     def test_a_media_block_needs_an_id_or_a_url(self):
         graph = _single_node_graph("send_message")

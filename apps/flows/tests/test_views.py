@@ -258,6 +258,18 @@ class TestFolderFilter:
             ("Onboarding", "Onboarding"),
         ]
 
+    def test_a_real_unfiled_folder_is_a_separate_group(self, tenancy, client_for):
+        """Both render under the label "Unfiled", so comparing labels to detect
+        a run merged two genuinely different groups into one."""
+        create_flow(workspace=tenancy.workspace, name="Loose")
+        create_flow(workspace=tenancy.workspace, name="Filed", folder="Unfiled")
+
+        groups = client_for(tenancy.owner).get(list_url(tenancy)).context["groups"]
+
+        assert [group["key"] for group in groups] == ["", "Unfiled"]
+        assert [group["label"] for group in groups] == ["Unfiled", "Unfiled"]
+        assert [[f.name for f in group["flows"]] for group in groups] == [["Loose"], ["Filed"]]
+
     def test_an_unknown_status_filter_falls_back_to_the_default_view(self, tenancy, client_for):
         """Not merely "ignored": an if/elif here let an unrecognised value skip
         the archived exclusion too, so `?status=bogus` listed archived flows

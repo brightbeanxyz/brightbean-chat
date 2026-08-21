@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from apps.flows.schema import fields as f
-from apps.flows.schema.envelope import MAX_EDGES, MAX_NODES, SCHEMA_VERSION, limits
+from apps.flows.schema.envelope import ID_PATTERN, MAX_EDGES, MAX_NODES, SCHEMA_VERSION, limits
+from apps.flows.schema.handles import HANDLE_PATTERN
 from apps.flows.schema.nodes import NODE_TYPES, all_defs
 
 __all__ = ["ARTIFACT_RELATIVE_PATH", "artifact_path", "json_schema", "serialize"]
@@ -66,7 +67,7 @@ def json_schema() -> dict[str, Any]:
     for node_type, spec in NODE_TYPES.items():
         defs[f"node_{node_type}"] = f.obj(
             {
-                "id": f.string(min_length=1, max_length=64),
+                "id": f.string(min_length=1, max_length=64, pattern=ID_PATTERN),
                 "type": f.const(node_type),
                 "position": f.ref("position"),
                 "config": spec.config,
@@ -78,14 +79,19 @@ def json_schema() -> dict[str, Any]:
     defs["node"] = f.tagged_union("type", {node_type: f"node_{node_type}" for node_type in NODE_TYPES})
     defs["edge"] = f.obj(
         {
-            "id": f.string(min_length=1, max_length=64),
-            "source": f.string(min_length=1, max_length=64),
+            # The same grammars validate_document enforces, not a prose
+            # approximation of them: a document that accepts ids this server
+            # refuses is a builder that generates graphs its own autosave
+            # rejects.
+            "id": f.string(min_length=1, max_length=64, pattern=ID_PATTERN),
+            "source": f.string(min_length=1, max_length=64, pattern=ID_PATTERN),
             "sourceHandle": f.string(
                 min_length=1,
                 max_length=70,
+                pattern=HANDLE_PATTERN,
                 description="default | btn:<id> | qr:<id> | cond:true | cond:false | rand:<id> | timeout | error",
             ),
-            "target": f.string(min_length=1, max_length=64),
+            "target": f.string(min_length=1, max_length=64, pattern=ID_PATTERN),
         },
         required=["id", "source", "sourceHandle", "target"],
     )

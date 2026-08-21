@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 __all__ = [
     "COND_VALUES",
+    "HANDLE_PATTERN",
     "DYNAMIC_PREFIXES",
     "STATIC_HANDLES",
     "Handle",
@@ -40,7 +41,11 @@ DYNAMIC_PREFIXES = ("btn", "qr", "rand")
 # everything else, so the character set is an allowlist and the length is
 # capped. ':' is excluded on purpose — it is the separator, and allowing it in
 # an id would make "btn:a:b" ambiguous.
-_HANDLE_RE = re.compile(r"^(?:default|timeout|error|cond:(?:true|false)|(?:btn|qr|rand):[A-Za-z0-9_-]{1,64})$")
+#: Exported so the generated schema constrains ``sourceHandle`` to the same
+#: grammar this module parses, instead of describing it only in prose.
+HANDLE_PATTERN = r"^(?:default|timeout|error|cond:(?:true|false)|(?:btn|qr|rand):[A-Za-z0-9_-]{1,64})$"
+
+_HANDLE_RE = re.compile(HANDLE_PATTERN)
 
 
 @dataclass(frozen=True)

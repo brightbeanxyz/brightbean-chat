@@ -35,13 +35,21 @@ def _described(schema: dict[str, Any], description: str) -> dict[str, Any]:
     return schema
 
 
-def string(*, min_length: int | None = None, max_length: int | None = None, description: str = "") -> dict[str, Any]:
+def string(
+    *,
+    min_length: int | None = None,
+    max_length: int | None = None,
+    pattern: str | None = None,
+    description: str = "",
+) -> dict[str, Any]:
     """A string. ``min_length=1`` is the usual way to say "not blank"."""
     schema: dict[str, Any] = {"type": "string"}
     if min_length is not None:
         schema["minLength"] = min_length
     if max_length is not None:
         schema["maxLength"] = max_length
+    if pattern is not None:
+        schema["pattern"] = pattern
     return _described(schema, description)
 
 

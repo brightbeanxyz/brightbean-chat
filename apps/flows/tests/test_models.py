@@ -100,3 +100,32 @@ class TestRepresentations:
 
         assert str(version) == f"{flow.pk} v1"
         assert version.is_draft is True
+
+
+class TestAdminIntegrity:
+    """The admin is the one place a tenant column is hand-editable."""
+
+    def test_workspace_is_not_editable_on_either_model(self):
+        """Every service query scopes on workspace_id, and a FlowVersion carries
+        its own copy rather than reaching through flow (SPEC §5). Moving either
+        row on its own raises nothing — it just makes _versions(flow) stop
+        returning that version, so an active flow's published version becomes
+        invisible to the code that reads it."""
+        from django.contrib import admin as django_admin
+
+        from apps.flows.admin import FlowAdmin, FlowVersionAdmin
+
+        site = django_admin.site
+        for model, admin_class in ((Flow, FlowAdmin), (FlowVersion, FlowVersionAdmin)):
+            instance = admin_class(model, site)
+            assert "workspace" in instance.readonly_fields, model.__name__
+
+    def test_a_version_is_only_found_through_its_own_workspace(self, tenancy, other_tenancy):
+        """The invariant the readonly column protects."""
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+        version = FlowVersion.objects.for_workspace(tenancy.workspace).get(flow=flow)
+
+        version.workspace = other_tenancy.workspace
+        version.save(update_fields=["workspace"])
+
+        assert FlowVersion.objects.for_workspace(tenancy.workspace).filter(flow=flow).count() == 0

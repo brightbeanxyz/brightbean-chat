@@ -26,6 +26,7 @@ entry node — is a perfectly ordinary draft and is handled in
 """
 
 import json
+import math
 import re
 from typing import Any
 
@@ -35,6 +36,7 @@ from apps.flows.schema.nodes import all_defs, node_spec
 
 __all__ = [
     "GRAPH_KEYS",
+    "ID_PATTERN",
     "limits",
     "MAX_EDGES",
     "MAX_GRAPH_BYTES",
@@ -74,7 +76,13 @@ _EDGE_KEYS = ("id", "source", "sourceHandle", "target")
 # Node and edge ids reach idempotency keys (SPEC §9.4:
 # ``exec:{execution_id}:node:{node_id}``) and sticky-randomizer variable names
 # (``rand:<node_id>``), so they are an allowlist rather than "any string".
-_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+#: Exported so the generated schema describes the same ids this module accepts.
+#: The two used to disagree — the document said "any 1–64 characters", so an id
+#: with a space passed the schema the builder generates panels from and was then
+#: refused by the very next autosave.
+ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+
+_ID_RE = re.compile(ID_PATTERN)
 
 
 def limits() -> dict[str, int]:
@@ -106,9 +114,38 @@ def empty_graph() -> dict[str, Any]:
 def graph_byte_size(graph: Any) -> int:
     """Serialized size in bytes, or ``-1`` when the value is not JSON at all."""
     try:
-        return len(json.dumps(graph, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+        # allow_nan=False: NaN and Infinity are a CPython extension, not JSON,
+        # and Postgres `jsonb` refuses them outright.
+        return len(json.dumps(graph, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8"))
     except (TypeError, ValueError):
         return -1
+
+
+def _measure(value: Any, *, depth_limit: int) -> tuple[int, bool]:
+    """One walk, two answers: deepest nesting, and whether a non-finite float is in there.
+
+    Both questions need to visit every value, and the depth walk is already
+    bounded, so asking them together costs an isinstance check per node rather
+    than a second traversal. A document that busts the depth cap returns early
+    with whatever it has seen — the depth error wins, so the other answer cannot
+    matter.
+    """
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    deepest = 0
+    non_finite = False
+    while stack:
+        current, depth = stack.pop()
+        if depth > deepest:
+            deepest = depth
+            if deepest > depth_limit:
+                return deepest, non_finite
+        if isinstance(current, float) and not math.isfinite(current):
+            non_finite = True
+        if isinstance(current, dict):
+            stack.extend((child, depth + 1) for child in current.values())
+        elif isinstance(current, list):
+            stack.extend((child, depth + 1) for child in current)
+    return deepest, non_finite
 
 
 def json_depth(value: Any, *, limit: int) -> int:
@@ -117,19 +154,7 @@ def json_depth(value: Any, *, limit: int) -> int:
     Returns ``limit + 1`` as soon as the document is known to be too deep, so a
     pathological input costs a bounded walk rather than an unbounded one.
     """
-    stack: list[tuple[Any, int]] = [(value, 1)]
-    deepest = 0
-    while stack:
-        current, depth = stack.pop()
-        if depth > deepest:
-            deepest = depth
-            if deepest > limit:
-                return deepest
-        if isinstance(current, dict):
-            stack.extend((child, depth + 1) for child in current.values())
-        elif isinstance(current, list):
-            stack.extend((child, depth + 1) for child in current)
-    return deepest
+    return _measure(value, depth_limit=limit)[0]
 
 
 def _issue(code: str, message: str, **address: Any) -> Issue:
@@ -158,9 +183,19 @@ def check_limits(graph: Any, *, known_size: int | None = None) -> list[Issue]:
                     f"The graph is {size} bytes; the limit is {MAX_GRAPH_BYTES} bytes.",
                 )
             ]
-    depth = json_depth(graph, limit=MAX_GRAPH_DEPTH)
+    depth, non_finite = _measure(graph, depth_limit=MAX_GRAPH_DEPTH)
     if depth > MAX_GRAPH_DEPTH:
         return [_issue("graph_too_deep", f"The graph nests deeper than the limit of {MAX_GRAPH_DEPTH} levels.")]
+    if non_finite:
+        # Checked on the walk rather than left to the serializer, because the
+        # `known_size` fast path skips serializing altogether. Postgres `jsonb`
+        # rejects these, so storing one turns an authenticated save into a 500.
+        return [
+            _issue(
+                "non_finite_number",
+                "NaN and Infinity are not JSON numbers and cannot be stored.",
+            )
+        ]
     return []
 
 

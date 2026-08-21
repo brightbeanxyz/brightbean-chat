@@ -345,6 +345,28 @@ class TestHostileBodies:
         assert response.status_code == 422
         assert [issue["code"] for issue in response.json()["validation"]["errors"]] == ["graph_not_object"]
 
+    def test_a_non_finite_number_is_refused_rather_than_reaching_postgres(self, tenancy, client_for, flow):
+        """CPython's decoder accepts bare NaN and Infinity; jsonb does not, so
+        without this the save is a 500 on an authenticated PUT."""
+        graph = graph_for("note")
+        body = json.dumps({"graph": graph}).replace('"x": 0', '"x": NaN', 1)
+        assert "NaN" in body
+
+        response = client_for(tenancy.owner).put(detail_url(tenancy, flow), data=body, content_type="application/json")
+
+        assert response.status_code == 422
+        assert [issue["code"] for issue in response.json()["validation"]["errors"]] == ["non_finite_number"]
+        assert latest_version(flow).graph_json == empty_graph()
+
+    def test_an_overflowing_float_is_refused_too(self, tenancy, client_for, flow):
+        graph = graph_for("note")
+        body = json.dumps({"graph": graph}).replace('"x": 0', '"x": 1e999', 1)
+
+        response = client_for(tenancy.owner).put(detail_url(tenancy, flow), data=body, content_type="application/json")
+
+        assert response.status_code == 422
+        assert latest_version(flow).graph_json == empty_graph()
+
     def test_a_json_array_body_is_refused(self, tenancy, client_for, flow):
         response = client_for(tenancy.owner).put(
             detail_url(tenancy, flow), data="[1, 2, 3]", content_type="application/json"

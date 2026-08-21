@@ -83,11 +83,14 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
 def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     flows = list(_visible_flows(request))
 
+    # Runs are detected on the folder value, not on the label it renders under:
+    # a workspace holding both unfiled flows and a folder literally named
+    # "Unfiled" produces two identical labels, and comparing those merged two
+    # genuinely different groups into one.
     groups: list[dict[str, Any]] = []
     for flow in flows:
-        label = flow.folder or UNFILED_LABEL
-        if not groups or groups[-1]["label"] != label:
-            groups.append({"label": label, "flows": []})
+        if not groups or groups[-1]["key"] != flow.folder:
+            groups.append({"key": flow.folder, "label": flow.folder or UNFILED_LABEL, "flows": []})
         groups[-1]["flows"].append(flow)
 
     # The folder filter offers every folder in the workspace, not just the ones

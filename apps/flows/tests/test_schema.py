@@ -155,6 +155,31 @@ class TestTheExportedDocumentAgrees:
 
         assert [issue.code for issue in issues] == ["unknown_config_key"]
 
+    def test_the_exported_id_and_handle_grammars_are_the_ones_enforced(self):
+        """The document used to say "any 1–64 characters", so an id with a space
+        passed the schema the builder generates panels from and was refused by
+        the very next autosave."""
+        from apps.flows.schema.envelope import ID_PATTERN
+        from apps.flows.schema.handles import HANDLE_PATTERN
+
+        defs = json_schema()["$defs"]
+
+        assert defs["edge"]["properties"]["id"]["pattern"] == ID_PATTERN
+        assert defs["edge"]["properties"]["source"]["pattern"] == ID_PATTERN
+        assert defs["edge"]["properties"]["target"]["pattern"] == ID_PATTERN
+        assert defs["edge"]["properties"]["sourceHandle"]["pattern"] == HANDLE_PATTERN
+        assert defs["node_note"]["properties"]["id"]["pattern"] == ID_PATTERN
+
+    def test_the_exported_schema_rejects_an_id_the_server_rejects(self):
+        document = json_schema()
+        graph = graph_for("send_message")
+        graph["nodes"][0]["id"] = "has space"
+
+        issues = validate_instance(document, graph, path="", defs=document["$defs"])
+
+        assert [issue.code for issue in issues] == ["invalid_config_value"]
+        assert [issue.code for issue in validate_graph(graph).errors][0] == "invalid_node_id"
+
     def test_every_ref_in_the_document_resolves(self):
         document = json_schema()
         names = set(document["$defs"])

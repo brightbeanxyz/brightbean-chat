@@ -505,22 +505,26 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "source": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "sourceHandle": {
           "description": "default | btn:<id> | qr:<id> | cond:true | cond:false | rand:<id> | timeout | error",
           "maxLength": 70,
           "minLength": 1,
+          "pattern": "^(?:default|timeout|error|cond:(?:true|false)|(?:btn|qr|rand):[A-Za-z0-9_-]{1,64})$",
           "type": "string"
         },
         "target": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         }
       },
@@ -787,6 +791,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -815,6 +820,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -929,6 +935,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1004,6 +1011,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1042,6 +1050,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1088,6 +1097,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1137,6 +1147,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1199,6 +1210,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1243,6 +1255,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1266,80 +1279,27 @@
       "description": "SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
       "properties": {
         "config": {
-          "additionalProperties": false,
-          "properties": {
-            "continue_window": {
-              "$ref": "#/$defs/continue_window"
+          "discriminator": {
+            "mapping": {
+              "date": "#/$defs/smart_delay_date",
+              "duration": "#/$defs/smart_delay_duration"
             },
-            "date": {
-              "additionalProperties": false,
-              "anyOf": [
-                {
-                  "required": [
-                    "field"
-                  ]
-                },
-                {
-                  "required": [
-                    "datetime"
-                  ]
-                }
-              ],
-              "properties": {
-                "datetime": {
-                  "description": "ISO-8601 instant.",
-                  "maxLength": 64,
-                  "minLength": 1,
-                  "type": "string"
-                },
-                "field": {
-                  "description": "A date/datetime field.",
-                  "maxLength": 200,
-                  "minLength": 1,
-                  "type": "string"
-                }
-              },
-              "type": "object"
-            },
-            "duration": {
-              "additionalProperties": false,
-              "properties": {
-                "unit": {
-                  "enum": [
-                    "minutes",
-                    "hours",
-                    "days"
-                  ],
-                  "type": "string"
-                },
-                "value": {
-                  "maximum": 100000,
-                  "minimum": 1,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "value",
-                "unit"
-              ],
-              "type": "object"
-            },
-            "mode": {
-              "enum": [
-                "duration",
-                "date"
-              ],
-              "type": "string"
-            }
+            "propertyName": "mode"
           },
-          "required": [
-            "mode"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/smart_delay_duration"
+            },
+            {
+              "$ref": "#/$defs/smart_delay_date"
+            }
           ],
           "type": "object"
         },
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1379,6 +1339,7 @@
         "id": {
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
           "type": "string"
         },
         "position": {
@@ -1503,6 +1464,93 @@
       },
       "required": [
         "enabled"
+      ],
+      "type": "object"
+    },
+    "smart_delay_date": {
+      "additionalProperties": false,
+      "properties": {
+        "continue_window": {
+          "$ref": "#/$defs/continue_window"
+        },
+        "date": {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "field"
+              ]
+            },
+            {
+              "required": [
+                "datetime"
+              ]
+            }
+          ],
+          "properties": {
+            "datetime": {
+              "description": "ISO-8601 instant.",
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "field": {
+              "description": "A date/datetime field.",
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "mode": {
+          "const": "date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "date"
+      ],
+      "type": "object"
+    },
+    "smart_delay_duration": {
+      "additionalProperties": false,
+      "properties": {
+        "continue_window": {
+          "$ref": "#/$defs/continue_window"
+        },
+        "duration": {
+          "additionalProperties": false,
+          "properties": {
+            "unit": {
+              "enum": [
+                "minutes",
+                "hours",
+                "days"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "maximum": 100000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "value",
+            "unit"
+          ],
+          "type": "object"
+        },
+        "mode": {
+          "const": "duration",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "duration"
       ],
       "type": "object"
     },

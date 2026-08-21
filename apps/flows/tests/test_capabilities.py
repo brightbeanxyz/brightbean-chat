@@ -43,6 +43,34 @@ class TestTheTable:
         assert capabilities_for(Platform.EMAIL).inbound is False
 
 
+class TestTheSwapPoint:
+    """ROADMAP contract 4. #4 owns the table; this app reads it."""
+
+    def test_it_reports_which_table_is_in_force(self):
+        """Passes either way, and changes meaning the moment #4 merges. The
+        import target matters: naming a module that does not export CAPABILITIES
+        raises ImportError, which the swap point swallows, leaving the vendored
+        numbers silently in force for good."""
+        from apps.flows.capabilities import CAPABILITIES_ARE_VENDORED
+
+        try:
+            from apps.channels.capabilities import CAPABILITIES as CHANNELS_CAPABILITIES
+        except ImportError:
+            assert CAPABILITIES_ARE_VENDORED is True
+        else:
+            assert CAPABILITIES_ARE_VENDORED is False
+            assert dict(CHANNELS_CAPABILITIES) == CAPABILITIES
+
+    def test_whatever_table_is_in_force_answers_what_the_validator_asks(self):
+        """The validator calls supports_block() and reads six limit fields off
+        these records; #4's dataclass has to satisfy the same surface."""
+        for platform, record in CAPABILITIES.items():
+            assert isinstance(record.supports_block("image"), bool), platform
+            for attribute in ("buttons", "quick_replies", "url_buttons", "max_buttons", "max_quick_replies"):
+                assert hasattr(record, attribute), (platform, attribute)
+            assert isinstance(record.max_text_len, int), platform
+
+
 class TestButtonHeavyOnSms:
     def test_it_warns_rather_than_erroring(self):
         result = validate_graph(button_heavy_graph(), platforms=[Platform.SMS])

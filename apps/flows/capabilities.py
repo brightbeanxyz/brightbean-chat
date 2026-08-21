@@ -176,7 +176,13 @@ _VENDORED: dict[str, Capabilities] = {
 
 _imported: dict[str, Any] | None
 try:  # pragma: no cover - the branch taken depends on whether #4 has merged
-    from apps.channels.registry import CAPABILITIES as _CHANNELS_CAPABILITIES
+    # `channels.capabilities`, not `channels.registry`: contract 4 puts the
+    # table in a module that imports no adapter code, and the registry only
+    # borrows `capabilities_for` from it. Importing the wrong name would raise
+    # ImportError, be swallowed here, and leave the vendored numbers silently in
+    # force for good — which is the one failure this whole swap point exists to
+    # avoid. `test_capabilities.py` asserts the swap actually took.
+    from apps.channels.capabilities import CAPABILITIES as _CHANNELS_CAPABILITIES
 
     _imported = dict(_CHANNELS_CAPABILITIES)
 except ImportError:

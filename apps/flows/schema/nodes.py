@@ -269,6 +269,35 @@ register_defs(
         },
         required=["enabled"],
     ),
+    smart_delay_duration=f.obj(
+        {
+            "mode": f.const("duration"),
+            "duration": f.obj(
+                {"value": f.integer(minimum=1, maximum=100_000), "unit": f.enum("minutes", "hours", "days")},
+                required=["value", "unit"],
+            ),
+            "continue_window": f.ref("continue_window"),
+        },
+        required=["mode", "duration"],
+    ),
+    smart_delay_date=f.obj(
+        {
+            "mode": f.const("date"),
+            "date": {
+                **f.obj(
+                    {
+                        "field": f.string(min_length=1, max_length=200, description="A date/datetime field."),
+                        "datetime": f.string(min_length=1, max_length=64, description="ISO-8601 instant."),
+                    },
+                ),
+                # SPEC §11.5: "date {field or fixed datetime}" — one of the two
+                # has to be there, which `required` alone cannot express.
+                "anyOf": [{"required": ["field"]}, {"required": ["datetime"]}],
+            },
+            "continue_window": f.ref("continue_window"),
+        },
+        required=["mode", "date"],
+    ),
     randomizer_path=f.obj(
         {
             "id": f.string(min_length=1, max_length=64, description="The id in this path's rand:<id> handle."),
@@ -409,29 +438,13 @@ register_node_type(
         type="smart_delay",
         label="Smart Delay",
         description="SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
-        config=f.obj(
-            {
-                "mode": f.enum("duration", "date"),
-                "duration": f.obj(
-                    {
-                        "value": f.integer(minimum=1, maximum=100_000),
-                        "unit": f.enum("minutes", "hours", "days"),
-                    },
-                    required=["value", "unit"],
-                ),
-                "date": {
-                    **f.obj(
-                        {
-                            "field": f.string(min_length=1, max_length=200, description="A date/datetime field."),
-                            "datetime": f.string(min_length=1, max_length=64, description="ISO-8601 instant."),
-                        },
-                    ),
-                    "anyOf": [{"required": ["field"]}, {"required": ["datetime"]}],
-                },
-                "continue_window": f.ref("continue_window"),
-            },
-            required=["mode"],
-        ),
+        # Discriminated on `mode` rather than a flat object with everything
+        # optional. With only `mode` required, {"mode": "duration"} published
+        # cleanly and reached the engine with nothing to compute run_at from —
+        # and a date-mode node could carry a `duration` block that would never
+        # be read. Each branch now requires its own payload and rejects the
+        # other's.
+        config=f.tagged_union("mode", {"duration": "smart_delay_duration", "date": "smart_delay_date"}),
         handles=("default",),
     )
 )
