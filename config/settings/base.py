@@ -150,6 +150,7 @@ LOCAL_APPS = [
     "apps.workspaces",
     "apps.members",
     "apps.credentials",
+    "apps.media_library",
     "theme",
 ]
 
@@ -409,6 +410,35 @@ else:
     STORAGES["default"] = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     }
+
+# ---------------------------------------------------------------------------
+# Media library limits (SECURITY-BASELINE §9, issue #16)
+# ---------------------------------------------------------------------------
+# Studio resolves its storage cap through subscription tiers and an override
+# row. This is a self-hostable product, so the limits are environment variables
+# with defaults that fit a small box, and the boundary they are counted against
+# is the workspace — the same tenant boundary everything else is scoped to.
+#
+# Two independent limits because they stop different things: the per-file cap
+# bounds what one request can cost, the per-workspace cap bounds what a member
+# can accumulate over a thousand of them.
+_MB = 1024 * 1024
+MEDIA_MAX_UPLOAD_BYTES_IMAGE = env.int("MEDIA_MAX_UPLOAD_BYTES_IMAGE", default=20 * _MB)
+MEDIA_MAX_UPLOAD_BYTES_AUDIO = env.int("MEDIA_MAX_UPLOAD_BYTES_AUDIO", default=50 * _MB)
+MEDIA_MAX_UPLOAD_BYTES_VIDEO = env.int("MEDIA_MAX_UPLOAD_BYTES_VIDEO", default=200 * _MB)
+MEDIA_MAX_UPLOAD_BYTES_FILE = env.int("MEDIA_MAX_UPLOAD_BYTES_FILE", default=25 * _MB)
+MEDIA_WORKSPACE_QUOTA_BYTES = env.int("MEDIA_WORKSPACE_QUOTA_BYTES", default=5 * 1024 * _MB)
+MEDIA_MAX_FILES_PER_UPLOAD = env.int("MEDIA_MAX_FILES_PER_UPLOAD", default=20)
+MEDIA_THUMBNAIL_SIZE = (400, 400)
+# Pillow decompression-bomb guard. A 10 KB PNG can declare 60000x60000 and cost
+# gigabytes to expand; apps.media_library.thumbnails checks the declared size
+# against this before any pixel data is decoded.
+MEDIA_MAX_IMAGE_PIXELS = env.int("MEDIA_MAX_IMAGE_PIXELS", default=50_000_000)
+
+# Django's own multipart guard, kept in step with the media library's batch cap
+# so a request carrying more parts is rejected by the framework before any view
+# code runs. The default is 100.
+DATA_UPLOAD_MAX_NUMBER_FILES = MEDIA_MAX_FILES_PER_UPLOAD
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

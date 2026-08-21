@@ -64,6 +64,7 @@ class TestActiveFlag:
             ("inbox/", "inbox"),
             ("sequences/", "sequences"),
             ("broadcasts/", "broadcasts"),
+            ("media/", "media"),
         ],
     )
     def test_exactly_one_main_nav_item_is_active_per_route(self, suffix, expected, tenancy):
@@ -236,7 +237,7 @@ class TestNavStructure:
     def test_the_product_nav_is_the_one_the_issue_specifies(self):
         keys = [i.key for g in MAIN_NAV for i in g.items]
 
-        assert set(keys) == {"dashboard", "contacts", "flows", "inbox", "sequences", "broadcasts"}
+        assert set(keys) == {"dashboard", "contacts", "flows", "inbox", "sequences", "broadcasts", "media"}
 
     def test_settings_groups_match_the_brief(self):
         assert [g.label for g in SETTINGS_NAV] == ["Account", "Organization", "Workspace"]

@@ -72,10 +72,15 @@ urlpatterns = [
     path("organization/members/", include("apps.members.urls")),
     # Invite acceptance is unauthenticated — the recipient has no org yet.
     path("", include("apps.members.urls_public")),
+    # Public, token-bearing media delivery (#16). The fetcher is a messaging
+    # platform with no session; the signed token is the whole credential. Joins
+    # the /u/, /c/ and /o/ family documented in apps/common/signing.py.
+    path("", include("apps.media_library.urls_public")),
     # Workspace-scoped routes (SPEC §16). The kwarg name `workspace_id` is
     # RBACMiddleware's resolution contract; do not rename it.
     path("w/<uuid:workspace_id>/", include("apps.workspaces.urls")),
     path("w/<uuid:workspace_id>/settings/credentials/", include("apps.credentials.urls")),
+    path("w/<uuid:workspace_id>/media/", include("apps.media_library.urls")),
     *[_ws_stub(*stub) for stub in _WORKSPACE_STUBS],
     path("", account_views.root, name="index"),
 ]
