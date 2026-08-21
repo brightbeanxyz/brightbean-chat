@@ -15,18 +15,16 @@
 
   <h2>Switch workspace</h2>
   <ul>
-    {% for membership in request.user.workspace_memberships.all %}
-      {% if not membership.workspace.is_archived %}
-        <li>
-          <form method="post" action="{% url 'workspaces:switch' workspace_id=membership.workspace_id %}">
-            {% csrf_token %}
-            <button type="submit">
-              {{ membership.workspace.icon }} {{ membership.workspace.name }}
-              ({{ membership.get_workspace_role_display }})
-            </button>
-          </form>
-        </li>
-      {% endif %}
+    {% for membership in switchable_memberships %}
+      <li>
+        <form method="post" action="{% url 'workspaces:switch' workspace_id=membership.workspace_id %}">
+          {% csrf_token %}
+          <button type="submit">
+            {{ membership.workspace.icon }} {{ membership.workspace.name }}
+            ({{ membership.get_workspace_role_display }})
+          </button>
+        </form>
+      </li>
     {% endfor %}
   </ul>
 {% endblock %}

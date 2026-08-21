@@ -81,9 +81,31 @@ def resolve_platform_credentials(
     if organization is None and workspace is not None:
         organization = workspace.organization
 
+    return resolve_from_rows(
+        platform,
+        override=_workspace_override(platform, workspace),
+        organization_credential=_organization_credential(platform, organization),
+    )
+
+
+def resolve_from_rows(
+    platform: str,
+    *,
+    override: Any = None,
+    organization_credential: Any = None,
+) -> CredentialResolution:
+    """The chain itself, for a caller that already holds the rows.
+
+    The settings page lists every platform and has fetched both tables in two
+    queries; going back through :func:`resolve_platform_credentials` would
+    re-query — and re-decrypt — once per platform.
+    """
     for source, candidate in (
-        (SOURCE_WORKSPACE, _workspace_credentials(platform, workspace)),
-        (SOURCE_ORGANIZATION, _organization_credentials(platform, organization)),
+        (SOURCE_WORKSPACE, dict(override.credentials or {}) if override is not None else None),
+        (
+            SOURCE_ORGANIZATION,
+            dict(organization_credential.credentials or {}) if organization_credential is not None else None,
+        ),
         (SOURCE_ENV, env_credentials(platform)),
     ):
         if candidate is None:
@@ -102,16 +124,14 @@ def resolve_platform_credentials(
     return CredentialResolution(platform=platform)
 
 
-def _workspace_credentials(platform: str, workspace: Any) -> dict[str, Any] | None:
+def _workspace_override(platform: str, workspace: Any) -> WorkspaceCredentialOverride | None:
     if workspace is None:
         return None
-    override = WorkspaceCredentialOverride.objects.for_workspace(workspace).filter(platform=platform).first()
-    return dict(override.credentials or {}) if override else None  # type: ignore[arg-type]
+    return WorkspaceCredentialOverride.objects.for_workspace(workspace).filter(platform=platform).first()
 
 
-def _organization_credentials(platform: str, organization: Any) -> dict[str, Any] | None:
+def _organization_credential(platform: str, organization: Any) -> PlatformCredential | None:
     if organization is None:
         return None
-    credential = PlatformCredential.objects.for_org(organization.pk if hasattr(organization, "pk") else organization)
-    row = credential.filter(platform=platform).first()
-    return dict(row.credentials or {}) if row else None
+    org_id = organization.pk if hasattr(organization, "pk") else organization
+    return PlatformCredential.objects.for_org(org_id).filter(platform=platform).first()

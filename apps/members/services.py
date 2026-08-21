@@ -24,6 +24,7 @@ the privilege violation.
 """
 
 import logging
+import smtplib
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -71,22 +72,74 @@ def org_level(user: Any, org: Any) -> int:
     return ORG_ROLE_LEVEL.get(membership.org_role, 0)
 
 
-def workspace_authority_level(user: Any, org: Any, workspace_id: Any) -> int:
-    """How senior a workspace role this user may grant, change or remove.
+def workspace_authority_map(user: Any, org: Any) -> dict[str, int]:
+    """Workspace id → the most senior role ``user`` may grant, change or remove there.
 
-    Zero means "no authority here at all", which is the answer for every role
+    A missing key means no authority at all, which is the answer for every role
     without ``manage_members`` — Editor, Agent and Viewer. Org owners get
     workspace-admin authority across the org, mirroring the fact that they can
     already reach everything through org settings; org *admins* get no implicit
     workspace authority, only what their own membership grants.
+
+    Built as a map rather than answered one workspace at a time because the
+    callers ask about every workspace in the org — rendering the member form,
+    validating a submitted assignment set — and a per-workspace lookup made that
+    two queries per workspace. This is two queries total, whatever the count.
     """
     if org_level(user, org) >= ORG_ROLE_LEVEL[OrgRole.OWNER]:
-        return WORKSPACE_ROLE_LEVEL[WorkspaceRole.ADMIN]
+        admin_level = WORKSPACE_ROLE_LEVEL[WorkspaceRole.ADMIN]
+        live = Workspace.objects.for_org(org.pk).filter(is_archived=False)
+        return {str(pk): admin_level for pk in live.values_list("id", flat=True)}
 
-    membership = WorkspaceMembership.objects.filter(user=user, workspace_id=workspace_id).first()
-    if membership is None or not membership.effective_permissions.get("manage_members", False):
-        return 0
-    return WORKSPACE_ROLE_LEVEL.get(membership.workspace_role, 0)
+    memberships = WorkspaceMembership.objects.filter(
+        user=user, workspace__organization=org, workspace__is_archived=False
+    )
+    return {
+        str(membership.workspace_id): WORKSPACE_ROLE_LEVEL.get(membership.workspace_role, 0)
+        for membership in memberships
+        if membership.effective_permissions.get("manage_members", False)
+    }
+
+
+def workspace_authority_level(user: Any, org: Any, workspace_id: Any) -> int:
+    """Single-workspace form of :func:`workspace_authority_map`."""
+    return workspace_authority_map(user, org).get(str(workspace_id), 0)
+
+
+def manageable_workspaces(user: Any, org: Any) -> list[Workspace]:
+    """The live workspaces ``user`` may assign roles in.
+
+    The member-management form renders exactly this list, and
+    :func:`update_workspace_assignments` treats exactly this list as the set a
+    submission speaks for — the two have to agree, or omission-means-removal
+    starts removing memberships the caller was never shown.
+    """
+    authority = workspace_authority_map(user, org)
+    if not authority:
+        return []
+    return list(Workspace.objects.for_org(org.pk).filter(is_archived=False, id__in=list(authority)))
+
+
+def may_manage_org_membership(caller_level: int, target_role: str) -> bool:
+    """Whether a caller may change or remove a membership at ``target_role``.
+
+    Admin and above are owner-only, mirroring ``create_invitation``'s rule that
+    only an owner may *create* an admin. Without the mirror the privilege is
+    destroyable but not restorable: one admin could demote or remove another,
+    and no admin could put them back.
+    """
+    target_level = ORG_ROLE_LEVEL.get(target_role, 0)
+    if target_level >= ORG_ROLE_LEVEL[OrgRole.ADMIN]:
+        return caller_level >= ORG_ROLE_LEVEL[OrgRole.OWNER]
+    return caller_level >= target_level
+
+
+def _assert_may_manage_org_membership(caller_level: int, target_role: str, verb: str) -> None:
+    if may_manage_org_membership(caller_level, target_role):
+        return
+    if caller_level < ORG_ROLE_LEVEL.get(target_role, 0):
+        raise MembershipError(f"You cannot {verb} a member whose role is higher than your own.")
+    raise MembershipError(f"Only organization owners can {verb} an organization admin.")
 
 
 def _normalise_assignments(org: Any, assignments: Any) -> list[WorkspaceAssignment]:
@@ -106,12 +159,12 @@ def _normalise_assignments(org: Any, assignments: Any) -> list[WorkspaceAssignme
     return cleaned
 
 
-def _assert_may_grant(inviter: Any, org: Any, assignments: list[WorkspaceAssignment]) -> None:
+def _assert_may_grant(authority: dict[str, int], assignments: list[WorkspaceAssignment]) -> None:
     for assignment in assignments:
-        authority = workspace_authority_level(inviter, org, assignment.workspace_id)
-        if authority == 0:
+        level = authority.get(assignment.workspace_id, 0)
+        if level == 0:
             raise MembershipError("You cannot manage members in that workspace.")
-        if WORKSPACE_ROLE_LEVEL[assignment.role] > authority:
+        if WORKSPACE_ROLE_LEVEL[assignment.role] > level:
             raise MembershipError("You cannot grant a workspace role higher than your own in that workspace.")
 
 
@@ -170,7 +223,7 @@ def create_invitation(
         raise MembershipError("Only organization owners can invite someone as an admin.")
 
     assignments = _normalise_assignments(org, workspace_assignments)
-    _assert_may_grant(effective_inviter, org, assignments)
+    _assert_may_grant(workspace_authority_map(effective_inviter, org), assignments)
 
     invitation = Invitation.objects.create(
         organization=org,
@@ -283,7 +336,10 @@ def send_invite_email(invitation: Invitation) -> None:
         )
         message.attach_alternative(render_to_string("members/email/invite.html", context), "text/html")
         message.send()
-    except Exception:
+    except (OSError, smtplib.SMTPException):
+        # Delivery only. A TemplateSyntaxError or a renamed context key must not
+        # be reported as an SMTP problem and then silently swallowed — the
+        # invitation would look sent and never arrive.
         logger.exception("Failed to send invitation email for invitation %s", invitation.pk)
 
 
@@ -309,8 +365,7 @@ def remove_member(org: Any, membership: OrgMembership, removed_by: Any) -> None:
         if not owners.exists():
             raise MembershipError("Cannot remove the last organization owner.")
 
-    if org_level(removed_by, org) < ORG_ROLE_LEVEL.get(membership.org_role, 0):
-        raise MembershipError("You cannot remove a member whose role is higher than your own.")
+    _assert_may_manage_org_membership(org_level(removed_by, org), membership.org_role, "remove")
 
     with transaction.atomic():
         workspace_ids = list(Workspace.objects.for_org(org.pk).values_list("id", flat=True))
@@ -329,9 +384,7 @@ def update_member_org_role(org: Any, membership: OrgMembership, new_role: str, *
 
     if caller is not None:
         caller_level = org_level(caller, org)
-        existing_level = ORG_ROLE_LEVEL.get(membership.org_role, 0)
-        if caller_level < existing_level:
-            raise MembershipError("You cannot change a member whose role is higher than your own.")
+        _assert_may_manage_org_membership(caller_level, membership.org_role, "change")
         if new_level >= ORG_ROLE_LEVEL[OrgRole.ADMIN] and new_level >= caller_level:
             raise MembershipError("Only organization owners can promote someone to admin.")
 
@@ -349,27 +402,35 @@ def update_member_org_role(org: Any, membership: OrgMembership, new_role: str, *
 def update_workspace_assignments(org: Any, user: Any, assignments: Any, *, inviter: Any = None) -> None:
     """Set a member's workspace memberships to exactly ``assignments``.
 
-    Omission means removal, so any UI calling this must render every workspace.
+    Omission means removal, so the caller must render every workspace **in
+    scope** — and the scope is the caller's own authority, not the whole
+    organization. Scoping it wider would make the form unsubmittable for anyone
+    who manages some of the org's workspaces but not all of them: a membership
+    in a workspace they were never shown is absent from ``desired``, reads as a
+    deliberate removal, and fails the authority check below on every attempt.
     """
+    authority = workspace_authority_map(inviter, org) if inviter is not None else None
     desired = {a.workspace_id: a.role for a in _normalise_assignments(org, assignments)}
 
-    workspace_ids = [str(pk) for pk in Workspace.objects.for_org(org.pk).values_list("id", flat=True)]
-    current = {
-        str(m.workspace_id): m for m in WorkspaceMembership.objects.filter(user=user, workspace_id__in=workspace_ids)
-    }
+    if authority is None:
+        scope: set[str] = {str(pk) for pk in Workspace.objects.for_org(org.pk).values_list("id", flat=True)}
+    else:
+        scope = set(authority)
 
-    if inviter is not None:
+    current = {str(m.workspace_id): m for m in WorkspaceMembership.objects.filter(user=user, workspace_id__in=scope)}
+
+    if authority is not None:
         # Authority over what is being granted...
-        _assert_may_grant(inviter, org, [WorkspaceAssignment(ws, role) for ws, role in desired.items()])
+        _assert_may_grant(authority, [WorkspaceAssignment(ws, role) for ws, role in desired.items()])
         # ...and over what is being taken away or changed. Without the second
         # half, a workspace admin could demote an owner-equivalent membership by
         # submitting a lower role: the requested level passes the first check,
         # and the demotion itself is the violation.
         for workspace_id, membership in current.items():
             existing_level = WORKSPACE_ROLE_LEVEL.get(membership.workspace_role, 0)
-            authority = workspace_authority_level(inviter, org, workspace_id)
+            level = authority.get(workspace_id, 0)
             changing = workspace_id not in desired or desired[workspace_id] != membership.workspace_role
-            if changing and (authority == 0 or existing_level > authority):
+            if changing and (level == 0 or existing_level > level):
                 raise MembershipError("You cannot modify a workspace membership whose role is higher than your own.")
 
     for workspace_id, membership in current.items():

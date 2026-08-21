@@ -35,7 +35,12 @@ def settings_view(request: OrgRequest) -> HttpResponse:
 @require_POST
 def update_settings(request: OrgRequest) -> HttpResponse:
     org = request.org
-    org.name = (request.POST.get("name") or org.name).strip()[:100]
+    # Strip first, then reject — see apps/workspaces/views.py for the same trap.
+    name = (request.POST.get("name") or "").strip()[:100]
+    if not name:
+        messages.error(request, "An organization needs a name.")
+        return redirect(reverse("organizations:settings"))
+    org.name = name
     org.default_timezone = (request.POST.get("default_timezone") or org.default_timezone).strip()[:63]
     org.logo_url = (request.POST.get("logo_url") or "").strip()
     org.save(update_fields=["name", "default_timezone", "logo_url", "updated_at"])
@@ -54,7 +59,9 @@ def workspaces_view(request: OrgRequest) -> HttpResponse:
     """
     workspaces = Workspace.objects.for_org(request.org.pk).order_by("is_archived", "name")
     member_workspace_ids = set(
-        WorkspaceMembership.objects.filter(user=request.user).values_list("workspace_id", flat=True)
+        WorkspaceMembership.objects.filter(user=request.user, workspace__organization=request.org).values_list(
+            "workspace_id", flat=True
+        )
     )
     return render(
         request,

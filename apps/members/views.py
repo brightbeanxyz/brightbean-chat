@@ -13,8 +13,6 @@ with issue #32, and building against a library this branch does not vendor would
 ship a page that silently does nothing. #32 restyles and can convert these.
 """
 
-from typing import Any
-
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
@@ -29,13 +27,14 @@ from apps.members.roles import ORG_ROLE_LEVEL, OrgRole, WorkspaceRole
 from apps.members.services import (
     MembershipError,
     create_invitation,
+    manageable_workspaces,
+    may_manage_org_membership,
     org_level,
     remove_member,
     resend_invitation,
     revoke_invitation,
     update_member_org_role,
     update_workspace_assignments,
-    workspace_authority_level,
 )
 from apps.members.signals_keys import PENDING_INVITE_SESSION_KEY
 from apps.workspaces.models import Workspace
@@ -52,15 +51,6 @@ def _org_role_choices_for(membership: OrgMembership) -> list[tuple[str, str]]:
         choices.append((OrgRole.ADMIN.value, "Admin"))
     choices.append((OrgRole.MEMBER.value, "Member"))
     return choices
-
-
-def _manageable_workspaces(user: Any, org: Any) -> list[Workspace]:
-    """Workspaces this user may assign roles in."""
-    return [
-        workspace
-        for workspace in Workspace.objects.for_org(org.pk).filter(is_archived=False)
-        if workspace_authority_level(user, org, workspace.pk) > 0
-    ]
 
 
 def _parse_assignments(request: OrgRequest, workspaces: list[Workspace]) -> list[dict[str, str]]:
@@ -83,17 +73,29 @@ def _parse_assignments(request: OrgRequest, workspaces: list[Workspace]) -> list
 def member_list(request: OrgRequest) -> HttpResponse:
     memberships = OrgMembership.objects.for_org(request.org.pk).select_related("user").order_by("user__email")
     invitations = Invitation.objects.for_org(request.org.pk).filter(accepted_at__isnull=True)
-    workspaces = _manageable_workspaces(request.user, request.org)
+    workspaces = manageable_workspaces(request.user, request.org)
+    caller_level = org_level(request.user, request.org)
+    # Resolved per row rather than "anyone but me", so the form never presents a
+    # role change or a removal that the service layer will refuse — which is
+    # what _org_role_choices_for exists for one level up.
+    rows = [
+        {
+            "membership": membership,
+            "can_manage": membership.user_id != request.user.pk
+            and may_manage_org_membership(caller_level, membership.org_role),
+        }
+        for membership in memberships
+    ]
     return render(
         request,
         "members/list.html",
         {
-            "memberships": memberships,
+            "rows": rows,
             "invitations": [i for i in invitations if not i.is_expired],
             "workspaces": workspaces,
             "workspace_roles": WorkspaceRole.choices,
             "org_role_choices": _org_role_choices_for(request.org_membership),
-            "is_admin": org_level(request.user, request.org) >= ORG_ROLE_LEVEL[OrgRole.ADMIN],
+            "is_admin": caller_level >= ORG_ROLE_LEVEL[OrgRole.ADMIN],
         },
     )
 
@@ -102,7 +104,7 @@ def member_list(request: OrgRequest) -> HttpResponse:
 @require_org_role("admin")
 @require_POST
 def invite_member(request: OrgRequest) -> HttpResponse:
-    workspaces = _manageable_workspaces(request.user, request.org)
+    workspaces = manageable_workspaces(request.user, request.org)
     try:
         create_invitation(
             org=request.org,
@@ -186,7 +188,7 @@ def manage_workspaces(request: OrgRequest, membership_id: str) -> HttpResponse:
     — the rendered form is a convenience, never the control.
     """
     membership = get_object_or_404(OrgMembership, pk=membership_id, organization=request.org)
-    workspaces = _manageable_workspaces(request.user, request.org)
+    workspaces = manageable_workspaces(request.user, request.org)
 
     if request.method == "POST":
         try:

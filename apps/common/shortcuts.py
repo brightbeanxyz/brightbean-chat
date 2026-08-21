@@ -9,6 +9,7 @@ calling it directly would look right and cross tenants. Use this instead.
 
 from typing import Any
 
+from django.core.exceptions import ValidationError
 from django.http import Http404
 
 
@@ -19,8 +20,15 @@ def get_scoped_object_or_404(model: Any, workspace: Any, **kwargs: Any) -> Any:
     not exist at all: the two must be indistinguishable, or the response itself
     tells an attacker which ids are real.
     """
+    # Scoping happens OUTSIDE the try. for_workspace(None) raises ValueError on
+    # purpose — it means the caller has no workspace in hand and their filter
+    # would match nothing — and catching that here would serve a programming
+    # error as an ordinary 404, which is exactly the silence the guard exists to
+    # break.
+    queryset = model.objects.for_workspace(workspace)
     try:
-        return model.objects.for_workspace(workspace).get(**kwargs)
-    except (model.DoesNotExist, model.MultipleObjectsReturned, ValueError, TypeError) as exc:
-        # ValueError/TypeError: a malformed pk (bad UUID) is a miss, not a 500.
+        return queryset.get(**kwargs)
+    except (model.DoesNotExist, model.MultipleObjectsReturned, ValidationError, ValueError, TypeError) as exc:
+        # ValidationError/ValueError/TypeError: a malformed pk (a bad UUID) is a
+        # miss, not a 500.
         raise Http404(f"No {model.__name__} matches the given query.") from exc

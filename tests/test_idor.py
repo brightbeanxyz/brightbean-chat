@@ -6,6 +6,7 @@ from django.test import override_settings
 from tests.idor import (
     TENANT_KWARG_RESOLVERS,
     WAIVED_ROUTES,
+    UnnamedTenantRouteError,
     UnregisteredRouteKwargError,
     assert_cross_tenant_isolation,
     iter_tenant_routes,
@@ -69,3 +70,19 @@ class TestTheSuiteActuallyCatchesLeaks:
             iter_tenant_routes()
 
         assert "platform" in str(caught.value)
+
+    def test_an_unnamed_tenant_route_is_an_error_not_a_skip(self):
+        """A route nothing reverses is exactly the kind that gets registered
+        without a name; skipping it would be the one silent hole in a mechanism
+        whose whole point is that nothing escapes quietly."""
+        with (
+            override_settings(ROOT_URLCONF="tests.unnamed_urls"),
+            pytest.raises(UnnamedTenantRouteError) as caught,
+        ):
+            iter_tenant_routes("tests.unnamed_urls")
+
+        assert "no name=" in str(caught.value)
+
+    def test_an_unnamed_route_without_tenant_ids_is_fine(self):
+        """Only tenant-addressable routes have to be reversible here."""
+        assert iter_tenant_routes("tests.unnamed_urls_harmless") == []

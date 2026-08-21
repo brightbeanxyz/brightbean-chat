@@ -1,13 +1,16 @@
-"""Scoped model managers.
+"""Org-scoped model manager.
 
-Ported from BrightBean Studio's ``apps/common/managers.py``, minus its
-``OrgScopedModel`` / ``WorkspaceScopedModel`` abstract models: those declare
-foreign keys to ``organizations.Organization`` and ``workspaces.Workspace``,
-which do not exist yet and belong to issue #31 along with the rest of tenancy.
+Ported from BrightBean Studio's ``apps/common/managers.py``. Studio's
+``WorkspaceScopedManager`` is deliberately **not** here: the enforcing one lives
+in :mod:`apps.common.scoping`, and two classes of the same name — one of which
+silently does not enforce anything — is a trap rather than a convenience.
+Studio's ``OrgScopedModel`` / ``WorkspaceScopedModel`` abstract models are not
+ported either; ``apps.common.scoping.WorkspaceScopedModel`` replaces the latter.
 
-Issue #31 builds the enforcing workspace-scoped base manager on top of these
-(SECURITY-BASELINE §1: every queryset on tenant data goes through it, and
-cross-workspace access returns 404, never 403).
+Organizations are the tenant root, so org-scoped models carry no enforcement:
+there is no outer tenant to leak across, and ``Organization`` itself has to be
+queryable without a scope. Tenant data hangs off a workspace and goes through
+``apps.common.scoping`` (SECURITY-BASELINE §1).
 """
 
 from typing import Any
@@ -25,15 +28,3 @@ class OrgScopedManager(models.Manager):
 
     def for_org(self, organization_id: Any) -> models.QuerySet:
         return self.get_queryset().filter(organization_id=organization_id)
-
-
-class WorkspaceScopedManager(models.Manager):
-    """Manager that filters queries by ``workspace_id``.
-
-    Usage::
-
-        MyModel.objects.for_workspace(workspace_id).all()
-    """
-
-    def for_workspace(self, workspace_id: Any) -> models.QuerySet:
-        return self.get_queryset().filter(workspace_id=workspace_id)

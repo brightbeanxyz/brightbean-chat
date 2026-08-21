@@ -18,8 +18,8 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.platforms import Platform
 from apps.credentials.forms import WorkspaceCredentialOverrideForm
-from apps.credentials.models import CONFIGURABLE_PLATFORMS, WorkspaceCredentialOverride
-from apps.credentials.resolution import resolve_platform_credentials
+from apps.credentials.models import CONFIGURABLE_PLATFORMS, PlatformCredential, WorkspaceCredentialOverride
+from apps.credentials.resolution import resolve_from_rows
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
 
@@ -34,11 +34,19 @@ def _overrides_by_platform(workspace: object) -> dict[str, WorkspaceCredentialOv
 @require_permission("manage_workspace_settings")
 @require_GET
 def credential_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    # Two queries for the whole page. Going through resolve_platform_credentials
+    # per platform would re-read — and re-decrypt — rows already in hand.
     overrides = _overrides_by_platform(request.workspace)
+    org_credentials = {
+        credential.platform: credential
+        for credential in PlatformCredential.objects.for_org(request.workspace.organization_id)
+    }
     rows = []
     for platform in CONFIGURABLE_PLATFORMS:
         override = overrides.get(platform)
-        resolution = resolve_platform_credentials(platform, workspace=request.workspace)
+        resolution = resolve_from_rows(
+            platform, override=override, organization_credential=org_credentials.get(platform)
+        )
         rows.append(
             {
                 "platform": platform,

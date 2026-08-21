@@ -6,28 +6,30 @@
   <table>
     <thead><tr><th>Member</th><th>Organization role</th><th>Workspaces</th><th></th></tr></thead>
     <tbody>
-      {% for membership in memberships %}
+      {% for row in rows %}
         <tr>
-          <td>{{ membership.user.display_name }}<br /><span class="muted">{{ membership.user.email }}</span></td>
+          <td>{{ row.membership.user.display_name }}<br /><span class="muted">{{ row.membership.user.email }}</span></td>
           <td>
-            {% if is_admin and membership.user_id != request.user.id %}
-              <form method="post" action="{% url 'members:update_role' membership_id=membership.id %}">
+            {% if is_admin and row.can_manage %}
+              <form method="post" action="{% url 'members:update_role' membership_id=row.membership.id %}">
                 {% csrf_token %}
                 <select name="org_role" aria-label="Organization role">
                   {% for value, label in org_role_choices %}
-                    <option value="{{ value }}" {% if membership.org_role == value %}selected{% endif %}>{{ label }}</option>
+                    <option value="{{ value }}" {% if row.membership.org_role == value %}selected{% endif %}>
+                      {{ label }}
+                    </option>
                   {% endfor %}
                 </select>
                 <button type="submit">Update</button>
               </form>
             {% else %}
-              {{ membership.get_org_role_display }}
+              {{ row.membership.get_org_role_display }}
             {% endif %}
           </td>
-          <td><a href="{% url 'members:manage_workspaces' membership_id=membership.id %}">Manage access</a></td>
+          <td><a href="{% url 'members:manage_workspaces' membership_id=row.membership.id %}">Manage access</a></td>
           <td>
-            {% if is_admin and membership.user_id != request.user.id %}
-              <form method="post" action="{% url 'members:remove' membership_id=membership.id %}">
+            {% if is_admin and row.can_manage %}
+              <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}">
                 {% csrf_token %}
                 <button type="submit">Remove</button>
               </form>

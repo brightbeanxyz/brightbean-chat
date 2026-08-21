@@ -15,6 +15,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.validators import is_valid_hex_color
 from apps.members.decorators import require_permission
+from apps.members.models import WorkspaceMembership
 from apps.members.requests import WorkspaceRequest
 
 
@@ -22,7 +23,15 @@ from apps.members.requests import WorkspaceRequest
 @require_GET
 def dashboard(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The workspace landing page. Every role can see it."""
-    return render(request, "workspaces/dashboard.html")
+    # select_related and the archived filter belong here, not in the template:
+    # iterating memberships and touching .workspace costs one query each, on the
+    # most-visited page in the app.
+    switchable = (
+        WorkspaceMembership.objects.filter(user=request.user, workspace__is_archived=False)
+        .select_related("workspace")
+        .order_by("workspace__name")
+    )
+    return render(request, "workspaces/dashboard.html", {"switchable_memberships": switchable})
 
 
 @login_required
@@ -35,7 +44,15 @@ def switch(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     check has already happened in the middleware, so reaching here means the
     switch is legitimate — a role check would be wrong, since which workspace
     you are looking at is a personal preference, not workspace data.
+
+    The write is done here rather than left to the middleware's own
+    keep-in-sync side effect. That side effect is an optimisation for ordinary
+    navigation; making the switcher depend on it would mean any future narrowing
+    of it — skipping GETs, gating it behind a check — silently turns this view
+    into a redirect that changes nothing.
     """
+    request.user.last_workspace_id = request.workspace.pk
+    request.user.save(update_fields=["last_workspace_id", "updated_at"])
     return redirect(reverse("workspaces:dashboard", kwargs={"workspace_id": workspace_id}))
 
 
@@ -51,7 +68,13 @@ def settings_view(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 @require_POST
 def update_settings(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     workspace = request.workspace
-    workspace.name = (request.POST.get("name") or workspace.name).strip()[:100]
+    # Strip first, then reject: `or workspace.name` only catches an empty
+    # string, so "   " would survive it and be stored as a nameless workspace.
+    name = (request.POST.get("name") or "").strip()[:100]
+    if not name:
+        messages.error(request, "A workspace needs a name.")
+        return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
+    workspace.name = name
     workspace.icon = (request.POST.get("icon") or "").strip()[:8]
     workspace.description = (request.POST.get("description") or "").strip()[:500]
     workspace.timezone = (request.POST.get("timezone") or "").strip()[:63]

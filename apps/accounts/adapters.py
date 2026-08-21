@@ -1,6 +1,7 @@
 """allauth adapters."""
 
 import logging
+import smtplib
 from typing import Any
 
 from allauth.account.adapter import DefaultAccountAdapter
@@ -30,7 +31,12 @@ class AccountAdapter(DefaultAccountAdapter):
     def send_mail(self, template_prefix: str, email: str, context: dict[str, Any]) -> None:
         try:
             super().send_mail(template_prefix, email, context)
-        except Exception:
+        except (OSError, smtplib.SMTPException):
+            # Delivery failures only. A TemplateSyntaxError or a renamed context
+            # key must not be swallowed here and reported as an SMTP problem —
+            # that turns a broken email template into an invisible non-delivery
+            # with a message pointing operators at settings that are fine.
+            #
             # No address in the log line: the recipient is personal data, and
             # the template prefix is enough to say which mail failed.
             logger.exception("Failed to send account email (%s). Check the SMTP settings.", template_prefix)

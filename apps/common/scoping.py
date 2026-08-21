@@ -1,13 +1,12 @@
 """Enforcing workspace scoping for tenant models (SECURITY-BASELINE §1).
 
-``apps/common/managers.py`` ships BrightBean Studio's ``WorkspaceScopedManager``:
-a ``.for_workspace(id)`` convenience method and nothing else. Its docstring says
-"auto-filters", but ``get_queryset()`` is not overridden, so ``Model.objects.all()``
-still returns every tenant's rows. Isolation there rests entirely on every view
-author remembering the filter — and the one that forgets leaks silently, with a
-200 and somebody else's data.
-
-This module is the enforcing version. A tenant model inherits
+BrightBean Studio's ``WorkspaceScopedManager`` is a ``.for_workspace(id)``
+convenience method and nothing else. Its docstring says "auto-filters", but
+``get_queryset()`` is not overridden, so ``Model.objects.all()`` still returns
+every tenant's rows. Isolation there rests entirely on every view author
+remembering the filter — and the one that forgets leaks silently, with a 200 and
+somebody else's data. It is not ported; this is the enforcing version, and it
+carries the name so there is only ever one thing to import. A tenant model inherits
 :class:`WorkspaceScopedModel`; its ``objects`` manager hands out querysets that
 **refuse to execute** until they have been scoped:
 

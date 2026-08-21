@@ -40,16 +40,26 @@ def provision_organization_and_workspace(user: Any) -> Any:
     Idempotent: a user who already belongs to an organization is left alone, so
     every caller can be unconditional.
     """
+    from django.utils import timezone
+
+    from apps.accounts.models import User
     from apps.members.models import OrgMembership, WorkspaceMembership
     from apps.members.roles import OrgRole, WorkspaceRole
     from apps.organizations.models import Organization
     from apps.workspaces.models import Workspace
 
+    # Lock the user row for the rest of the transaction before reading the
+    # guard. Without it two concurrent first visits — two tabs, or a prefetch
+    # racing the click — both see no membership and both provision, leaving the
+    # account in two organizations with nothing to say which is real. Studio ran
+    # this inside the user-creation transaction, so moving it to a request
+    # handler is what made the window reachable.
+    if not User.objects.select_for_update().filter(pk=user.pk).exists():
+        return None  # deleted between the request arriving and getting the lock
+
     existing = OrgMembership.objects.filter(user=user).select_related("organization").first()
     if existing:
         return existing.organization
-
-    from django.utils import timezone
 
     org = Organization.objects.create(name=DEFAULT_ORG_NAME, default_timezone="UTC")
     OrgMembership.objects.create(

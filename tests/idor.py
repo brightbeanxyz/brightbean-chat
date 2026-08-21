@@ -98,6 +98,10 @@ class UnregisteredRouteKwargError(AssertionError):
     """A tenant route carries a kwarg the suite does not know how to build."""
 
 
+class UnnamedTenantRouteError(AssertionError):
+    """A tenant route has no ``name=``, so the suite cannot reverse it."""
+
+
 @dataclass(frozen=True)
 class TenantRoute:
     name: str
@@ -125,7 +129,19 @@ def _walk(resolver: URLResolver, prefix: tuple[str, ...], namespace: str | None)
         if isinstance(entry, URLResolver):
             child_ns = ":".join(part for part in (namespace, entry.namespace) if part) or None
             yield from _walk(entry, kwargs, child_ns)
-        elif isinstance(entry, URLPattern) and entry.name:
+        elif isinstance(entry, URLPattern):
+            if not entry.name:
+                # Skipping it would be the one silent hole in a mechanism whose
+                # whole point is that nothing escapes quietly: an endpoint
+                # nothing reverses is exactly the kind that gets registered
+                # without a name.
+                if any(kwarg in TENANT_KWARG_RESOLVERS for kwarg in kwargs):
+                    raise UnnamedTenantRouteError(
+                        f"Route {entry.pattern!s} takes {sorted(kwargs)} but has no name=, so the IDOR "
+                        f"suite cannot reverse it. Give it a name (and waive it in WAIVED_ROUTES if it "
+                        f"genuinely must not be swept). See docs/SECURITY-BASELINE.md §1."
+                    )
+                continue
             yield TenantRoute(name=":".join(part for part in (namespace, entry.name) if part), kwargs=kwargs)
 
 

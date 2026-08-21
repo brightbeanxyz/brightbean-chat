@@ -33,6 +33,10 @@ Three rules:
    already scoped by construction) keep working. `apps.common.checks.check_workspace_scoped_models`
    fails the build if that ordering is ever reversed.
 
+There is exactly one `WorkspaceScopedManager`, in `apps.common.scoping`. Studio's
+non-enforcing namesake is deliberately not ported: two classes of the same name,
+one of which quietly enforces nothing, is a trap rather than a convenience.
+
 ### Cross-tenant access answers 404, never 403
 
 A 403 confirms the id names something real. Over a UUID space, that confirmation
@@ -55,13 +59,19 @@ that reveals nothing the caller did not already know.
 names a tenant object with **another tenant's** ids, as a fully privileged member
 of a different organization, asserting 404.
 
-It is not opt-in. A route carrying an id the suite cannot build raises
-`UnregisteredRouteKwargError` rather than being skipped, so adding
-`/w/<uuid:workspace_id>/contacts/<uuid:contact_id>/` without registering a
-`contact_id` resolver turns the suite red. Register it in
-`TENANT_KWARG_RESOLVERS` (ids that identify a tenant's object) or
-`NEUTRAL_KWARG_VALUES` (values that need to exist but identify nothing), or add
-a `WAIVED_ROUTES` entry with a reason.
+It is not opt-in, and it has no silent skips:
+
+* A route carrying an id the suite cannot build raises
+  `UnregisteredRouteKwargError`, so adding
+  `/w/<uuid:workspace_id>/contacts/<uuid:contact_id>/` without registering a
+  `contact_id` resolver turns the suite red. Register it in
+  `TENANT_KWARG_RESOLVERS` (ids that identify a tenant's object) or
+  `NEUTRAL_KWARG_VALUES` (values that need to exist but identify nothing).
+* A tenant route with no `name=` raises `UnnamedTenantRouteError`, because the
+  suite reverses by name. Endpoints nothing reverses are exactly the ones that
+  get registered nameless; give it a name.
+* A route that genuinely must not be swept gets a `WAIVED_ROUTES` entry with a
+  reason. That is the only exemption, and it is a reviewed line of code.
 
 ## URLs
 
