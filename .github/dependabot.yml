@@ -15,6 +15,18 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # Django stays on the 5.2 LTS line: SPEC §2 fixes the major at 5.x, and
+      # 5.2 has security support through Apr 2028. Patch bumps within 5.2 are
+      # exactly the security releases we want arriving automatically, so only
+      # minor and major are ignored. Moving off LTS is a deliberate decision
+      # with a migration behind it, not a weekly PR — Dependabot opened one for
+      # 6.1 (#36) and it was closed for this reason. Drop this block when the
+      # project chooses its next LTS.
+      - dependency-name: "django"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
     groups:
       python-dev-tooling:
         patterns:

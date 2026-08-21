@@ -52,12 +52,32 @@ class TestCrossTenantIsolation:
 
         assert {
             "contacts",
-            "flows",
             "inbox",
             "sequences",
             "broadcasts",
             "settings_ws_fields",
             "settings_ws_tags",
+        } <= names
+
+    def test_the_sweep_covers_the_flows_app(self):
+        """Issue #6 replaced the `flows` placeholder with the real app, pages and
+        builder data API alike. Every one of those routes names a flow, so the
+        sweep has to reach all of them — including the API, which is exactly the
+        surface a placeholder never had."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "flows:list",
+            "flows:create",
+            "flows:edit",
+            "flows:rename",
+            "flows:duplicate",
+            "flows:archive",
+            "flows:restore",
+            "flows:api_detail",
+            "flows:api_publish",
+            "flows:api_stats",
+            "flows:api_schema",
         } <= names
 
     def test_every_waiver_states_a_reason(self):

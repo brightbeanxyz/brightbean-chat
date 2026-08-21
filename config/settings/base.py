@@ -133,8 +133,8 @@ THIRD_PARTY_APPS = [
     "allauth.socialaccount.providers.google",
 ]
 
-# The first six are the tenancy, auth and credential substrate (issue #31) plus
-# the Layer-2 task queue (issue #5); the rest of the domain apps follow.
+# The first six are the tenancy, auth and credential substrate (issue #31);
+# the Layer-2 domain apps follow it.
 #
 # ``theme`` holds the compiled Tailwind bundle. It has to be an installed app
 # rather than a STATICFILES_DIRS entry, because that is what puts
@@ -150,6 +150,7 @@ LOCAL_APPS = [
     "apps.workspaces",
     "apps.members",
     "apps.credentials",
+    "apps.flows",
     "apps.queueing",
     "theme",
 ]
