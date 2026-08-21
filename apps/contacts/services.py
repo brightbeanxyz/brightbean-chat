@@ -28,6 +28,8 @@ Not here, deliberately:
   here is one both of them would have to unlearn.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -65,12 +67,70 @@ _SCALAR_FIELDS: tuple[str, ...] = ("first_name", "last_name", "email", "phone", 
 
 
 def _clean_text(value: Any, *, limit: int) -> str:
-    """Collapse whitespace and enforce the column width."""
+    """Collapse whitespace and **truncate** to the column width.
+
+    Truncating rather than raising is right for the fields this is used on —
+    a contact's name, email and phone as a platform hands them over. Rejecting
+    the whole contact because a display name is 300 characters would drop an
+    inbound message; keeping the first 150 loses nothing anyone will miss.
+
+    Names a human types are the opposite case: see :func:`_clean_name`.
+    """
     if value is None:
         return ""
     if not isinstance(value, str):
         raise ContactsError("Expected text.")
     return " ".join(value.split())[:limit]
+
+
+def _clean_name(value: Any, *, limit: int, noun: str) -> str:
+    """Collapse whitespace and **refuse** anything over the column width.
+
+    Silently truncating a name a human typed is worse than refusing it twice
+    over: they see a name they did not type, and two names that differ only
+    after the limit collapse into one, so the second attempt is rejected as a
+    duplicate of a name that looks nothing like it on screen. This is also what
+    ``coerce_value`` already does for a custom-field text value, so the two
+    paths now agree that over-length input is an error rather than a suggestion.
+    """
+    if not isinstance(value, str) and value is not None:
+        raise ContactsError(f"A {noun} name must be text.")
+    cleaned = " ".join((value or "").split())
+    if not cleaned:
+        raise ContactsError(f"A {noun} needs a name.")
+    if len(cleaned) > limit:
+        raise ContactsError(f"A {noun} name is at most {limit} characters.")
+    return cleaned
+
+
+def _assert_name_is_free(model: Any, workspace_id: Any, name: str, *, noun: str, excluding: Any = None) -> None:
+    """Refuse a name another row in the workspace already holds.
+
+    Matched case-insensitively, because the unique constraints are on
+    ``Lower(name)`` — checking with ``=`` here would let "vip" through and then
+    let the database raise on it.
+    """
+    rows = model.objects.for_workspace(workspace_id).filter(name__iexact=name)
+    if excluding is not None:
+        rows = rows.exclude(pk=excluding)
+    if rows.exists():
+        raise ContactsError(f"A {noun} with that name already exists.")
+
+
+@contextmanager
+def _unique_name(noun: str) -> Iterator[None]:
+    """Turn the unique-index violation the check above races with into a refusal.
+
+    ``_assert_name_is_free`` is a check-then-write, so two concurrent requests
+    can both pass it. Without this the loser gets an ``IntegrityError`` — a 500
+    for input the single-threaded path answers with a readable message — and
+    poisons any enclosing atomic block. The savepoint keeps that block usable.
+    """
+    try:
+        with transaction.atomic():
+            yield
+    except IntegrityError as exc:
+        raise ContactsError(f"A {noun} with that name already exists.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +204,7 @@ def merge_contacts(*, primary: Contact, duplicate: Contact) -> Contact:
         held = set(primary.contact_tags.values_list("tag_id", flat=True))
         for link in duplicate.contact_tags.select_related("tag"):
             if link.tag_id not in held:
-                add_tag(primary, link.tag)
+                _link_tag(primary, link.tag)
 
         filled = set(primary.field_values.values_list("field_id", flat=True))
         for value in duplicate.field_values.select_related("field"):
@@ -176,9 +236,7 @@ def merge_contacts(*, primary: Contact, duplicate: Contact) -> Contact:
 
 def get_or_create_tag(workspace: Any, name: str) -> tuple[Tag, bool]:
     """Find a tag by name, case-insensitively, or create it."""
-    cleaned = _clean_text(name, limit=100)
-    if not cleaned:
-        raise ContactsError("A tag needs a name.")
+    cleaned = _clean_name(name, limit=100, noun="tag")
     existing = Tag.objects.for_workspace(workspace).filter(name__iexact=cleaned).first()
     if existing is not None:
         return existing, False
@@ -195,14 +253,11 @@ def get_or_create_tag(workspace: Any, name: str) -> tuple[Tag, bool]:
 
 
 def rename_tag(tag: Tag, name: str) -> Tag:
-    cleaned = _clean_text(name, limit=100)
-    if not cleaned:
-        raise ContactsError("A tag needs a name.")
-    clash = Tag.objects.for_workspace(tag.workspace_id).filter(name__iexact=cleaned).exclude(pk=tag.pk).exists()
-    if clash:
-        raise ContactsError("A tag with that name already exists.")
+    cleaned = _clean_name(name, limit=100, noun="tag")
+    _assert_name_is_free(Tag, tag.workspace_id, cleaned, noun="tag", excluding=tag.pk)
     tag.name = cleaned
-    tag.save(update_fields=["name", "updated_at"])
+    with _unique_name("tag"):
+        tag.save(update_fields=["name", "updated_at"])
     return tag
 
 
@@ -217,9 +272,15 @@ def delete_tag(tag: Tag) -> int:
     consumers should treat a tag deletion as a schema change, not as a stream of
     per-contact events.
     """
-    links = ContactTag.objects.for_workspace(tag.workspace_id).filter(tag=tag).count()
+    # Counts *live* contacts, not link rows, which is why `.delete()`'s own
+    # cascade count is not used: it includes links belonging to soft-deleted
+    # contacts, and the number goes straight into a message telling an operator
+    # how many people they are about to affect.
+    live = (
+        ContactTag.objects.for_workspace(tag.workspace_id).filter(tag=tag, contact__status=ContactStatus.ACTIVE).count()
+    )
     tag.delete()
-    return links
+    return live
 
 
 def add_tag(contact: Contact, tag: Tag) -> bool:
@@ -233,6 +294,17 @@ def add_tag(contact: Contact, tag: Tag) -> bool:
     links = ContactTag.objects.for_workspace(contact.workspace_id)
     if links.filter(contact=contact, tag=tag).exists():
         return False
+    return _link_tag(contact, tag)
+
+
+def _link_tag(contact: Contact, tag: Tag) -> bool:
+    """Insert the link and emit, without re-asking whether it is already there.
+
+    Split out for ``merge_contacts``, which has already computed the set of tags
+    the survivor holds — going back through ``add_tag`` would spend one probe
+    per tag re-establishing what that set says, inside the merge's own
+    transaction.
+    """
     try:
         with transaction.atomic():
             # ContactScopedModel.save() derives `workspace` from the contact, so
@@ -273,14 +345,12 @@ def remove_tag(contact: Contact, tag: Tag) -> bool:
 
 
 def create_custom_field(workspace: Any, *, name: str, field_type: str) -> CustomField:
-    cleaned = _clean_text(name, limit=100)
-    if not cleaned:
-        raise ContactsError("A field needs a name.")
+    cleaned = _clean_name(name, limit=100, noun="field")
     if field_type not in CustomFieldType.values:
-        raise ContactsError(f"Unknown field type {field_type!r}.")
-    if CustomField.objects.for_workspace(workspace).filter(name__iexact=cleaned).exists():
-        raise ContactsError("A field with that name already exists.")
-    return CustomField.objects.create(workspace=workspace, name=cleaned, type=field_type)
+        raise ContactsError("That is not a field type.")
+    _assert_name_is_free(CustomField, workspace, cleaned, noun="field")
+    with _unique_name("field"):
+        return CustomField.objects.create(workspace=workspace, name=cleaned, type=field_type)
 
 
 def rename_custom_field(field: CustomField, name: str) -> CustomField:
@@ -294,16 +364,11 @@ def rename_custom_field(field: CustomField, name: str) -> CustomField:
     migrates or drops values belongs to issue #13, with a preview of what it
     will discard.
     """
-    cleaned = _clean_text(name, limit=100)
-    if not cleaned:
-        raise ContactsError("A field needs a name.")
-    clash = (
-        CustomField.objects.for_workspace(field.workspace_id).filter(name__iexact=cleaned).exclude(pk=field.pk).exists()
-    )
-    if clash:
-        raise ContactsError("A field with that name already exists.")
+    cleaned = _clean_name(name, limit=100, noun="field")
+    _assert_name_is_free(CustomField, field.workspace_id, cleaned, noun="field", excluding=field.pk)
     field.name = cleaned
-    field.save(update_fields=["name", "updated_at"])
+    with _unique_name("field"):
+        field.save(update_fields=["name", "updated_at"])
     return field
 
 
@@ -313,9 +378,15 @@ def delete_custom_field(field: CustomField) -> int:
     Sends no ``contact.field_changed`` per contact, for the reason
     :func:`delete_tag` gives.
     """
-    values = CustomFieldValue.objects.for_workspace(field.workspace_id).filter(field=field).count()
+    # Live contacts, not stored rows — see delete_tag for why `.delete()`'s
+    # cascade count answers a different question than the one the operator asked.
+    live = (
+        CustomFieldValue.objects.for_workspace(field.workspace_id)
+        .filter(field=field, contact__status=ContactStatus.ACTIVE)
+        .count()
+    )
     field.delete()
-    return values
+    return live
 
 
 def coerce_value(field: CustomField, value: Any) -> tuple[str, Any]:
@@ -486,12 +557,12 @@ def create_segment(workspace: Any, *, name: str, filter_json: Any) -> Segment:
     """
     from apps.contacts.conditions import validate
 
-    cleaned = _clean_text(name, limit=100)
-    if not cleaned:
-        raise ContactsError("A segment needs a name.")
+    cleaned = _clean_name(name, limit=100, noun="segment")
     document = _as_filter_document(filter_json)
+    _assert_name_is_free(Segment, workspace, cleaned, noun="segment")
     validate(workspace, document)
-    return Segment.objects.create(workspace=workspace, name=cleaned, filter_json=document)
+    with _unique_name("segment"):
+        return Segment.objects.create(workspace=workspace, name=cleaned, filter_json=document)
 
 
 def update_segment(segment: Segment, *, name: str | None = None, filter_json: Any = None) -> Segment:
@@ -499,9 +570,8 @@ def update_segment(segment: Segment, *, name: str | None = None, filter_json: An
 
     changed: list[str] = []
     if name is not None:
-        cleaned = _clean_text(name, limit=100)
-        if not cleaned:
-            raise ContactsError("A segment needs a name.")
+        cleaned = _clean_name(name, limit=100, noun="segment")
+        _assert_name_is_free(Segment, segment.workspace_id, cleaned, noun="segment", excluding=segment.pk)
         segment.name = cleaned
         changed.append("name")
     if filter_json is not None:
@@ -510,5 +580,6 @@ def update_segment(segment: Segment, *, name: str | None = None, filter_json: An
         segment.filter_json = document
         changed.append("filter_json")
     if changed:
-        segment.save(update_fields=[*changed, "updated_at"])
+        with _unique_name("segment"):
+            segment.save(update_fields=[*changed, "updated_at"])
     return segment

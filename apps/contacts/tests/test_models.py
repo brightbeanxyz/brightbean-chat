@@ -204,3 +204,75 @@ class TestTheBootTimeAllowlistChecks:
         monkeypatch.setattr(conditions, "OP_LABELS", {})
 
         assert [error.id for error in check_condition_allowlists()] == ["contacts.E002"]
+
+
+@pytest.mark.django_db
+class TestTheReadOnlyTagsRelation:
+    """``Contact.tags`` is for reading. The through table is written only by
+    ``services``, which emits the contract-7 events."""
+
+    def test_add_is_refused(self, contact, tag):
+        with pytest.raises(RuntimeError, match="read-only"):
+            contact.tags.add(tag)
+
+    def test_remove_is_refused(self, contact, tag):
+        """The one that used to succeed: `.remove()` only DELETEs, so it dropped
+        the link with no contact.tag_removed emitted and nothing raised."""
+        from apps.contacts import services
+
+        services.add_tag(contact, tag)
+
+        # Django wraps remove() in atomic(savepoint=False), so the refusal marks
+        # the enclosing transaction broken — correct for a programming error, and
+        # a 500 in a request. The extra atomic() here gives it a savepoint to
+        # roll back to so the assertion below can still run.
+        with pytest.raises(RuntimeError, match="read-only"), transaction.atomic():
+            contact.tags.remove(tag)
+
+        assert contact.contact_tags.count() == 1
+
+    def test_clear_is_refused(self, contact, tag):
+        from apps.contacts import services
+
+        services.add_tag(contact, tag)
+
+        with pytest.raises(RuntimeError, match="read-only"), transaction.atomic():
+            contact.tags.clear()
+
+        assert contact.contact_tags.count() == 1
+
+    def test_reading_still_works(self, contact, tag):
+        from apps.contacts import services
+
+        services.add_tag(contact, tag)
+
+        assert [t.pk for t in contact.tags.all()] == [tag.pk]
+
+
+@pytest.mark.django_db
+class TestEmptyUpdateFieldsStaysANoOp:
+    def test_save_with_an_empty_update_fields_writes_nothing(self, contact, custom_field):
+        """Django returns before touching the database for a falsy
+        update_fields; widening it to {"workspace"} would defeat that."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        row = CustomFieldValue(contact=contact, field=custom_field, value_text="a")
+        row.save()
+
+        with CaptureQueriesContext(connection) as captured:
+            row.save(update_fields=[])
+
+        assert captured.captured_queries == []
+
+    def test_a_non_empty_update_fields_still_carries_the_derived_workspace(self, contact, custom_field):
+        row = CustomFieldValue(contact=contact, field=custom_field, value_text="a")
+        row.save()
+        row.workspace_id = None
+        row.value_text = "b"
+
+        row.save(update_fields=["value_text"])
+
+        row.refresh_from_db()
+        assert row.value_text == "b"
+        assert row.workspace_id == contact.workspace_id

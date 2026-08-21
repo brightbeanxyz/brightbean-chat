@@ -64,10 +64,12 @@ class TestCrossTenantIsolation:
         assert {
             "contacts:list",
             "contacts:tag_list",
+            "contacts:tag_rows",
             "contacts:tag_create",
             "contacts:tag_rename",
             "contacts:tag_delete",
             "contacts:field_list",
+            "contacts:field_rows",
             "contacts:field_create",
             "contacts:field_rename",
             "contacts:field_delete",

@@ -48,6 +48,8 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models
 from django.db.models.functions import Lower
+from django.db.models.signals import m2m_changed
+from django.dispatch import receiver
 
 from apps.common.scoping import WorkspaceScopedModel
 from apps.contacts.errors import WorkspaceMismatchError
@@ -123,10 +125,10 @@ class Contact(WorkspaceScopedModel):
     status = models.CharField(max_length=16, choices=ContactStatus.choices, default=ContactStatus.ACTIVE)
     last_interaction_at = models.DateTimeField(null=True, blank=True)
 
-    # Read-only by convention. ``contact.tags.add(tag)`` works and is WRONG: it
-    # writes a ContactTag without emitting ``contact.tag_added``, so issue #22's
-    # rule triggers and #25's webhooks never fire.
-    # :func:`apps.contacts.services.add_tag` is the only writer.
+    # Read-only, and enforced rather than asked for — see the m2m_changed
+    # receiver at the bottom of this module. It exists for reading (
+    # ``prefetch_related("tags")``, ``Count("contacts")``); every write goes
+    # through :mod:`apps.contacts.services` so the contract-7 events fire.
     tags = models.ManyToManyField("contacts.Tag", through="contacts.ContactTag", related_name="contacts", blank=True)
 
     class Meta:
@@ -222,8 +224,15 @@ class ContactScopedModel(WorkspaceScopedModel):
             raise WorkspaceMismatchError(
                 f"That {peer._meta.verbose_name} belongs to a different workspace than the contact."
             )
-        if kwargs.get("update_fields") is not None:
-            kwargs["update_fields"] = {*kwargs["update_fields"], "workspace"}
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            # Only widen a non-empty set. Django reads a falsy ``update_fields``
+            # as "save nothing" and returns before touching the database or
+            # sending signals (``django/db/models/base.py``: "If update_fields
+            # is empty, skip the save"), so adding ``workspace`` to an empty one
+            # would turn a documented no-op into a real UPDATE.
+            widened = set(update_fields)
+            kwargs["update_fields"] = widened | {"workspace"} if widened else widened
         super().save(*args, **kwargs)
 
 
@@ -364,3 +373,27 @@ class Segment(WorkspaceScopedModel):
             validate(self.workspace_id, self.filter_json, exclude_segment_id=self.pk)
         except ConditionValidationError as exc:
             raise ValidationError({"filter_json": str(exc)}) from exc
+
+
+@receiver(m2m_changed, sender=Contact.tags.through)
+def _refuse_direct_tag_mutation(sender: Any, action: str, **kwargs: Any) -> None:
+    """Make ``Contact.tags``'s read-only contract real instead of advisory.
+
+    ``contact.tags.add(tag)`` was already loud by accident — ``bulk_create``
+    skips ``ContactScopedModel.save()``, so the NOT NULL ``workspace`` column
+    rejects it. ``.remove()`` and ``.clear()`` only DELETE, so they *succeeded*,
+    dropping link rows with no ``contact.tag_removed`` emitted. Issue #22's rule
+    triggers and #25's outbound webhooks would simply never learn the contact
+    lost the tag, and nothing would raise — a silent failure exactly where the
+    docstring implied safety.
+
+    A ``RuntimeError`` rather than a :class:`~apps.contacts.errors.ContactsError`
+    on purpose: this is a programming mistake, not user input, and views catch
+    ``ContactsError`` to render a toast.
+    """
+    if action in {"pre_add", "pre_remove", "pre_clear"}:
+        raise RuntimeError(
+            "Contact.tags is read-only. Use apps.contacts.services.add_tag / remove_tag, "
+            "which emit the contact.tag_added / contact.tag_removed events that issue #22's "
+            "rule triggers and #25's webhooks subscribe to."
+        )

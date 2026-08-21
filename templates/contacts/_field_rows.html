@@ -1,15 +1,19 @@
 {% comment %}
-The refreshable half of the custom-fields page — same arrangement as
-_tag_rows.html, listening for `fieldsChanged`.
-
+The refreshable half of the custom-fields page. The list page renders this inline;
+every mutation's toast_response carries a `fieldsChanged` HX-Trigger, and this
+container answers it by re-fetching itself from `contacts:field_rows` — a view that
+renders this template alone. Fetching the full page and picking one div out
+of it with hx-select also works, and costs a whole shell render (sidebar,
+workspace switcher, every context-processor query) per keystroke-sized edit.
+{% endcomment %}
+{% comment %}
 A field's type is shown but never editable: changing it would orphan every
 stored value in the column the old type used, where the condition engine reads
 the new type's column and sees nothing. See services.rename_custom_field.
 {% endcomment %}
 <div id="field-rows"
-     hx-get="{% url 'contacts:field_list' workspace_id=request.workspace.id %}"
+     hx-get="{% url 'contacts:field_rows' workspace_id=request.workspace.id %}"
      hx-trigger="fieldsChanged from:body"
-     hx-select="#field-rows"
      hx-swap="outerHTML">
   {% if fields %}
     <table>

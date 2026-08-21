@@ -7,8 +7,10 @@ here, and the gap is named in the PR.
 """
 
 import json
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 
 from apps.contacts import services
 from apps.contacts.models import ContactStatus, CustomField, CustomFieldType, Segment, Tag
@@ -246,3 +248,112 @@ class TestTheContactList:
             return len(captured.captured_queries)
 
         assert render_with(5) == render_with(25)
+
+
+@pytest.mark.django_db
+class TestTheContactListOrdering:
+    def test_contacts_with_no_interaction_sort_last_not_first(self, tenancy, client_for):
+        """Postgres sorts NULL above every value under DESC, so a plain
+        `-last_interaction_at` puts everyone who has never interacted at the top
+        of a list whose whole point is recency."""
+        now = timezone.now()
+        never = services.create_contact(tenancy.workspace, first_name="Never")
+        recent = services.create_contact(tenancy.workspace, first_name="Recent", last_interaction_at=now)
+        older = services.create_contact(
+            tenancy.workspace, first_name="Older", last_interaction_at=now - timedelta(days=5)
+        )
+
+        body = client_for(tenancy.owner).get(url(tenancy, "contacts/")).content.decode()
+
+        assert body.index("Recent") < body.index("Older") < body.index("Never")
+        assert {recent.pk, older.pk, never.pk}  # all three rendered
+
+
+@pytest.mark.django_db
+class TestCountsExcludeTombstones:
+    def _tombstone(self, contact):
+        contact.status = ContactStatus.DELETED
+        contact.save(update_fields=["status"])
+
+    def test_a_tags_contact_count_ignores_soft_deleted_contacts(self, tenancy, client_for):
+        tag, _ = services.get_or_create_tag(tenancy.workspace, "VIP")
+        live = services.create_contact(tenancy.workspace, first_name="Live")
+        gone = services.create_contact(tenancy.workspace, first_name="Gone")
+        services.add_tag(live, tag)
+        services.add_tag(gone, tag)
+        self._tombstone(gone)
+
+        body = client_for(tenancy.owner).get(url(tenancy, "settings/tags/")).content.decode()
+
+        assert ">1<" in body.replace(" ", "").replace("\n", "")
+
+    def test_a_fields_value_count_ignores_soft_deleted_contacts(self, tenancy, client_for, custom_field):
+        live = services.create_contact(tenancy.workspace, first_name="Live")
+        gone = services.create_contact(tenancy.workspace, first_name="Gone")
+        services.set_field_value(live, custom_field, "a")
+        services.set_field_value(gone, custom_field, "b")
+        self._tombstone(gone)
+
+        body = client_for(tenancy.owner).get(url(tenancy, "settings/fields/")).content.decode()
+
+        assert ">1<" in body.replace(" ", "").replace("\n", "")
+
+    def test_the_delete_toast_counts_live_contacts_only(self, tenancy, client_for):
+        tag, _ = services.get_or_create_tag(tenancy.workspace, "VIP")
+        live = services.create_contact(tenancy.workspace, first_name="Live")
+        gone = services.create_contact(tenancy.workspace, first_name="Gone")
+        services.add_tag(live, tag)
+        services.add_tag(gone, tag)
+        self._tombstone(gone)
+
+        response = client_for(tenancy.owner).post(url(tenancy, f"settings/tags/{tag.pk}/delete/"))
+
+        assert "1 contact." in triggers(response)["showToast"]["body"]
+
+
+@pytest.mark.django_db
+class TestASegmentThatCannotBeEvaluatedFailsClosed:
+    def test_it_shows_no_contacts_rather_than_all_of_them(self, tenancy, client_for):
+        """The operator asked for a subset; answering with the whole workspace
+        is the least safe way to be wrong."""
+        services.create_contact(tenancy.workspace, first_name="Zebediah")
+        segment = Segment.objects.create(
+            workspace=tenancy.workspace,
+            name="Windowed",
+            filter_json={"match": "all", "rules": [{"source": "window", "key": "telegram", "op": "inside"}]},
+        )
+
+        body = client_for(tenancy.owner).get(url(tenancy, f"contacts/?segment={segment.pk}")).content.decode()
+
+        assert "could not be applied" in body
+        # "Everyone" is the segment selector's null option, so assert on the
+        # contact's own name rather than a word the chrome also uses.
+        assert "Zebediah" not in body
+
+
+@pytest.mark.django_db
+class TestTheFragmentRoutes:
+    @pytest.mark.parametrize("suffix", ["settings/tags/rows/", "settings/fields/rows/"])
+    def test_a_fragment_renders_without_the_shell(self, tenancy, client_for, suffix):
+        """The whole point: no sidebar, no workspace switcher, no shell queries."""
+        body = client_for(tenancy.owner).get(url(tenancy, suffix)).content.decode()
+
+        assert "sidebar-nav-item" not in body
+        assert "<html" not in body
+
+    @pytest.mark.parametrize("suffix", ["settings/tags/rows/", "settings/fields/rows/"])
+    @pytest.mark.parametrize("role", REFUSED_ROLES)
+    def test_a_fragment_is_gated_like_its_page(self, tenancy, client_for, suffix, role):
+        assert client_for(tenancy.user_for(role)).get(url(tenancy, suffix)).status_code == 403
+
+    def test_a_fragment_is_a_fraction_of_the_full_page(self, tenancy, client_for):
+        """The saving is bytes and render work, not queries — sidebar_context is
+        a context processor and runs for every render() whatever the template."""
+        client = client_for(tenancy.owner)
+        services.get_or_create_tag(tenancy.workspace, "VIP")
+
+        page = client.get(url(tenancy, "settings/tags/")).content
+        fragment = client.get(url(tenancy, "settings/tags/rows/")).content
+
+        assert b"VIP" in fragment
+        assert len(fragment) * 10 < len(page)

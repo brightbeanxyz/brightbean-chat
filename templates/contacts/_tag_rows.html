@@ -1,14 +1,14 @@
 {% comment %}
-The refreshable half of the tags page. tag_list.html renders it inline, and
-every mutation's toast_response carries a `tagsChanged` HX-Trigger that makes
-this container re-fetch the whole page and swap just this fragment back in
-(hx-select). One template, one route — no separate fragment endpoint to keep in
-step with the page it belongs to.
+The refreshable half of the tags page. The list page renders this inline;
+every mutation's toast_response carries a `tagsChanged` HX-Trigger, and this
+container answers it by re-fetching itself from `contacts:tag_rows` — a view that
+renders this template alone. Fetching the full page and picking one div out
+of it with hx-select also works, and costs a whole shell render (sidebar,
+workspace switcher, every context-processor query) per keystroke-sized edit.
 {% endcomment %}
 <div id="tag-rows"
-     hx-get="{% url 'contacts:tag_list' workspace_id=request.workspace.id %}"
+     hx-get="{% url 'contacts:tag_rows' workspace_id=request.workspace.id %}"
      hx-trigger="tagsChanged from:body"
-     hx-select="#tag-rows"
      hx-swap="outerHTML">
   {% if tags %}
     <table>

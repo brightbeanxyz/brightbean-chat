@@ -27,7 +27,7 @@ from typing import Any
 
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from django.db.models import Count, QuerySet
+from django.db.models import Count, F, Q, QuerySet
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -47,6 +47,28 @@ PAGE_SIZE = 50
 
 def _failed(exc: Exception, title: str) -> HttpResponse:
     return toast_response(tone="error", title=title, body=str(exc))
+
+
+def _tag_context(request: WorkspaceRequest) -> dict[str, Any]:
+    """Tags with the number of **live** contacts carrying each.
+
+    The filter is the point: the M2M join reaches ContactTag, which keeps its
+    rows when a contact is soft-deleted, so an unfiltered Count reports people
+    the rest of the app has already stopped showing — and feeds that number into
+    a prompt telling the operator how many contacts a delete will touch.
+    """
+    tags = Tag.objects.for_workspace(request.workspace).annotate(
+        contact_count=Count("contacts", filter=Q(contacts__status=ContactStatus.ACTIVE))
+    )
+    return {"tags": tags}
+
+
+def _field_context(request: WorkspaceRequest) -> dict[str, Any]:
+    """Custom fields with the number of values held by live contacts."""
+    fields = CustomField.objects.for_workspace(request.workspace).annotate(
+        value_count=Count("values", filter=Q(values__contact__status=ContactStatus.ACTIVE))
+    )
+    return {"fields": fields, "field_types": CustomFieldType.choices}
 
 
 @login_required
@@ -72,14 +94,21 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
             contacts = contacts_matching(request.workspace, segment.filter_json)
         except ConditionError as exc:
             # A segment saved before a tag it references was deleted, or one
-            # using a source this deployment cannot evaluate yet. Show the list
-            # unfiltered and say why rather than 500.
+            # using a source this deployment cannot evaluate yet. Fail *closed*:
+            # the operator asked for a subset, so answering with the whole
+            # workspace is the least safe way to be wrong, and the count they
+            # read off the page would be wrong in the direction that matters.
             error = str(exc)
+            contacts = contacts.none()
 
+    # nulls_last is load-bearing: Postgres sorts NULL above every value under
+    # DESC, so a plain "-last_interaction_at" puts every contact who has never
+    # interacted at the top of a list whose whole point is recency.
+    #
     # -id, not -created_at, as the tiebreak: primary keys are UUIDv7, so it is a
     # stable, unique, index-backed newest-first ordering that costs nothing.
     # prefetch_related, or the tag column is one query per row.
-    rows = contacts.prefetch_related("tags").order_by("-last_interaction_at", "-id")
+    rows = contacts.prefetch_related("tags").order_by(F("last_interaction_at").desc(nulls_last=True), "-id")
     page = Paginator(rows, PAGE_SIZE).get_page(request.GET.get("page"))
     return render(
         request,
@@ -97,8 +126,7 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 @require_permission("manage_crm")
 @require_GET
 def tag_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    tags = Tag.objects.for_workspace(request.workspace).annotate(contact_count=Count("contacts"))
-    return render(request, "contacts/tag_list.html", {"tags": tags})
+    return render(request, "contacts/tag_list.html", _tag_context(request))
 
 
 @login_required
@@ -150,9 +178,7 @@ def tag_delete(request: WorkspaceRequest, workspace_id: str, tag_id: str) -> Htt
 @require_permission("manage_crm")
 @require_GET
 def field_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    fields = CustomField.objects.for_workspace(request.workspace).annotate(value_count=Count("values"))
-    context: dict[str, Any] = {"fields": fields, "field_types": CustomFieldType.choices}
-    return render(request, "contacts/field_list.html", context)
+    return render(request, "contacts/field_list.html", _field_context(request))
 
 
 @login_required
@@ -196,3 +222,29 @@ def field_delete(request: WorkspaceRequest, workspace_id: str, field_id: str) ->
         body=f"{name} — {removed} stored value{'' if removed == 1 else 's'} removed.",
         events={"fieldsChanged": True},
     )
+
+
+@login_required
+@require_permission("manage_crm")
+@require_GET
+def tag_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Just the table, for the htmx refresh after a mutation.
+
+    Without it the refresh renders the whole page — the base template, the
+    sidebar, the workspace switcher — so htmx can parse all of it and keep one
+    div. The response goes from tens of kilobytes to a few hundred bytes.
+
+    It does **not** save the shell's queries: ``sidebar_context`` is a context
+    processor and runs for every ``render()``, whatever the template. Cutting
+    those would mean bypassing ``RequestContext`` entirely, which is a bigger
+    change than this is worth.
+    """
+    return render(request, "contacts/_tag_rows.html", _tag_context(request))
+
+
+@login_required
+@require_permission("manage_crm")
+@require_GET
+def field_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Just the table — see :func:`tag_rows`."""
+    return render(request, "contacts/_field_rows.html", _field_context(request))

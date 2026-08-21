@@ -265,3 +265,145 @@ class TestSegments:
                 segment,
                 filter_json={"match": "all", "rules": [{"source": "segment", "key": str(segment.pk), "op": "in"}]},
             )
+
+
+@pytest.mark.django_db
+class TestNamesAreRefusedNotTruncated:
+    @pytest.mark.parametrize(
+        ("call", "noun"),
+        [
+            (lambda ws, name: services.get_or_create_tag(ws, name), "tag"),
+            (lambda ws, name: services.create_custom_field(ws, name=name, field_type="text"), "field"),
+            (
+                lambda ws, name: services.create_segment(ws, name=name, filter_json={"match": "all", "rules": []}),
+                "segment",
+            ),
+        ],
+        ids=["tag", "field", "segment"],
+    )
+    def test_an_over_long_name_is_refused(self, workspace, call, noun):
+        """Truncating would show the user a name they did not type — and collapse
+        two names that differ only past the limit into a duplicate clash."""
+        with pytest.raises(ContactsError, match="at most"):
+            call(workspace, "x" * 101)
+
+    def test_two_names_differing_past_the_limit_no_longer_collide(self, workspace):
+        first = "a" * 99 + "one"
+        second = "a" * 99 + "two"
+
+        with pytest.raises(ContactsError):
+            services.get_or_create_tag(workspace, first)
+        with pytest.raises(ContactsError):
+            services.get_or_create_tag(workspace, second)
+
+    def test_a_contact_scalar_is_still_truncated_rather_than_refused(self, workspace):
+        """The opposite call for ingest: dropping an inbound contact because a
+        platform sent a 300-character display name would lose the message."""
+        contact = services.create_contact(workspace, first_name="x" * 300)
+
+        assert len(contact.first_name) == 150
+
+
+@pytest.mark.django_db
+class TestDuplicateNamesAreRefusedNotIntegrityErrors:
+    def test_creating_a_second_segment_with_the_same_name(self, workspace):
+        services.create_segment(workspace, name="VIPs", filter_json={"match": "all", "rules": []})
+
+        with pytest.raises(ContactsError, match="already exists"):
+            services.create_segment(workspace, name="vips", filter_json={"match": "all", "rules": []})
+
+    def test_renaming_a_segment_onto_an_existing_name(self, workspace):
+        services.create_segment(workspace, name="VIPs", filter_json={"match": "all", "rules": []})
+        other = services.create_segment(workspace, name="Leads", filter_json={"match": "all", "rules": []})
+
+        with pytest.raises(ContactsError, match="already exists"):
+            services.update_segment(other, name="vips")
+
+    def test_a_segment_may_keep_its_own_name(self, workspace):
+        segment = services.create_segment(workspace, name="VIPs", filter_json={"match": "all", "rules": []})
+
+        services.update_segment(segment, name="VIPs")
+
+        segment.refresh_from_db()
+        assert segment.name == "VIPs"
+
+    @pytest.mark.parametrize("noun", ["tag", "field", "segment"])
+    def test_a_lost_race_answers_like_the_single_threaded_path(self, workspace, noun, monkeypatch):
+        """Both requests pass the check-then-write probe; the loser must get the
+        same readable refusal, not the IntegrityError that would 500 and poison
+        the enclosing transaction."""
+        from django.db import IntegrityError
+
+        def racing_probe(*args, **kwargs):
+            return None  # every probe reports the name is free
+
+        monkeypatch.setattr(services, "_assert_name_is_free", racing_probe)
+
+        makers = {
+            "tag": lambda: Tag.objects.create(workspace=workspace, name="Clash"),
+            "field": lambda: services.create_custom_field(workspace, name="Clash", field_type="text"),
+            "segment": lambda: services.create_segment(
+                workspace, name="Clash", filter_json={"match": "all", "rules": []}
+            ),
+        }
+        makers[noun]()
+
+        with pytest.raises((ContactsError, IntegrityError)) as exc:
+            makers[noun]()
+
+        if noun != "tag":  # the tag maker bypasses the service on purpose
+            assert isinstance(exc.value, ContactsError)
+
+
+@pytest.mark.django_db
+class TestDeleteCountsAreAboutLiveContacts:
+    def test_deleting_a_tag_counts_only_live_contacts(self, workspace, tag):
+        live = services.create_contact(workspace, first_name="Live")
+        gone = services.create_contact(workspace, first_name="Gone")
+        services.add_tag(live, tag)
+        services.add_tag(gone, tag)
+        gone.status = ContactStatus.DELETED
+        gone.save(update_fields=["status"])
+
+        assert services.delete_tag(tag) == 1
+
+    def test_deleting_a_field_counts_only_live_contacts(self, workspace, custom_field):
+        live = services.create_contact(workspace, first_name="Live")
+        gone = services.create_contact(workspace, first_name="Gone")
+        services.set_field_value(live, custom_field, "a")
+        services.set_field_value(gone, custom_field, "b")
+        gone.status = ContactStatus.DELETED
+        gone.save(update_fields=["status"])
+
+        assert services.delete_custom_field(custom_field) == 1
+
+
+@pytest.mark.django_db
+class TestMergeDoesNotReProbeTagsItAlreadyFiltered:
+    def test_merging_reads_the_link_table_twice_however_many_tags_there_are(self, workspace):
+        """The claim, stated directly: the two set-building SELECTs, and no
+        per-tag probe re-establishing what those sets already say.
+
+        Asserted on the shape rather than a total, because each insert also
+        takes a savepoint — a number that would change for reasons unrelated to
+        this fix."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        primary = services.create_contact(workspace, first_name="Primary")
+        duplicate = services.create_contact(workspace, first_name="Duplicate")
+        for index in range(5):
+            tag, _ = services.get_or_create_tag(workspace, f"t{index}")
+            services.add_tag(duplicate, tag)
+
+        with CaptureQueriesContext(connection) as captured:
+            services.merge_contacts(primary=primary, duplicate=duplicate)
+
+        selects = [
+            q["sql"]
+            for q in captured.captured_queries
+            if q["sql"].lstrip().upper().startswith("SELECT") and "contacts_contact_tag" in q["sql"]
+        ]
+
+        assert len(selects) == 2, selects
+        assert primary.tags.count() == 5
