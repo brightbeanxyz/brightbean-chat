@@ -103,6 +103,62 @@ class TestJobRegistry:
         assert ran == ["bad", "ok"]
         assert failures == ["bad"]
 
+    def test_a_broken_optional_module_cannot_stop_the_sweep(self, monkeypatch: Any) -> None:
+        """Resolution runs outside run_housekeeping_jobs' per-job guard.
+
+        An optional module that imports but raises would otherwise abort the
+        whole sweep from outside that guard — taking zombie recovery, the one
+        job that makes the queue self-healing, down with it.
+        """
+        monkeypatch.setattr(
+            housekeeping,
+            "OPTIONAL_JOB_PATHS",
+            (("explodes", "apps.queueing.tests.exploding_probe.job"),),
+        )
+        ran: list[str] = []
+
+        def good() -> str:
+            ran.append("good")
+            return "ok"
+
+        with only_housekeeping_jobs(good=good):
+            failures = run_housekeeping_jobs()
+
+        assert ran == ["good"]
+        assert failures == []
+
+    def test_a_path_whose_attribute_is_missing_is_reported(self, monkeypatch: Any, caplog: Any) -> None:
+        """Silence would be indistinguishable from "the app has not landed"."""
+        monkeypatch.setattr(
+            housekeeping,
+            "OPTIONAL_JOB_PATHS",
+            (("typo", "apps.queueing.tests.test_housekeeping.no_such_attribute"),),
+        )
+        with only_housekeeping_jobs(), caplog.at_level("WARNING", logger="apps.queueing.housekeeping"):
+            jobs = housekeeping_jobs()
+
+        assert jobs == {}
+        assert "no callable" in caplog.text
+
+    def test_an_absent_module_is_only_looked_up_once(self, monkeypatch: Any) -> None:
+        """Python does not cache failed imports, so an unmemoised bridge would
+        redo a full sys.path search on every sweep."""
+        attempts: list[str] = []
+
+        def counting_import(name: str) -> Any:
+            attempts.append(name)
+            raise ImportError(name)
+
+        monkeypatch.setattr(housekeeping, "OPTIONAL_JOB_PATHS", (("absent", "apps.nope.module.job"),))
+        monkeypatch.setattr(housekeeping.importlib, "import_module", counting_import)
+
+        with only_housekeeping_jobs():
+            housekeeping_jobs()
+            housekeeping_jobs()
+            housekeeping_jobs()
+
+        assert attempts == ["apps.nope.module"]
+
     def test_dotted_path_jobs_for_apps_that_have_not_landed_are_skipped(self) -> None:
         """L2-B, L3-B and L5-C all register into this; none of them exist yet."""
         with only_housekeeping_jobs():
@@ -144,6 +200,21 @@ class TestTheChain:
 
         assert revived.pk != dead.pk
         assert revived.status == ActionStatus.PENDING
+
+    def test_a_tenant_row_named_housekeeping_does_not_suppress_the_chain(self, tenancy: Tenancy) -> None:
+        """The liveness check asks about the *system* chain, not the type name.
+
+        Without the workspace__isnull filter, any row merely typed
+        "housekeeping" satisfied it — so a fixture or a later layer reusing the
+        name would leave every worker reporting a healthy chain while zombie
+        recovery never ran.
+        """
+        decoy = make_action(tenancy.workspace, type=ActionType.HOUSEKEEPING, status=ActionStatus.PENDING)
+
+        chain = ensure_housekeeping_scheduled()
+
+        assert chain.pk != decoy.pk
+        assert chain.workspace_id is None
 
     def test_bootstrapping_leaves_a_running_sweep_alone(self) -> None:
         running = ensure_housekeeping_scheduled()

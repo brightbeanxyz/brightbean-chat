@@ -84,11 +84,12 @@ def internal_tick(request: HttpRequest) -> HttpResponse:
     duration_ms = int((time.monotonic() - started) * 1000)
 
     logger.info(
-        "Tick drained claimed=%s done=%s failed=%s retried=%s duration_ms=%s",
+        "Tick drained claimed=%s done=%s failed=%s retried=%s stranded=%s duration_ms=%s",
         result.claimed,
         result.done,
         result.failed,
         result.retried,
+        result.stranded,
         duration_ms,
     )
     return JsonResponse(
@@ -97,6 +98,7 @@ def internal_tick(request: HttpRequest) -> HttpResponse:
             "done": result.done,
             "failed": result.failed,
             "retried": result.retried,
+            "stranded": result.stranded,
             "duration_ms": duration_ms,
         }
     )

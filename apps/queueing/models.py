@@ -20,9 +20,40 @@ alternative — a sentinel "System" workspace row — would put a fake tenant in
 filter it out.
 """
 
+from typing import Any
+from uuid import UUID
+
 from django.db import models
 
 from apps.common.scoping import WorkspaceScopedModel
+
+
+def coerce_contact_id(contact: Any) -> UUID | str | None:
+    """Normalise a ``Contact``, a UUID or a string to what ``contact_id`` holds.
+
+    One implementation, deliberately, and it lives next to the column it feeds.
+    Two callers depend on it agreeing with itself: :mod:`apps.queueing.registry`
+    writes the value into the column, and :mod:`apps.queueing.locks` hashes the
+    same value into the advisory-lock key the whole engine serialises on
+    (SPEC §9.6). If those two ever normalised differently — one keeping
+    ``"AB-…"``, the other lowercasing it — the worker would lock a key nobody
+    else computes, and the one-step-per-contact invariant would fail silently
+    under exactly the concurrency it exists for.
+
+    Returns a canonical ``UUID`` where the input parses as one, so a freshly
+    created row and one read back from the database compare equal. A
+    non-UUID string is passed through rather than coerced, and left for the
+    column to reject on save.
+    """
+    if contact is None:
+        return None
+    value = getattr(contact, "pk", contact)
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return str(value)
 
 
 class ActionType(models.TextChoices):

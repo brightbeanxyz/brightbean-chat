@@ -78,6 +78,50 @@ class TestRetryNow:
         assert action.last_error == ""
         assert action.run_at <= timezone.now()
 
+    def test_it_refuses_to_resurrect_a_cancelled_action(
+        self, admin_instance: ScheduledActionAdmin, rf: Any, tenancy: Tenancy
+    ) -> None:
+        """Cancelled means *do not run this* — it is set by whoever owns the work.
+
+        Requeuing a cancelled broadcast_send sends the broadcast a user
+        cancelled. An exclude-list swept these back in whenever an operator
+        selected a page of rows to retry.
+        """
+        cancelled = make_action(tenancy.workspace, status=ActionStatus.CANCELLED, type="broadcast_send")
+        admin_instance.retry_now(_admin_request(rf), ScheduledAction.objects.unscoped().filter(pk=cancelled.pk))
+
+        cancelled.refresh_from_db()
+        assert cancelled.status == ActionStatus.CANCELLED
+
+    def test_it_does_not_re_run_a_completed_action(
+        self, admin_instance: ScheduledActionAdmin, rf: Any, tenancy: Tenancy
+    ) -> None:
+        done = make_action(tenancy.workspace, status=ActionStatus.DONE)
+        admin_instance.retry_now(_admin_request(rf), ScheduledAction.objects.unscoped().filter(pk=done.pk))
+
+        done.refresh_from_db()
+        assert done.status == ActionStatus.DONE
+
+    def test_the_skipped_count_survives_a_filtered_changelist(
+        self, admin_instance: ScheduledActionAdmin, rf: Any, tenancy: Tenancy
+    ) -> None:
+        """The admin hands the action a queryset carrying the changelist filters.
+
+        Counting after the update re-ran that filter, matched nothing, and
+        produced "Skipped -12 action(s)".
+        """
+        for _ in range(3):
+            make_action(tenancy.workspace, status=ActionStatus.FAILED, attempts=5)
+        # A changelist filtered by status=failed, which list_filter offers.
+        filtered = ScheduledAction.objects.unscoped().filter(status=ActionStatus.FAILED)
+        request = _admin_request(rf)
+
+        admin_instance.retry_now(request, filtered)
+
+        messages = [str(m) for m in request._messages]
+        assert "Requeued 3 action(s)." in messages
+        assert not any("-" in m for m in messages), messages
+
     def test_it_skips_rows_a_worker_is_holding(
         self, admin_instance: ScheduledActionAdmin, rf: Any, tenancy: Tenancy
     ) -> None:

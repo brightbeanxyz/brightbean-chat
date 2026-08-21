@@ -39,13 +39,20 @@ def only_housekeeping_jobs(**jobs: housekeeping.HousekeepingJob) -> Iterator[Non
     the test happens to have created.
     """
     previous = dict(housekeeping._JOBS)
+    # Resolution is memoised per process, so the attempted-paths set has to
+    # reset with the registry or the second test to look at a dotted path finds
+    # it already written off.
+    previous_attempted = set(housekeeping._RESOLUTION_ATTEMPTED)
     housekeeping._JOBS.clear()
     housekeeping._JOBS.update(jobs)
+    housekeeping._RESOLUTION_ATTEMPTED.clear()
     try:
         yield
     finally:
         housekeeping._JOBS.clear()
         housekeeping._JOBS.update(previous)
+        housekeeping._RESOLUTION_ATTEMPTED.clear()
+        housekeeping._RESOLUTION_ATTEMPTED.update(previous_attempted)
 
 
 def make_action(workspace: Any = None, **overrides: Any) -> ScheduledAction:

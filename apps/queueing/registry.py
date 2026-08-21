@@ -39,11 +39,10 @@ import logging
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from django.db import IntegrityError, transaction
 
-from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionStatus, ScheduledAction
+from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionStatus, ScheduledAction, coerce_contact_id
 
 __all__ = [
     "DuplicateHandlerError",
@@ -108,27 +107,6 @@ def get_handler(action_type: str) -> Handler | None:
 def registered_types() -> tuple[str, ...]:
     """Every type with a handler, sorted. Ops visibility and error messages."""
     return tuple(sorted(_HANDLERS))
-
-
-def _contact_id(contact: Any) -> UUID | str | None:
-    """Accept a Contact instance, a UUID or a string; return a UUID.
-
-    Normalised rather than passed through, so ``action.contact_id`` is the same
-    type whether the row was just created or just read back from the database.
-    A caller that got a ``str`` from one path and a ``UUID`` from the other
-    would compare the two and quietly get ``False``.
-    """
-    if contact is None:
-        return None
-    value = getattr(contact, "pk", contact)
-    if isinstance(value, UUID):
-        return value
-    try:
-        return UUID(str(value))
-    except (ValueError, AttributeError, TypeError):
-        # Not a UUID. Let the field raise on save rather than silently storing
-        # something the column cannot hold.
-        return str(value)
 
 
 def schedule(
@@ -233,7 +211,7 @@ def _schedule(
 
     fields = {
         "workspace": workspace,
-        "contact_id": _contact_id(contact),
+        "contact_id": coerce_contact_id(contact),
         "run_at": run_at,
         "type": action_type,
         "payload": payload or {},
@@ -250,12 +228,30 @@ def _schedule(
         # the caller opened around this call.
         with transaction.atomic():
             return ScheduledAction.objects.create(**fields)
-    except IntegrityError:
-        pass
+    except IntegrityError as exc:
+        if not _is_idempotency_conflict(exc):
+            # Some other constraint — a deleted workspace, a NOT NULL a later
+            # migration added. Swallowing it here would surface as the
+            # idempotency error below, sending the reader after a key collision
+            # that never happened.
+            raise
 
     existing = _existing_for_key(idempotency_key, workspace)
     logger.debug("Idempotent enqueue of %r hit existing action %s", action_type, existing.pk)
     return existing
+
+
+def _is_idempotency_conflict(exc: IntegrityError) -> bool:
+    """Was this integrity error the idempotency key, or something else entirely?
+
+    psycopg exposes the violated constraint on the wrapped exception's ``diag``;
+    Django's unique index for the field is named ``..._idempotency_key_..._uniq``.
+    The message fallback covers a driver that reports no ``diag``.
+    """
+    constraint = getattr(getattr(exc.__cause__, "diag", None), "constraint_name", None)
+    if constraint:
+        return "idempotency_key" in constraint
+    return "idempotency_key" in str(exc)
 
 
 def _existing_for_key(idempotency_key: str, workspace: Any) -> ScheduledAction:

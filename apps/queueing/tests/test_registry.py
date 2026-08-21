@@ -133,6 +133,29 @@ class TestSchedule:
         assert ScheduledAction.objects.for_workspace(tenancy.workspace).count() == 2
         assert still_usable.idempotency_key == "key-2"
 
+    def test_an_unrelated_integrity_error_is_not_disguised_as_a_key_conflict(
+        self, tenancy: Tenancy, monkeypatch: Any
+    ) -> None:
+        """A bare `except IntegrityError` reported every constraint failure as
+        an idempotency collision, sending the reader after a key clash that
+        never happened."""
+        from django.db import IntegrityError
+
+        def explode(*args: Any, **kwargs: Any) -> None:
+            raise IntegrityError('insert violates foreign key constraint "…workspace_id…"')
+
+        monkeypatch.setattr(ScheduledAction.objects, "create", explode)
+
+        with pytest.raises(IntegrityError, match="foreign key"):
+            schedule("t", timezone.now(), workspace=tenancy.workspace, idempotency_key="key-1")
+
+    def test_a_real_key_conflict_is_still_recognised(self, tenancy: Tenancy) -> None:
+        """The narrowed catch must still see the constraint it is there for."""
+        first = schedule("t", timezone.now(), workspace=tenancy.workspace, idempotency_key="key-1")
+        again = schedule("t", timezone.now(), workspace=tenancy.workspace, idempotency_key="key-1")
+
+        assert again.pk == first.pk
+
     def test_scheduling_an_unhandled_type_warns_but_succeeds(self, tenancy: Tenancy, caplog: Any) -> None:
         """Enqueue must not depend on import order between two apps."""
         with caplog.at_level("WARNING", logger="apps.queueing.registry"):

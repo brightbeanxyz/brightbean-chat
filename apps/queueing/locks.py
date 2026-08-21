@@ -42,14 +42,17 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
-from uuid import UUID
 
 from django.db import connection, transaction
 
+from apps.queueing.models import coerce_contact_id
+
 __all__ = [
     "LockOutsideTransactionError",
+    "advisory_lock",
     "contact_lock",
     "contact_lock_key",
+    "try_advisory_lock",
     "try_contact_lock",
 ]
 
@@ -60,35 +63,23 @@ class LockOutsideTransactionError(RuntimeError):
     """Raised when an xact-scoped advisory lock is requested outside a transaction."""
 
 
-def _contact_id(contact: Any) -> str:
-    """Normalise a Contact, a UUID or a string to the canonical UUID text.
-
-    The canonical form matters: the key is hashed, so ``"AB-…"`` and ``"ab-…"``
-    are different locks. ``str(UUID(...))`` is lowercase and hyphenated, which
-    is also what Postgres' ``uuid::text`` produces — so a future call site that
-    computes the key in SQL agrees with this one.
-    """
-    value = getattr(contact, "pk", contact)
-    if value is None:
-        raise ValueError("contact_lock() needs a contact id; None would lock a key shared by every caller.")
-    if isinstance(value, UUID):
-        return str(value)
-    try:
-        return str(UUID(str(value)))
-    except (ValueError, AttributeError, TypeError):
-        # Not a UUID — a test double or a future non-UUID identifier. Use the
-        # string as given rather than silently locking something else.
-        return str(value)
-
-
 def contact_lock_key(contact: Any) -> str:
     """The lock key SPEC §9.6 names: ``contact:<uuid>``.
 
     Exported because the string is a cross-layer contract, not an
     implementation detail. Anything that needs the same lock — including SQL
     that builds the key itself — must produce exactly this.
+
+    Normalisation is ``apps.queueing.models.coerce_contact_id``, the same
+    function that decides what goes into the ``contact_id`` column. The key is
+    hashed, so ``"AB-…"`` and ``"ab-…"`` would be *different* locks; sharing one
+    normaliser with the writer is what stops the worker locking a key nobody
+    else computes.
     """
-    return f"contact:{_contact_id(contact)}"
+    value = coerce_contact_id(contact)
+    if value is None:
+        raise ValueError("contact_lock() needs a contact id; None would lock a key shared by every caller.")
+    return f"contact:{value}"
 
 
 def _require_transaction(name: str) -> None:
@@ -103,6 +94,35 @@ def _require_transaction(name: str) -> None:
 
 
 @contextmanager
+def advisory_lock(key: str, *, _caller: str = "advisory_lock") -> Iterator[None]:
+    """Block until the transaction holds the advisory lock named by ``key``.
+
+    The generic primitive. Contacts are the main consumer and get their own
+    wrapper below, but the queue also serialises its housekeeping bootstrap
+    this way — and both go through here so there is exactly one place that
+    knows how a key becomes a lock, and one place to change if that ever needs
+    a ``lock_timeout`` or a two-integer keyspace.
+    """
+    _require_transaction(_caller)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [key])
+    logger.debug("Acquired advisory lock %s", key)
+    yield
+
+
+@contextmanager
+def try_advisory_lock(key: str, *, _caller: str = "try_advisory_lock") -> Iterator[bool]:
+    """Take the advisory lock named by ``key`` if free; yield whether it was taken."""
+    _require_transaction(_caller)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", [key])
+        row = cursor.fetchone()
+    acquired = bool(row and row[0])
+    logger.debug("Advisory lock %s %s", key, "acquired" if acquired else "busy")
+    yield acquired
+
+
+@contextmanager
 def contact_lock(contact: Any) -> Iterator[None]:
     """Block until this contact's advisory lock is held; hold it until COMMIT.
 
@@ -111,12 +131,8 @@ def contact_lock(contact: Any) -> Iterator[None]:
         with transaction.atomic(), contact_lock(contact_id):
             ...advance the execution...
     """
-    _require_transaction("contact_lock")
-    key = contact_lock_key(contact)
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [key])
-    logger.debug("Acquired contact lock %s", key)
-    yield
+    with advisory_lock(contact_lock_key(contact), _caller="contact_lock"):
+        yield
 
 
 @contextmanager
@@ -133,11 +149,5 @@ def try_contact_lock(contact: Any) -> Iterator[bool]:
                 return
             ...advance the execution...
     """
-    _require_transaction("try_contact_lock")
-    key = contact_lock_key(contact)
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s))", [key])
-        row = cursor.fetchone()
-    acquired = bool(row and row[0])
-    logger.debug("Contact lock %s %s", key, "acquired" if acquired else "busy")
-    yield acquired
+    with try_advisory_lock(contact_lock_key(contact), _caller="try_contact_lock") as acquired:
+        yield acquired

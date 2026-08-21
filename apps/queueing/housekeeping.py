@@ -39,10 +39,11 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from django.db import connection, transaction
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.queueing.locks import advisory_lock
 from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
 from apps.queueing.registry import register_handler, schedule_system
 
@@ -76,6 +77,10 @@ BOOTSTRAP_LOCK_KEY = "queueing:housekeeping-bootstrap"
 HousekeepingJob = Callable[[], str | None]
 
 _JOBS: dict[str, HousekeepingJob] = {}
+
+#: Dotted paths already tried this process, resolved or not. See
+#: :func:`_resolve_optional_jobs`.
+_RESOLUTION_ATTEMPTED: set[str] = set()
 
 #: Jobs owned by apps that may not be installed yet, wired by dotted path.
 #:
@@ -112,20 +117,51 @@ def register_housekeeping_job(name: str, *, replace: bool = False) -> Callable[[
 
 
 def _resolve_optional_jobs() -> None:
-    """Register the dotted-path jobs whose modules happen to be importable."""
+    """Register the dotted-path jobs whose modules happen to be importable.
+
+    Attempted once per process per path. Python does not cache *failed*
+    imports, so without ``_RESOLUTION_ATTEMPTED`` every sweep would repeat a
+    full ``sys.path`` search for each app that has not landed.
+    """
     for name, path in OPTIONAL_JOB_PATHS:
-        if name in _JOBS:
+        if name in _JOBS or path in _RESOLUTION_ATTEMPTED:
             continue
         module_path, _, attribute = path.rpartition(".")
         try:
             module = importlib.import_module(module_path)
         except ImportError:
-            # The owning app has not landed, or is not installed here.
+            # The owning app has not landed, or is not installed here. Expected,
+            # and the whole reason this bridge is tolerant.
+            _RESOLUTION_ATTEMPTED.add(path)
+            logger.debug("Optional housekeeping job %s not available yet (%s)", name, path)
             continue
+        except Exception:  # noqa: BLE001 - see below; this must not reach the caller
+            # The module exists but blew up on import — a misconfiguration, a
+            # bad setting, a circular import. Distinguishing this from "not
+            # landed yet" matters twice over: it is a real fault somebody has to
+            # see, and letting it propagate would abort the whole sweep from
+            # outside run_housekeeping_jobs' per-job guard, taking zombie
+            # recovery with it. Zombie recovery is what makes the queue
+            # self-healing, so a broken sibling must never be able to stop it.
+            _RESOLUTION_ATTEMPTED.add(path)
+            logger.exception("Optional housekeeping job %s could not be imported from %s", name, path)
+            continue
+
         job = getattr(module, attribute, None)
+        _RESOLUTION_ATTEMPTED.add(path)
         if callable(job):
             _JOBS[name] = job
             logger.info("Registered optional housekeeping job %s from %s", name, path)
+        else:
+            # The module is here and the attribute is not. Silence would be
+            # indistinguishable from "the app has not landed", which is exactly
+            # how a typo'd path becomes a job that never runs and nobody misses.
+            logger.warning(
+                "Optional housekeeping job %s: %s imported but exposes no callable %r; it will not run",
+                name,
+                module_path,
+                attribute,
+            )
 
 
 def housekeeping_jobs() -> dict[str, HousekeepingJob]:
@@ -228,31 +264,40 @@ def ensure_housekeeping_scheduled() -> ScheduledAction:
     Bootstrapping here rather than in a data migration is that same property:
     a migration runs once and cannot repair anything afterwards.
     """
-    with transaction.atomic():
-        # Check-then-create is a race between two workers booting together, and
-        # an hour-bucket idempotency key cannot settle it: the row this repairs
-        # is often a *failed* row from the current hour, so the key it would
-        # collide with is the dead row itself and the chain would stay dead.
-        # An advisory lock makes the check and the create one step instead.
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", [BOOTSTRAP_LOCK_KEY])
+    # Check-then-create is a race between two workers booting together, and an
+    # hour-bucket idempotency key cannot settle it: the row this repairs is
+    # often a *failed* row from the current hour, so the key it would collide
+    # with is the dead row itself and the chain would stay dead. An advisory
+    # lock makes the check and the create one step instead.
+    with transaction.atomic(), advisory_lock(BOOTSTRAP_LOCK_KEY):
+        return _live_or_new_chain()
 
-        # Cross-tenant on purpose, and the only read that can see a system row
-        # at all: NULL workspace means no .for_workspace() query matches it.
-        live = (
-            ScheduledAction.objects.unscoped()
-            .filter(type=ActionType.HOUSEKEEPING)
-            .filter(Q(status=ActionStatus.PENDING) | Q(status=ActionStatus.RUNNING))
-            .order_by("run_at")
-            .first()
-        )
-        if live is not None:
-            return live
 
-        # Deliberately no idempotency key: the lock above already guarantees
-        # uniqueness, and a key would be the thing preventing the repair.
-        #
-        # Now, not next hour — a deployment booting for the first time, or
-        # recovering from a broken chain, should sweep promptly rather than sit
-        # idle for an hour with zombies in the table.
-        return schedule_system(ActionType.HOUSEKEEPING, timezone.now())
+def _live_or_new_chain() -> ScheduledAction:
+    """The bootstrap critical section. The caller holds the advisory lock."""
+    # Cross-tenant on purpose, and the only read that can see a system row at
+    # all: NULL workspace means no .for_workspace() query matches it.
+    #
+    # workspace__isnull=True is load bearing, not decoration. Without it any
+    # row that merely *has type* "housekeeping" satisfies the liveness check —
+    # including a tenant-owned one from a fixture, a test, or a later layer
+    # reusing the name. The system chain would then never be created, and every
+    # worker, tick and HTTP tick would report it healthy while zombie recovery
+    # and every registered prune silently never ran.
+    live = (
+        ScheduledAction.objects.unscoped()
+        .filter(type=ActionType.HOUSEKEEPING, workspace__isnull=True)
+        .filter(Q(status=ActionStatus.PENDING) | Q(status=ActionStatus.RUNNING))
+        .order_by("run_at")
+        .first()
+    )
+    if live is not None:
+        return live
+
+    # Deliberately no idempotency key: the lock above already guarantees
+    # uniqueness, and a key would be the thing preventing the repair.
+    #
+    # Now, not next hour — a deployment booting for the first time, or
+    # recovering from a broken chain, should sweep promptly rather than sit
+    # idle for an hour with zombies in the table.
+    return schedule_system(ActionType.HOUSEKEEPING, timezone.now())

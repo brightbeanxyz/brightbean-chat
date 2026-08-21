@@ -56,6 +56,7 @@ __all__ = [
     "claim_batch",
     "drain",
     "next_run_at",
+    "positive_int",
     "process_action",
     "run_batch",
 ]
@@ -110,17 +111,20 @@ class BatchResult:
     done: int = 0
     failed: int = 0
     retried: int = 0
+    #: Claimed, then left in ``running`` because even recording the failure
+    #: failed. Counted apart from ``failed`` so the totals reconcile against
+    #: the table: a stranded row is still ``running`` until zombie recovery
+    #: takes it, and reporting it as ``failed`` sends an operator looking for
+    #: a terminal row that is not there.
+    stranded: int = 0
 
     def __iadd__(self, other: "BatchResult") -> "BatchResult":
         self.claimed += other.claimed
         self.done += other.done
         self.failed += other.failed
         self.retried += other.retried
+        self.stranded += other.stranded
         return self
-
-    @property
-    def is_empty(self) -> bool:
-        return self.claimed == 0
 
 
 def next_run_at(attempts: int, now: datetime | None = None) -> datetime:
@@ -132,6 +136,24 @@ def next_run_at(attempts: int, now: datetime | None = None) -> datetime:
     now = now or timezone.now()
     index = min(max(attempts, 1), len(BACKOFF_SCHEDULE)) - 1
     return now + timedelta(seconds=BACKOFF_SCHEDULE[index])
+
+
+def positive_int(raw: str | int) -> int:
+    """Parse a count that must be at least 1.
+
+    Doubles as an argparse ``type=``: argparse turns a ``ValueError`` from a
+    converter into a proper usage error, so the commands get the check for
+    free.
+
+    A batch size of 0 is the reason this exists. It reads as "do nothing", but
+    every loop here decides it has drained the queue by comparing
+    ``claimed < batch_size`` — and ``0 < 0`` is false, so a zero batch size
+    turned the drain into a spin that claimed nothing and never stopped.
+    """
+    value = int(raw)
+    if value < 1:
+        raise ValueError(f"must be 1 or greater, got {value}")
+    return value
 
 
 def claim_batch(limit: int = DEFAULT_BATCH_SIZE) -> list[ScheduledAction]:
@@ -148,8 +170,7 @@ def claim_batch(limit: int = DEFAULT_BATCH_SIZE) -> list[ScheduledAction]:
     omitting it would make every row claimed by a healthy worker look abandoned
     ten minutes later.
     """
-    if limit <= 0:
-        return []
+    limit = positive_int(limit)
     # Cross-tenant on purpose: this is the deployment-wide drain. See the module
     # docstring. Application code reads ScheduledAction through .for_workspace().
     claimed = list(ScheduledAction.objects.raw(CLAIM_SQL, [limit]))
@@ -160,18 +181,26 @@ def claim_batch(limit: int = DEFAULT_BATCH_SIZE) -> list[ScheduledAction]:
     return claimed
 
 
-def _error_text(exc: BaseException) -> str:
-    """A short, scrubbed, human-readable rendering of a handler failure.
+def _storable(text: str) -> str:
+    """Scrub and cap anything on its way into ``last_error``.
 
-    Scrubbed because ``last_error`` is a plain column shown in the admin, and an
-    exception's ``str()`` routinely carries the URL, header or token that caused
-    it (SECURITY-BASELINE §5). The full traceback goes to the log, which is
-    scrubbed by the same rules.
+    Applied in ``_record_failure`` rather than at each call site, so the
+    invariant "everything in that column has been scrubbed and bounded" holds
+    for every writer including the ones not written yet. Scrubbed because
+    ``last_error`` is a plain column shown in the admin and an exception's
+    ``str()`` routinely carries the URL, header or token that caused it
+    (SECURITY-BASELINE §5); capped because a hostile payload should not be able
+    to write a novel into a TEXT column on each of its attempts.
     """
-    text = scrub(f"{type(exc).__name__}: {exc}")
+    text = scrub(text)
     if len(text) > MAX_STORED_ERROR_CHARS:
         text = text[: MAX_STORED_ERROR_CHARS - 1] + "…"
     return text
+
+
+def _error_text(exc: BaseException) -> str:
+    """Render a handler failure. Scrubbing and capping happen on write."""
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _mark_done(action: ScheduledAction) -> None:
@@ -186,7 +215,7 @@ def _record_failure(action: ScheduledAction, message: str, *, permanent: bool) -
     Runs in its own transaction: the caller's has been rolled back, taking the
     handler's partial writes with it, and this update must survive.
     """
-    action.last_error = message
+    action.last_error = _storable(message)
     if permanent or action.attempts >= action.max_attempts:
         action.status = ActionStatus.FAILED
     else:
@@ -253,6 +282,7 @@ def process_action(action: ScheduledAction) -> str:
 
 def run_batch(batch_size: int = DEFAULT_BATCH_SIZE) -> BatchResult:
     """Claim one batch and process every row in it."""
+    batch_size = positive_int(batch_size)
     actions = claim_batch(batch_size)
     result = BatchResult(claimed=len(actions))
     for action in actions:
@@ -263,7 +293,7 @@ def run_batch(batch_size: int = DEFAULT_BATCH_SIZE) -> BatchResult:
             # connection, say). Leave the row 'running' and let zombie recovery
             # pick it up rather than abandoning the rest of the batch.
             logger.exception("Queue action %s could not be finalised; leaving it to zombie recovery", action.pk)
-            result.failed += 1
+            result.stranded += 1
             continue
         if status == ActionStatus.DONE:
             result.done += 1
@@ -287,6 +317,7 @@ def drain(
     hand the rows to zombie recovery ten minutes later instead of finishing work
     that is a few milliseconds from done.
     """
+    batch_size = positive_int(batch_size)
     total = BatchResult()
     deadline = None if max_seconds is None else time.monotonic() + max_seconds
     while True:

@@ -118,9 +118,12 @@ class TestClaim:
 
         assert claimed == {mine.pk, theirs.pk, system.pk}
 
-    def test_a_non_positive_limit_claims_nothing(self, tenancy: Tenancy) -> None:
+    @pytest.mark.parametrize("limit", [0, -1])
+    def test_a_non_positive_limit_is_refused(self, tenancy: Tenancy, limit: int) -> None:
+        """It used to return [], which is what made drain() spin forever."""
         make_action(tenancy.workspace)
-        assert claim_batch(0) == []
+        with pytest.raises(ValueError, match="1 or greater"):
+            claim_batch(limit)
 
 
 @pytest.mark.django_db
@@ -217,6 +220,17 @@ class TestProcessAction:
         assert action.status == ActionStatus.FAILED
         assert action.attempts == 1
         assert "No handler registered" in action.last_error
+
+    def test_every_stored_error_is_scrubbed_whichever_path_wrote_it(self, tenancy: Tenancy, secret_value: str) -> None:
+        """Scrubbing lives in _record_failure, so both writers are covered."""
+        from apps.queueing.worker import _record_failure
+
+        action = make_action(tenancy.workspace, type=PROBE)
+        _record_failure(action, f"token={secret_value}", permanent=True)
+
+        action.refresh_from_db()
+        assert secret_value not in action.last_error
+        assert "[REDACTED]" in action.last_error
 
     def test_a_stored_error_is_scrubbed(self, tenancy: Tenancy, secret_value: str) -> None:
         """last_error is a plain column rendered in the admin (SECURITY-BASELINE §5)."""
@@ -317,6 +331,37 @@ class TestBatches:
     def test_batch_result_adds_up(self) -> None:
         total = BatchResult()
         total += BatchResult(claimed=2, done=1, failed=1)
-        total += BatchResult(claimed=3, done=3)
-        assert (total.claimed, total.done, total.failed) == (5, 4, 1)
-        assert not total.is_empty
+        total += BatchResult(claimed=3, done=2, stranded=1)
+        assert (total.claimed, total.done, total.failed, total.stranded) == (5, 3, 1, 1)
+
+    @pytest.mark.parametrize("batch_size", [0, -1])
+    def test_drain_refuses_a_non_positive_batch_size(self, batch_size: int) -> None:
+        """The termination test is `claimed < batch_size`, and 0 < 0 is False.
+
+        Before the guard, drain(batch_size=0) claimed nothing, never satisfied
+        its own empty-queue check, and spun at full CPU forever.
+        """
+        with pytest.raises(ValueError, match="1 or greater"):
+            drain(batch_size=batch_size)
+
+    @pytest.mark.parametrize("batch_size", [0, -1])
+    def test_run_batch_refuses_a_non_positive_batch_size(self, batch_size: int) -> None:
+        with pytest.raises(ValueError, match="1 or greater"):
+            run_batch(batch_size)
+
+    def test_a_row_that_cannot_record_its_failure_is_counted_as_stranded(
+        self, tenancy: Tenancy, monkeypatch: Any
+    ) -> None:
+        """It stays `running` for zombie recovery, so calling it `failed` would
+        send an operator looking for a terminal row that is not there."""
+        make_action(tenancy.workspace, type=PROBE)
+
+        def explode(*args: Any, **kwargs: Any) -> str:
+            raise RuntimeError("connection dropped while recording the failure")
+
+        with temporary_handler(PROBE, _boom):
+            monkeypatch.setattr("apps.queueing.worker._record_failure", explode)
+            result = run_batch()
+
+        assert (result.claimed, result.stranded, result.failed) == (1, 1, 0)
+        assert ScheduledAction.objects.unscoped().filter(status=ActionStatus.RUNNING).count() == 1

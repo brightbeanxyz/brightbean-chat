@@ -44,6 +44,15 @@ class TestProcessTasks:
 
         assert ScheduledAction.objects.for_workspace(tenancy.workspace).filter(status=ActionStatus.DONE).count() == 4
 
+    @pytest.mark.parametrize("batch_size", ["0", "-1"])
+    def test_a_non_positive_batch_size_is_refused(self, batch_size: str) -> None:
+        """`claimed < batch_size` is False when both are 0, so the idle sleep
+        never fired and the worker spun flat out claiming nothing."""
+        from django.core.management import CommandError
+
+        with pytest.raises((CommandError, SystemExit, ValueError)):
+            call_command("process_tasks", "--once", "--batch-size", batch_size, stdout=StringIO())
+
     def test_it_bootstraps_the_housekeeping_chain_on_start(self) -> None:
         call_command("process_tasks", "--once", stdout=StringIO())
         assert ScheduledAction.objects.unscoped().filter(type="housekeeping").exists()
@@ -144,6 +153,13 @@ class TestTick:
             call_command("tick", "--max-seconds", "0", stdout=out)
 
         assert "1 done" in out.getvalue()
+
+    @pytest.mark.parametrize("batch_size", ["0", "-1"])
+    def test_a_non_positive_batch_size_is_refused(self, batch_size: str) -> None:
+        from django.core.management import CommandError
+
+        with pytest.raises((CommandError, SystemExit, ValueError)):
+            call_command("tick", "--batch-size", batch_size, stdout=StringIO())
 
     def test_it_bootstraps_the_housekeeping_chain(self) -> None:
         call_command("tick", stdout=StringIO())

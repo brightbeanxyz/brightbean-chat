@@ -26,10 +26,19 @@ from apps.queueing.models import ActionStatus, ScheduledAction
 
 logger = logging.getLogger(__name__)
 
+#: What "retry now" may move back to pending. An allowlist, not an exclude-list
+#: — see :meth:`ScheduledActionAdmin.retry_now`.
+RETRYABLE_STATUSES = (ActionStatus.FAILED, ActionStatus.PENDING)
+
 
 @admin.register(ScheduledAction)
 class ScheduledActionAdmin(admin.ModelAdmin):
     list_display = ("id", "type", "status", "run_at", "attempts", "max_attempts", "workspace", "updated_at")
+    # `workspace` is a FK in list_display, so without this the changelist does
+    # one extra query per row — 101 for a default page, on the busiest table in
+    # the deployment, at exactly the moment an operator opens it during an
+    # incident.
+    list_select_related = ("workspace",)
     list_filter = ("status", "type")
     # Not the UUID columns: Postgres has no icontains for uuid, so adding
     # `id` or `contact_id` here turns every admin search into a 500.
@@ -60,25 +69,37 @@ class ScheduledActionAdmin(admin.ModelAdmin):
         ``attempts`` is reset to zero, not preserved: an operator clicking
         retry has usually just fixed the thing that was failing, and a row
         that came back with one attempt left would fail again and stay failed.
-        A ``running`` row is skipped — a worker may be inside its handler right
-        now, and flipping it to ``pending`` underneath would hand the same work
-        to a second worker.
+
+        Eligibility is an allowlist rather than "everything except running",
+        because the statuses this must not touch are not all alike:
+
+        * ``running`` — a worker may be inside the handler right now, and
+          flipping the row to ``pending`` underneath would hand the same work
+          to a second worker.
+        * ``cancelled`` — set by whoever owns the work, never by the worker, and
+          it means *do not run this*. Requeuing a cancelled ``broadcast_send``
+          sends the broadcast a user cancelled. An exclude-list quietly swept
+          these back in whenever an operator selected a page of rows.
+        * ``done`` — already ran; re-running is a duplicate side effect.
         """
-        eligible = queryset.exclude(status=ActionStatus.RUNNING)
-        updated = eligible.update(
+        # Counted before the update: the changelist's own filters ride along on
+        # this queryset, so re-counting afterwards (with, say, status=failed
+        # active) matches nothing and the arithmetic goes negative.
+        selected = queryset.count()
+        updated = queryset.filter(status__in=RETRYABLE_STATUSES).update(
             status=ActionStatus.PENDING,
             run_at=timezone.now(),
             attempts=0,
             last_error="",
             updated_at=timezone.now(),
         )
-        skipped = queryset.count() - updated
+        skipped = selected - updated
         logger.warning("Admin %s requeued %s scheduled action(s)", request.user, updated)
         self.message_user(request, f"Requeued {updated} action(s).", messages.SUCCESS)
-        if skipped:
+        if skipped > 0:
             self.message_user(
                 request,
-                f"Skipped {skipped} action(s) that are currently running.",
+                f"Skipped {skipped} action(s): running, cancelled or already done.",
                 messages.WARNING,
             )
 

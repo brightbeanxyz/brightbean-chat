@@ -22,7 +22,7 @@ from django.core.management.base import BaseCommand
 from django.db import connections
 
 from apps.queueing.housekeeping import ensure_housekeeping_scheduled
-from apps.queueing.worker import DEFAULT_BATCH_SIZE, BatchResult, run_batch
+from apps.queueing.worker import DEFAULT_BATCH_SIZE, BatchResult, positive_int, run_batch
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class Command(BaseCommand):
         self._stopping = False
 
     def add_arguments(self, parser: Any) -> None:
-        parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+        parser.add_argument("--batch-size", type=positive_int, default=DEFAULT_BATCH_SIZE)
         parser.add_argument("--interval", type=float, default=1.0, help="Seconds to idle when the queue is empty.")
         parser.add_argument("--once", action="store_true", help="Run a single batch and exit (tests, debugging).")
         parser.add_argument("--max-batches", type=int, default=0, help="Stop after N batches. 0 means never.")
@@ -67,16 +67,18 @@ class Command(BaseCommand):
                 self._sleep(interval)
 
         logger.info(
-            "Worker stopped batches=%s claimed=%s done=%s failed=%s retried=%s",
+            "Worker stopped batches=%s claimed=%s done=%s failed=%s retried=%s stranded=%s",
             batches,
             totals.claimed,
             totals.done,
             totals.failed,
             totals.retried,
+            totals.stranded,
         )
         self.stdout.write(
             f"Processed {totals.claimed} action(s) in {batches} batch(es): "
-            f"{totals.done} done, {totals.retried} retrying, {totals.failed} failed."
+            f"{totals.done} done, {totals.retried} retrying, {totals.failed} failed"
+            f"{f', {totals.stranded} stranded' if totals.stranded else ''}."
         )
 
     def _refresh_connections(self) -> None:
