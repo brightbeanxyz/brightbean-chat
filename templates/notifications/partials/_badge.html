@@ -10,9 +10,10 @@ update the count wherever it is rendered, without the responding view knowing
 where that is. That is why this is HTML and Studio's equivalent is JSON: htmx
 swaps markup, and Studio needed a JS callback to turn its number into some.
 
-Two targets, because the count appears twice — the footer bell's dot and the
-sidebar nav row's badge — and leaving one stale after "mark all read" shows a
-bell with no dot beside a row still claiming four.
+Three targets, because the count appears three times — the footer bell's dot,
+the sidebar nav row's badge, and the mobile bar's dot, which is the only one a
+phone reader can see. Leaving any of them stale after "mark all read" shows an
+indicator contradicting the others.
 
 The nav badge is *deleted* at zero rather than emptied, because the shell's
 contract is that a zero badge renders nothing at all (see
@@ -24,6 +25,7 @@ server, lights the bell dot on the next poll, and brings the number with it on
 the next navigation — which is how every other badge in this shell works.
 {% endcomment %}{% spaceless %}
 <span id="notification-badge" hx-swap-oob="true">{% include "notifications/partials/_dot.html" %}</span>
+<span id="notification-badge-mobile" hx-swap-oob="true">{% include "notifications/partials/_dot.html" %}</span>
 {% if unread_notification_count %}
 <span class="sidebar-badge" id="nav-badge-notifications" hx-swap-oob="true">{{ unread_notification_count }}</span>
 {% else %}

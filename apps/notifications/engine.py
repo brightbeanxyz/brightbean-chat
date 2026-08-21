@@ -22,6 +22,7 @@ There are no callers in this issue. Layers 3 to 6 supply them.
 
 import copy
 import logging
+import math
 from collections.abc import Iterable, Sequence
 from functools import partial
 from typing import Any
@@ -107,6 +108,7 @@ def notify(
         return []
 
     title, body = events.render(event, context)
+    title = _fit_title(title)
     payload = _payload(workspace, event, context)
 
     notifications = [
@@ -128,6 +130,22 @@ def notify(
         _dispatch_emails(workspace, notifications)
 
     return notifications
+
+
+def _fit_title(title: str) -> str:
+    """Keep the rendered title inside the column it is written to.
+
+    Copy templates interpolate caller values, so a long one runs past
+    ``Notification.title``'s 255 characters and Postgres raises on insert —
+    aborting the caller's transaction over a display string. Reachable with
+    entirely valid input: ``member_mentioned`` renders "{actor_name} mentioned
+    you", and a long display name is not a bug. The body has no such limit
+    (TextField), so nothing is lost from the detail.
+    """
+    limit = Notification._meta.get_field("title").max_length
+    if limit is None or len(title) <= limit:
+        return title
+    return title[: limit - 1].rstrip() + "\u2026"
 
 
 def _resolve_workspace(workspace: Any) -> Any:
@@ -203,8 +221,13 @@ def _json_safe(value: Any, depth: int = 0) -> bool:
     is a JSON type; the ``TypeError`` then landed at ``create()``, part-way
     through a fan-out that had already written rows for earlier recipients.
     """
-    if value is None or isinstance(value, str | int | float | bool):
+    if value is None or isinstance(value, str | bool | int):
         return True
+    if isinstance(value, float):
+        # NaN and the infinities are floats that json.dumps happily writes as
+        # NaN/Infinity — tokens that are not JSON and that Postgres rejects on
+        # the way into jsonb, so the insert fails part-way through a fan-out.
+        return math.isfinite(value)
     if depth >= _MAX_PAYLOAD_DEPTH:
         return False
     if isinstance(value, list | tuple):

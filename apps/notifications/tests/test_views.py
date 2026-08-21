@@ -357,7 +357,10 @@ class TestTheHistoryPageCarriesNoResponseOnlyMarkup:
         body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
 
         assert 'hx-trigger="notificationsChanged from:body"' in body
-        assert "hx-include=\"[name='event_type'],[name='read_state']\"" in body
+        # Named individually rather than as one literal, so extending the
+        # include list does not fail a test about the trigger wiring.
+        for field in ("event_type", "read_state", "page"):
+            assert f"[name='{field}']" in body
 
 
 @pytest.mark.django_db
@@ -416,3 +419,125 @@ class TestMarkAllReadKeepsUpdatedAtHonest:
 
         notification.refresh_from_db()
         assert notification.updated_at > before
+
+
+@pytest.mark.django_db
+class TestClickingANotificationGoesWhereItPoints:
+    """hx-post cancels an anchor's own navigation, so without an explicit
+    redirect the reader clicks a notification, watches it turn read, and has to
+    click again to reach its target."""
+
+    def test_following_a_row_redirects_to_its_action_url(self, tenancy, client_for):
+        notification = make_notification(
+            tenancy.owner, payload={"action_url": "/w/abc/flows/1", "tone": "error", "icon": "flows"}
+        )
+
+        response = client_for(tenancy.owner).post(
+            reverse("notifications:mark_read", args=[notification.id]), {"follow": "1"}, headers=HTMX
+        )
+
+        assert response["HX-Redirect"] == "/w/abc/flows/1"
+        notification.refresh_from_db()
+        assert notification.is_read is True
+
+    def test_the_history_pages_mark_read_button_stays_put(self, tenancy, client_for):
+        """It posts the same route and must not navigate anyone anywhere."""
+        notification = make_notification(tenancy.owner, payload={"action_url": "/w/abc/flows/1"})
+
+        response = client_for(tenancy.owner).post(
+            reverse("notifications:mark_read", args=[notification.id]), headers=HTMX
+        )
+
+        assert "HX-Redirect" not in response
+
+    def test_a_row_with_no_target_does_not_redirect(self, tenancy, client_for):
+        notification = make_notification(tenancy.owner, payload={"tone": "info"})
+
+        response = client_for(tenancy.owner).post(
+            reverse("notifications:mark_read", args=[notification.id]), {"follow": "1"}, headers=HTMX
+        )
+
+        assert "HX-Redirect" not in response
+
+    def test_a_stored_off_site_url_is_still_refused_at_redirect_time(self, tenancy, client_for):
+        """A redirect built from a stored value is exactly where a row written
+        before the allowlist existed would matter."""
+        notification = make_notification(tenancy.owner)
+        Notification.objects.filter(pk=notification.pk).update(payload={"action_url": "https://evil.test/login"})
+
+        response = client_for(tenancy.owner).post(
+            reverse("notifications:mark_read", args=[notification.id]), {"follow": "1"}, headers=HTMX
+        )
+
+        assert "HX-Redirect" not in response
+
+    def test_the_bell_row_asks_to_be_followed(self, tenancy, client_for):
+        make_notification(tenancy.owner, payload={"action_url": "/w/abc/flows/1"})
+
+        body = client_for(tenancy.owner).get(reverse("notifications:bell")).content.decode()
+
+        assert "follow" in body
+
+
+@pytest.mark.django_db
+class TestTheHistoryPageIsActionable:
+    def test_a_row_with_a_target_links_to_it(self, tenancy, client_for):
+        """Otherwise a notification that scrolls out of the bell's 20-row
+        window is reachable from the email but from nowhere in the product."""
+        make_notification(tenancy.owner, title="Go here", payload={"action_url": "/w/abc/flows/1"})
+
+        body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
+
+        assert 'href="/w/abc/flows/1"' in body
+
+    def test_a_row_without_one_stays_plain_text(self, tenancy, client_for):
+        make_notification(tenancy.owner, title="Nowhere to go", payload={"tone": "info"})
+
+        body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
+
+        assert "Nowhere to go" in body
+        assert 'href=""' not in body
+
+
+@pytest.mark.django_db
+class TestTheRefreshKeepsTheReadersPlace:
+    def test_the_page_number_travels_with_the_refresh(self, tenancy, client_for):
+        for index in range(70):
+            make_notification(tenancy.owner, title=f"Row {index:02d}")
+
+        body = client_for(tenancy.owner).get(reverse("notifications:list"), {"page": 2}, headers=HTMX).content.decode()
+
+        assert '<input type="hidden" name="page" value="2">' in body
+
+    def test_the_container_includes_the_page_input(self, tenancy, client_for):
+        body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
+
+        assert "[name='page']" in body
+
+    def test_changing_a_filter_does_not_carry_the_page(self, tenancy, client_for):
+        """A new filter is a different result set, so page 1 is right."""
+        body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
+        selects = body[body.index('name="event_type"') : body.index("notification-history")]
+
+        assert "[name='page']" not in selects
+
+
+@pytest.mark.django_db
+class TestTheMobileIndicator:
+    def test_the_shell_gives_it_its_own_swap_target(self, tenancy, client_for):
+        make_notification(tenancy.owner)
+
+        body = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.id}/").content.decode()
+
+        assert body.count('id="notification-badge-mobile"') == 1
+
+    def test_marking_read_clears_it_too(self, tenancy, client_for):
+        """It sits outside both desktop targets, so it would otherwise keep
+        showing a dot after the last notification was read."""
+        make_notification(tenancy.owner)
+
+        body = client_for(tenancy.owner).post(reverse("notifications:mark_all_read"), headers=HTMX).content.decode()
+
+        assert 'id="notification-badge-mobile"' in body
+        assert body.count("hx-swap-oob") == 3
+        assert "notif-dot" not in body

@@ -21,7 +21,12 @@ would need Alpine's `.camel` modifier to survive htmx's lowercase event names).
     <a href="{% if n.payload.action_url %}{{ n.payload.action_url }}{% else %}{% url 'notifications:list' %}{% endif %}"
        class="notif-item{% if not n.is_read %} is-unread{% endif %} btn-surface-1 flex gap-3 px-4 py-3"
        {% if not n.is_read %}
+       {% comment %}follow=1: this row is a link, so the click has to end up at
+       the notification's target. hx-post cancels the anchor's own navigation,
+       and the view answers with HX-Redirect. The href stays real so
+       middle-click and "open in new tab" still work.{% endcomment %}
        hx-post="{% url 'notifications:mark_read' n.id %}"
+       hx-vals='{"follow": "1"}'
        hx-swap="none"
        {% endif %}>
         <span class="notif-icon notif-icon-{{ n.payload.tone|default:'info' }} flex-shrink-0">

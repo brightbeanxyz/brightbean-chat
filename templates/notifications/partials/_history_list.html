@@ -4,6 +4,13 @@ The history page's rows, swapped in by the filter controls.
 Args: notifications, page, has_next, has_previous, selected_* (for the pager's
 hx-get, which has to carry the current filters forward).
 {% endcomment %}
+{% comment %}
+The page the reader is on, so the container's refresh returns it rather than
+snapping back to page 1. It lives in this partial because this partial is what
+gets re-rendered, so the value is always the one just served.
+{% endcomment %}
+<input type="hidden" name="page" value="{{ page }}">
+
 {% if notifications %}
 <ul class="divide-y" style="border-color: var(--border);">
     {% for n in notifications %}
@@ -12,7 +19,19 @@ hx-get, which has to carry the current filters forward).
             {% include "partials/_nav_icon.html" with name=n.payload.icon|default:"bell" %}
         </span>
         <div class="flex-1 min-w-0">
-            <p class="text-[13px] font-semibold leading-snug" style="color: var(--text-primary);">{{ n.title }}</p>
+            {% comment %}
+              Linked here as well as in the bell. An actionable notification
+              that has scrolled out of the bell's 20-row window would otherwise
+              be reachable from the email but from nowhere in the product. The
+              path was reduced to this origin at write time, so it is safe to
+              render directly; a row without one stays plain text rather than
+              becoming a dead link.
+            {% endcomment %}
+            <p class="text-[13px] font-semibold leading-snug" style="color: var(--text-primary);">
+                {% if n.payload.action_url %}
+                <a href="{{ n.payload.action_url }}" class="btn-text-hover-primary">{{ n.title }}</a>
+                {% else %}{{ n.title }}{% endif %}
+            </p>
             {% if n.body %}
             <p class="text-[12px] leading-relaxed mt-0.5" style="color: var(--text-secondary);">{{ n.body }}</p>
             {% endif %}

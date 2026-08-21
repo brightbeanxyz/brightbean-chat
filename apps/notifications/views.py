@@ -33,7 +33,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
 from apps.members.requests import RBACRequest
-from apps.notifications import selectors
+from apps.notifications import action_urls, selectors
 from apps.notifications.events import REGISTRY, registered_choices
 from apps.notifications.models import Notification, NotificationSetting
 
@@ -167,9 +167,34 @@ def mark_read(request: RBACRequest, notification_id: Any) -> HttpResponse:
         notification.read_at = timezone.now()
         notification.save(update_fields=["is_read", "read_at", "updated_at"])
 
+    destination = _followed_destination(request, notification)
+
     if _is_htmx(request):
-        return _changed_response(request)
-    return redirect("notifications:list")
+        response = _changed_response(request)
+        if destination:
+            # htmx swallows the anchor's own navigation once hx-post is on it,
+            # so without this the reader clicks a notification, watches it turn
+            # read, and has to click again to actually get where it pointed.
+            # The row asks for this explicitly (hx-vals follow=1) rather than it
+            # being implied by having an action_url, because the history page's
+            # "Mark read" button posts the same route and must stay put.
+            response["HX-Redirect"] = destination
+        return response
+    return redirect(destination or "notifications:list")
+
+
+def _followed_destination(request: Any, notification: Notification) -> str | None:
+    """Where this click should land, if it asked to be followed.
+
+    The stored path was already reduced to this origin at write time
+    (:mod:`apps.notifications.action_urls`), and it is re-checked here because
+    a redirect built from a stored value is exactly where a stale row would
+    matter.
+    """
+    if request.POST.get("follow") != "1":
+        return None
+    payload = notification.payload if isinstance(notification.payload, dict) else {}
+    return action_urls.safe_path(payload.get("action_url"))
 
 
 @login_required

@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "HANDLER_TYPE",
+    "NotificationEmailError",
     "reset_bindings",
     "enqueue_email",
     "handle_notification_email",
@@ -96,14 +97,28 @@ def queueing_available() -> bool:
     return _bind(_ENQUEUE_LOCATIONS, "enqueue") is not None
 
 
+class NotificationEmailError(RuntimeError):
+    """A queued send failed and the action should be retried.
+
+    The queue decides *whether* to retry and how long to wait (SPEC §15:
+    30s, 2m, 10m, 1h, 6h, then failed). Its only signal is whether the handler
+    raised, so a handler that swallows a transport error tells it the send
+    succeeded — and a transient SMTP outage becomes permanent.
+    """
+
+
 def handle_notification_email(payload: dict[str, Any]) -> None:
     """The worker-side half: send the email a scheduled action stands for.
 
     Kept tiny and import-light on purpose — it is called from #5's worker
     process, which has no reason to import this app's views or engine.
+
+    Raises :class:`NotificationEmailError` when the send fails, so the queue's
+    backoff applies. Returns quietly when there is nothing to do, so a retry
+    that has been overtaken by events does not spin.
     """
     from apps.notifications.mail import send_delivery
-    from apps.notifications.models import NotificationDelivery
+    from apps.notifications.models import DeliveryStatus, NotificationDelivery
 
     delivery_id = payload.get("delivery_id")
     delivery = (
@@ -116,7 +131,19 @@ def handle_notification_email(payload: dict[str, Any]) -> None:
         # and nothing worth failing the action over.
         logger.info("notification_email action referenced a delivery that no longer exists: %r", delivery_id)
         return
-    send_delivery(delivery)
+
+    if delivery.status == DeliveryStatus.SENT:
+        # The idempotency key stops a second *action row* being enqueued; it
+        # does nothing about one row running twice. A worker that sent the mail
+        # and died before marking the action done gets swept back to pending by
+        # zombie recovery, and without this check the recipient is mailed again.
+        logger.info("notification_email action re-ran for delivery %s, which was already sent.", delivery.pk)
+        return
+
+    if not send_delivery(delivery):
+        # send_delivery has already recorded FAILED and logged the cause; this
+        # exists purely to tell the queue the action did not succeed.
+        raise NotificationEmailError(f"Notification email delivery {delivery.pk} failed; queued for retry.")
 
 
 def register_handler_if_available() -> bool:

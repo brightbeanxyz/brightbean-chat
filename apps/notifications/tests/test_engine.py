@@ -406,3 +406,74 @@ class TestSubjectCannotBreakTheHeader:
         # Falls back to the title, and the action URL falls back to a route we
         # control, rather than raising AttributeError out of a narrow except.
         assert mail.outbox[-1].subject == 'Flow "W" hit the loop cap'
+
+
+@pytest.mark.django_db
+class TestValuesThatLookJsonSafeAndAreNot:
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_floats_are_dropped(self, tenancy, value):
+        """json.dumps writes these as NaN/Infinity — tokens that are not JSON
+        and that Postgres rejects on the way into jsonb, so the insert fails
+        part-way through a fan-out."""
+        created = notify(tenancy.workspace, "flow_loop_cap_hit", context={"flow_name": "W", "ratio": value})
+
+        assert "ratio" not in created[0].payload
+        json.dumps(created[0].payload)
+
+    def test_a_non_finite_float_nested_in_a_list_is_dropped(self, tenancy):
+        created = notify(
+            tenancy.workspace, "flow_loop_cap_hit", context={"flow_name": "W", "series": [1.0, float("nan")]}
+        )
+
+        assert "series" not in created[0].payload
+
+    def test_ordinary_floats_still_survive(self, tenancy):
+        created = notify(tenancy.workspace, "flow_loop_cap_hit", context={"flow_name": "W", "ratio": 0.5})
+
+        assert created[0].payload["ratio"] == 0.5
+
+    def test_booleans_are_not_mistaken_for_numbers(self, tenancy):
+        """bool is a subclass of int; the check has to keep it a bool."""
+        created = notify(tenancy.workspace, "flow_loop_cap_hit", context={"flow_name": "W", "ok": True})
+
+        assert created[0].payload["ok"] is True
+
+
+@pytest.mark.django_db
+class TestTitlesFitTheColumn:
+    def test_a_long_rendered_title_is_truncated_rather_than_raising(self, tenancy):
+        """Reachable with entirely valid input: member_mentioned renders
+        "{actor_name} mentioned you", and a long display name is not a bug.
+        Postgres would raise on the varchar(255) insert and abort the caller's
+        transaction over a display string."""
+        created = notify(
+            tenancy.workspace,
+            "member_mentioned",
+            users=[tenancy.owner],
+            context={"actor_name": "A" * 300, "message": "hello"},
+        )
+
+        assert len(created[0].title) <= 255
+        assert created[0].title.endswith("…")
+
+    def test_a_title_exactly_at_the_limit_is_left_alone(self, tenancy):
+        created = notify(
+            tenancy.workspace,
+            "member_mentioned",
+            users=[tenancy.owner],
+            context={"actor_name": "B" * (255 - len(" mentioned you")), "message": "hi"},
+        )
+
+        assert len(created[0].title) == 255
+        assert not created[0].title.endswith("…")
+
+    def test_the_body_keeps_the_full_detail(self, tenancy):
+        """Only the title is bounded — body is a TextField."""
+        created = notify(
+            tenancy.workspace,
+            "member_mentioned",
+            users=[tenancy.owner],
+            context={"actor_name": "C" * 300, "message": "D" * 5000},
+        )
+
+        assert "D" * 5000 in created[0].body

@@ -97,7 +97,9 @@ class TestNoDuplicateIds:
     shell page shipped two `nav-badge-notifications` elements.
     """
 
-    @pytest.mark.parametrize("element_id", ["notification-badge", "nav-badge-notifications"])
+    @pytest.mark.parametrize(
+        "element_id", ["notification-badge", "nav-badge-notifications", "notification-badge-mobile"]
+    )
     def test_the_shell_carries_each_badge_id_at_most_once(self, tenancy, client_for, element_id):
         Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Ping")
 
@@ -114,14 +116,17 @@ class TestNoDuplicateIds:
 
         assert "hx-swap-oob" not in body
 
-    def test_the_response_fragment_updates_both_places_the_count_appears(self, tenancy, client_for):
+    def test_the_response_fragment_updates_every_place_the_count_appears(self, tenancy, client_for):
+        """Three: the footer bell's dot, the sidebar nav row's badge, and the
+        mobile bar's dot — which is the only one a phone reader can see, and
+        which sits outside both desktop targets."""
         Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Ping")
 
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
-        assert 'id="notification-badge"' in body
-        assert 'id="nav-badge-notifications"' in body
-        assert body.count("hx-swap-oob") == 2
+        for element_id in ("notification-badge", "nav-badge-notifications", "notification-badge-mobile"):
+            assert f'id="{element_id}"' in body
+        assert body.count("hx-swap-oob") == 3
 
     def test_reaching_zero_deletes_the_nav_badge_rather_than_emptying_it(self, tenancy, client_for):
         """The shell renders no badge at all for a zero count, so there is

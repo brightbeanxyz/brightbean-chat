@@ -5,6 +5,7 @@ both states: the one that exists today (no queue, send inline) and the one that
 exists after #5 lands (enqueue, send in the worker).
 """
 
+import smtplib
 import sys
 import types
 from pathlib import Path
@@ -187,3 +188,57 @@ class TestTheSeamIsActuallyOneFile:
         )
 
         assert not offenders, f"these reach past the seam to apps.queueing: {offenders}"
+
+
+@pytest.mark.django_db
+class TestTheWorkerHandlerTellsTheQueueTheTruth:
+    """The queue's only signal is whether the handler raised. A handler that
+    swallows a transport error reports success, and SPEC §15's backoff never
+    runs — so a transient SMTP outage becomes permanent."""
+
+    def test_a_failed_send_raises_so_the_queue_retries(self, tenancy, fake_queueing):
+        notify(tenancy.workspace, "flow_loop_cap_hit", users=[tenancy.owner], context=LOOP_CAP_CONTEXT)
+        payload = fake_queueing.calls[0]["payload"]
+
+        with (
+            patch("django.core.mail.EmailMultiAlternatives.send", side_effect=smtplib.SMTPException("greylisted")),
+            pytest.raises(queue.NotificationEmailError, match="failed"),
+        ):
+            queue.handle_notification_email(payload)
+
+        assert NotificationDelivery.objects.get(pk=payload["delivery_id"]).status == DeliveryStatus.FAILED
+
+    def test_a_successful_send_returns_quietly(self, tenancy, fake_queueing):
+        notify(tenancy.workspace, "flow_loop_cap_hit", users=[tenancy.owner], context=LOOP_CAP_CONTEXT)
+        payload = fake_queueing.calls[0]["payload"]
+
+        assert queue.handle_notification_email(payload) is None
+        assert len(mail.outbox) == 1
+
+    def test_an_already_sent_delivery_is_not_mailed_twice(self, tenancy, fake_queueing):
+        """The idempotency key stops a second action *row*; it does nothing
+        about one row running twice, which is what zombie recovery does after a
+        worker sends the mail and dies before marking the action done."""
+        notify(tenancy.workspace, "flow_loop_cap_hit", users=[tenancy.owner], context=LOOP_CAP_CONTEXT)
+        payload = fake_queueing.calls[0]["payload"]
+        queue.handle_notification_email(payload)
+        assert len(mail.outbox) == 1
+
+        queue.handle_notification_email(payload)
+
+        assert len(mail.outbox) == 1
+
+    def test_a_retry_after_a_failure_is_still_attempted(self, tenancy, fake_queueing):
+        """Only SENT is skipped — a FAILED row is exactly what a retry is for."""
+        notify(tenancy.workspace, "flow_loop_cap_hit", users=[tenancy.owner], context=LOOP_CAP_CONTEXT)
+        payload = fake_queueing.calls[0]["payload"]
+        with (
+            patch("django.core.mail.EmailMultiAlternatives.send", side_effect=smtplib.SMTPException("boom")),
+            pytest.raises(queue.NotificationEmailError),
+        ):
+            queue.handle_notification_email(payload)
+
+        queue.handle_notification_email(payload)
+
+        assert len(mail.outbox) == 1
+        assert NotificationDelivery.objects.get(pk=payload["delivery_id"]).status == DeliveryStatus.SENT
