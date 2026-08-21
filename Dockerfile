@@ -1,4 +1,28 @@
 # ---------------------------------------------------------------------------
+# Frontend — compile the Tailwind bundle.
+# ---------------------------------------------------------------------------
+# The output has to exist before collectstatic runs in the runtime stage:
+# production uses CompressedManifestStaticFilesStorage, which hard-fails on a
+# {% static %} reference it cannot resolve. It is also gitignored, so it cannot
+# simply arrive with the source copy.
+#
+# The vendored JS in static/js/vendor/ is committed and needs no build step —
+# see scripts/vendor-js.mjs for why.
+FROM node:20-slim AS frontend
+
+WORKDIR /app
+
+# Lockfile first, so a source-only change reuses the install layer.
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+# styles.css scans templates/ and apps/**/templates/ through its @source
+# directives, so Tailwind needs the whole tree to know which classes to emit.
+COPY . .
+RUN npm run build:css \
+    && test -s theme/static/css/dist/styles.css
+
+# ---------------------------------------------------------------------------
 # Builder — resolve dependencies into a virtualenv we can copy wholesale.
 # ---------------------------------------------------------------------------
 # Studio's image is single-stage and ships pip's build cache, the dev tooling
@@ -41,6 +65,11 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app . .
+
+# The compiled stylesheet, which .gitignore keeps out of the build context.
+# Must land before the collectstatic below, and be owned by the app user, which
+# is what runs it.
+COPY --from=frontend --chown=app:app /app/theme/static/css/dist /app/theme/static/css/dist
 
 # WORKDIR creates /app as root and COPY --chown only covers the files it
 # copies, so the app user could not create staticfiles/ at build time or write

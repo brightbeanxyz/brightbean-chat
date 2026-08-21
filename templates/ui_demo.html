@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% load common_extras %}
+{% comment %}
+The design system's living style guide, and the smoke view the L1-B acceptance
+criteria ask for: toast + ui_select + platform icons, all exercised on one page
+that is not the page they were built for.
+
+Note what is NOT here: a per-page toast include. Studio's toast host is a
+partial each template has to remember to pull in; this page fires toasts with
+nothing but a form posting to a toast_response view.
+{% endcomment %}
+
+{% block title %}Design system — BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<h1 class="text-lg font-semibold" style="color: var(--text-primary);">Design system</h1>
+<p class="text-sm mb-6" style="color: var(--text-secondary);">
+    The tokens, components and helpers every later UI issue renders into.
+</p>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-10 max-w-3xl">
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Toasts</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            Fired by <code>toast_response(...)</code> over <code>HX-Trigger</code>. The host lives in
+            <code>base.html</code>, so this works on every page with no include.
+        </p>
+        <div class="flex flex-wrap gap-2">
+            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "success"}' hx-swap="none">Success</button>
+            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "info"}' hx-swap="none">Info</button>
+            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "warn"}' hx-swap="none">Warning</button>
+            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "error"}' hx-swap="none">Error</button>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Select</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            <code>{% templatetag openblock %} ui_select {% templatetag closeblock %}</code> — single and multi,
+            with a panel that escapes the toolbar's overflow.
+        </p>
+        <div class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-1"
+             x-data="{ status: '', channels: [] }">
+            {% ui_select model="status" options=ui_demo_statuses placeholder="All statuses" icon="status" %}
+            {% ui_select model="channels" options=ui_demo_channels multiple=True placeholder="Channels" icon="channel" %}
+            <span class="text-xs whitespace-nowrap" style="color: var(--text-tertiary);"
+                  x-text="'status=' + (status || 'all') + ' channels=' + (channels.length || 'all')"></span>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Platform icons</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            One partial, six platforms, <code>currentColor</code>. The last tile is an unknown key,
+            proving the fallback glyph.
+        </p>
+        <div class="flex flex-wrap gap-4">
+            {% for platform in ui_demo_platforms %}
+            <div class="flex flex-col items-center gap-1.5 w-20">
+                <span class="pi-chip pi-{{ platform }} w-8 h-8">{% include "partials/_platform_icon.html" with platform=platform size="md" %}</span>
+                <span class="pi-ink-{{ platform }}">{% include "partials/_platform_icon.html" with platform=platform size="sm" %}</span>
+                <span class="text-[10px] truncate w-full text-center" style="color: var(--text-tertiary);">{{ platform }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Buttons</h2>
+        <div class="flex flex-wrap items-center gap-3 mt-3">
+            <button type="button" class="btn-brand w-auto">Primary</button>
+            <button type="button" class="btn-outline w-auto">Outline</button>
+            <button type="button" class="btn-link">Link</button>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Alerts</h2>
+        <div class="space-y-2">
+            <div class="alert-success">Saved. Every tone has a matching toast.</div>
+            <div class="alert-info">Informational, for context a user did not ask for.</div>
+            <div class="alert-warning">Warning — the fourth tone, which Studio's stylesheet is missing.</div>
+            <div class="alert-error">Something went wrong.</div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Form controls</h2>
+        <div class="space-y-3 max-w-sm">
+            <input type="text" class="form-input-styled" placeholder="Text input">
+            <input type="text" class="form-input-styled is-error" placeholder="Input with an error">
+            <select class="form-input-styled bb-select">
+                <option>Select with a custom chevron</option>
+            </select>
+            <label class="flex items-center gap-2 text-sm" style="color: var(--text-secondary);">
+                <input type="checkbox" class="bb-checkbox" checked> Checkbox, bean green
+            </label>
+            <label class="flex items-center gap-2 text-sm" style="color: var(--text-secondary);">
+                <span class="bb-toggle"><input type="checkbox" checked><span class="bb-toggle-track"></span></span>
+                Toggle switch
+            </label>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Brand ramp</h2>
+        <div class="flex flex-wrap gap-1">
+            <div class="w-12 h-10 rounded" style="background: var(--brand-50);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-100);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-200);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-300);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-400);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-500);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-600);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-700);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-800);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-900);"></div>
+        </div>
+    </section>
+
+</div>
+{% endblock %}

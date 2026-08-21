@@ -116,7 +116,7 @@ jobs:
         run: pytest --cov=apps --cov-report=term-missing
 
   audit:
-    name: Dependency audit (pip-audit, npm audit)
+    name: Dependency audit + frontend build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -194,10 +194,37 @@ jobs:
           fi
           echo "pip-audit correctly rejected the vulnerable fixture."
 
+      - name: Install JavaScript dependencies
+        run: npm ci --no-audit --no-fund
+
       - name: npm audit
-        # No JavaScript dependencies yet — the Tailwind toolchain arrives with
-        # issue #32. The step is wired now so that PR inherits a working gate.
         run: npm audit --audit-level=low
+
+      - name: Tailwind build is deterministic
+        # "Deterministic in CI" is only a claim until something checks it. Two
+        # builds of the same input must be byte-identical, or a rebuild would
+        # churn the manifest hash on every deploy for no reason.
+        run: |
+          npm run build:css
+          cp theme/static/css/dist/styles.css /tmp/styles.first.css
+          rm -rf theme/static/css/dist
+          npm run build:css
+          cmp /tmp/styles.first.css theme/static/css/dist/styles.css
+          test -s theme/static/css/dist/styles.css
+          echo "Tailwind output is reproducible ($(wc -c < theme/static/css/dist/styles.css) bytes)."
+
+      - name: Vendored JavaScript matches the lockfile
+        # static/js/vendor/ is committed so a clone without Node still runs, but
+        # a committed copy can drift from the version package-lock.json pins —
+        # by a hand edit, or by a Dependabot bump nobody re-vendored. Re-running
+        # the copy and diffing makes that impossible to merge.
+        run: |
+          npm run vendor
+          if ! git diff --exit-code -- static/js/vendor; then
+            echo "::error::static/js/vendor is stale — run \`npm run vendor\` and commit the result."
+            exit 1
+          fi
+          echo "Vendored bundles match package-lock.json."
 
   build:
     name: Docker build
@@ -231,12 +258,15 @@ jobs:
           echo "container uid: ${uid}"
           test "${uid}" != "0"
 
-      - name: docker compose up reaches the placeholder page
-        # The Layer-0 definition of done, checked on every PR rather than once
-        # by hand: a clean checkout with no .env boots Postgres, migrates, and
-        # serves both the placeholder page and a /healthz backed by a real
-        # database round-trip. IMAGE_TAG points compose at the image built
-        # above so it does not rebuild the same layers.
+      - name: docker compose up serves the app shell
+        # A clean checkout with no .env boots Postgres, migrates, and serves
+        # both the app shell and a /healthz backed by a real database
+        # round-trip. IMAGE_TAG points compose at the image built above so it
+        # does not rebuild the same layers.
+        #
+        # `curl -fsS` follows no redirect and fails on any non-2xx, so this also
+        # asserts that / stays publicly reachable — the shell must not put the
+        # landing page behind a login.
         env:
           IMAGE_TAG: ci
         run: |

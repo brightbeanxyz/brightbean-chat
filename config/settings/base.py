@@ -124,10 +124,19 @@ THIRD_PARTY_APPS = [
     "csp",
 ]
 
-# Business apps land in their own issues: tenancy in #31, theme in #32, the
-# domain apps from Layer 2 onwards. Layer 0 ships apps.common and nothing else.
+# Business apps land in their own issues: tenancy in #31, the domain apps from
+# Layer 2 onwards.
+#
+# ``theme`` holds the compiled Tailwind bundle. It has to be an installed app
+# rather than a STATICFILES_DIRS entry, because that is what puts
+# theme/static/ in front of the app-directories finder and makes
+# {% static 'css/dist/styles.css' %} resolve. There is deliberately no
+# django-tailwind dependency and no TAILWIND_APP_NAME: Studio carries both and
+# never invokes `manage.py tailwind`, so the npm scripts in package.json are
+# the real build (deviation 1 of the L1-B brief).
 LOCAL_APPS = [
     "apps.common",
+    "theme",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -157,6 +166,11 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                # Supplies the sidebar navigation with its `active` flag already
+                # computed — the single active-state convention the whole UI
+                # uses (deviation 4). Returns {} for anonymous requests, so the
+                # landing and auth pages cost nothing.
+                "apps.common.context_processors.sidebar_context",
             ],
         },
     },

@@ -1,13 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>403 Forbidden &mdash; BrightBean Chat</title>
-  </head>
-  <body>
-    <h1>403 Forbidden</h1>
-    <p>You do not have permission to view this page.</p>
-    <p><a href="/">Back to the start</a></p>
-  </body>
-</html>
+{% extends "layouts/error.html" %}
+{% block title %}403 Forbidden — BrightBean Chat{% endblock %}
+{% block heading %}403 Forbidden{% endblock %}
+{% block message %}You do not have permission to view this page.{% endblock %}

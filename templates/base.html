@@ -1,0 +1,246 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en" {% block html_style %}{% endblock %}>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}BrightBean Chat{% endblock %}</title>
+
+    <link rel="icon" type="image/svg+xml" href="{% static 'favicon/favicon.svg' %}">
+    <link rel="icon" type="image/png" sizes="96x96" href="{% static 'favicon/favicon-96x96.png' %}">
+    <link rel="shortcut icon" href="{% static 'favicon/favicon.ico' %}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'favicon/apple-touch-icon.png' %}">
+    <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
+
+    <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+
+    {% comment %}
+      Sidebar collapse survives a reload without a flash only if all THREE of
+      the following cooperate. Removing any one of them reintroduces a
+      flash-of-expanded-sidebar, so they are ported and maintained as a unit:
+
+      1. this pre-paint script, which stamps html.sidebar-is-collapsed from
+         localStorage before the browser paints anything;
+      2. the .sidebar-initial rules below, which mirror EVERY collapsed state
+         in plain CSS — they are what actually renders until Alpine boots;
+      3. the x-init on <aside>, which strips both classes and hands over to
+         Alpine's reactive :class, deferring the width transition to $nextTick
+         so the handover itself does not animate 240px -> 60px.
+    {% endcomment %}
+    {% if show_app_shell %}
+    <script nonce="{{ request.csp_nonce }}">
+        if (localStorage.getItem('sidebarCollapsed') === 'true') {
+            document.documentElement.classList.add('sidebar-is-collapsed');
+        }
+    </script>
+    {% endif %}
+    <style nonce="{{ request.csp_nonce }}">
+        /* Global: issue #31's auth templates use Alpine too. */
+        [x-cloak] { display: none !important; }
+        {% if show_app_shell %}
+        /* Initial sidebar width - applied before Alpine loads */
+        .sidebar-initial { width: 240px; }
+        html.sidebar-is-collapsed .sidebar-initial { width: 60px; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-nav-item { justify-content: center; padding: 8px; gap: 0; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-nav-label,
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-section-label,
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-section-label-wrap,
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-badge { display: none; }
+        /* Collapsed child overrides before Alpine */
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-btn { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-nav { padding-left: 0.5rem; padding-right: 0.5rem; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-org-footer { padding: 0.5rem; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-org-expanded { display: none; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-org-collapsed { display: flex !important; }
+
+        /* Mobile: hide sidebar off-screen before Alpine loads */
+        @media (max-width: 1023px) {
+            .sidebar-initial {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                transform: translateX(-100%);
+                z-index: 40;
+                width: 240px !important;
+            }
+            /* On mobile, never show collapsed state pre-Alpine */
+            html.sidebar-is-collapsed .sidebar-initial { width: 240px !important; }
+        }
+        {% endif %}
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="min-h-screen" style="background: var(--surface-page); color: var(--text-primary);">
+{% csrf_token %}
+<script nonce="{{ request.csp_nonce }}">
+    // The hidden input above is the single global CSRF source for every htmx
+    // request. The cookie is deliberately not HttpOnly for the same reason,
+    // but reading the input avoids depending on cookie parsing.
+    document.body.addEventListener('htmx:configRequest', function (event) {
+        var token = document.querySelector('[name=csrfmiddlewaretoken]');
+        if (token) { event.detail.headers['X-CSRFToken'] = token.value; }
+    });
+</script>
+
+{% include "partials/_toast_host.html" %}
+
+{% if show_app_shell %}
+<div class="flex h-screen overflow-hidden"
+     style="background: var(--surface-page);"
+     x-data="{ sidebarCollapsed: localStorage.getItem('sidebarCollapsed') === 'true', mobileMenuOpen: false }"
+     x-effect="localStorage.setItem('sidebarCollapsed', sidebarCollapsed)"
+     @keydown.escape.window="mobileMenuOpen = false">
+
+    <!-- Mobile backdrop overlay -->
+    <div x-show="mobileMenuOpen" x-cloak
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click="mobileMenuOpen = false"
+         class="fixed inset-0 bg-black/30 z-30 lg:hidden"></div>
+
+    <!-- Sidebar -->
+    <aside class="flex flex-col flex-shrink-0 sidebar-initial
+                  fixed inset-y-0 left-0 z-40 w-60 bg-white
+                  transition-transform duration-200
+                  lg:relative lg:z-auto lg:translate-x-0 lg:bg-transparent"
+           :class="[
+               sidebarCollapsed ? 'lg:w-[60px] sidebar-collapsed' : 'lg:w-60',
+               mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+           ]"
+           x-init="$el.classList.remove('sidebar-initial'); document.documentElement.classList.remove('sidebar-is-collapsed'); $nextTick(() => $el.classList.add('transition-all', 'duration-200'))"
+           @click="if (window.innerWidth < 1024 && $event.target.closest('a')) { mobileMenuOpen = false }">
+
+        <!-- Workspace switcher / product mark -->
+        <div class="flex-shrink-0 px-3 pt-3 pb-1" :class="sidebarCollapsed ? 'px-2' : 'px-3'">
+            {% if sidebar_workspaces %}
+            <div class="relative" x-data="{ wsOpen: false }" @click.away="wsOpen = false">
+                <button type="button" @click="wsOpen = !wsOpen"
+                        class="sidebar-ws-btn btn-neutral-100 w-full flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer">
+                    {% include "partials/_logo.html" with workspace=current_workspace %}
+                    <span class="sidebar-nav-label text-sm font-semibold truncate" style="color: var(--text-primary);">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
+                    <svg class="sidebar-nav-label ml-auto flex-shrink-0" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-ghost);"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg>
+                </button>
+                <div x-show="wsOpen" x-cloak class="anim-collapse absolute left-0 right-0 mt-1 z-50 rounded-lg py-1"
+                     style="background: var(--surface-0); box-shadow: var(--shadow-lg); border: 1px solid var(--border);">
+                    {% for ws in sidebar_workspaces %}
+                    <a href="{{ ws.url }}" class="block px-3 py-1.5 text-xs btn-surface-1" style="color: var(--text-secondary);">{{ ws.name }}</a>
+                    {% endfor %}
+                    {% if can_create_workspace %}
+                    <a href="{{ create_workspace_url }}" class="block px-3 py-1.5 text-xs btn-surface-1" style="color: var(--primary);">New workspace</a>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="sidebar-ws-btn flex items-center gap-2 px-2 py-1.5">
+                {% include "partials/_logo.html" %}
+                <span class="sidebar-nav-label text-sm font-semibold truncate" style="color: var(--text-primary);">BrightBean Chat</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <nav class="sidebar-nav flex-1 overflow-y-auto py-2 px-3" :class="sidebarCollapsed ? 'px-2' : 'px-3'">
+            {% block sidebar_nav %}
+            {% include "partials/_nav_groups.html" with groups=nav_groups %}
+            {% endblock %}
+        </nav>
+
+        <!-- Footer: collapse toggle, settings, sign out -->
+        <div class="sidebar-org-footer flex-shrink-0 p-3 border-t" style="border-color: var(--border);">
+            <div class="sidebar-org-expanded flex items-center gap-1" x-show="!sidebarCollapsed" x-cloak>
+                <a href="{{ settings_nav_groups.0.items.0.url|default:'#' }}" class="sidebar-nav-item flex-1" title="Settings">
+                    {% include "partials/_nav_icon.html" with name="settings" %}
+                    <span class="sidebar-nav-label">Settings</span>
+                </a>
+                <button type="button" @click="sidebarCollapsed = true"
+                        class="btn-icon-hover w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer"
+                        style="color: var(--text-tertiary);" title="Collapse sidebar" aria-label="Collapse sidebar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+                </button>
+            </div>
+            <div class="sidebar-org-collapsed hidden flex-col items-center gap-1" x-show="sidebarCollapsed" x-cloak>
+                <button type="button" @click="sidebarCollapsed = false"
+                        class="btn-icon-hover w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer"
+                        style="color: var(--text-tertiary);" title="Expand sidebar" aria-label="Expand sidebar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+                </button>
+            </div>
+            {% if logout_url %}
+            <form method="post" action="{{ logout_url }}" class="sidebar-nav-label mt-1" x-show="!sidebarCollapsed" x-cloak>
+                {% csrf_token %}
+                <button type="submit" class="sidebar-nav-item w-full cursor-pointer">
+                    {% include "partials/_nav_icon.html" with name="logout" %}
+                    <span class="sidebar-nav-label">Sign out</span>
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </aside>
+
+    <!-- Main column -->
+    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <!-- Mobile top bar -->
+        <div class="flex lg:hidden items-center justify-between px-4 py-3 flex-shrink-0 border-b"
+             style="background: var(--surface-0); border-color: var(--border);">
+            <button @click="mobileMenuOpen = !mobileMenuOpen"
+                    class="btn-icon-hover w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer -ml-1"
+                    style="color: var(--text-secondary);" title="Toggle menu" aria-label="Toggle menu">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+                </svg>
+            </button>
+            <div class="flex items-center gap-2">
+                {% include "partials/_logo.html" with size="sm" %}
+                <span class="text-sm font-semibold truncate max-w-[160px]" style="color: var(--text-primary);">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
+            </div>
+            <div class="w-9"></div>
+        </div>
+
+        <main class="lg:border lg:m-2.5 lg:rounded-xl flex-1 p-3 sm:p-4 lg:p-6 overflow-y-auto flex flex-col"
+              style="background: var(--surface-0); border-color: var(--border);">
+            {% block page_header %}{% endblock %}
+            {% if messages %}
+            <div class="mb-4 space-y-2">
+                {% for message in messages %}
+                <div class="alert-{% if message.tags == 'error' %}error{% elif message.tags == 'success' %}success{% elif message.tags == 'warning' %}warning{% else %}info{% endif %}">{{ message }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            <div class="flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden">
+            {% block content %}{% endblock %}
+            </div>
+        </main>
+    </div>
+</div>
+{% else %}
+<main class="auth-bg min-h-screen flex items-center justify-center py-12 px-4" style="font-family: var(--font-body);">
+    {% comment %}
+      Issue #31 owns the auth templates. They extend this file and fill this
+      block; .auth-card and .auth-bg are already in the design system, so a
+      login page is `{% extends "base.html" %}` plus a card.
+    {% endcomment %}
+    {% block auth_content %}{% endblock %}
+</main>
+{% endif %}
+
+{% comment %}
+  Vendored JS (deviation 6). Studio pulls flatpickr, Chart.js and Sortable off a
+  public CDN, which forces that origin into script-src and style-src. Every
+  library here is served from 'self'; see scripts/vendor-js.mjs.
+
+  A Django comment rather than an HTML one on purpose: an HTML comment ships to
+  the browser, so a page documenting the removal of a CDN origin would still
+  contain that origin's hostname — and the test asserting no CDN reference
+  survives in any rendered template would fail on its own explanation.
+
+  Order is load-bearing: htmx synchronously first, then any inline script that
+  DEFINES an Alpine component, then Alpine itself deferred so those definitions
+  exist by the time it boots.
+{% endcomment %}
+<script src="{% static 'js/vendor/htmx.min.js' %}"></script>
+{% block alpine_components %}{% endblock %}
+<script src="{% static 'js/vendor/alpine.min.js' %}" defer></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,28 +1,42 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>BrightBean Chat</title>
-  </head>
-  <body>
-    <h1>BrightBean Chat</h1>
-    <p>
-      The scaffold is running. This placeholder is replaced by the application
-      shell in issue #32.
+{% extends "base.html" %}
+{% load static %}
+{% comment %}
+The root route, and the one page CI asserts on: the build job boots the compose
+stack from a checkout with no .env and greps the unauthenticated response for
+"BrightBean Chat". It must stay publicly reachable and return 200.
+
+Signed in, base.html renders the app shell and {% block content %} below is the
+dashboard landing. Signed out, it renders {% block auth_content %} — which is
+this page's real job today, since issue #31 owns the login form.
+{% endcomment %}
+
+{% block title %}BrightBean Chat{% endblock %}
+
+{% block auth_content %}
+<div class="auth-card text-center">
+    <img src="{% static 'img/brightbean-logo.webp' %}" alt="" width="44" height="44" class="mx-auto mb-5">
+    <h1 class="text-xl font-semibold mb-2" style="color: var(--text-primary);">BrightBean Chat</h1>
+    <p class="text-sm mb-6" style="color: var(--text-secondary);">
+        Open-source, self-hostable chat-marketing automation.
     </p>
-    <ul>
-      <li><a href="/healthz">/healthz</a> &mdash; health probe (database check)</li>
-      <li><a href="/admin/">/admin/</a> &mdash; Django admin</li>
-    </ul>
-    <p id="csp-probe">Content Security Policy: unverified.</p>
-    <!--
-      Proves the per-request CSP nonce reaches templates. Issue #32 keeps this
-      pattern for every inline script in the real shell.
-    -->
-    <script nonce="{{ request.csp_nonce }}">
-      document.getElementById("csp-probe").textContent =
-        "Content Security Policy: nonce accepted, inline scripts run.";
-    </script>
-  </body>
-</html>
+    <div class="space-y-2">
+        <a href="{% url 'ui_demo' %}" class="btn-brand">View the design system</a>
+        <a href="/admin/" class="btn-outline">Django admin</a>
+    </div>
+    <p class="text-xs mt-6" style="color: var(--text-tertiary);">
+        Sign-in arrives with the tenancy workstream.
+        <a href="/healthz" class="underline">Health probe</a>.
+    </p>
+</div>
+{% endblock %}
+
+{% block page_header %}
+<h1 class="text-lg font-semibold mb-1" style="color: var(--text-primary);">BrightBean Chat</h1>
+<p class="text-sm mb-5" style="color: var(--text-secondary);">
+    Your workspace dashboard lands here with the contacts and inbox workstreams.
+</p>
+{% endblock %}
+
+{% block content %}
+<a href="{% url 'ui_demo' %}" class="btn-link self-start">Open the design system</a>
+{% endblock %}

@@ -1,10 +1,12 @@
 # Loaded automatically by `docker compose up`. Bind-mounts the working tree and
 # swaps gunicorn for runserver so edits reload without a rebuild.
 #
-# Studio's override also runs a node:20-slim `tailwind` service. There is no
-# Tailwind toolchain here yet — issue #32 adds theme/static_src and the npm
-# scripts — and a service pointing at a missing directory would break
-# `docker compose up` for everyone.
+# The bind-mount is also why the `tailwind` service below has to exist: it
+# shadows /app in the image, so the stylesheet the Dockerfile's node stage
+# compiled is invisible in dev. Something has to rebuild it on the host side,
+# and this is it. (Issue #32 added it; before the Tailwind toolchain existed, a
+# node service pointing at a missing theme/static_src broke `docker compose up`
+# for everyone, which is why Layer 0 left it out.)
 
 services:
   migrate:
@@ -15,3 +17,24 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
+
+  tailwind:
+    image: node:20-slim
+    working_dir: /app
+    # `npm ci` on start rather than a baked image: the lockfile is the source of
+    # truth and this way a dependency bump needs no rebuild. It writes into the
+    # named volume below, never the host tree.
+    command: sh -c "npm ci --no-audit --no-fund && npm run watch:css"
+    volumes:
+      - .:/app
+      # node_modules lives in a named volume so the container's linux binaries
+      # (esbuild, @parcel/watcher and friends are platform-specific) never
+      # clobber a macOS or Windows developer's host install.
+      - tailwind_node_modules:/app/node_modules
+    # Deliberately no depends_on and no healthcheck: a CSS watcher is not part
+    # of the app's boot path, and `docker compose up -d` must not wait on or
+    # fail because of it.
+    restart: unless-stopped
+
+volumes:
+  tailwind_node_modules:

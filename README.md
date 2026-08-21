@@ -3,8 +3,8 @@
 Open-source, self-hostable chat-marketing automation — Django 5, HTMX, Alpine,
 Tailwind 4 and PostgreSQL, with no Redis and no message broker.
 
-> **Status: scaffold.** This repository currently holds the project skeleton
-> (issue #2). Tenancy, the UI shell and every domain feature land in the issues
+> **Status: early.** The project skeleton (issue #2) and the UI shell and design
+> system (issue #32) are in. Tenancy and every domain feature land in the issues
 > tracked from [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Documentation
@@ -27,7 +27,7 @@ development default. `/healthz` reports the database round-trip.
 
 ## Quickstart (local Python)
 
-Requires Python 3.12 and a PostgreSQL 16 server.
+Requires Python 3.12, Node 20+ and a PostgreSQL 16 server.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -35,7 +35,34 @@ make setup
 make server
 ```
 
-`make help` lists every target.
+`make help` lists every target. The design system is at
+<http://localhost:8000/ui/>.
+
+### Frontend
+
+Tailwind 4 through plain npm scripts — there is no `django-tailwind` and no
+`tailwind.config.js` (Tailwind 4 is CSS-first: the configuration is the
+`@source` directives at the top of the stylesheet).
+
+| Path | What it is |
+|---|---|
+| `theme/static_src/src/styles.css` | The design system. Three token layers in one `:root`; rebranding means editing the ~20 Layer-1 values at the top |
+| `theme/static/css/dist/styles.css` | The compiled bundle — a build artefact, gitignored |
+| `static/js/vendor/` | htmx, Alpine, flatpickr, Chart.js and Sortable, copied from `node_modules` and committed |
+
+```bash
+make frontend     # npm ci + build the bundle and refresh the vendored copies
+make css-watch    # rebuild on save, alongside `make server`
+```
+
+`make setup` runs `make frontend` for you. The vendored JavaScript is committed,
+so a clone with no Node still serves working pages — only the stylesheet needs
+building. `docker compose up` runs a `tailwind` service that watches and
+rebuilds it, and the Docker image compiles it in a Node stage.
+
+To bump a vendored library, change the pin in `package.json`, run
+`npm install && npm run vendor`, and commit both the lockfile and the refreshed
+files in `static/js/vendor/` — CI re-runs the copy and fails on any difference.
 
 ### Dependencies
 
@@ -59,6 +86,11 @@ make lint        # ruff check + ruff format --check (includes the security rules
 make typecheck   # mypy
 make audit       # pip-audit + npm audit, and a self-test of the audit gate
 ```
+
+Every inline `<script>` and `<style>` carries `nonce="{{ request.csp_nonce }}"`,
+and there are no inline event handlers — the stylesheet's hover utility classes
+exist so there need not be. Nothing loads from a CDN; the CSP is `'self'`
+throughout. Tests enforce all three.
 
 CI runs all of the above plus a Docker build and a gitleaks scan. Install the
 pre-commit hooks to catch most of it before pushing:

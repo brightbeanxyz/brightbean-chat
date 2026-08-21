@@ -1,0 +1,10 @@
+{% comment %}
+The body of a "coming soon" stub, shared by both branches of base.html so the
+signed-in and signed-out versions cannot drift.
+{% endcomment %}
+<div class="w-12 h-12 rounded-xl flex items-center justify-center mb-4 mx-auto"
+     style="background: var(--surface-2); color: var(--text-ghost);">
+    <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+</div>
+<p class="text-sm font-medium mb-1" style="color: var(--text-primary);">{{ section }} is not built yet</p>
+<p class="text-xs" style="color: var(--text-tertiary);">Lands with issue {{ issue }}.</p>

@@ -1,0 +1,17 @@
+{% load static %}{% comment %}
+The product/workspace mark. Renders the workspace icon when there is one, the
+workspace's initial when there is not, and the BrightBean Chat logo when there
+is no workspace at all (the anonymous and pre-tenancy case).
+
+Args:
+  workspace: optional workspace object with .icon and .name.
+  size: "sm" (28px) or "md" (30px, default).
+{% endcomment %}{% with px=size|default:"md" %}
+{% if workspace and workspace.icon %}
+<img src="{{ workspace.icon.url }}" alt="" class="sidebar-logo-mark{% if px == 'sm' %} w-7 h-7{% endif %}">
+{% elif workspace %}
+<div class="sidebar-logo-mark{% if px == 'sm' %} w-7 h-7{% endif %}">{{ workspace.name|make_list|first|upper }}</div>
+{% else %}
+<img src="{% static 'img/brightbean-logo.webp' %}" alt="BrightBean Chat" class="sidebar-logo-mark{% if px == 'sm' %} w-7 h-7{% endif %}">
+{% endif %}
+{% endwith %}
