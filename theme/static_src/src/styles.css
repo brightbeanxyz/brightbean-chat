@@ -139,6 +139,8 @@
   --shadow-lg:  0 10px 15px rgba(23,20,18,0.08), 0 4px 6px rgba(23,20,18,0.04);
   --shadow-xl:  0 20px 25px rgba(23,20,18,0.08), 0 8px 10px rgba(23,20,18,0.04);
   --shadow-primary: 0 4px 14px rgba(var(--brand-500-rgb), 0.28);
+  /* The toast host floats over content and needs more lift than --shadow-xl. */
+  --shadow-toast: 0 12px 30px rgba(23, 20, 18, 0.32);
 
   /* Radii */
   --radius-sm:   0.25rem;
@@ -1006,7 +1008,7 @@ span.flatpickr-weekday {
   max-width: min(28rem, calc(100vw - 2rem));
   background: var(--neutral-900);
   color: var(--text-inverse);
-  box-shadow: 0 12px 30px rgba(23, 20, 18, 0.32);
+  box-shadow: var(--shadow-toast);
   animation: bb-toast-pop var(--dur-slow) var(--ease-out);
   pointer-events: auto;
 }
