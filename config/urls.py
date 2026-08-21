@@ -24,7 +24,6 @@ _WS_SETTINGS_LAYOUT = "workspace_settings"
 # endpoint: SECURITY-BASELINE §1 requires it to 404 for a member of another
 # workspace, and tests/idor.py walks it automatically.
 _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = [
-    ("flows/", "flows", "Flows", "#6 (L2-D) and #10 (L3-C)", _APP_LAYOUT, "edit_flows"),
     ("inbox/", "inbox", "Inbox", "#14 (L4-D)", _APP_LAYOUT, "use_inbox"),
     ("sequences/", "sequences", "Sequences", "#22 (L6-A)", _APP_LAYOUT, "edit_flows"),
     ("broadcasts/", "broadcasts", "Broadcasts", "#23 (L6-B)", _APP_LAYOUT, "send_broadcasts"),
@@ -78,6 +77,10 @@ urlpatterns = [
     # the prefix and spells the sub-paths itself (issue #3). Listed after
     # apps.workspaces.urls, so its patterns can be shadowed but never shadow.
     path("w/<uuid:workspace_id>/", include("apps.contacts.urls")),
+    # Flows own two prefixes under the workspace — the pages at flows/ and
+    # SPEC §16's builder data API at api/flows/ — so they mount at the
+    # workspace root together under one namespace. See apps/flows/urls.py.
+    path("w/<uuid:workspace_id>/", include("apps.flows.urls")),
     *[_ws_stub(*stub) for stub in _WORKSPACE_STUBS],
     path("", account_views.root, name="index"),
 ]

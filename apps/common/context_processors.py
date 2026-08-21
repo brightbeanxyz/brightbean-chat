@@ -158,7 +158,16 @@ MAIN_NAV: list[NavGroup] = [
                 workspace_scoped=True,
             ),
             NavItem(key="contacts", label="Contacts", icon="contacts", url_name="contacts:list", workspace_scoped=True),
-            NavItem(key="flows", label="Flows", icon="flows", url_name="flows", workspace_scoped=True),
+            NavItem(
+                key="flows",
+                label="Flows",
+                icon="flows",
+                url_name="flows:list",
+                # The builder is the same section to a reader, so the row
+                # stays lit while it is open (issue #6).
+                url_names=frozenset({"flows:list", "flows:edit"}),
+                workspace_scoped=True,
+            ),
             NavItem(key="sequences", label="Sequences", icon="sequences", url_name="sequences", workspace_scoped=True),
             NavItem(
                 key="broadcasts", label="Broadcasts", icon="broadcasts", url_name="broadcasts", workspace_scoped=True

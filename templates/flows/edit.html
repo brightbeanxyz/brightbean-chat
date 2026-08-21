@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% comment %}
+The builder's host page (SPEC §16): a mount div and a placeholder.
+
+Issue #10 (L3-C) replaces the placeholder with the React island and adds the
+bundle's {% templatetag openblock %} static {% templatetag closeblock %} tag in
+extra_js. Everything it needs is already here as data attributes — the flow id
+and the four API URLs — so it reverses no URLs of its own and this template does
+not change shape when the island arrives.
+
+The API URLs carry the workspace segment: SPEC §16 writes them without one, and
+apps/flows/api.py records why they have one here.
+{% endcomment %}
+
+{% block title %}{{ flow.name }} · Flows · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div class="min-w-0">
+        <a href="{{ list_url }}" class="btn-link text-xs">← All flows</a>
+        <h1 class="text-lg font-semibold truncate" style="color: var(--text-primary);">{{ flow.name }}</h1>
+    </div>
+    <div class="flex items-center gap-2 text-xs" style="color: var(--text-tertiary);">
+        {% if version %}<span>Draft v{{ version.version }}</span>{% endif %}
+        {% if not can_edit %}<span>Read-only</span>{% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="flow-builder"
+     class="flex-1 min-h-0 rounded-xl border flex items-center justify-center p-8"
+     style="border-color: var(--border); background: var(--surface-1);"
+     data-flow-id="{{ flow.id }}"
+     data-can-edit="{{ can_edit|yesno:"true,false" }}"
+     data-detail-url="{{ api_detail_url }}"
+     data-publish-url="{{ api_publish_url }}"
+     data-stats-url="{{ api_stats_url }}"
+     data-schema-url="{{ api_schema_url }}">
+    <div class="text-center">
+        <p class="text-sm font-medium" style="color: var(--text-primary);">The flow builder lands with issue #10</p>
+        <p class="text-sm mt-1" style="color: var(--text-secondary);">
+            The graph, its validation and the pick-lists this canvas needs are already served by
+            the data API on this page.
+        </p>
+    </div>
+</div>
+{% endblock %}
