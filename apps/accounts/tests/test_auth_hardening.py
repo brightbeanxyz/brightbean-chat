@@ -4,7 +4,7 @@ import pytest
 from django.conf import settings
 from django.core import mail
 
-from apps.accounts.middleware import AUTH_RATE_LIMIT, AUTH_RATE_WINDOW
+from apps.accounts.middleware import AUTH_RATE_LIMIT, AUTH_RATE_WINDOW, window_cache_key
 from tests.support import TEST_PASSWORD, create_user
 
 LOGIN = "/accounts/login/"
@@ -40,6 +40,21 @@ class TestAuthRateLimiting:
     def test_unrelated_paths_are_untouched(self, client):
         for _ in range(AUTH_RATE_LIMIT + 5):
             assert client.get("/healthz").status_code == 200
+
+    def test_the_bucket_rotates_with_the_clock(self):
+        """BaseCache.incr is get+set with no timeout, so it re-stamps the entry
+        with DEFAULT_TIMEOUT (five minutes). A bucket keyed only on the address
+        would outlive its own window by four, and Retry-After would be a lie."""
+        start = AUTH_RATE_WINDOW * 16_666  # a window boundary
+        first = window_cache_key("203.0.113.1", now=start)
+        same = window_cache_key("203.0.113.1", now=start + AUTH_RATE_WINDOW - 1)
+        later = window_cache_key("203.0.113.1", now=start + AUTH_RATE_WINDOW)
+
+        assert first == same
+        assert first != later
+
+    def test_different_addresses_get_different_buckets(self):
+        assert window_cache_key("203.0.113.1") != window_cache_key("203.0.113.2")
 
     def test_the_counter_is_shared_across_processes(self):
         """LocMemCache is per process and gunicorn runs two workers, so a
