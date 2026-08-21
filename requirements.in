@@ -20,7 +20,7 @@
 # image does not ship pytest, ruff and mypy.
 
 # Core
-Django==5.2.17            # 5.2 is the LTS line (security fixes through Apr 2028)
+Django==6.1            # 5.2 is the LTS line (security fixes through Apr 2028)
 django-environ==0.14.0
 psycopg[binary]==3.3.4     # psycopg 3; Postgres is the only datastore (SPEC §2)
 gunicorn==26.1.0
