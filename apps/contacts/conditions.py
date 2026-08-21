@@ -682,7 +682,20 @@ def _load(filter_json: Any) -> Any:
             raise ConditionValidationError("filter document is nested too deeply", code="too_deep")
         try:
             filter_json = json.loads(filter_json, parse_constant=_reject_constant)
-        except json.JSONDecodeError as exc:
+        except (ValueError, RecursionError) as exc:
+            # Broader than JSONDecodeError on purpose. json.loads also raises a
+            # bare ValueError for an integer literal past CPython 3.11's
+            # 4300-digit conversion limit — which fits inside MAX_FILTER_BYTES,
+            # so the size cap does not catch it — and a RecursionError is
+            # conceivable for a document the bracket prescan let through. Every
+            # one of those is a bad document, and a caller that catches
+            # ConditionValidationError should not get a 500 for one.
+            #
+            # JSONDecodeError is a ValueError subclass, so it lands here too;
+            # ConditionValidationError is also one, which is why _reject_constant's
+            # own error is re-raised unchanged rather than relabelled.
+            if isinstance(exc, ConditionValidationError):
+                raise
             raise ConditionValidationError("filter document is not valid JSON", code="bad_json") from exc
     _assert_shape(filter_json)
     return filter_json
@@ -1041,6 +1054,24 @@ def _day_bounds(day: date, tz: tzinfo) -> tuple[datetime, datetime]:
 
 _NUMBER_LOOKUPS: dict[str, str] = {"=": "exact", ">": "gt", "<": "lt", ">=": "gte", "<=": "lte"}
 
+#: The two constant predicates, written as *real* predicates rather than as
+#: ``Q()`` and its negation.
+#:
+#: A bare ``Q()`` is Django's identity element, not a "matches everyone" clause,
+#: and it disappears in two directions that matter here. ``~Q()`` compiles to no
+#: predicate at all — Django's ``WhereNode`` short-circuits a childless node
+#: before it ever consults ``negated`` — so ``not_in`` a segment that matches
+#: everyone would have matched everyone instead of nobody, silently dropping an
+#: exclusion clause. And ``Q() | other`` collapses to ``other``, so an ``any``
+#: group containing such a segment would have under-matched.
+#:
+#: ``pk__isnull=False`` is true for every persisted row and negates to
+#: ``pk IS NULL``, which is true for none, so both directions behave. The cost
+#: is one trivially-satisfiable clause in the SQL, and only in the degenerate
+#: case that produces it.
+_EVERYONE = Q(pk__isnull=False)
+_NOBODY = Q(pk__in=())
+
 
 def _populated_q(column: str, value_type: str) -> Q:
     """ "Has a value" — for text that means non-empty, not merely non-NULL."""
@@ -1126,7 +1157,7 @@ def _segment_q(ctx: _Ctx, rule: Rule) -> Q:
     # The referenced segment was validated and resolved by validate(), so this
     # is a plain recursion: its Q is inlined into the same WHERE clause rather
     # than becoming a subquery, and the whole filter stays one statement.
-    inner = _compile_group(ctx, rule.group) if rule.group is not None else Q()
+    inner = _compile_group(ctx, rule.group) if rule.group is not None else _EVERYONE
     return inner if rule.op == "in" else ~inner
 
 
@@ -1152,7 +1183,7 @@ def _compile_group(ctx: _Ctx, group: Group) -> Q:
         # `any` with no rules is nobody. Correct algebra and a live hazard — an
         # empty segment handed to a broadcast targets the whole workspace, so
         # issue #23 must show a count before it sends.
-        return Q() if group.match == MATCH_ALL else Q(pk__in=())
+        return _EVERYONE if group.match == MATCH_ALL else _NOBODY
     return reduce(operator.and_ if group.match == MATCH_ALL else operator.or_, parts)
 
 

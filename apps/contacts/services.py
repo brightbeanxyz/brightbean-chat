@@ -464,6 +464,20 @@ def field_values_for(contact: Contact) -> dict[UUID, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _as_filter_document(filter_json: Any) -> dict[str, Any]:
+    """Require a real JSON object for a stored filter.
+
+    ``conditions.validate()`` accepts a raw string and parses it, which is right
+    for an API boundary — but storing that string in a ``JSONField`` would leave
+    the column holding a JSON *string* rather than an object, so every later read
+    re-parses it and the shape of what is on disk depends on how it was written.
+    Segments keep the parsed form.
+    """
+    if not isinstance(filter_json, dict):
+        raise ContactsError("A segment filter must be a JSON object.")
+    return filter_json
+
+
 def create_segment(workspace: Any, *, name: str, filter_json: Any) -> Segment:
     """Create a segment, validating its filter first.
 
@@ -475,8 +489,9 @@ def create_segment(workspace: Any, *, name: str, filter_json: Any) -> Segment:
     cleaned = _clean_text(name, limit=100)
     if not cleaned:
         raise ContactsError("A segment needs a name.")
-    validate(workspace, filter_json)
-    return Segment.objects.create(workspace=workspace, name=cleaned, filter_json=filter_json)
+    document = _as_filter_document(filter_json)
+    validate(workspace, document)
+    return Segment.objects.create(workspace=workspace, name=cleaned, filter_json=document)
 
 
 def update_segment(segment: Segment, *, name: str | None = None, filter_json: Any = None) -> Segment:
@@ -490,8 +505,9 @@ def update_segment(segment: Segment, *, name: str | None = None, filter_json: An
         segment.name = cleaned
         changed.append("name")
     if filter_json is not None:
-        validate(segment.workspace_id, filter_json, exclude_segment_id=segment.pk)
-        segment.filter_json = filter_json
+        document = _as_filter_document(filter_json)
+        validate(segment.workspace_id, document, exclude_segment_id=segment.pk)
+        segment.filter_json = document
         changed.append("filter_json")
     if changed:
         segment.save(update_fields=[*changed, "updated_at"])

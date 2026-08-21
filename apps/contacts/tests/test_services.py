@@ -7,6 +7,7 @@ import pytest
 from django.utils import timezone
 
 from apps.contacts import services
+from apps.contacts.conditions import ConditionValidationError
 from apps.contacts.errors import ContactsError, FieldTypeError, WorkspaceMismatchError
 from apps.contacts.models import ContactStatus, CustomField, CustomFieldType, CustomFieldValue, Tag
 
@@ -223,3 +224,44 @@ class TestMergingContacts:
     def test_a_contact_cannot_be_merged_into_itself(self, contact):
         with pytest.raises(ContactsError):
             services.merge_contacts(primary=contact, duplicate=contact)
+
+
+@pytest.mark.django_db
+class TestSegments:
+    def test_a_filter_must_be_a_json_object(self, workspace):
+        """conditions.validate() accepts a raw string and parses it, which is
+        right for an API boundary — but storing that string would leave the
+        column holding a JSON string rather than an object."""
+        with pytest.raises(ContactsError):
+            services.create_segment(workspace, name="Strings", filter_json='{"match": "all", "rules": []}')
+
+    @pytest.mark.parametrize("document", [[], "all", 42, None, True])
+    def test_a_non_object_document_is_refused(self, workspace, document):
+        with pytest.raises(ContactsError):
+            services.create_segment(workspace, name="Odd", filter_json=document)
+
+    def test_an_invalid_filter_is_refused_before_the_row_is_written(self, workspace):
+        from apps.contacts.models import Segment
+
+        with pytest.raises(ConditionValidationError):
+            services.create_segment(workspace, name="Broken", filter_json={"match": "sideways", "rules": []})
+
+        assert Segment.objects.for_workspace(workspace).count() == 0
+
+    def test_updating_a_filter_validates_it_too(self, workspace):
+        segment = services.create_segment(workspace, name="Fine", filter_json={"match": "all", "rules": []})
+
+        with pytest.raises(ConditionValidationError):
+            services.update_segment(segment, filter_json={"match": "all", "rules": [{"source": "nope"}]})
+
+        segment.refresh_from_db()
+        assert segment.filter_json == {"match": "all", "rules": []}
+
+    def test_a_segment_cannot_be_updated_to_reference_itself(self, workspace):
+        segment = services.create_segment(workspace, name="Selfie", filter_json={"match": "all", "rules": []})
+
+        with pytest.raises(ConditionValidationError):
+            services.update_segment(
+                segment,
+                filter_json={"match": "all", "rules": [{"source": "segment", "key": str(segment.pk), "op": "in"}]},
+            )

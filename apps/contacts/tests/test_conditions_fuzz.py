@@ -131,6 +131,15 @@ PRE_ORM_PAYLOADS: tuple[tuple[str, object, str], ...] = (
     ("raw-json-is-a-depth-bomb", '{"a":' * 2000 + "null" + "}" * 2000, "too_deep"),
     ("raw-json-is-oversized", '{"match":"all","rules":[],"pad":"' + "x" * MAX_FILTER_BYTES + '"}', "too_large"),
     ("raw-json-is-malformed", "{not json", "bad_json"),
+    # json.loads raises a bare ValueError, not a JSONDecodeError, past
+    # CPython 3.11's 4300-digit int conversion limit — and 5 KB of digits
+    # sits comfortably inside MAX_FILTER_BYTES, so the size cap does not
+    # catch it. Escaping as a ValueError would be a 500 rather than a 400.
+    (
+        "raw-json-holds-an-oversized-integer",
+        '{"match":"all","rules":[{"source":"system_field","key":"email","op":"is","value":' + "9" * 5000 + "}]}",
+        "bad_json",
+    ),
     (
         "raw-json-holds-nan",
         '{"match":"all","rules":[{"source":"system_field","key":"email","op":"is","value":NaN}]}',
@@ -278,3 +287,25 @@ class TestValuesThatAreLegalButSharp:
         }
 
         assert list(queryset(workspace, payload)) == []
+
+
+@pytest.mark.django_db
+class TestEveryRefusalIsAConditionError:
+    """A bad document must never escape as something a caller does not catch.
+
+    ``Segment.clean()`` catches ``ConditionValidationError`` and
+    ``views.contact_list`` catches ``ConditionError``; anything else reaching
+    them is a 500 for input a stranger supplied. The corpus above already
+    asserts the type for every payload, so this covers only the one case where
+    getting the type right and getting the *code* right pull against each other.
+    """
+
+    def test_a_rejected_constant_keeps_its_own_error_code(self, workspace):
+        """ConditionValidationError is itself a ValueError, so the broadened
+        except clause in _load must re-raise it rather than relabel it."""
+        payload = '{"match":"all","rules":[{"source":"system_field","key":"email","op":"is","value":NaN}]}'
+
+        with pytest.raises(ConditionValidationError) as exc:
+            validate(workspace, payload)
+
+        assert exc.value.code == "bad_number"

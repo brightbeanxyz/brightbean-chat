@@ -681,3 +681,88 @@ class TestSubqueriesCarryTheirOwnTenancy:
         # And running it leaves the table standing.
         assert list(queryset(world.workspace, _filter(rule), now=NOW)) == []
         assert Contact.objects.for_workspace(world.workspace).count() == len(world.contacts)
+
+
+@pytest.mark.django_db
+class TestTheConstantPredicates:
+    """An empty group is a real predicate, not Django's identity element.
+
+    A bare ``Q()`` vanishes in two directions: ``~Q()`` compiles to no predicate
+    at all, so ``not_in`` a segment matching everyone silently dropped the
+    exclusion; and ``Q() | other`` collapses to ``other``, so an ``any`` group
+    containing such a segment under-matched. Both are asserted here because both
+    were live.
+    """
+
+    @pytest.fixture
+    def everyone_segment(self, world):
+        return services.create_segment(world.workspace, name="Everyone", filter_json={"match": "all", "rules": []})
+
+    def test_in_a_segment_that_matches_everyone_matches_everyone(self, world, everyone_segment):
+        rule = {"source": "segment", "key": str(everyone_segment.pk), "op": "in"}
+
+        got = queryset(world.workspace, _filter(rule), now=NOW)
+
+        assert {c.pk for c in got} == {c.pk for c in world.active.values()}
+
+    def test_not_in_a_segment_that_matches_everyone_matches_nobody(self, world, everyone_segment):
+        rule = {"source": "segment", "key": str(everyone_segment.pk), "op": "not_in"}
+
+        got = queryset(world.workspace, _filter(rule), now=NOW)
+
+        assert list(got) == []
+
+    def test_the_exclusion_survives_being_anded_with_another_rule(self, world, everyone_segment):
+        """The shape that made this a fail-open: the dropped clause is invisible
+        because the surviving rules still return a plausible-looking set."""
+        rules = [
+            {"source": "segment", "key": str(everyone_segment.pk), "op": "not_in"},
+            {"source": "tag", "key": str(world.tags["vip"].pk), "op": "has"},
+        ]
+
+        got = queryset(world.workspace, {"match": "all", "rules": rules}, now=NOW)
+
+        assert list(got) == []
+
+    def test_an_everyone_segment_still_dominates_an_any_group(self, world, everyone_segment):
+        """`Q() | other` collapsed to `other`, so this under-matched."""
+        rules = [
+            {"source": "segment", "key": str(everyone_segment.pk), "op": "in"},
+            {"source": "tag", "key": str(world.tags["vip"].pk), "op": "has"},
+        ]
+
+        got = queryset(world.workspace, {"match": "any", "rules": rules}, now=NOW)
+
+        assert {c.pk for c in got} == {c.pk for c in world.active.values()}
+
+    def test_a_segment_wrapping_an_empty_one_negates_correctly_too(self, world, everyone_segment):
+        """One level deeper: the wrapper compiles to the same constant."""
+        wrapper = services.create_segment(
+            world.workspace,
+            name="Wrapper",
+            filter_json={
+                "match": "all",
+                "rules": [{"source": "segment", "key": str(everyone_segment.pk), "op": "in"}],
+            },
+        )
+        rule = {"source": "segment", "key": str(wrapper.pk), "op": "not_in"}
+
+        assert list(queryset(world.workspace, _filter(rule), now=NOW)) == []
+
+    def test_in_and_not_in_partition_the_workspace_for_an_empty_segment(self, world, everyone_segment):
+        """The invariant the module docstring claims, at the value that broke it."""
+        key = str(everyone_segment.pk)
+        inside = {c.pk for c in queryset(world.workspace, _filter({"source": "segment", "key": key, "op": "in"}))}
+        outside = {c.pk for c in queryset(world.workspace, _filter({"source": "segment", "key": key, "op": "not_in"}))}
+
+        assert inside & outside == set()
+        assert inside | outside == {c.pk for c in world.active.values()}
+
+    def test_a_nobody_segment_negates_to_everybody(self, world):
+        """The mirror case, which already worked — pinned so it stays working."""
+        nobody = services.create_segment(world.workspace, name="Nobody", filter_json={"match": "any", "rules": []})
+        rule = {"source": "segment", "key": str(nobody.pk), "op": "not_in"}
+
+        got = queryset(world.workspace, _filter(rule), now=NOW)
+
+        assert {c.pk for c in got} == {c.pk for c in world.active.values()}
