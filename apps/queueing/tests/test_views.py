@@ -69,6 +69,34 @@ class TestTokenGate:
 
         assert calls == [("wrong", TOKEN)]
 
+    @pytest.mark.parametrize("method", ["delete", "put", "patch", "head", "options"])
+    def test_an_unauthenticated_caller_learns_nothing_from_the_method(
+        self, client: Client, url: str, settings: Any, method: str
+    ) -> None:
+        """A 405 here would be a route-existence oracle.
+
+        The method check has to run *after* the token check, or an
+        unauthenticated HEAD answers 405 with an Allow header while every
+        unmounted path answers 404 — which tells a caller holding no token that
+        this route exists, and so that the deployment runs this queue.
+        Same reasoning as CONTRIBUTING.md's rule for stacking @require_POST
+        innermost on the tenant views.
+        """
+        settings.TICK_TOKEN = TOKEN
+        bad_token = getattr(client, method)(f"{url}?token=wrong")
+        no_token = getattr(client, method)(url)
+
+        assert bad_token.status_code == 404
+        assert no_token.status_code == 404
+        assert "Allow" not in bad_token
+
+    @pytest.mark.parametrize("method", ["get", "post", "delete", "head"])
+    def test_an_unconfigured_deployment_answers_404_whatever_the_method(
+        self, client: Client, url: str, settings: Any, method: str
+    ) -> None:
+        settings.TICK_TOKEN = ""
+        assert getattr(client, method)(url).status_code == 404
+
     def test_the_token_never_reaches_the_logs(self, client: Client, url: str, settings: Any, caplog: Any) -> None:
         """It rides in a query string, and request paths are logged (SECURITY-BASELINE §5)."""
         settings.TICK_TOKEN = TOKEN
@@ -101,9 +129,12 @@ class TestDrain:
         settings.TICK_TOKEN = TOKEN
         assert client.post(f"{url}?token={TOKEN}").status_code == 200
 
-    def test_other_methods_are_refused(self, client: Client, url: str, settings: Any) -> None:
+    def test_other_methods_are_refused_once_the_caller_is_proven(self, client: Client, url: str, settings: Any) -> None:
         settings.TICK_TOKEN = TOKEN
-        assert client.delete(f"{url}?token={TOKEN}").status_code == 405
+        response = client.delete(f"{url}?token={TOKEN}")
+
+        assert response.status_code == 405
+        assert response["Allow"] == "GET, POST"
 
     def test_it_bootstraps_the_housekeeping_chain(self, client: Client, url: str, settings: Any) -> None:
         """A cron-only host never runs the worker, so the tick has to do this."""

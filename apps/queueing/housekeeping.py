@@ -44,7 +44,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
-from apps.queueing.registry import register_handler, schedule
+from apps.queueing.registry import register_handler, schedule_system
 
 __all__ = [
     "HOUSEKEEPING_INTERVAL",
@@ -189,10 +189,13 @@ def _bucket(moment: datetime) -> str:
 
 
 def _schedule_run(run_at: datetime) -> ScheduledAction:
-    return schedule(
+    # schedule_system, not schedule: this row belongs to the deployment and
+    # carries a NULL workspace on purpose. The separate entry point is what
+    # keeps that deliberate rather than an argument someone could pass by
+    # accident (apps.queueing.registry).
+    return schedule_system(
         ActionType.HOUSEKEEPING,
         run_at,
-        workspace=None,  # deployment-level work; belongs to no tenant
         idempotency_key=f"housekeeping:{_bucket(run_at)}",
     )
 
@@ -252,4 +255,4 @@ def ensure_housekeeping_scheduled() -> ScheduledAction:
         # Now, not next hour — a deployment booting for the first time, or
         # recovering from a broken chain, should sweep promptly rather than sit
         # idle for an hour with zombies in the table.
-        return schedule(ActionType.HOUSEKEEPING, timezone.now(), workspace=None)
+        return schedule_system(ActionType.HOUSEKEEPING, timezone.now())

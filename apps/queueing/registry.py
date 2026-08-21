@@ -54,6 +54,7 @@ __all__ = [
     "register_handler",
     "registered_types",
     "schedule",
+    "schedule_system",
 ]
 
 logger = logging.getLogger(__name__)
@@ -140,12 +141,21 @@ def schedule(
     idempotency_key: str | None = None,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
 ) -> ScheduledAction:
-    """Enqueue one action. Returns the row — new, or the one already there.
+    """Enqueue one action for a workspace. Returns the row — new, or the one already there.
 
-    ``workspace`` is required and may be ``None`` **only** for deployment-level
-    system work (the housekeeping chain); it is keyword-only so that passing it
-    is a deliberate act rather than a positional accident. ``contact`` accepts a
-    ``Contact``, a UUID or a string, so callers need not reach for ``.pk``.
+    ``workspace`` is required, keyword-only, and **must not be None**. A NULL
+    workspace means a deployment-level system row, which no ``.for_workspace()``
+    query can ever see (``apps.queueing.models``) — so a caller that passed
+    ``None`` by accident would mint a tenant's work as an invisible system row
+    and never hear about it. ``request.workspace`` is ``None`` on every
+    anonymous and non-``/w/`` request, which is exactly how that accident
+    happens. Use :func:`schedule_system` when a system row is what you actually
+    mean; it is a separate call for the same reason ``.unscoped()`` is
+    (CONTRIBUTING.md) — crossing the tenant boundary should be greppable, not a
+    falsy argument.
+
+    ``contact`` accepts a ``Contact``, a UUID or a string, so callers need not
+    reach for ``.pk``.
 
     ``idempotency_key`` makes the enqueue a no-op when the key is already
     present: the existing row is returned unchanged, whatever its status.
@@ -153,6 +163,63 @@ def schedule(
     arranged" — and it is why a key that has already run to ``done`` does not
     schedule a second run.
     """
+    if workspace is None:
+        raise ValueError(
+            "schedule() needs a workspace. None would create a deployment-level system row that "
+            "no tenant query can see, which is silent data loss from the owning workspace's point "
+            "of view. Use schedule_system() if a system row is genuinely what you want."
+        )
+    return _schedule(
+        action_type,
+        run_at,
+        payload,
+        workspace=workspace,
+        contact=contact,
+        idempotency_key=idempotency_key,
+        max_attempts=max_attempts,
+    )
+
+
+def schedule_system(
+    action_type: str,
+    run_at: datetime,
+    payload: dict[str, Any] | None = None,
+    *,
+    idempotency_key: str | None = None,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+) -> ScheduledAction:
+    """Enqueue one action that belongs to the deployment rather than a tenant.
+
+    The housekeeping chain is the only caller today. The row carries a NULL
+    workspace, so it is invisible to every ``.for_workspace()`` query and
+    reachable only from the worker's cross-tenant drain — which is the point,
+    and which is why this is a separate, greppable entry point rather than
+    ``schedule(workspace=None)``.
+
+    Never call this with data belonging to a workspace.
+    """
+    return _schedule(
+        action_type,
+        run_at,
+        payload,
+        workspace=None,
+        contact=None,
+        idempotency_key=idempotency_key,
+        max_attempts=max_attempts,
+    )
+
+
+def _schedule(
+    action_type: str,
+    run_at: datetime,
+    payload: dict[str, Any] | None,
+    *,
+    workspace: Any,
+    contact: Any,
+    idempotency_key: str | None,
+    max_attempts: int,
+) -> ScheduledAction:
+    """The shared body. Callers go through ``schedule`` or ``schedule_system``."""
     if get_handler(action_type) is None:
         # Not an error: an app may enqueue before the app that owns the type has
         # been imported, and the SPEC's own housekeeping chain enqueues its

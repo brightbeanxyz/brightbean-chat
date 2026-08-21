@@ -25,10 +25,9 @@ import logging
 import time
 
 from django.conf import settings
-from django.http import Http404, HttpRequest, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.utils.crypto import constant_time_compare
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
 
 from apps.queueing.housekeeping import ensure_housekeeping_scheduled
 from apps.queueing.worker import DEFAULT_BATCH_SIZE, drain
@@ -47,9 +46,19 @@ MAX_SECONDS = 20
 
 
 @csrf_exempt  # Token-authenticated, not session-authenticated: an external pinger has no CSRF cookie.
-@require_http_methods(["GET", "POST"])
-def internal_tick(request: HttpRequest) -> JsonResponse:
-    """Drain the queue once. 404 unless the caller presents ``TICK_TOKEN``."""
+def internal_tick(request: HttpRequest) -> HttpResponse:
+    """Drain the queue once. 404 unless the caller presents ``TICK_TOKEN``.
+
+    The method check is inside the body, *after* the token check, rather than in
+    a ``@require_http_methods`` decorator. A decorator runs first, so an
+    unauthenticated ``HEAD`` or ``DELETE`` would answer ``405`` with an
+    ``Allow`` header while every unmounted path answers ``404`` — which
+    confirms this route exists, and with it that the deployment runs this
+    queue, to a caller holding no token at all. That is the same reasoning
+    CONTRIBUTING.md gives for stacking ``@require_POST`` innermost on the
+    tenant views: the check that reveals nothing has to run before the one that
+    reveals something.
+    """
     expected = (getattr(settings, "TICK_TOKEN", "") or "").strip()
     if not expected:
         # Unset means the route does not exist for this deployment. 404 rather
@@ -64,6 +73,10 @@ def internal_tick(request: HttpRequest) -> JsonResponse:
         # anyway, but there is no reason to hand it to the filter at all.
         logger.warning("Rejected /internal/tick: bad or missing token")
         raise Http404
+
+    # Only now, with the caller proven, is it safe to say something specific.
+    if request.method not in ("GET", "POST"):
+        return HttpResponseNotAllowed(["GET", "POST"])
 
     started = time.monotonic()
     ensure_housekeeping_scheduled()

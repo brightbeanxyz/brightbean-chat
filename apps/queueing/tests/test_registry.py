@@ -15,6 +15,7 @@ from apps.queueing.registry import (
     register_handler,
     registered_types,
     schedule,
+    schedule_system,
 )
 from apps.queueing.tests.support import temporary_handler
 from tests.support import Tenancy
@@ -140,9 +141,44 @@ class TestSchedule:
         assert action.pk is not None
         assert "nobody_handles_this" in caplog.text
 
-    def test_system_work_may_omit_the_workspace(self) -> None:
-        action = schedule("housekeeping", timezone.now(), workspace=None, idempotency_key="sys-1")
-        assert action.workspace_id is None
 
-        again = schedule("housekeeping", timezone.now(), workspace=None, idempotency_key="sys-1")
+@pytest.mark.django_db
+class TestTheSystemBoundary:
+    """A NULL workspace is invisible to every tenant query, so reaching it is
+    a separate call rather than a falsy argument — the same reasoning that makes
+    ``.unscoped()`` its own greppable method (CONTRIBUTING.md)."""
+
+    def test_schedule_refuses_a_none_workspace(self, tenancy: Tenancy) -> None:
+        """``request.workspace`` is None on every anonymous and non-/w/ request.
+
+        Passing it through would mint a tenant's work as a system row its owner
+        can never see or cancel — silent, and in the unsafe direction.
+        """
+        with pytest.raises(ValueError, match="needs a workspace"):
+            schedule("t", timezone.now(), workspace=None)
+
+        assert ScheduledAction.objects.unscoped().count() == 0
+
+    def test_the_error_names_the_alternative(self) -> None:
+        with pytest.raises(ValueError, match="schedule_system"):
+            schedule("t", timezone.now(), workspace=None)
+
+    def test_schedule_system_creates_the_deployment_level_row(self) -> None:
+        action = schedule_system("housekeeping", timezone.now(), idempotency_key="sys-1")
+
+        assert action.workspace_id is None
+        again = schedule_system("housekeeping", timezone.now(), idempotency_key="sys-1")
         assert again.pk == action.pk
+
+    def test_a_system_row_is_invisible_to_the_tenant_it_would_belong_to(self, tenancy: Tenancy) -> None:
+        schedule_system("housekeeping", timezone.now())
+
+        assert ScheduledAction.objects.for_workspace(tenancy.workspace).count() == 0
+        assert ScheduledAction.objects.unscoped().count() == 1
+
+    def test_schedule_system_takes_no_contact(self) -> None:
+        """Contacts belong to workspaces; a system row has none, so the
+        parameter is absent rather than ignored."""
+        import inspect
+
+        assert "contact" not in inspect.signature(schedule_system).parameters
