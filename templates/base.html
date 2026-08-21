@@ -49,8 +49,15 @@
         html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-btn { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
         html.sidebar-is-collapsed .sidebar-initial .sidebar-nav { padding-left: 0.5rem; padding-right: 0.5rem; }
         html.sidebar-is-collapsed .sidebar-initial .sidebar-org-footer { padding: 0.5rem; }
+        /* The footer's two halves are mirrored here rather than hidden with a
+           utility class. An element carrying both `hidden` and `x-show` can
+           never be shown: Alpine clears the inline display and the class's
+           display:none simply reasserts itself. Both rules are scoped to
+           .sidebar-initial, so they stop applying the instant x-init removes
+           it and x-show becomes the only thing deciding. */
+        .sidebar-initial .sidebar-org-collapsed { display: none; }
         html.sidebar-is-collapsed .sidebar-initial .sidebar-org-expanded { display: none; }
-        html.sidebar-is-collapsed .sidebar-initial .sidebar-org-collapsed { display: flex !important; }
+        html.sidebar-is-collapsed .sidebar-initial .sidebar-org-collapsed { display: flex; }
 
         /* Mobile: hide sidebar off-screen before Alpine loads */
         @media (max-width: 1023px) {
@@ -148,7 +155,7 @@
 
         <!-- Footer: collapse toggle, settings, sign out -->
         <div class="sidebar-org-footer flex-shrink-0 p-3 border-t" style="border-color: var(--border);">
-            <div class="sidebar-org-expanded flex items-center gap-1" x-show="!sidebarCollapsed" x-cloak>
+            <div class="sidebar-org-expanded flex items-center gap-1" x-show="!sidebarCollapsed">
                 <a href="{{ settings_nav_groups.0.items.0.url|default:'#' }}" class="sidebar-nav-item flex-1" title="Settings">
                     {% include "partials/_nav_icon.html" with name="settings" %}
                     <span class="sidebar-nav-label">Settings</span>
@@ -159,7 +166,7 @@
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
                 </button>
             </div>
-            <div class="sidebar-org-collapsed hidden flex-col items-center gap-1" x-show="sidebarCollapsed" x-cloak>
+            <div class="sidebar-org-collapsed flex-col items-center gap-1" x-show="sidebarCollapsed">
                 <button type="button" @click="sidebarCollapsed = false"
                         class="btn-icon-hover w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer"
                         style="color: var(--text-tertiary);" title="Expand sidebar" aria-label="Expand sidebar">
@@ -167,7 +174,7 @@
                 </button>
             </div>
             {% if logout_url %}
-            <form method="post" action="{{ logout_url }}" class="sidebar-nav-label mt-1" x-show="!sidebarCollapsed" x-cloak>
+            <form method="post" action="{{ logout_url }}" class="sidebar-nav-label mt-1" x-show="!sidebarCollapsed">
                 {% csrf_token %}
                 <button type="submit" class="sidebar-nav-item w-full cursor-pointer">
                     {% include "partials/_nav_icon.html" with name="logout" %}

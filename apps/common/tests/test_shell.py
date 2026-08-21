@@ -1,6 +1,7 @@
 """The app shell: base.html, the toast host, the layouts and the error pages."""
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -149,6 +150,37 @@ class TestSidebarCollapse:
 
         missing = sorted(targeted - rendered_classes)
         assert not missing, f"styled for the collapsed state but never rendered: {missing}"
+
+    def test_no_element_combines_x_show_with_a_display_none_utility(self):
+        """`class="hidden" x-show="..."` is a trap that cannot be seen in a
+        rendered page: Alpine shows an element by clearing its inline display,
+        after which the utility's own display:none reasserts itself and the
+        element stays invisible forever. Here it would have meant a collapsed
+        sidebar with no way to expand it again.
+        """
+        html = (Path(__file__).parents[3] / "templates" / "base.html").read_text()
+
+        offenders = []
+        for tag in re.findall(r"<[a-z]+\s[^>]*x-show=[^>]*>", html, re.S):
+            classes = re.search(r'class="([^"]*)"', tag)
+            # Token-exact: a responsive variant like `lg:hidden` is fine and
+            # deliberate — the mobile backdrop must stay hidden on desktop
+            # whatever Alpine thinks. Only an unconditional `hidden` is a trap.
+            if classes and "hidden" in classes.group(1).split():
+                offenders.append(tag)
+
+        assert not offenders, f"x-show on an element that a utility class keeps hidden: {offenders}"
+
+    def test_the_footer_halves_are_not_cloaked(self):
+        """x-cloak on either half would blank the footer until Alpine boots —
+        the exact flash the pre-paint block exists to prevent. They are mirrored
+        by CSS instead."""
+        html = (Path(__file__).parents[3] / "templates" / "base.html").read_text()
+
+        for half in ["sidebar-org-expanded", "sidebar-org-collapsed"]:
+            tag = re.search(rf"<div class=\"{half}[^>]*>", html)
+            assert tag, half
+            assert "x-cloak" not in tag.group(0), f"{half} is cloaked"
 
     def test_the_badge_markup_exists_for_a_non_zero_count(self):
         """Pairs with the allowance above: the class is unreachable today only
@@ -364,6 +396,39 @@ class TestSettingsLayouts:
         body = client.get("/settings/preferences/").content.decode()
 
         assert 'sidebar-nav-item active"' in body
+
+
+@pytest.mark.django_db
+class TestStaticReferences:
+    def test_every_static_reference_in_a_template_actually_exists(self):
+        """The Docker image runs collectstatic under ManifestStaticFilesStorage,
+        which hard-fails on a {% static %} path it cannot resolve — so a typo
+        here breaks the image build, not the test suite. Catch it in the fast
+        job instead of the slow one.
+
+        This also covers the build wiring: css/dist/styles.css only resolves
+        because `theme` is an installed app and `npm run build:css` has run.
+        """
+        from django.contrib.staticfiles import finders
+
+        templates = Path(__file__).parents[3] / "templates"
+        refs = set()
+        for path in templates.rglob("*.html"):
+            refs |= set(re.findall(r"\{%\s*static\s+'([^']+)'", path.read_text()))
+
+        assert refs, "no {% static %} references found — did the shell disappear?"
+        missing = sorted(ref for ref in refs if finders.find(ref) is None)
+        assert not missing, f"referenced but not found by any static finder: {missing}"
+
+    def test_the_compiled_stylesheet_is_the_one_the_theme_app_serves(self):
+        """theme/ exists only to put the Tailwind output on the app-directories
+        finder. If it were dropped from INSTALLED_APPS this would be the symptom."""
+        from django.contrib.staticfiles import finders
+
+        found = finders.find("css/dist/styles.css")
+
+        assert found, "the Tailwind bundle is missing — run `npm run build:css`"
+        assert "theme/static" in found.replace("\\", "/")
 
 
 @pytest.mark.django_db

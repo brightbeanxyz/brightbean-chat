@@ -40,8 +40,7 @@ page except that one.
     </button>
     <div x-show="open" x-cloak
          :style="`top:${top}px; left:${left}px;`"
-         class="fixed z-50 w-56 max-h-72 overflow-y-auto rounded-lg py-1"
-         style="background: var(--surface-0); box-shadow: var(--shadow-lg); border: 1px solid var(--border);"
+         class="bb-select-panel fixed z-50 w-56 max-h-72 overflow-y-auto py-1"
          role="listbox" {% if multiple %}aria-multiselectable="true"{% endif %}>
         <button type="button"
                 @click="{% if multiple %}{{ model }} = []{% else %}{{ model }} = ''; open = false{% endif %}; {{ onchange }}"

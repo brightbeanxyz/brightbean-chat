@@ -29,10 +29,10 @@ nothing but a form posting to a toast_response view.
             <code>base.html</code>, so this works on every page with no include.
         </p>
         <div class="flex flex-wrap gap-2">
-            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "success"}' hx-swap="none">Success</button>
-            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "info"}' hx-swap="none">Info</button>
-            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "warn"}' hx-swap="none">Warning</button>
-            <button type="button" class="btn-outline w-auto" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "error"}' hx-swap="none">Error</button>
+            <button type="button" class="btn-outline btn-inline" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "success"}' hx-swap="none">Success</button>
+            <button type="button" class="btn-outline btn-inline" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "info"}' hx-swap="none">Info</button>
+            <button type="button" class="btn-outline btn-inline" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "warn"}' hx-swap="none">Warning</button>
+            <button type="button" class="btn-outline btn-inline" hx-post="{% url 'ui_demo_toast' %}" hx-vals='{"tone": "error"}' hx-swap="none">Error</button>
         </div>
     </section>
 
@@ -71,8 +71,8 @@ nothing but a form posting to a toast_response view.
     <section>
         <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Buttons</h2>
         <div class="flex flex-wrap items-center gap-3 mt-3">
-            <button type="button" class="btn-brand w-auto">Primary</button>
-            <button type="button" class="btn-outline w-auto">Outline</button>
+            <button type="button" class="btn-brand btn-inline">Primary</button>
+            <button type="button" class="btn-outline btn-inline">Outline</button>
             <button type="button" class="btn-link">Link</button>
         </div>
     </section>

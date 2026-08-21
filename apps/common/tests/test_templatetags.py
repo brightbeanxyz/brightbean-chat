@@ -214,7 +214,18 @@ class TestUiSelectRendering:
         html = self._render()
 
         assert "getBoundingClientRect()" in html
-        assert 'class="fixed z-50' in html
+        assert "bb-select-panel fixed z-50" in html
+
+    def test_the_panel_chrome_is_a_class_not_an_inline_style(self):
+        """Alpine's :style REPLACES the style attribute, so a panel that
+        declared its background inline lost it the moment it was positioned and
+        opened transparent over the page."""
+        html = self._render()
+
+        assert ":style=" in html
+        panel = html[html.index("bb-select-panel") - 200 :]
+        panel = panel[: panel.index(">") + 1]
+        assert 'style="background' not in panel
 
     def test_the_trigger_uses_the_shared_class_not_a_page_local_one(self):
         """Deviation 5: these styles live in styles.css, not in one page."""

@@ -476,6 +476,16 @@ img.sidebar-logo-mark {
   transform: translateY(0);
 }
 
+/* Width modifier. .btn-brand and .btn-outline are width:100% because Studio
+   only ever used them in auth forms, and a plain Tailwind `w-auto` cannot undo
+   that: these rules are unlayered, and unlayered CSS wins over the utilities
+   Tailwind emits inside a cascade layer. */
+.btn-brand.btn-inline,
+.btn-outline.btn-inline,
+.btn-social.btn-inline {
+  width: auto;
+}
+
 /* Secondary / outline button */
 .btn-outline {
   display: inline-flex;
@@ -906,6 +916,18 @@ span.flatpickr-weekday {
   color: var(--neutral-500);
   pointer-events: none;
 }
+/* The {% ui_select %} dropdown panel.
+   Its chrome lives here rather than in a style="" attribute because the panel
+   is positioned with Alpine's :style, and that binding REPLACES the inline
+   style attribute — declaring background/border/shadow inline meant they
+   vanished the moment the panel was anchored, and it opened transparent. */
+.bb-select-panel {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+}
+
 /* Option-row states inside the {% ui_select %} panel. These exist as classes
    rather than inline styles because Alpine toggles them through :class, and
    an inline event handler or style is not an option under the CSP. */
