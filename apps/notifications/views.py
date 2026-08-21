@@ -11,8 +11,18 @@ scoping a notification to ``request.workspace`` would let a colleague in the
 same workspace mark someone else's notification read. The boundary is the user,
 so the lookup is ``get_object_or_404(..., user=request.user)`` — still a 404,
 never a 403, so a probe cannot distinguish "not yours" from "no such id".
+
+**Write views do not render a surface.** Two surfaces show the same rows — the
+bell dropdown and the history page — and an earlier cut had ``mark_read``
+return the bell partial to whoever asked, so marking a row read from the
+history page swapped the dropdown into the list container and lost the reader's
+filter and page. Guessing from the request was the wrong fix; the views now
+return only the out-of-band badge plus an ``HX-Trigger``, and each surface
+re-fetches *itself* with its own state. Adding a third surface needs no change
+here.
 """
 
+import json
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
@@ -29,6 +39,10 @@ from apps.notifications.models import Notification, NotificationSetting
 
 #: Rows per page on the history view.
 PAGE_SIZE = 30
+
+#: Ceiling on the page number a request may ask for. Far past any real feed;
+#: it exists to keep the OFFSET inside a bigint.
+MAX_PAGE = 100_000
 
 
 def _is_htmx(request: Any) -> bool:
@@ -51,8 +65,30 @@ def _bell_context(request: Any) -> dict[str, Any]:
     return {
         "notifications": selectors.recent_for(request.user),
         "unread_notification_count": selectors.unread_count_for(request.user),
-        "registry": REGISTRY,
     }
+
+
+#: Fired after anything is marked read. Every surface showing notifications
+#: listens for it and re-fetches itself, carrying whatever filter or page state
+#: it happens to hold — which is state the write view does not have and should
+#: not try to reconstruct.
+CHANGED_EVENT = "notificationsChanged"
+
+
+def _changed_response(request: Any) -> HttpResponse:
+    """The badge, plus the event that tells each surface to refresh.
+
+    Not ``apps.common.htmx.trigger_response``: that returns a bodyless 204 by
+    design, and this response needs a body — the out-of-band badge fragment —
+    so the count updates in the same round trip that fires the event.
+    """
+    response = render(
+        request,
+        "notifications/partials/_badge.html",
+        {"unread_notification_count": selectors.unread_count_for(request.user)},
+    )
+    response["HX-Trigger"] = json.dumps({CHANGED_EVENT: True})
+    return response
 
 
 @login_required
@@ -71,7 +107,11 @@ def notification_list(request: RBACRequest) -> HttpResponse:
         queryset = queryset.filter(is_read=True)
 
     try:
-        page = max(1, int(request.GET.get("page", 1)))
+        # Clamped, not just floored: Python ints are arbitrary precision, so
+        # ?page=99999999999999999999 parses fine and then overflows the bigint
+        # Postgres wants for OFFSET, turning a nonsense page number into a 500
+        # rather than the empty page the except clause was written to produce.
+        page = min(MAX_PAGE, max(1, int(request.GET.get("page", 1))))
     except (TypeError, ValueError):
         page = 1
     offset = (page - 1) * PAGE_SIZE
@@ -87,7 +127,6 @@ def notification_list(request: RBACRequest) -> HttpResponse:
         "page": page,
         "has_next": len(window) > PAGE_SIZE,
         "has_previous": page > 1,
-        "registry": REGISTRY,
         "email_enabled": _email_enabled(request.user),
         "unread_notification_count": selectors.unread_count_for(request.user),
     }
@@ -129,18 +168,24 @@ def mark_read(request: RBACRequest, notification_id: Any) -> HttpResponse:
         notification.save(update_fields=["is_read", "read_at", "updated_at"])
 
     if _is_htmx(request):
-        return render(request, "notifications/partials/_bell_panel.html", _bell_context(request))
+        return _changed_response(request)
     return redirect("notifications:list")
 
 
 @login_required
 @require_POST
 def mark_all_read(request: RBACRequest) -> HttpResponse:
-    """Mark everything read in one statement."""
-    selectors.feed_for(request.user).filter(is_read=False).update(is_read=True, read_at=timezone.now())
+    """Mark everything read in one statement.
+
+    ``update()`` bypasses ``auto_now``, so ``updated_at`` is set explicitly —
+    otherwise the bulk path would leave it at creation time while the
+    single-row path above moves it, and the column would mean two things.
+    """
+    now = timezone.now()
+    selectors.feed_for(request.user).filter(is_read=False).update(is_read=True, read_at=now, updated_at=now)
 
     if _is_htmx(request):
-        return render(request, "notifications/partials/_bell_panel.html", _bell_context(request))
+        return _changed_response(request)
     return redirect("notifications:list")
 
 

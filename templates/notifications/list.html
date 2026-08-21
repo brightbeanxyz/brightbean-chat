@@ -25,7 +25,7 @@
         {% if unread_notification_count %}
         <button type="button" class="btn-outline btn-inline text-xs"
                 hx-post="{% url 'notifications:mark_all_read' %}"
-                hx-target="#notification-history" hx-swap="innerHTML">Mark all read</button>
+                hx-swap="none">Mark all read</button>
         {% endif %}
     </div>
 </div>
@@ -48,7 +48,19 @@
     </select>
 </div>
 
+{% comment %}
+  The container re-fetches itself when anything is marked read, anywhere —
+  including from the bell dropdown, since notificationsChanged bubbles to body.
+  hx-include carries the two filter selects, so the refresh returns the list the
+  reader was actually looking at rather than an unfiltered first page. That
+  state lives here, which is why the write view does not try to rebuild it.
+{% endcomment %}
 <div id="notification-history" class="rounded-xl border overflow-hidden"
+     hx-get="{% url 'notifications:list' %}"
+     hx-trigger="notificationsChanged from:body"
+     hx-target="this"
+     hx-swap="innerHTML"
+     hx-include="[name='event_type'],[name='read_state']"
      style="background: var(--surface-0); border-color: var(--border);">
     {% include "notifications/partials/_history_list.html" %}
 </div>

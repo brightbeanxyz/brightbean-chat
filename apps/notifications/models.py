@@ -66,7 +66,14 @@ class Notification(BaseModel):
 
     class Meta:
         db_table = "notifications_notification"
-        ordering = ["-created_at"]
+        # "-id" is the tiebreak, not decoration. One notify() fan-out writes a
+        # row per recipient inside the same microsecond, so ordering on
+        # created_at alone is not a total order and Postgres may return ties
+        # differently per query — which makes LIMIT/OFFSET paging over them
+        # duplicate one row and skip another. The pk is a UUIDv7, so it sorts
+        # by creation time and agrees with the primary key rather than fighting
+        # it.
+        ordering = ["-created_at", "-id"]
         indexes = [
             # The bell's two queries, in order: the recent list, and the unread
             # count that renders on every authenticated page.
@@ -111,7 +118,9 @@ class NotificationDelivery(BaseModel):
 
     class Meta:
         db_table = "notifications_delivery"
-        ordering = ["-created_at"]
+        # Same reason as Notification: one fan-out writes a delivery per
+        # recipient in the same instant, and the admin pages over them.
+        ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["status", "created_at"], name="notifdelivery_status_idx"),
         ]

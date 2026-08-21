@@ -23,9 +23,13 @@ hx-get, which has to carry the current filters forward).
         </div>
         {% if not n.is_read %}
         <button type="button"
+                {% comment %}swap="none": the response is the out-of-band badge
+                plus a notificationsChanged event, and the container below
+                re-fetches itself with its own filter and page state. Swapping
+                a write response into the list is what lost the reader's
+                place.{% endcomment %}
                 hx-post="{% url 'notifications:mark_read' n.id %}"
-                hx-target="#notification-history"
-                hx-swap="innerHTML"
+                hx-swap="none"
                 class="btn-text-hover-primary flex-shrink-0 self-start text-[11px] font-semibold cursor-pointer"
                 style="color: var(--primary);">Mark read</button>
         {% endif %}
@@ -37,12 +41,12 @@ hx-get, which has to carry the current filters forward).
 <div class="flex items-center justify-between px-4 py-3 border-t" style="border-color: var(--border);">
     {% if has_previous %}
     <button type="button" class="btn-outline btn-inline text-xs"
-            hx-get="{% url 'notifications:list' %}?page={{ page|add:'-1' }}&event_type={{ selected_event_type }}&read_state={{ selected_read_state }}"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'-1' }}&event_type={{ selected_event_type|urlencode }}&read_state={{ selected_read_state|urlencode }}"
             hx-target="#notification-history" hx-swap="innerHTML">Newer</button>
     {% else %}<span></span>{% endif %}
     {% if has_next %}
     <button type="button" class="btn-outline btn-inline text-xs"
-            hx-get="{% url 'notifications:list' %}?page={{ page|add:'1' }}&event_type={{ selected_event_type }}&read_state={{ selected_read_state }}"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'1' }}&event_type={{ selected_event_type|urlencode }}&read_state={{ selected_read_state|urlencode }}"
             hx-target="#notification-history" hx-swap="innerHTML">Older</button>
     {% else %}<span></span>{% endif %}
 </div>
@@ -61,4 +65,11 @@ hx-get, which has to carry the current filters forward).
 </div>
 {% endif %}
 
-{% include "notifications/partials/_badge.html" %}
+{% comment %}
+No _badge.html include here. This partial is rendered BOTH as an htmx response
+and inline by list.html on the full-page path, and _badge.html carries
+`id="notification-badge"` and `id="nav-badge-notifications"` with hx-swap-oob —
+which on the full page would be a second copy of ids the shell already renders,
+and an out-of-band swap resolves its target by id. The badge now travels with
+the write responses instead, where it is unambiguously a response fragment.
+{% endcomment %}

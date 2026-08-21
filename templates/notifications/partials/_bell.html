@@ -57,7 +57,17 @@ config/settings/base.py already grants for exactly this reason.
 
     <div x-show="bellOpen" x-cloak
          class="bb-select-panel anim-collapse absolute bottom-full left-0 mb-2 z-50 w-80 py-1">
-        <div id="notification-panel-body">
+        {% comment %}
+          Two triggers, one target: the button's hx-get fills this on open, and
+          `notificationsChanged from:body` refills it after anything is marked
+          read — from this panel or from the history page, since the event
+          bubbles either way. The write view therefore never has to know which
+          surface asked.
+        {% endcomment %}
+        <div id="notification-panel-body"
+             hx-get="{% url 'notifications:bell' %}"
+             hx-trigger="notificationsChanged from:body"
+             hx-swap="innerHTML">
             <div class="px-4 py-6 text-center text-xs" style="color: var(--text-tertiary);">Loading…</div>
         </div>
     </div>

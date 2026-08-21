@@ -1,7 +1,9 @@
 """notify() — fan-out, the email decision, and the transaction contract."""
 
 import contextlib
+import json
 import smtplib
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +14,7 @@ from django.test import override_settings
 from apps.members.roles import WorkspaceRole
 from apps.notifications.engine import notify
 from apps.notifications.events import NotificationCopyError
+from apps.notifications.mail import send_delivery
 from apps.notifications.models import (
     Channel,
     DeliveryStatus,
@@ -249,3 +252,157 @@ class TestTransactionContract:
 
         assert Notification.objects.count() == 0
         assert mail.outbox == []
+
+
+@pytest.mark.django_db
+class TestEmptyRolesMeansNobody:
+    """The mirror of test_an_empty_user_list_notifies_nobody. `roles or
+    DEFAULT_ROLES` used truthiness, so a caller's filtered-to-empty role list
+    silently became "every admin in the workspace"."""
+
+    def test_an_empty_roles_tuple_notifies_nobody(self, tenancy):
+        assert notify(tenancy.workspace, "flow_loop_cap_hit", roles=(), context=LOOP_CAP_CONTEXT) == []
+        assert Notification.objects.count() == 0
+
+    def test_an_empty_roles_list_notifies_nobody(self, tenancy):
+        assert notify(tenancy.workspace, "flow_loop_cap_hit", roles=[], context=LOOP_CAP_CONTEXT) == []
+
+    def test_roles_none_still_defaults_to_admins(self, tenancy):
+        created = notify(tenancy.workspace, "flow_loop_cap_hit", roles=None, context=LOOP_CAP_CONTEXT)
+
+        assert {n.user for n in created} == {tenancy.owner, tenancy.members["admin"]}
+
+
+@pytest.mark.django_db
+class TestPayloadsAreNotShared:
+    def test_each_row_gets_its_own_dict(self, tenancy):
+        """All three rows aliased one dict, so mutating one caller-side
+        appeared to change rows that were never written."""
+        created = loop_cap(tenancy.workspace)
+        assert len(created) == 2
+
+        created[0].payload["only_mine"] = True
+
+        assert "only_mine" not in created[1].payload
+
+    def test_nested_values_are_not_shared_either(self, tenancy):
+        created = notify(
+            tenancy.workspace,
+            "flow_loop_cap_hit",
+            context={"flow_name": "W", "tags": ["a"]},
+        )
+
+        created[0].payload["tags"].append("b")
+
+        assert created[1].payload["tags"] == ["a"]
+
+
+@pytest.mark.django_db
+class TestContextValuesMustSurviveJsonb:
+    def test_a_nested_uuid_is_dropped_rather_than_crashing_the_write(self, tenancy):
+        """A list is a JSON type, so a shallow check let a list of UUIDs
+        through and the TypeError landed at create() — part-way through a
+        fan-out that had already written rows."""
+        created = notify(
+            tenancy.workspace,
+            "flow_loop_cap_hit",
+            context={"flow_name": "W", "contacts": [tenancy.workspace.pk]},
+        )
+
+        assert len(created) == 2
+        assert "contacts" not in created[0].payload
+        assert created[0].payload["flow_name"] == "W"
+
+    def test_a_nested_dict_of_scalars_survives(self, tenancy):
+        created = notify(
+            tenancy.workspace,
+            "flow_loop_cap_hit",
+            context={"flow_name": "W", "stats": {"sent": 1, "failed": 0, "note": None}},
+        )
+
+        assert created[0].payload["stats"] == {"sent": 1, "failed": 0, "note": None}
+
+    def test_a_non_string_key_is_dropped(self, tenancy):
+        """json.dumps would coerce it silently, so the value would round-trip
+        as something the caller did not write."""
+        created = notify(tenancy.workspace, "flow_loop_cap_hit", context={"flow_name": "W", "counts": {1: "one"}})
+
+        assert "counts" not in created[0].payload
+
+    def test_a_self_referential_structure_is_refused_not_recursed(self, tenancy):
+        loop: dict[str, Any] = {"flow_name": "W"}
+        loop["self"] = loop
+
+        created = notify(tenancy.workspace, "flow_loop_cap_hit", context=loop)
+
+        assert "self" not in created[0].payload
+
+    def test_every_stored_payload_actually_serialises(self, tenancy):
+        created = notify(
+            tenancy.workspace,
+            "flow_loop_cap_hit",
+            context={"flow_name": "W", "ok": [1, "two", {"three": True}]},
+        )
+
+        json.dumps(created[0].payload)
+
+
+@pytest.mark.django_db
+class TestWorkspaceMayBeAnId:
+    """_payload and _dispatch_emails both tolerated a bare id; the roles path
+    dereferenced .organization_id and crashed. A queue worker rehydrating a job
+    holds an id, not an instance."""
+
+    def test_a_workspace_id_resolves_on_the_roles_path(self, tenancy):
+        created = notify(tenancy.workspace.pk, "flow_loop_cap_hit", context=LOOP_CAP_CONTEXT)
+
+        assert {n.user for n in created} == {tenancy.owner, tenancy.members["admin"]}
+
+    def test_a_workspace_id_still_fills_the_payload_name(self, tenancy):
+        """Which getattr(workspace, "name", "") left blank before."""
+        created = notify(tenancy.workspace.pk, "flow_loop_cap_hit", context=LOOP_CAP_CONTEXT)
+
+        assert created[0].payload["workspace_name"] == tenancy.workspace.name
+        assert created[0].payload["workspace_id"] == str(tenancy.workspace.pk)
+
+    def test_an_id_naming_nothing_raises_clearly(self, tenancy):
+        import uuid
+
+        with pytest.raises(ValueError, match="neither a Workspace nor the id of one"):
+            notify(uuid.uuid4(), "flow_loop_cap_hit", context=LOOP_CAP_CONTEXT)
+
+
+@pytest.mark.django_db
+class TestSubjectCannotBreakTheHeader:
+    def test_a_newline_in_the_title_does_not_escape_as_a_bad_header(self, tenancy, django_capture_on_commit_callbacks):
+        """BadHeaderError is a ValueError, so it slipped past the
+        transport-only except clause and escaped between the in-memory attempts
+        increment and the save — leaving the row PENDING with attempts=0."""
+        with django_capture_on_commit_callbacks(execute=True):
+            notify(
+                tenancy.workspace,
+                "flow_loop_cap_hit",
+                users=[tenancy.owner],
+                context={"flow_name": "Welcome\nseries\r\nBcc: attacker@evil.test"},
+            )
+
+        message = mail.outbox[0].message()
+        assert len(mail.outbox) == 1
+        # The subject is one line, so the injected text is inert content rather
+        # than a header break.
+        assert "\n" not in mail.outbox[0].subject and "\r" not in mail.outbox[0].subject
+        assert message["Bcc"] is None
+        assert message["To"] == tenancy.owner.email
+        assert NotificationDelivery.objects.get().status == DeliveryStatus.SENT
+
+    def test_a_non_dict_payload_does_not_crash_the_send(self, tenancy, django_capture_on_commit_callbacks):
+        """payload is a JSONField; a row edited elsewhere can hold a list."""
+        created = notify(tenancy.workspace, "flow_loop_cap_hit", users=[tenancy.owner], context={"flow_name": "W"})
+        Notification.objects.filter(pk=created[0].pk).update(payload=["not", "a", "dict"])
+        delivery = NotificationDelivery.objects.get()
+        delivery.notification.refresh_from_db()
+
+        assert send_delivery(delivery) is True
+        # Falls back to the title, and the action URL falls back to a route we
+        # control, rather than raising AttributeError out of a narrow except.
+        assert mail.outbox[-1].subject == 'Flow "W" hit the loop cap'

@@ -270,3 +270,149 @@ class TestTheEmailToggle:
         client_for(tenancy.owner).post(reverse("notifications:email_preference"), {}, headers=HTMX)
 
         assert not NotificationSetting.objects.filter(user=tenancy.members["admin"]).exists()
+
+
+@pytest.mark.django_db
+class TestWriteViewsDoNotRenderASurface:
+    """Two surfaces show these rows. An earlier cut had the write views return
+    the bell partial to whoever asked, so marking a row read from the history
+    page swapped the dropdown into the list container and lost the reader's
+    filter and page. The write views now return only the badge plus an event.
+    """
+
+    def test_mark_read_does_not_return_the_bell_panel(self, tenancy, client_for):
+        notification = make_notification(tenancy.owner)
+
+        body = (
+            client_for(tenancy.owner)
+            .post(reverse("notifications:mark_read", args=[notification.id]), headers=HTMX)
+            .content.decode()
+        )
+
+        # Markup unique to the dropdown: its footer link and its own heading.
+        assert "View all notifications" not in body
+        assert "All caught up" not in body
+
+    def test_mark_all_read_does_not_return_the_bell_panel(self, tenancy, client_for):
+        make_notification(tenancy.owner)
+
+        body = client_for(tenancy.owner).post(reverse("notifications:mark_all_read"), headers=HTMX).content.decode()
+
+        assert "View all notifications" not in body
+        assert "All caught up" not in body
+
+    @pytest.mark.parametrize("route", ["notifications:mark_all_read", None])
+    def test_both_write_views_fire_the_refresh_event(self, tenancy, client_for, route):
+        notification = make_notification(tenancy.owner)
+        url = reverse(route) if route else reverse("notifications:mark_read", args=[notification.id])
+
+        response = client_for(tenancy.owner).post(url, headers=HTMX)
+
+        assert "notificationsChanged" in response["HX-Trigger"]
+
+    def test_the_response_is_the_badge_and_nothing_else(self, tenancy, client_for):
+        make_notification(tenancy.owner)
+
+        body = client_for(tenancy.owner).post(reverse("notifications:mark_all_read"), headers=HTMX).content.decode()
+
+        assert 'id="notification-badge"' in body
+        assert "notif-dot" not in body
+
+    def test_marking_read_from_the_history_page_leaves_the_list_intact(self, tenancy, client_for):
+        """The concrete regression: the history page posts these too."""
+        notification = make_notification(tenancy.owner, title="Still here")
+        client = client_for(tenancy.owner)
+
+        client.post(reverse("notifications:mark_read", args=[notification.id]), headers=HTMX)
+        body = client.get(reverse("notifications:list"), headers=HTMX).content.decode()
+
+        assert "Still here" in body
+        assert "notif-item" in body
+
+
+@pytest.mark.django_db
+class TestTheHistoryPageCarriesNoResponseOnlyMarkup:
+    """_history_list.html is rendered both as an htmx response and inline by
+    list.html, so anything in it that only makes sense in a response — an
+    out-of-band badge carrying ids the shell already renders — is a duplicate
+    id on the full page."""
+
+    @pytest.mark.parametrize("element_id", ["notification-badge", "nav-badge-notifications"])
+    def test_the_full_page_carries_each_badge_id_at_most_once(self, tenancy, client_for, element_id):
+        make_notification(tenancy.owner)
+
+        body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
+
+        assert body.count(f'id="{element_id}"') <= 1
+
+    def test_the_full_page_carries_no_out_of_band_attributes(self, tenancy, client_for):
+        make_notification(tenancy.owner)
+
+        body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
+
+        assert "hx-swap-oob" not in body
+
+    def test_the_container_refreshes_itself_with_its_filters(self, tenancy, client_for):
+        """The state the write view deliberately does not try to rebuild."""
+        body = client_for(tenancy.owner).get(reverse("notifications:list")).content.decode()
+
+        assert 'hx-trigger="notificationsChanged from:body"' in body
+        assert "hx-include=\"[name='event_type'],[name='read_state']\"" in body
+
+
+@pytest.mark.django_db
+class TestPagingIsBounded:
+    def test_an_enormous_page_number_is_clamped_not_a_500(self, tenancy, client_for):
+        """Python ints are arbitrary precision, so this parses and then
+        overflows the bigint Postgres wants for OFFSET."""
+        response = client_for(tenancy.owner).get(reverse("notifications:list"), {"page": "99999999999999999999"})
+
+        assert response.status_code == 200
+
+    def test_a_negative_page_falls_back_to_the_first(self, tenancy, client_for):
+        make_notification(tenancy.owner, title="Only row")
+
+        body = client_for(tenancy.owner).get(reverse("notifications:list"), {"page": "-5"}).content.decode()
+
+        assert "Only row" in body
+
+    def test_paging_is_stable_across_a_single_fan_out(self, tenancy, client_for):
+        """Every row in one notify() call shares a created_at to the
+        microsecond, so without a unique tiebreak the two pages can overlap."""
+        for index in range(40):
+            make_notification(tenancy.owner, title=f"Row {index:02d}")
+        client = client_for(tenancy.owner)
+
+        first = client.get(reverse("notifications:list"), {"page": 1}, headers=HTMX).content.decode()
+        second = client.get(reverse("notifications:list"), {"page": 2}, headers=HTMX).content.decode()
+
+        on_first = {f"Row {i:02d}" for i in range(40) if f"Row {i:02d}" in first}
+        on_second = {f"Row {i:02d}" for i in range(40) if f"Row {i:02d}" in second}
+        assert not on_first & on_second, "a row appeared on both pages"
+        assert len(on_first | on_second) == 40, "a row appeared on neither page"
+
+    def test_the_pager_url_encodes_the_filter_values(self, tenancy, client_for):
+        for index in range(35):
+            make_notification(tenancy.owner, title=f"Row {index}")
+
+        body = (
+            client_for(tenancy.owner)
+            .get(reverse("notifications:list"), {"event_type": "a&read_state=read"})
+            .content.decode()
+        )
+
+        assert "a%26read_state%3Dread" in body
+
+
+@pytest.mark.django_db
+class TestMarkAllReadKeepsUpdatedAtHonest:
+    def test_the_bulk_path_moves_updated_at_like_the_single_path(self, tenancy, client_for):
+        """update() bypasses auto_now, so without an explicit value the two
+        paths would leave the column meaning two different things."""
+        notification = make_notification(tenancy.owner)
+        before = notification.updated_at
+
+        client_for(tenancy.owner).post(reverse("notifications:mark_all_read"), headers=HTMX)
+
+        notification.refresh_from_db()
+        assert notification.updated_at > before

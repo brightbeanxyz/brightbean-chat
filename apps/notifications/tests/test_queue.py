@@ -47,10 +47,22 @@ def fake_queueing():
         "apps.queueing.handlers": handlers,
     }
     sys.modules.update(added)
+    # The seam memoises what it bound, so a stand-in installed for one test
+    # would otherwise still be bound in the next.
+    queue.reset_bindings()
     with patch("apps.notifications.queue.django_apps.is_installed", return_value=True):
         yield types.SimpleNamespace(calls=calls, registered=registered)
     for name in added:
         sys.modules.pop(name, None)
+    queue.reset_bindings()
+
+
+@pytest.fixture(autouse=True)
+def _clear_bindings():
+    """No test may inherit another's resolved entry point."""
+    queue.reset_bindings()
+    yield
+    queue.reset_bindings()
 
 
 @pytest.mark.django_db
@@ -108,6 +120,15 @@ class TestWithTheQueue:
         assert len(keys) == len(set(keys))
         for call in fake_queueing.calls:
             assert call["idempotency_key"].endswith(call["payload"]["delivery_id"])
+
+    def test_the_lookup_and_its_log_line_happen_once_per_process(self, tenancy, fake_queueing, caplog):
+        """A 500-recipient fan-out must not write 500 identical INFO lines."""
+        with caplog.at_level("INFO", logger="apps.notifications.queue"):
+            notify(tenancy.workspace, "flow_loop_cap_hit", context=LOOP_CAP_CONTEXT)
+            notify(tenancy.workspace, "flow_loop_cap_hit", context=LOOP_CAP_CONTEXT)
+
+        assert len(fake_queueing.calls) == 4
+        assert caplog.text.count("bound enqueue") == 1
 
     def test_the_workspace_travels_with_the_action(self, tenancy, fake_queueing):
         notify(tenancy.workspace, "flow_loop_cap_hit", context=LOOP_CAP_CONTEXT)

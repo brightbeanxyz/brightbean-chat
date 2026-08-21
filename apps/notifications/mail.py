@@ -18,7 +18,7 @@ import smtplib
 from typing import Any
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import BadHeaderError, EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
@@ -32,6 +32,34 @@ logger = logging.getLogger(__name__)
 __all__ = ["send_delivery"]
 
 
+def _payload_of(notification: Any) -> dict[str, Any]:
+    """The row's payload, or an empty dict.
+
+    ``payload`` is a ``JSONField``, so a row written by a future caller — or
+    edited in the admin — can hold a list or a string. Normalising once here
+    means the subject line and the action URL cannot disagree about whether
+    that is possible, which they did: one guarded with ``isinstance`` and the
+    other called ``.get()`` straight out.
+    """
+    payload = getattr(notification, "payload", None)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _subject(notification: Any) -> str:
+    """The subject line, with anything that would break a header removed.
+
+    A context value carrying a newline reaches the title through the copy
+    templates, and ``Notification.title`` is a varchar that stores it happily.
+    Django then raises ``BadHeaderError`` at send time — after this function's
+    caller has already incremented ``attempts`` in memory and before it saves,
+    so the delivery row would sit at PENDING with no attempt recorded, looking
+    queued rather than broken. Collapsing the whitespace is both the fix and
+    the better email.
+    """
+    raw = str(_payload_of(notification).get("email_subject") or notification.title)
+    return " ".join(raw.split())
+
+
 def _action_url(notification: Any) -> str:
     """Where the email's button goes.
 
@@ -41,8 +69,7 @@ def _action_url(notification: Any) -> str:
     off-site link in an email that carries this product's branding. One policy,
     in :mod:`apps.notifications.action_urls`, applied at both ends.
     """
-    raw = notification.payload.get("action_url") if isinstance(notification.payload, dict) else None
-    return action_urls.absolute(action_urls.safe_path(raw))
+    return action_urls.absolute(action_urls.safe_path(_payload_of(notification).get("action_url")))
 
 
 def send_delivery(delivery: NotificationDelivery) -> bool:
@@ -67,16 +94,22 @@ def send_delivery(delivery: NotificationDelivery) -> bool:
 
     try:
         message = EmailMultiAlternatives(
-            subject=notification.payload.get("email_subject") or notification.title,
+            subject=_subject(notification),
             body=render_to_string("notifications/email/notification.txt", context),
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[recipient.email],
         )
         message.attach_alternative(render_to_string("notifications/email/notification.html", context), "text/html")
         message.send()
-    except (OSError, smtplib.SMTPException) as exc:
+    except (OSError, smtplib.SMTPException, BadHeaderError) as exc:
         # No address in the log line: the recipient is personal data, and
         # apps/accounts/adapters.py makes the same omission for the same reason.
+        #
+        # BadHeaderError is in the clause because it is a ValueError and would
+        # otherwise escape *between* the in-memory attempts increment and the
+        # save below, leaving the row PENDING with attempts=0 — indistinguishable
+        # from one that was never tried. Named, not widened to ValueError, so a
+        # genuine coding error still surfaces.
         logger.exception("Failed to send notification email for notification %s", notification.pk)
         delivery.status = DeliveryStatus.FAILED
         delivery.error_message = str(exc)[:500]

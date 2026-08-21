@@ -20,6 +20,7 @@ public import, which is also what Studio's own module docstring instructs.
 There are no callers in this issue. Layers 3 to 6 supply them.
 """
 
+import copy
 import logging
 from collections.abc import Iterable, Sequence
 from functools import partial
@@ -87,6 +88,8 @@ def notify(
             "which one the caller believed was in effect."
         )
 
+    workspace = _resolve_workspace(workspace)
+
     event = events.get_event(event_type)
     if event is None:
         # Production path for an unregistered type: events.get_event has already
@@ -94,7 +97,12 @@ def notify(
         return []
 
     context = context or {}
-    recipients = active_users(users) if users is not None else recipients_for_roles(workspace, roles or DEFAULT_ROLES)
+    # `roles if roles is not None` rather than `roles or`: an empty sequence has
+    # to mean "nobody", exactly as users=[] does. Truthiness would turn a
+    # caller's filtered-to-empty role list into "every admin in the workspace",
+    # which is the one mistake this signature is shaped to prevent.
+    resolved_roles = DEFAULT_ROLES if roles is None else roles
+    recipients = active_users(users) if users is not None else recipients_for_roles(workspace, resolved_roles)
     if not recipients:
         return []
 
@@ -107,7 +115,11 @@ def notify(
             event_type=event.key,
             title=title,
             body=body,
-            payload=payload,
+            # A deep copy per row. The rows serialize independently either way,
+            # which is what makes sharing one dict silently wrong: every
+            # returned instance would alias it, so mutating one caller-side
+            # would appear to change rows that were never written.
+            payload=copy.deepcopy(payload),
         )
         for recipient in recipients
     ]
@@ -116,6 +128,28 @@ def notify(
         _dispatch_emails(workspace, notifications)
 
     return notifications
+
+
+def _resolve_workspace(workspace: Any) -> Any:
+    """Accept a ``Workspace`` or its id, and return the instance.
+
+    ``recipients_for_roles`` needs ``workspace.organization_id`` to find org
+    owners, while ``_payload`` and ``_dispatch_emails`` both reach for
+    ``getattr(workspace, "pk", workspace)`` and are happy with a bare id. That
+    left the API accepting an id on two paths of three — and a queue worker
+    rehydrating a job holds an id, not an instance. Resolving here makes one
+    answer true everywhere, and incidentally fixes ``workspace_name`` in the
+    payload, which was blank whenever a caller passed an id.
+    """
+    if workspace is None or hasattr(workspace, "organization_id"):
+        return workspace
+
+    from apps.workspaces.models import Workspace
+
+    resolved = Workspace.objects.filter(pk=workspace).first()
+    if resolved is None:
+        raise ValueError(f"notify() got workspace={workspace!r}, which is neither a Workspace nor the id of one.")
+    return resolved
 
 
 def _payload(workspace: Any, event: events.NotificationEvent, context: dict[str, Any]) -> dict[str, Any]:
@@ -156,8 +190,31 @@ def _payload(workspace: Any, event: events.NotificationEvent, context: dict[str,
     return payload
 
 
-def _json_safe(value: Any) -> bool:
-    return isinstance(value, str | int | float | bool | list | dict) or value is None
+#: How deep to walk a context value before giving up on it. Deeper than any
+#: sane notification context, and shallow enough that a self-referential
+#: structure is rejected rather than recursed into forever.
+_MAX_PAYLOAD_DEPTH = 6
+
+
+def _json_safe(value: Any, depth: int = 0) -> bool:
+    """Whether ``value`` will survive the jsonb encoder — all the way down.
+
+    Checking only the top level let a list of UUIDs through, because a ``list``
+    is a JSON type; the ``TypeError`` then landed at ``create()``, part-way
+    through a fan-out that had already written rows for earlier recipients.
+    """
+    if value is None or isinstance(value, str | int | float | bool):
+        return True
+    if depth >= _MAX_PAYLOAD_DEPTH:
+        return False
+    if isinstance(value, list | tuple):
+        return all(_json_safe(item, depth + 1) for item in value)
+    if isinstance(value, dict):
+        # jsonb object keys are strings; a non-string key would be coerced
+        # silently by json.dumps, so the value would round-trip as something
+        # the caller did not write.
+        return all(isinstance(key, str) and _json_safe(item, depth + 1) for key, item in value.items())
+    return False
 
 
 def _dispatch_emails(workspace: Any, notifications: list[Notification]) -> None:

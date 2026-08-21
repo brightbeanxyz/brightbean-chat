@@ -10,8 +10,7 @@ would need Alpine's `.camel` modifier to survive htmx's lowercase event names).
     {% if unread_notification_count %}
     <button type="button"
             hx-post="{% url 'notifications:mark_all_read' %}"
-            hx-target="#notification-panel-body"
-            hx-swap="innerHTML"
+            hx-swap="none"
             class="text-[11px] font-semibold cursor-pointer btn-text-hover-primary"
             style="color: var(--primary);">Mark all read</button>
     {% endif %}
@@ -23,8 +22,7 @@ would need Alpine's `.camel` modifier to survive htmx's lowercase event names).
        class="notif-item{% if not n.is_read %} is-unread{% endif %} btn-surface-1 flex gap-3 px-4 py-3"
        {% if not n.is_read %}
        hx-post="{% url 'notifications:mark_read' n.id %}"
-       hx-target="#notification-panel-body"
-       hx-swap="innerHTML"
+       hx-swap="none"
        {% endif %}>
         <span class="notif-icon notif-icon-{{ n.payload.tone|default:'info' }} flex-shrink-0">
             {% include "partials/_nav_icon.html" with name=n.payload.icon|default:"bell" %}
@@ -56,4 +54,8 @@ would need Alpine's `.camel` modifier to survive htmx's lowercase event names).
 </div>
 {% endif %}
 
-{% include "notifications/partials/_badge.html" %}
+{% comment %}
+The badge is not included here either: it rides on the write responses, so this
+partial stays a pure rendering of the panel and can be swapped in without
+carrying ids that live elsewhere in the shell.
+{% endcomment %}

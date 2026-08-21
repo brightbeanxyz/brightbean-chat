@@ -31,6 +31,13 @@ class NotificationAdmin(admin.ModelAdmin):
         # no event behind it is a lie to whoever receives it.
         return False
 
+    def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
+        # The docstring above claims these rows are read-only; without this it
+        # was only half true, and title, body and payload stayed editable. A
+        # notification someone has already received is a record of what
+        # happened, and payload in particular feeds a link.
+        return False
+
 
 @admin.register(NotificationDelivery)
 class NotificationDeliveryAdmin(admin.ModelAdmin):

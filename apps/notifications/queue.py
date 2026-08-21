@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "HANDLER_TYPE",
+    "reset_bindings",
     "enqueue_email",
     "handle_notification_email",
     "queueing_available",
@@ -52,7 +53,27 @@ _REGISTER_LOCATIONS = ("apps.queueing.handlers", "apps.queueing.registry", "apps
 _ENQUEUE_LOCATIONS = ("apps.queueing.services", "apps.queueing.scheduling", "apps.queueing")
 
 
+#: Resolved entry points, keyed by the attribute name. The probe walks a short
+#: module list and logs what it bound; doing that per notification meant a
+#: 500-recipient fan-out repeated the lookup 500 times and wrote 500 identical
+#: INFO lines. ``reset_bindings()`` exists for tests, which install and remove
+#: a stand-in ``apps.queueing`` between cases.
+_BINDINGS: dict[str, Callable[..., Any] | None] = {}
+
+
+def reset_bindings() -> None:
+    """Forget what was bound. For tests that swap ``apps.queueing`` in and out."""
+    _BINDINGS.clear()
+
+
 def _bind(module_names: tuple[str, ...], attr: str) -> Callable[..., Any] | None:
+    if attr in _BINDINGS:
+        return _BINDINGS[attr]
+    _BINDINGS[attr] = _probe(module_names, attr)
+    return _BINDINGS[attr]
+
+
+def _probe(module_names: tuple[str, ...], attr: str) -> Callable[..., Any] | None:
     # is_installed() first: it is cheaper than an import and it is the correct
     # question. A package that is importable but absent from INSTALLED_APPS has
     # no migrated tables, so enqueueing into it would fail at the database.
