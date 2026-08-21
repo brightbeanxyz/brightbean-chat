@@ -4,7 +4,8 @@ import pytest
 from django.conf import settings
 from django.core import mail
 
-from apps.accounts.middleware import AUTH_RATE_LIMIT, AUTH_RATE_WINDOW, window_cache_key
+from apps.accounts.middleware import AUTH_RATE_LIMIT, AUTH_RATE_WINDOW, RATE_LIMIT_NAMESPACE
+from apps.common.ratelimit import window_key
 from tests.support import TEST_PASSWORD, create_user
 
 LOGIN = "/accounts/login/"
@@ -42,24 +43,38 @@ class TestAuthRateLimiting:
             assert client.get("/healthz").status_code == 200
 
     def test_the_bucket_rotates_with_the_clock(self):
-        """BaseCache.incr is get+set with no timeout, so it re-stamps the entry
-        with DEFAULT_TIMEOUT (five minutes). A bucket keyed only on the address
-        would outlive its own window by four, and Retry-After would be a lie."""
+        """The window number is part of the key, so the window starts on the
+        clock instead of sliding forward with every attempt — which is what
+        makes the Retry-After we hand out the truth."""
         start = AUTH_RATE_WINDOW * 16_666  # a window boundary
-        first = window_cache_key("203.0.113.1", now=start)
-        same = window_cache_key("203.0.113.1", now=start + AUTH_RATE_WINDOW - 1)
-        later = window_cache_key("203.0.113.1", now=start + AUTH_RATE_WINDOW)
+
+        def key(now):
+            return window_key(RATE_LIMIT_NAMESPACE, "203.0.113.1", window_seconds=AUTH_RATE_WINDOW, now=now)
+
+        first = key(start)
+        same = key(start + AUTH_RATE_WINDOW - 1)
+        later = key(start + AUTH_RATE_WINDOW)
 
         assert first == same
         assert first != later
 
     def test_different_addresses_get_different_buckets(self):
-        assert window_cache_key("203.0.113.1") != window_cache_key("203.0.113.2")
+        one = window_key(RATE_LIMIT_NAMESPACE, "203.0.113.1", window_seconds=AUTH_RATE_WINDOW)
+        two = window_key(RATE_LIMIT_NAMESPACE, "203.0.113.2", window_seconds=AUTH_RATE_WINDOW)
 
-    def test_the_counter_is_shared_across_processes(self):
-        """LocMemCache is per process and gunicorn runs two workers, so a
-        per-process counter is evaded by landing on the other one."""
-        assert "locmem" not in settings.CACHES["default"]["BACKEND"].lower()
+        assert one != two
+
+    def test_the_counter_is_a_row_not_a_cache_entry(self):
+        """Django's cache API has no atomic increment on the backend the
+        no-Redis rule leaves us with, so counting through it loses attempts
+        under exactly the concurrency an attacker generates."""
+        import inspect
+
+        from apps.accounts import middleware
+        from apps.common.models import RateLimitCounter
+
+        assert "django.core.cache" not in inspect.getsource(middleware)
+        assert RateLimitCounter._meta.db_table == "common_rate_limit_counter"
 
     def test_a_forged_forwarded_header_does_not_reset_the_bucket(self, client):
         """Studio takes the leftmost X-Forwarded-For value unconditionally, so

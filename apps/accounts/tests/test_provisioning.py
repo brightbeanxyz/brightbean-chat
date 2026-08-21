@@ -77,7 +77,7 @@ class TestInvitedSignup:
 
     def test_an_invited_signup_joins_the_inviting_org(self, tenancy, client):
         invitation = self._pending_invite(tenancy)
-        client.get(f"/invite/{invitation.token}/")
+        client.get(f"/invite/{invitation.raw_token}/")
 
         client.post(
             reverse("account_signup"),
@@ -91,7 +91,7 @@ class TestInvitedSignup:
     def test_no_default_organization_is_created_and_deleted(self, tenancy, client):
         """Studio creates one and then removes it by name-matching."""
         invitation = self._pending_invite(tenancy)
-        client.get(f"/invite/{invitation.token}/")
+        client.get(f"/invite/{invitation.raw_token}/")
         before = Organization.objects.count()
 
         client.post(
@@ -104,7 +104,7 @@ class TestInvitedSignup:
 
     def test_the_invited_workspace_role_is_applied(self, tenancy, client):
         invitation = self._pending_invite(tenancy)
-        client.get(f"/invite/{invitation.token}/")
+        client.get(f"/invite/{invitation.raw_token}/")
 
         client.post(
             reverse("account_signup"),
@@ -117,7 +117,7 @@ class TestInvitedSignup:
 
     def test_the_signup_form_prefills_the_invited_address(self, tenancy, client):
         invitation = self._pending_invite(tenancy)
-        client.get(f"/invite/{invitation.token}/")
+        client.get(f"/invite/{invitation.raw_token}/")
 
         response = client.get(reverse("account_signup"))
 
@@ -127,15 +127,15 @@ class TestInvitedSignup:
     def test_the_token_is_stashed_in_the_session(self, tenancy, client):
         invitation = self._pending_invite(tenancy)
 
-        client.get(f"/invite/{invitation.token}/")
+        client.get(f"/invite/{invitation.raw_token}/")
 
-        assert client.session[PENDING_INVITE_SESSION_KEY] == invitation.token
+        assert client.session[PENDING_INVITE_SESSION_KEY] == invitation.raw_token
 
     def test_an_expired_token_falls_back_to_a_fresh_org(self, tenancy, client):
         from django.utils import timezone
 
         invitation = self._pending_invite(tenancy)
-        client.get(f"/invite/{invitation.token}/")
+        client.get(f"/invite/{invitation.raw_token}/")
         invitation.expires_at = timezone.now() - timezone.timedelta(seconds=1)
         invitation.save(update_fields=["expires_at"])
 

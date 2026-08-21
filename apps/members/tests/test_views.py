@@ -53,12 +53,26 @@ class TestEditorCannotManageMembers:
         assert client.get(f"/w/{tenancy.workspace.pk}/settings/").status_code == 403
 
     def test_editor_cannot_invite(self, tenancy, client_for):
-        """Editor is an org member, so the org-level gate refuses first."""
+        """The org gate is at member tier so a workspace Admin who is only an
+        org member can invite; the refusal comes from the service, which finds
+        an Editor holds manage_members nowhere."""
+        from apps.members.models import Invitation
+
         client = client_for(tenancy.user_for("editor"))
 
-        response = client.post("/organization/members/invite/", {"email": "x@example.test", "org_role": "member"})
+        response = client.post(
+            "/organization/members/invite/",
+            {"email": "x@example.test", "org_role": "member"},
+            follow=True,
+        )
 
-        assert response.status_code == 403
+        assert not Invitation.objects.for_org(tenancy.organization.pk).exists()
+        assert b"at least one workspace" in response.content
+
+    def test_the_invite_form_is_not_offered_to_an_editor(self, tenancy, client_for):
+        content = client_for(tenancy.user_for("editor")).get("/organization/members/").content
+
+        assert b"Invite someone" not in content
 
     def test_editor_has_no_workspace_to_assign_roles_in(self, tenancy, client_for):
         """manage_workspaces is open to org members, but the form only offers

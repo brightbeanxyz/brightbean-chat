@@ -238,12 +238,16 @@ class TestResendAndRevoke:
         )
 
     def test_resend_rotates_the_token(self, tenancy):
+        """Rotation is what makes resend the repair for a leaked or stale link."""
         invitation = self._invite(tenancy)
-        original = invitation.token
+        original_digest = invitation.token_digest
+        original_token = invitation.raw_token
 
         resend_invitation(invitation)
 
-        assert invitation.token != original
+        assert invitation.token_digest != original_digest
+        assert invitation.raw_token != original_token
+        assert not Invitation.objects.for_token(original_token).exists()
 
     def test_revoke_expires_it(self, tenancy):
         invitation = self._invite(tenancy)

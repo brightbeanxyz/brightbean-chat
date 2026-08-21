@@ -66,7 +66,7 @@
     </tbody>
   </table>
 
-  {% if is_admin %}
+  {% if can_invite %}
     <h2>Invite someone</h2>
     <form method="post" action="{% url 'members:invite' %}">
       {% csrf_token %}

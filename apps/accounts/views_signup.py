@@ -25,7 +25,7 @@ class InvitePrefillSignupView(SignupView):
         token = self.request.session.get(PENDING_INVITE_SESSION_KEY)
         if not token:
             return None
-        invitation = Invitation.objects.filter(token=token, accepted_at__isnull=True).first()
+        invitation = Invitation.objects.for_token(token).filter(accepted_at__isnull=True).first()
         if invitation and not invitation.is_expired:
             return invitation.email
         return None

@@ -28,7 +28,7 @@ def provision_on_signup(sender: Any, request: Any, user: Any, **kwargs: Any) -> 
 
     token = request.session.pop(PENDING_INVITE_SESSION_KEY, None) if request is not None else None
     if token:
-        invitation = Invitation.objects.filter(token=token, accepted_at__isnull=True).first()
+        invitation = Invitation.objects.for_token(token).filter(accepted_at__isnull=True).first()
         if invitation is not None and not invitation.is_expired:
             try:
                 # The session-bound token is itself proof the invitation reached

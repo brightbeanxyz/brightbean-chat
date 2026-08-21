@@ -36,7 +36,7 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.members.models import Invitation, OrgMembership, WorkspaceMembership, generate_invitation_token
+from apps.members.models import Invitation, OrgMembership, WorkspaceMembership
 from apps.members.roles import ORG_ROLE_LEVEL, WORKSPACE_ROLE_LEVEL, OrgRole, WorkspaceRole, permissions_for_role
 from apps.workspaces.models import Workspace
 
@@ -223,9 +223,15 @@ def create_invitation(
         raise MembershipError("Only organization owners can invite someone as an admin.")
 
     assignments = _normalise_assignments(org, workspace_assignments)
+    if inviter_level < ORG_ROLE_LEVEL[OrgRole.ADMIN] and not assignments:
+        # A workspace Admin who is only an org member invites *into their
+        # workspace*; their authority is the workspace, so an invitation that
+        # names none would be adding someone to the organization on no
+        # authority at all.
+        raise MembershipError("Choose at least one workspace to invite this person into.")
     _assert_may_grant(workspace_authority_map(effective_inviter, org), assignments)
 
-    invitation = Invitation.objects.create(
+    invitation = Invitation(
         organization=org,
         email=email,
         org_role=org_role,
@@ -233,7 +239,9 @@ def create_invitation(
         invited_by=invited_by,
         expires_at=timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS),
     )
-    send_invite_email(invitation)
+    token = invitation.issue_token()
+    invitation.save()
+    send_invite_email(invitation, token)
     return invitation
 
 
@@ -246,17 +254,41 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
     leave someone in an org with no workspace and an invitation that still looks
     pending.
 
+    Single-use is enforced under a row lock. The caller looked the invitation up
+    before the transaction opened, so validating that stale instance would let
+    two concurrent acceptances of the same token both see ``accepted_at=None``,
+    both create memberships — for *different* users, since the signup path
+    disables the email check — and both stamp it accepted.
+
     ``require_email_match=False`` is for the signup path, where the session-bound
     token is itself proof the invite reached its recipient — and where a social
     login returns whatever address the provider owns, which need not be the one
     invited.
     """
+    locked = Invitation.objects.select_for_update().filter(pk=invitation.pk).select_related("organization").first()
+    if locked is None:
+        raise MembershipError("This invitation is no longer available.")
+    invitation = locked
+
     if invitation.is_accepted:
         raise MembershipError("This invitation has already been accepted.")
     if invitation.is_expired:
         raise MembershipError("This invitation has expired.")
     if require_email_match and (user.email or "").strip().lower() != invitation.email.strip().lower():
         raise MembershipError("This invitation was sent to a different email address.")
+
+    # v1 routes org-scoped pages from a single OrgMembership (see
+    # RBACMiddleware). A second one would leave request.org and
+    # last_workspace_id pointing at different organizations — every page
+    # rendering one org's members while the workspace switcher shows another's.
+    # Refusing is the only coherent answer until multi-org lands.
+    other = OrgMembership.objects.filter(user=user).exclude(organization=invitation.organization).first()
+    if other is not None:
+        raise MembershipError(
+            f"This account already belongs to {other.organization.name}. "
+            "BrightBean Chat supports one organization per account, so leave that one first "
+            "or accept this invitation from a different account."
+        )
 
     OrgMembership.objects.get_or_create(
         user=user,
@@ -295,10 +327,10 @@ def resend_invitation(invitation: Invitation) -> Invitation:
     """
     if invitation.is_accepted:
         raise MembershipError("Cannot resend an already accepted invitation.")
-    invitation.token = generate_invitation_token()
+    token = invitation.issue_token()
     invitation.expires_at = timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS)
-    invitation.save(update_fields=["token", "expires_at", "updated_at"])
-    send_invite_email(invitation)
+    invitation.save(update_fields=["token_digest", "expires_at", "updated_at"])
+    send_invite_email(invitation, token)
     return invitation
 
 
@@ -311,14 +343,18 @@ def revoke_invitation(invitation: Invitation) -> Invitation:
     return invitation
 
 
-def send_invite_email(invitation: Invitation) -> None:
-    """Send the invite. Failures are logged, never raised.
+def send_invite_email(invitation: Invitation, token: str) -> None:
+    """Send the invite. Delivery failures are logged, never raised.
+
+    ``token`` is passed in rather than read off the invitation: the row holds
+    only a digest, so the raw value exists for exactly as long as the request
+    that minted it.
 
     A mail outage must not roll back a created invitation: the row is the
     durable thing, and "resend" exists precisely for this.
     """
     app_url = getattr(settings, "APP_URL", "http://localhost:8000").rstrip("/")
-    accept_path = reverse("accept_invite", kwargs={"token": invitation.token})
+    accept_path = reverse("accept_invite", kwargs={"token": token})
     accept_url = f"{app_url}{accept_path}"
     context = {
         "invitation": invitation,
@@ -369,7 +405,17 @@ def remove_member(org: Any, membership: OrgMembership, removed_by: Any) -> None:
 
     with transaction.atomic():
         workspace_ids = list(Workspace.objects.for_org(org.pk).values_list("id", flat=True))
-        WorkspaceMembership.objects.filter(user_id=membership.user_id, workspace_id__in=workspace_ids).delete()
+        memberships = WorkspaceMembership.objects.filter(user_id=membership.user_id, workspace_id__in=workspace_ids)
+
+        # The same invariant update_workspace_assignments enforces. Removing
+        # someone from the organization deletes their workspace memberships in
+        # bulk, so without this the sole Admin of a workspace can be removed
+        # through the members page and leave it with nobody who can manage its
+        # settings, channels or people.
+        for workspace_membership in memberships.filter(workspace_role=WorkspaceRole.ADMIN):
+            _assert_not_last_workspace_admin(workspace_membership.workspace_id, excluding=workspace_membership.pk)
+
+        memberships.delete()
         membership.delete()
 
 

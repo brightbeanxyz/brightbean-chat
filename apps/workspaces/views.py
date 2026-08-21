@@ -17,6 +17,7 @@ from apps.common.validators import is_valid_hex_color
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.members.requests import WorkspaceRequest
+from apps.workspaces.models import Workspace
 
 
 @login_required
@@ -73,6 +74,13 @@ def update_settings(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     name = (request.POST.get("name") or "").strip()[:100]
     if not name:
         messages.error(request, "A workspace needs a name.")
+        return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
+    # (organization, name) is unique, so without this an ordinary rename onto a
+    # sibling's name reaches the constraint and 500s. The create flow already
+    # checks; this one has to as well.
+    clash = Workspace.objects.for_org(workspace.organization_id).filter(name=name).exclude(pk=workspace.pk)
+    if clash.exists():
+        messages.error(request, "Another workspace in this organization already has that name.")
         return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
     workspace.name = name
     workspace.icon = (request.POST.get("icon") or "").strip()[:8]

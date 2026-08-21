@@ -34,14 +34,12 @@ It is a per-IP volume control, not per-account: a distributed spray against one
 account is out of scope here.
 """
 
-import hashlib
-import time
 from collections.abc import Callable
 
-from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
 
 from apps.common.net import get_client_ip
+from apps.common.ratelimit import hit, window_key
 
 # Prefix-matched. allauth mounts these under /accounts/.
 AUTH_RATE_LIMITED_PATHS = (
@@ -53,18 +51,7 @@ AUTH_RATE_LIMITED_PATHS = (
 AUTH_RATE_LIMIT = 10
 AUTH_RATE_WINDOW = 60  # seconds
 
-CACHE_KEY_PREFIX = "auth-ratelimit"
-
-
-def window_cache_key(client_ip: str, now: float | None = None) -> str:
-    """The bucket for one address in the current window.
-
-    The address is hashed to keep an IP out of the cache table; that is key
-    shortening and privacy hygiene, not a security control.
-    """
-    window = int((time.time() if now is None else now) // AUTH_RATE_WINDOW)
-    digest = hashlib.sha256(client_ip.encode("utf-8")).hexdigest()[:32]
-    return f"{CACHE_KEY_PREFIX}:{window}:{digest}"
+RATE_LIMIT_NAMESPACE = "auth"
 
 
 class AuthRateLimitMiddleware:
@@ -84,18 +71,11 @@ class AuthRateLimitMiddleware:
 
         return self.get_response(request)
 
-    def _over_limit(self, request: HttpRequest) -> bool:
-        key = window_cache_key(get_client_ip(request))
-
-        # add() only writes when the key is absent, which is the atomic
-        # primitive the cache API offers; incr() then counts without a
-        # read-modify-write race between workers.
-        cache.add(key, 0, AUTH_RATE_WINDOW * 2)
-        try:
-            attempts = cache.incr(key)
-        except ValueError:
-            # Evicted between add() and incr(). Treat it as the first attempt of
-            # this window rather than failing the request.
-            cache.set(key, 1, AUTH_RATE_WINDOW * 2)
-            attempts = 1
-        return attempts > AUTH_RATE_LIMIT
+    @staticmethod
+    def _over_limit(request: HttpRequest) -> bool:
+        key = window_key(
+            RATE_LIMIT_NAMESPACE,
+            get_client_ip(request),
+            window_seconds=AUTH_RATE_WINDOW,
+        )
+        return hit(key, limit=AUTH_RATE_LIMIT, window_seconds=AUTH_RATE_WINDOW)

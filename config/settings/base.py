@@ -191,15 +191,19 @@ WSGI_APPLICATION = "config.wsgi.application"
 # also the rate limiter (SPEC §22).
 #
 # The default is the DATABASE cache, not LocMemCache, because LocMemCache is per
-# process: both the Dockerfile and the Procfile run gunicorn with two workers,
-# so a per-IP counter kept there counts once per worker and is evaded by landing
-# on the other one — which would quietly disable the auth rate limiting
-# SECURITY-BASELINE §8 requires. The table is created by
+# process and both the Dockerfile and the Procfile run gunicorn with two
+# workers: anything counted there is counted once per worker and is evaded by
+# landing on the other one. A per-process default is a trap for the next thing
+# that needs to count across requests, so the shared backend is the default and
+# the single-process case is the override. The table is created by
 # apps/common/migrations/0001_cache_table.py, so `manage.py migrate` is enough
 # and there is no second deploy step to forget.
 #
-# Override CACHE_URL for a single-process deployment that would rather not pay
-# the round trip; anything that must count across workers has to stay shared.
+# Auth rate limiting does NOT use this. Django's cache API has no atomic
+# increment on a database backend — DatabaseCache inherits BaseCache.incr, which
+# is a get followed by a set — so counting through it loses attempts under
+# concurrency. apps/common/ratelimit.py counts in a row under select_for_update
+# instead (SPEC §22: "Postgres is ... the rate limiter").
 CACHES = {
     "default": env.cache("CACHE_URL", default="dbcache://cache_table"),
 }

@@ -96,14 +96,26 @@ def member_list(request: OrgRequest) -> HttpResponse:
             "workspace_roles": WorkspaceRole.choices,
             "org_role_choices": _org_role_choices_for(request.org_membership),
             "is_admin": caller_level >= ORG_ROLE_LEVEL[OrgRole.ADMIN],
+            # A workspace Admin who is only an org member can invite into the
+            # workspaces they manage, so the form is theirs too.
+            "can_invite": caller_level >= ORG_ROLE_LEVEL[OrgRole.ADMIN] or bool(workspaces),
         },
     )
 
 
 @login_required
-@require_org_role("admin")
+@require_org_role("member")
 @require_POST
 def invite_member(request: OrgRequest) -> HttpResponse:
+    """Invite someone into the organization.
+
+    Gated at member tier, not admin, because a workspace Admin whose *org* role
+    is Member is a supported inviter — that combination is the whole reason
+    ``manage_members`` is a workspace permission. create_invitation applies the
+    real rules: only an owner may invite an admin, every workspace assignment
+    needs ``manage_members`` in that workspace, and a non-admin inviter must
+    name at least one workspace so their authority is actually exercised.
+    """
     workspaces = manageable_workspaces(request.user, request.org)
     try:
         create_invitation(
@@ -236,7 +248,7 @@ def accept_invite(request: HttpRequest, token: str) -> HttpResponse:
     expired or already-accepted token renders the same terminal page, so the URL
     does not report which invitations exist.
     """
-    invitation = Invitation.objects.filter(token=token).select_related("organization").first()
+    invitation = Invitation.objects.for_token(token).select_related("organization").first()
     if invitation is None or invitation.is_accepted or invitation.is_expired:
         return render(request, "members/invite_expired.html", status=404)
 

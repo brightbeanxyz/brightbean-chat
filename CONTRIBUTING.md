@@ -125,6 +125,22 @@ column and query that. To look one up by tenant and kind, use plaintext columns
 
 Never render a stored secret. `masked_credentials` exists for that.
 
+**A credential that arrives in a request is not stored either.** An invitation
+token, an API key, a webhook secret — anything a caller presents to prove they
+may act — is kept as `hmac_digest(value)` in a queryable column, and the raw
+value lives only in the message that delivered it. A digest column can carry a
+unique index and an equality lookup, which is all the lookup path needs, and a
+database snapshot then gives up neither the values nor the ability to use them.
+
+## One organization per account
+
+v1 resolves org-scoped pages from a single `OrgMembership` (`RBACMiddleware`
+uses `.first()`, and its docstring says so). A second membership would leave
+`request.org` and `last_workspace_id` pointing at different organizations, so
+`accept_invitation` refuses rather than creating one. Lifting this means
+resolving the organization from the URL or the session — the middleware names
+the change — and every `request.org` consumer inherits it.
+
 ## Dependencies
 
 `requirements.in` and `requirements-dev.in` are the files humans edit; the `.txt`

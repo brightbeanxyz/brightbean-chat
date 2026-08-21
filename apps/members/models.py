@@ -18,6 +18,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from apps.common.encryption import hmac_digest
 from apps.common.managers import OrgScopedManager
 from apps.common.models import BaseModel
 from apps.members.roles import OrgRole, WorkspaceRole, permissions_for_role
@@ -26,12 +27,24 @@ INVITE_TOKEN_BYTES = 32
 
 
 def generate_invitation_token() -> str:
-    """A 43-character URL-safe token.
+    """A fresh 43-character URL-safe token.
 
-    Module-level and public because migrations record it by import path; moving
-    or renaming it breaks ``0001_initial``.
+    Returned to the caller and **not** stored: what the row keeps is
+    :func:`apps.common.encryption.hmac_digest` of it. See ``Invitation``.
     """
     return secrets.token_urlsafe(INVITE_TOKEN_BYTES)
+
+
+class InvitationManager(OrgScopedManager):
+    def for_token(self, token: str) -> models.QuerySet:
+        """Look an invitation up by the token from a URL.
+
+        Keyed HMAC rather than the raw value, so the row is queryable without
+        the row being usable.
+        """
+        if not token:
+            return self.none()
+        return self.filter(token_digest=hmac_digest(token))
 
 
 class OrgMembership(BaseModel):
@@ -116,9 +129,23 @@ class Invitation(BaseModel):
     signer is for *stateless* public token routes (``/u/``, ``/c/``, ``/o/``,
     ``/internal/tick``), where there is nothing to revoke.
 
+    **What is stored is a digest, not the token.** The token is the whole
+    credential — anyone holding it joins the organization, at whatever role the
+    invitation names — so keeping it in a column would mean a database snapshot
+    handed over every pending invitation, which is exactly what
+    SECURITY-BASELINE §5 forbids. ``token_digest`` is a keyed HMAC
+    (:func:`apps.common.encryption.hmac_digest`), which is deterministic enough
+    to carry a unique index and useless without ``SECRET_KEY``. The raw value
+    exists in the email, in the recipient's session, and on the object the
+    process that minted it is holding — nowhere else.
+
     Revoking sets ``expires_at`` to now rather than adding a status column, so
     every consumer only has to understand one expiry rule.
     """
+
+    #: Set only on the instance that just minted or rotated the token, so the
+    #: mail can carry it. Never loaded from the database.
+    raw_token: str | None = None
 
     organization = models.ForeignKey(
         "organizations.Organization",
@@ -137,11 +164,11 @@ class Invitation(BaseModel):
         null=True,
         related_name="sent_invitations",
     )
-    token = models.CharField(max_length=255, unique=True, default=generate_invitation_token)
+    token_digest = models.CharField(max_length=64, unique=True)
     expires_at = models.DateTimeField()
     accepted_at = models.DateTimeField(blank=True, null=True)
 
-    objects = OrgScopedManager()
+    objects = InvitationManager()
 
     class Meta:
         db_table = "members_invitation"
@@ -165,3 +192,14 @@ class Invitation(BaseModel):
     @property
     def is_pending(self) -> bool:
         return not self.is_accepted and not self.is_expired
+
+    def issue_token(self) -> str:
+        """Mint a fresh token, store its digest, and return the raw value.
+
+        Rotating on resend is deliberate: it makes "resend" also the repair for
+        a leaked or stale link.
+        """
+        token = generate_invitation_token()
+        self.token_digest = hmac_digest(token)
+        self.raw_token = token
+        return token
