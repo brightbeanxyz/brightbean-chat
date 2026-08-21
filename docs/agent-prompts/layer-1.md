@@ -26,17 +26,44 @@ REFERENCE REPO: `brightbeanxyz/brightbean-studio`. Port from these, adapting as 
 - allauth settings block from `config/settings/base.py` (`ACCOUNT_LOGIN_METHODS = {"email"}`, `ACCOUNT_SIGNUP_FIELDS`, adapters, Google provider wired from env vars `GOOGLE_AUTH_CLIENT_ID`/`_SECRET` rather than a DB SocialApp, 14-day sliding sessions, BCryptSHA256 hasher), and `templates/account/` + `templates/allauth/elements/`.
 - Root `conftest.py` fixture style (plain `Model.objects.create`, no factory_boy).
 
-ADAPT — the four roles are NOT Studio's six. Define in `apps/members/models.py`:
+ADAPT — TWO TIERS, TWO TABLES, exactly as Studio splits them (SPEC §4 is authoritative; read it before writing any of this). Member management is ORG-level, not workspace-level. Define in `apps/members/models.py`:
+
+  # --- organization tier: spans workspaces, governs who may enter one ---
+  class OrgRole(TextChoices): OWNER="owner"; ADMIN="admin"; MEMBER="member"
+  hierarchy {owner: 3, admin: 2, member: 1}
+  ORG_PERMISSION_KEYS = (   # (key, label) pairs, like Studio
+      ("manage_members",              "Invite, remove, change org roles, assign workspace memberships"),
+      ("manage_workspaces",           "Create and archive workspaces"),
+      ("manage_platform_credentials", "Org-level platform app credentials"),
+      ("manage_api_keys",             "Issue and revoke API keys for any workspace in the org"),
+  )
+  BUILTIN_ORG_PERMISSIONS = {   # SETS, not dicts — Studio's shape
+      OWNER:  {all four}, ADMIN: {all four}, MEMBER: set(),
+  }
+  def has_org_permission(membership, key) -> bool   # membership may be None -> False
+
+  # --- workspace tier: one workspace's data ---
   class WorkspaceRole(TextChoices): ADMIN="admin"; EDITOR="editor"; AGENT="agent"; VIEWER="viewer"
-  hierarchy {admin:4, editor:3, agent:2, viewer:1}
-  PERMISSION_KEYS = ["use_inbox", "reply_in_inbox", "edit_contact_fields", "manage_crm",
-                     "edit_flows", "send_broadcasts", "manage_channels", "manage_members",
-                     "manage_workspace_settings", "manage_api_keys", "view_analytics"]
-  admin  = all True
-  editor = admin minus {manage_channels, manage_members, manage_workspace_settings, manage_api_keys}
-  agent  = {use_inbox, reply_in_inbox, edit_contact_fields, view_analytics}
-  viewer = {use_inbox, view_analytics}          # read-only everywhere
-Keep Studio's `effective_permissions` property as the single resolution point and sole protocol — the public API (issue #25) will duck-type a `VirtualMembership` against it, exactly as Studio's `apps/api/auth.py` does. Keep `require_permission` / `require_workspace_role` / `require_org_role` with the same signatures and the `@login_required` → `@require_*` → `@require_POST` stacking convention.
+  hierarchy {admin: 4, editor: 3, agent: 2, viewer: 1}
+  PERMISSION_KEYS = ["use_inbox", "view_analytics", "reply_in_inbox", "edit_contact_fields",
+                     "manage_crm", "edit_flows", "send_broadcasts", "manage_channels",
+                     "manage_workspace_settings"]
+  BUILTIN_ROLE_PERMISSIONS = {   # dict[role, dict[key, bool]], every key listed explicitly
+      admin:  all True,
+      editor: all True except manage_channels, manage_workspace_settings,
+      agent:  {use_inbox, view_analytics, reply_in_inbox, edit_contact_fields},
+      viewer: {use_inbox, view_analytics},
+  }
+
+Note what moved: `manage_members` and `manage_api_keys` are ORG permissions and must NOT appear in the workspace table. Owner and admin hold identical org permission sets — they differ through hierarchy checks (only an owner may change an owner; the last owner cannot be removed or demoted; nobody may grant a tier at or above their own), not through the table.
+
+Keep Studio's `WorkspaceMembership.effective_permissions` property as the single resolution point and sole protocol — the public API (issue #25) will duck-type a `VirtualMembership` against it, exactly as Studio's `apps/api/auth.py` does. Ship all four decorators with Studio's signatures: `require_org_role(min_role)`, `require_org_permission(key)`, `require_workspace_role(min_role)`, `require_permission(key)`, and the `@login_required` → `@require_*` → `@require_POST` stacking convention. Define each hierarchy ONCE and import it (Studio duplicates them across `decorators.py` and `services.py` with a "must match" comment — deviation 6 below).
+
+Invitations are org-level: `Invitation(organization, email, org_role, workspace_assignments=[{workspace_id, role}], invited_by, token, expires_at, accepted_at)`. One invite places a person in the org and in the workspaces they need. Mount the member-management routes OUTSIDE the `/w/<workspace_id>/` prefix (Studio uses a flat `/members/`), and put "Team Members" under the Organization section of the settings layout, not the workspace section.
+
+Port Studio's cross-tier rule: an **org owner is treated as a workspace admin in every workspace of their org**, while an org admin is bounded by actual workspace membership. Studio's `members/services.py` escalation guards go with it.
+
+Name collision, on purpose: `OrgRole.ADMIN` and `WorkspaceRole.ADMIN` are different roles at different tiers. Qualify in prose and docstrings ("org admin" / "workspace admin"); the enum and decorator names disambiguate in code.
 
 DELIBERATE DEVIATIONS FROM STUDIO — these are the traps; do not copy them:
 1. **URL prefix.** `docs/SPEC.md` §16 specifies `/w/<workspace>/...`. Studio uses `workspace/<uuid:workspace_id>/` (singular) for scoped apps but `workspaces/<uuid>/settings/` (plural) for management — an inconsistency. Use `/w/<uuid:workspace_id>/` uniformly for workspace-scoped routes, and keep the **kwarg name `workspace_id`** because RBACMiddleware's whole resolution contract is `view_kwargs.get("workspace_id")`. No slugs.
@@ -54,10 +81,10 @@ ALSO NOTE (carry forward, don't fix now): RBACMiddleware assumes one org per use
 CONSTRAINTS:
 - Branch `feat/l1a-tenancy-rbac` off `main`; one PR; `Closes #31`.
 - Do not touch `theme/`, `templates/base.html`, `templates/layouts/`, `templates/components/` — issue #32 owns them.
-- Tests required: role enforcement (Viewer cannot POST anywhere; Agent blocked from flow routes; Editor cannot manage members), credential resolution across all three levels, invitation escalation rules (cannot invite as a higher tier, cannot remove the last admin, cannot remove yourself), auth rate limiting, and the IDOR helper.
+- Tests required: BOTH permission tables (a workspace viewer cannot POST anywhere; a workspace agent is blocked from flow routes; a workspace admin who is only an org *member* cannot reach member management, API keys or workspace creation; an org owner is treated as workspace admin in a workspace they hold no membership in), credential resolution across all three levels, invitation escalation rules (cannot invite at or above your own org tier, cannot remove or demote the last org owner, cannot remove yourself), auth rate limiting, and the IDOR helper.
 - Follow `docs/SECURITY-BASELINE.md`.
 
-DEFINITION OF DONE: signup → org+workspace provisioning → member invitation with role assignment → workspace switcher all work; the four roles enforce exactly the permission table above; credentials resolve workspace → org → env and are stored encrypted; the workspace-scoped manager and IDOR fuzz helper exist, are documented, and are proven by tests. In the PR body, list the Studio files ported and confirm each of the 9 deviations above.
+DEFINITION OF DONE: signup → org+workspace provisioning → an org-level invitation carrying an org role plus workspace assignments → workspace switcher all work; both permission tables enforce exactly what SPEC §4 specifies, with member management and API keys reachable only through the org tier; credentials resolve workspace → org → env and are stored encrypted; the workspace-scoped manager and IDOR fuzz helper exist, are documented, and are proven by tests. In the PR body, list the Studio files ported and confirm each of the 9 deviations above.
 ````
 
 ---
@@ -110,7 +137,7 @@ DEFINITION OF DONE: the app renders in the Studio visual style (shell, sidebar c
 **Layer-1 gate — verify before opening Layer 2:**
 
 1. `docker compose up` from a clean clone → signup → org+workspace auto-provisioned → land on a styled dashboard shell.
-2. Invite a member as each of the four roles; confirm Viewer cannot POST, Agent is refused on flow routes, Editor is refused on member management.
+2. Invite a member with each org role and each workspace role; confirm a workspace viewer cannot POST, a workspace agent is refused on flow routes, and an org member — whatever their workspace role — is refused on member management, API keys and workspace creation.
 3. Set a platform credential at env, org and workspace level in turn; confirm resolution order workspace → org → env, and that stored values are encrypted at rest and absent from logs.
 4. Run the IDOR fuzz suite; add a deliberately unscoped view and confirm it fails.
 5. Toggle the sidebar, hard-reload, confirm no flash; trigger a `toast_response` view and confirm the toast renders without a per-page include.
