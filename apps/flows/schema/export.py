@@ -19,18 +19,13 @@ It is an extension keyword, so any other JSON-Schema consumer ignores it, and it
 means L3-C reads one file rather than one file plus a hard-coded table.
 """
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
 
 from apps.flows.schema import fields as f
-from apps.flows.schema.envelope import (
-    MAX_EDGES,
-    MAX_GRAPH_BYTES,
-    MAX_GRAPH_DEPTH,
-    MAX_NODES,
-    SCHEMA_VERSION,
-)
+from apps.flows.schema.envelope import MAX_EDGES, MAX_NODES, SCHEMA_VERSION, limits
 from apps.flows.schema.nodes import NODE_TYPES, all_defs
 
 __all__ = ["ARTIFACT_RELATIVE_PATH", "artifact_path", "json_schema", "serialize"]
@@ -52,7 +47,15 @@ def artifact_path() -> Path:
 
 
 def json_schema() -> dict[str, Any]:
-    """The whole graph format as one JSON-Schema document."""
+    """The whole graph format as one JSON-Schema document.
+
+    The result is a **deep copy**. ``all_defs()`` hands back a shallow one, and
+    the node configs come straight off the registry, so without this every
+    fragment of the returned document would be the same object
+    :func:`~apps.flows.schema.envelope.validate_document` validates against —
+    and the first caller to adjust one for its own rendering would silently
+    rewrite the rules the server enforces, for the life of the worker process.
+    """
     defs = all_defs()
     defs["position"] = f.obj(
         {"x": {"type": "number"}, "y": {"type": "number"}},
@@ -87,7 +90,7 @@ def json_schema() -> dict[str, Any]:
         required=["id", "source", "sourceHandle", "target"],
     )
 
-    return {
+    document = {
         "$schema": _SCHEMA_URI,
         "$id": _DOCUMENT_ID,
         "title": "BrightBean Chat flow graph",
@@ -105,12 +108,7 @@ def json_schema() -> dict[str, Any]:
         },
         "x-brightbean": {
             "schema_version": SCHEMA_VERSION,
-            "limits": {
-                "max_graph_bytes": MAX_GRAPH_BYTES,
-                "max_graph_depth": MAX_GRAPH_DEPTH,
-                "max_nodes": MAX_NODES,
-                "max_edges": MAX_EDGES,
-            },
+            "limits": limits(),
             "node_types": [
                 {
                     "type": spec.type,
@@ -128,6 +126,7 @@ def json_schema() -> dict[str, Any]:
         },
         "$defs": defs,
     }
+    return copy.deepcopy(document)
 
 
 def serialize() -> str:

@@ -42,8 +42,16 @@ __all__ = [
 # the API's read endpoints.
 require_workspace_member = require_workspace_role(WorkspaceRole.VIEWER)
 
-UNFILED = "Unfiled"
-_MAX_NAME = 200
+#: What the "no folder" group is called on screen.
+UNFILED_LABEL = "Unfiled"
+
+#: The query-string value that selects it. Deliberately *not* the label: folder
+#: names are free user text, so filtering on "Unfiled" made a folder actually
+#: called Unfiled unreachable — picking it showed the unfiled flows instead. A
+#: dunder token sits outside the namespace anyone types into a folder field.
+UNFILED_VALUE = "__unfiled__"
+
+_MAX_NAME = Flow._meta.get_field("name").max_length or 200
 
 
 def _visible_flows(request: WorkspaceRequest) -> Any:
@@ -54,17 +62,17 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
     if query:
         flows = flows.filter(name__icontains=query)
 
+    # Anything unrecognised falls back to the default view rather than to no
+    # filtering at all: an if/elif here let `?status=bogus` match neither branch
+    # and so skip the exclusion, quietly listing archived flows among the live
+    # ones. Archived flows are out of the way by default but still findable —
+    # "Archived" in the status filter is the only way to see them, which is what
+    # archiving is for.
     status = (request.GET.get("status") or "").strip()
-    if status in FlowStatus.values:
-        flows = flows.filter(status=status)
-    elif not status:
-        # Archived flows are out of the way by default but still findable —
-        # "Archived" in the status filter is the only way to see them, which is
-        # what archiving is for.
-        flows = flows.exclude(status=FlowStatus.ARCHIVED)
+    flows = flows.filter(status=status) if status in FlowStatus.values else flows.exclude(status=FlowStatus.ARCHIVED)
 
     folder = (request.GET.get("folder") or "").strip()
-    if folder == UNFILED:
+    if folder == UNFILED_VALUE:
         flows = flows.filter(folder="")
     elif folder:
         flows = flows.filter(folder=folder)
@@ -77,7 +85,7 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
 
     groups: list[dict[str, Any]] = []
     for flow in flows:
-        label = flow.folder or UNFILED
+        label = flow.folder or UNFILED_LABEL
         if not groups or groups[-1]["label"] != label:
             groups.append({"label": label, "flows": []})
         groups[-1]["flows"].append(flow)
@@ -93,17 +101,19 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         .distinct()
     )
 
+    folder_names = list(folders)
     return {
         "groups": groups,
         "flow_count": len(flows),
-        "folders": list(folders),
-        "folder_options": [(folder, folder) for folder in folders],
+        # (value, label) pairs, which is what ui_select wants — and what keeps
+        # the "Unfiled" row's value distinct from a folder of the same name.
+        "folder_options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
         "status_options": list(FlowStatus.choices),
         "query": request.GET.get("q", ""),
         "status": request.GET.get("status", ""),
         "folder": request.GET.get("folder", ""),
         "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
-        "unfiled_label": UNFILED,
+        "unfiled_label": UNFILED_LABEL,
     }
 
 

@@ -24,7 +24,23 @@ from typing import Any
 
 from apps.common.platforms import Platform
 
-__all__ = ["CAPABILITIES", "CAPABILITIES_ARE_VENDORED", "Capabilities", "capabilities_for", "connected_platforms"]
+__all__ = [
+    "BLOCK_TYPES",
+    "CAPABILITIES",
+    "CAPABILITIES_ARE_VENDORED",
+    "Capabilities",
+    "capabilities_for",
+    "connected_platforms",
+]
+
+
+#: The send_message block types SPEC §11.1 defines. Named here so
+#: :meth:`Capabilities.supports_block` answers only about block types: resolving
+#: a graph-supplied string straight against the dataclass would happily report
+#: that a platform "supports" ``max_text_len`` or ``inbound``, which are not
+#: block types at all. ``test_capabilities.py`` asserts this stays equal to the
+#: set the schema's message_block union declares, so the two cannot drift.
+BLOCK_TYPES = frozenset({"text", "image", "audio", "video", "file", "card", "gallery"})
 
 
 @dataclass(frozen=True)
@@ -54,10 +70,13 @@ class Capabilities:
     def supports_block(self, block_type: str) -> bool:
         """Whether a send_message block of this kind renders natively.
 
-        Derived from the flags above rather than listed a second time: the
-        validator asks by block name, and a hand-written duplicate of the same
-        information is a place for the two to disagree.
+        The flag is read off this record rather than listed a second time — the
+        block names and the capability names are deliberately the same — but the
+        lookup is confined to :data:`BLOCK_TYPES` so that anything else answers
+        False instead of whatever field happened to share the name.
         """
+        if block_type not in BLOCK_TYPES:
+            return False
         return bool(getattr(self, block_type, False))
 
 

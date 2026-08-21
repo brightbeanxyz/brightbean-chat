@@ -1563,7 +1563,8 @@
       "max_edges": 2000,
       "max_graph_bytes": 524288,
       "max_graph_depth": 20,
-      "max_nodes": 500
+      "max_nodes": 500,
+      "schema_version": 1
     },
     "node_types": [
       {

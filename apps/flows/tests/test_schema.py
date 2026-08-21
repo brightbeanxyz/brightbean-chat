@@ -252,6 +252,31 @@ class TestTheJsonSchemaInterpreter:
         export test — not something to raise on in a request path."""
         assert validate_instance({"$ref": "#/$defs/nope"}, {"anything": 1}, path="", defs={}) == []
 
+    def test_one_of_requires_exactly_one_match_unlike_any_of(self):
+        """The interpreter exists to read fragments this app did not write —
+        CONDITION_SCHEMA arrives from apps.contacts (contract 8). Treating
+        `oneOf` as `anyOf` would let a value matching two branches through."""
+        branches = [
+            {"type": "object", "properties": {"a": {"type": "string"}}},
+            {"type": "object", "properties": {"b": {"type": "string"}}},
+        ]
+        both = {"a": "x", "b": "y"}
+
+        one_of = validate_instance({"oneOf": branches}, both, path="cfg", defs={})
+        any_of = validate_instance({"anyOf": branches}, both, path="cfg", defs={})
+
+        assert [issue.code for issue in one_of] == ["invalid_config_value"]
+        assert "exactly one" in one_of[0].message
+        assert any_of == []
+
+    def test_one_of_still_passes_a_value_matching_a_single_branch(self):
+        branches = [
+            {"type": "object", "required": ["a"], "properties": {"a": {"type": "string"}}},
+            {"type": "object", "required": ["b"], "properties": {"b": {"type": "string"}}},
+        ]
+
+        assert validate_instance({"oneOf": branches}, {"a": "x"}, path="cfg", defs={}) == []
+
     def test_a_variant_union_without_a_discriminator_reports_the_near_miss(self):
         schema = {
             "anyOf": [
@@ -282,6 +307,27 @@ class TestTheJsonSchemaInterpreter:
         )
 
         assert len(issues) == 1
+
+
+class TestTheExportIsACopy:
+    def test_mutating_the_exported_document_cannot_touch_the_registry(self):
+        """Every fragment used to be the same object the validator reads, so the
+        first caller to adjust one for rendering would rewrite the rules the
+        server enforces for the life of the process."""
+        from apps.flows.schema.nodes import SHARED_DEFS
+
+        before = SHARED_DEFS["quick_reply"]["properties"]["label"]["maxLength"]
+        document = json_schema()
+        document["$defs"]["quick_reply"]["properties"]["label"]["maxLength"] = 1
+        document["$defs"]["node_send_sms"]["properties"]["config"]["properties"]["text"]["maxLength"] = 1
+
+        assert SHARED_DEFS["quick_reply"]["properties"]["label"]["maxLength"] == before
+        assert json_schema()["$defs"]["quick_reply"]["properties"]["label"]["maxLength"] == before
+
+    def test_the_limits_have_one_source(self):
+        from apps.flows.schema import limits
+
+        assert json_schema()["x-brightbean"]["limits"] == limits()
 
 
 class TestHandleFormatting:

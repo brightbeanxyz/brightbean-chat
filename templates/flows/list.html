@@ -63,9 +63,7 @@ swap in styles.css meaningful.
         <input type="hidden" name="status" x-model="status">
         <input type="hidden" name="folder" x-model="folder">
         {% ui_select model="status" options=status_options placeholder="All statuses" icon="status" onchange="reload()" %}
-        {% if folder_options %}
         {% ui_select model="folder" options=folder_options placeholder="All folders" icon="tag" onchange="reload()" %}
-        {% endif %}
     </form>
 
     <div id="flow-rows"

@@ -63,15 +63,18 @@ class ValidationResult:
         }
 
 
-def validate_graph(graph: Any, *, platforms: Sequence[str] = ()) -> ValidationResult:
+def validate_graph(graph: Any, *, platforms: Sequence[str] = (), known_size: int | None = None) -> ValidationResult:
     """Validate a graph. ``platforms`` drives capability warnings and nothing else.
 
     An empty ``platforms`` means "do not guess": no capability warning is
     emitted. That is the state a deployment is in until issue #4 lands
     ``ChannelConnection`` — see
     :func:`apps.flows.capabilities.connected_platforms`.
+
+    ``known_size`` is passed through to the size cap; see
+    :func:`apps.flows.schema.envelope.check_limits`.
     """
-    document_errors = validate_document(graph)
+    document_errors = validate_document(graph, known_size=known_size)
     if document_errors:
         # Nothing below can be trusted to be the shape it looks like, and a
         # cascade of consequential complaints would bury the real one.
@@ -87,13 +90,18 @@ def validate_graph(graph: Any, *, platforms: Sequence[str] = ()) -> ValidationRe
             specs[node["id"]] = spec
             configs[node["id"]] = node.get("config")
 
+    # Computed once and handed to both consumers: "which nodes are entries" is
+    # one definition, and two copies of it drift the moment one is corrected.
+    routable = _routable(specs)
+    entries = _entry_nodes(specs, edges, routable)
+
     errors: list[Issue] = []
     errors.extend(_check_edges(edges, specs, configs))
-    errors.extend(_check_entry_nodes(specs, edges))
+    errors.extend(_check_entry_nodes(routable, entries))
 
     warnings: list[Issue] = []
     warnings.extend(_capability_warnings(nodes, platforms))
-    warnings.extend(_unreachable_warnings(specs, edges))
+    warnings.extend(_unreachable_warnings(specs, edges, routable, entries))
 
     return ValidationResult(graph_errors=errors, warnings=warnings)
 
@@ -204,9 +212,33 @@ def _routable(specs: dict[str, NodeSpec]) -> list[str]:
     return [node_id for node_id, spec in specs.items() if not spec.annotation]
 
 
-def _check_entry_nodes(specs: dict[str, NodeSpec], edges: list[dict[str, Any]]) -> list[Issue]:
+def _entry_nodes(specs: dict[str, NodeSpec], edges: list[dict[str, Any]], routable: list[str]) -> list[str]:
+    """Routable nodes with no incoming edge **from another node** (SPEC §9.1).
+
+    Two exclusions, both from that phrase rather than from convenience:
+
+    * A **self-edge** is not an edge from another node. Counting one would make
+      the commonest retry shape there is — a question node whose ``timeout``
+      handle re-asks itself — report "there is nowhere to start" and refuse to
+      publish.
+    * An edge from a **note** is not routing at all (SPEC §11.11), and every
+      other part of this module already excludes annotations. Counting one made
+      connecting a note to the first node report a missing entry node on top of
+      the note error that actually describes the mistake.
+    """
+    targeted = {
+        edge["target"]
+        for edge in edges
+        if edge["target"] in specs
+        and edge["source"] in specs
+        and edge["source"] != edge["target"]
+        and not specs[edge["source"]].annotation
+    }
+    return [node_id for node_id in routable if node_id not in targeted]
+
+
+def _check_entry_nodes(routable: list[str], entries: list[str]) -> list[Issue]:
     """SPEC §9.1: exactly one node with no incoming edge from another node."""
-    routable = _routable(specs)
     if not routable:
         return [
             Issue(
@@ -215,16 +247,14 @@ def _check_entry_nodes(specs: dict[str, NodeSpec], edges: list[dict[str, Any]]) 
             )
         ]
 
-    targeted = {edge["target"] for edge in edges if edge["target"] in specs and edge["source"] in specs}
-    entries = [node_id for node_id in routable if node_id not in targeted]
-
     if not entries:
         return [
             Issue(
                 code="no_entry_node",
                 message=(
-                    "Every node has an incoming edge, so there is nowhere to start. "
-                    "Exactly one node must have none (SPEC §9.1)."
+                    "Every node is only reachable from another node, so there is nowhere to start. "
+                    "Exactly one node must have no incoming edge — break the loop that returns to "
+                    "the node the flow should begin at (SPEC §9.1)."
                 ),
             )
         ]
@@ -246,11 +276,11 @@ def _check_entry_nodes(specs: dict[str, NodeSpec], edges: list[dict[str, Any]]) 
 # ---------------------------------------------------------------------------
 
 
-def _unreachable_warnings(specs: dict[str, NodeSpec], edges: list[dict[str, Any]]) -> list[Issue]:
+def _unreachable_warnings(
+    specs: dict[str, NodeSpec], edges: list[dict[str, Any]], routable_ids: list[str], entries: list[str]
+) -> list[Issue]:
     """Nodes no path from the entry reaches. Harmless, but almost always a mistake."""
-    routable = set(_routable(specs))
-    targeted = {edge["target"] for edge in edges if edge["target"] in specs and edge["source"] in specs}
-    entries = [node_id for node_id in routable if node_id not in targeted]
+    routable = set(routable_ids)
     if len(entries) != 1:
         # Zero or several entries is already a graph error; a second complaint
         # about the same shape adds noise, not information.

@@ -55,6 +55,16 @@ class TestDraftSaves:
         assert draft.published is False
         assert published_version(flow).version == 1
 
+    def test_saving_does_not_reassign_created_by(self, tenancy):
+        """`created_by` records who opened the revision. Rewriting it on every
+        autosave made it name whoever last had the flow open instead."""
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome", user=tenancy.owner)
+        editor = tenancy.user_for("editor")
+
+        save_draft(flow, graph_for("send_message"), user=editor)
+
+        assert latest_version(flow).created_by_id == tenancy.owner.pk
+
     def test_the_saved_graph_is_what_comes_back(self, tenancy):
         flow = create_flow(workspace=tenancy.workspace, name="Welcome")
         graph = graph_for("condition")
@@ -66,11 +76,22 @@ class TestDraftSaves:
 
 @pytest.mark.django_db
 class TestPublish:
+    def test_it_returns_the_findings_it_validated_against(self, tenancy):
+        """The caller needs them for its response and publish has just computed
+        them; returning only the version made every caller validate twice."""
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+
+        result = publish(flow, user=tenancy.owner)
+
+        assert result.version.published is True
+        assert result.validation.is_publishable is True
+
     def test_publishing_flips_the_flag_and_activates_the_flow(self, tenancy):
         flow = create_flow(workspace=tenancy.workspace, name="Welcome")
         save_draft(flow, graph_for("send_message"), user=tenancy.owner)
 
-        version = publish(flow, user=tenancy.owner)
+        version = publish(flow, user=tenancy.owner).version
         flow.refresh_from_db()
 
         assert version.published is True
@@ -79,10 +100,10 @@ class TestPublish:
     def test_publishing_a_second_version_unpublishes_the_first(self, tenancy):
         flow = create_flow(workspace=tenancy.workspace, name="Welcome")
         save_draft(flow, graph_for("send_message"), user=tenancy.owner)
-        first = publish(flow, user=tenancy.owner)
+        first = publish(flow, user=tenancy.owner).version
         save_draft(flow, graph_for("action"), user=tenancy.owner)
 
-        second = publish(flow, user=tenancy.owner)
+        second = publish(flow, user=tenancy.owner).version
         first.refresh_from_db()
 
         assert (first.published, second.published) == (False, True)
@@ -132,7 +153,7 @@ class TestPublish:
         graph["edges"].append({"id": "loop", "source": "sink", "sourceHandle": "default", "target": "stranded"})
         save_draft(flow, graph, user=tenancy.owner)
 
-        assert publish(flow, user=tenancy.owner).published is True
+        assert publish(flow, user=tenancy.owner).version.published is True
 
 
 @pytest.mark.django_db
@@ -149,6 +170,17 @@ class TestListActions:
         assert copy.status == FlowStatus.DRAFT
         assert published_version(copy) is None
         assert latest_version(copy).graph_json == latest_version(flow).graph_json
+
+    def test_a_name_at_the_field_limit_still_gets_the_copy_suffix(self, tenancy):
+        """Slicing the composed string dropped the suffix entirely, so the copy
+        came out with a name identical to its original."""
+        flow = create_flow(workspace=tenancy.workspace, name="x" * 200)
+
+        copy = duplicate_flow(flow, user=tenancy.owner)
+
+        assert copy.name.endswith(" (copy)")
+        assert len(copy.name) == 200
+        assert copy.name != flow.name
 
     def test_archiving_and_restoring_track_whether_anything_is_published(self, tenancy):
         flow = create_flow(workspace=tenancy.workspace, name="Welcome")

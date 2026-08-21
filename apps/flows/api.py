@@ -36,14 +36,7 @@ from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
 from apps.flows.models import Flow
 from apps.flows.picklists import picklists
-from apps.flows.schema import (
-    MAX_EDGES,
-    MAX_GRAPH_BYTES,
-    MAX_GRAPH_DEPTH,
-    MAX_NODES,
-    SCHEMA_VERSION,
-    json_schema,
-)
+from apps.flows.schema import MAX_GRAPH_BYTES, empty_graph, json_schema, limits
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
 from apps.members.roles import WorkspaceRole
@@ -59,14 +52,6 @@ require_workspace_member = require_workspace_role(WorkspaceRole.VIEWER)
 # before json.loads, so an oversized document costs a length check rather than a
 # parse.
 MAX_REQUEST_BYTES = MAX_GRAPH_BYTES + 4096
-
-_LIMITS = {
-    "max_graph_bytes": MAX_GRAPH_BYTES,
-    "max_graph_depth": MAX_GRAPH_DEPTH,
-    "max_nodes": MAX_NODES,
-    "max_edges": MAX_EDGES,
-    "schema_version": SCHEMA_VERSION,
-}
 
 
 def _get_flow(request: WorkspaceRequest, flow_id: str) -> Flow:
@@ -151,7 +136,10 @@ def _detail_read(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     flow = _get_flow(request, flow_id)
     draft = services.latest_version(flow)
     published = services.published_version(flow)
-    graph = draft.graph_json if draft else {}
+    # empty_graph(), not {}: a flow with no version is still described by the
+    # schema this same response links to, and {} fails it — the client would get
+    # three envelope errors about a graph nobody authored.
+    graph = draft.graph_json if draft else empty_graph()
     result = services.validate_for_workspace(graph, request.workspace)
     return JsonResponse(
         {
@@ -161,7 +149,7 @@ def _detail_read(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             "published_version": published.as_dict() if published else None,
             "picklists": picklists(request.workspace),
             "validation": result.as_dict(),
-            "limits": _LIMITS,
+            "limits": limits(),
             "schema_url": reverse("flows:api_schema", kwargs={"workspace_id": workspace_id}),
         }
     )
@@ -177,7 +165,11 @@ def _detail_save(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
         return _error("missing_graph", 'The body must be {"graph": {...}}.', 400)
 
     flow = _get_flow(request, flow_id)
-    result = services.validate_for_workspace(payload["graph"], request.workspace)
+    # The body was measured on the way in and Django caches it, so this is free
+    # — and the graph is a subtree of that body, so it is a valid upper bound
+    # for the size cap. It saves re-serialising the whole graph on every
+    # two-second autosave.
+    result = services.validate_for_workspace(payload["graph"], request.workspace, known_size=len(request.body))
     if result.blocks_save:
         # Structural findings only: the document is too big, too deep, or
         # carries a key no node type declares. A half-wired graph — a dangling
@@ -200,11 +192,20 @@ def flow_publish(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     """Validate strictly and publish. Errors block; warnings do not."""
     flow = _get_flow(request, flow_id)
     try:
-        version = services.publish(flow, user=request.user)
+        published = services.publish(flow, user=request.user)
     except services.FlowValidationError as exc:
         return JsonResponse({"validation": exc.result.as_dict()}, status=422)
-    result = services.validate_for_workspace(version.graph_json, request.workspace)
-    return JsonResponse({"flow": _flow_payload(flow), "version": version.as_dict(), "validation": result.as_dict()})
+    # publish() hands back the findings it validated against, from inside the
+    # transaction that approved them. Re-running validation here would repeat
+    # the whole walk and could answer differently, since a channel could change
+    # between the commit and the second pass.
+    return JsonResponse(
+        {
+            "flow": _flow_payload(flow),
+            "version": published.version.as_dict(),
+            "validation": published.validation.as_dict(),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

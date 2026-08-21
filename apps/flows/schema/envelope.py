@@ -35,6 +35,7 @@ from apps.flows.schema.nodes import all_defs, node_spec
 
 __all__ = [
     "GRAPH_KEYS",
+    "limits",
     "MAX_EDGES",
     "MAX_GRAPH_BYTES",
     "MAX_GRAPH_DEPTH",
@@ -74,6 +75,23 @@ _EDGE_KEYS = ("id", "source", "sourceHandle", "target")
 # ``exec:{execution_id}:node:{node_id}``) and sticky-randomizer variable names
 # (``rand:<node_id>``), so they are an allowlist rather than "any string".
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def limits() -> dict[str, int]:
+    """The caps, as one dict.
+
+    The single source for both client-facing copies: the builder reads them from
+    ``GET /api/flows/<id>/`` and from ``x-brightbean.limits`` in the exported
+    schema, and two hand-maintained copies of the same four numbers is how those
+    two start disagreeing about what the server will accept.
+    """
+    return {
+        "max_graph_bytes": MAX_GRAPH_BYTES,
+        "max_graph_depth": MAX_GRAPH_DEPTH,
+        "max_nodes": MAX_NODES,
+        "max_edges": MAX_EDGES,
+        "schema_version": SCHEMA_VERSION,
+    }
 
 
 def empty_graph() -> dict[str, Any]:
@@ -118,27 +136,37 @@ def _issue(code: str, message: str, **address: Any) -> Issue:
     return Issue(code=code, message=message, stage="document", **address)
 
 
-def check_limits(graph: Any) -> list[Issue]:
-    """Size and depth caps (SECURITY-BASELINE §7), before anything walks the graph."""
-    size = graph_byte_size(graph)
-    if size < 0:
-        return [_issue("malformed_graph", "The graph is not a JSON document.")]
-    if size > MAX_GRAPH_BYTES:
-        return [
-            _issue(
-                "graph_too_large",
-                f"The graph is {size} bytes; the limit is {MAX_GRAPH_BYTES} bytes.",
-            )
-        ]
+def check_limits(graph: Any, *, known_size: int | None = None) -> list[Issue]:
+    """Size and depth caps (SECURITY-BASELINE §7), before anything walks the graph.
+
+    ``known_size`` is an **upper bound** the caller already has — the API knows
+    ``len(request.body)``, and the graph is a subtree of that body, so it cannot
+    be larger. Supplying it skips a full re-serialisation of a document that was
+    parsed from JSON milliseconds earlier, which on the two-second autosave loop
+    (SPEC §16) is the difference between serialising every save once and twice.
+    A bound that is itself over the cap falls through to measuring precisely, so
+    the error can name the real size.
+    """
+    if known_size is None or known_size > MAX_GRAPH_BYTES:
+        size = graph_byte_size(graph)
+        if size < 0:
+            return [_issue("malformed_graph", "The graph is not a JSON document.")]
+        if size > MAX_GRAPH_BYTES:
+            return [
+                _issue(
+                    "graph_too_large",
+                    f"The graph is {size} bytes; the limit is {MAX_GRAPH_BYTES} bytes.",
+                )
+            ]
     depth = json_depth(graph, limit=MAX_GRAPH_DEPTH)
     if depth > MAX_GRAPH_DEPTH:
         return [_issue("graph_too_deep", f"The graph nests deeper than the limit of {MAX_GRAPH_DEPTH} levels.")]
     return []
 
 
-def validate_document(graph: Any) -> list[Issue]:
+def validate_document(graph: Any, *, known_size: int | None = None) -> list[Issue]:
     """Limits, envelope shape and every node config. Findings here refuse the write."""
-    issues = check_limits(graph)
+    issues = check_limits(graph, known_size=known_size)
     if issues:
         return issues
 

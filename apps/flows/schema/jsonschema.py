@@ -246,9 +246,17 @@ def _check_object(
 def _check_variants(
     schema: dict[str, Any], value: Any, path: str, node_id: str | None, defs: dict[str, Any]
 ) -> list[Issue]:
-    """``oneOf``/``anyOf``, with the OpenAPI ``discriminator`` honoured."""
-    variants = schema.get("oneOf") or schema.get("anyOf") or []
-    variants = [v for v in variants if isinstance(v, dict)]
+    """``oneOf``/``anyOf``, with the OpenAPI ``discriminator`` honoured.
+
+    The two keywords are **not** interchangeable, and this module exists to
+    interpret fragments it did not write — ``CONDITION_SCHEMA`` arrives from
+    ``apps.contacts.conditions`` (contract 8). ``anyOf`` passes when at least one
+    branch matches; ``oneOf`` requires exactly one, and a value matching two is
+    an error rather than a pass.
+    """
+    exclusive = "oneOf" in schema
+    raw_variants = schema.get("oneOf") if exclusive else schema.get("anyOf")
+    variants = [v for v in raw_variants or [] if isinstance(v, dict)]
     if not variants:
         return []
 
@@ -259,12 +267,23 @@ def _check_variants(
             return selected
         return validate_instance(selected, value, path=path, node_id=node_id, defs=defs)
 
-    # No discriminator: report the near-miss rather than every alternative's
+    attempts = [validate_instance(variant, value, path=path, node_id=node_id, defs=defs) for variant in variants]
+    matched = sum(1 for attempt in attempts if not attempt)
+
+    if exclusive and matched > 1:
+        return [
+            _issue(
+                CODE_INVALID_VALUE,
+                f"Matches {matched} of the allowed alternatives; exactly one may apply.",
+                path,
+                node_id,
+            )
+        ]
+    if matched:
+        return []
+    # Nothing matched: report the near-miss rather than every alternative's
     # complaints. Fewest findings is the closest match by any useful measure,
     # and it keeps the panel's error list readable.
-    attempts = [validate_instance(variant, value, path=path, node_id=node_id, defs=defs) for variant in variants]
-    if any(not attempt for attempt in attempts):
-        return []
     return min(attempts, key=len)
 
 

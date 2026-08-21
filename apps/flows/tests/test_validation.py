@@ -350,6 +350,36 @@ class TestEntryNodes:
         assert {issue.code for issue in result.errors} == {"multiple_entry_nodes"}
         assert {issue.node_id for issue in result.errors} == {"subject", "second"}
 
+    def test_a_node_that_loops_to_itself_is_still_the_entry(self):
+        """SPEC §9.1 says "no incoming edges **from other nodes**". Counting a
+        self-edge made the commonest retry shape there is — a question whose
+        `timeout` handle re-asks itself — report "nowhere to start"."""
+        graph = empty_graph()
+        node = node_fixture("send_message", node_id="ask")
+        graph["nodes"] = [node]
+        graph["edges"] = [{"id": "retry", "source": "ask", "sourceHandle": "timeout", "target": "ask"}]
+
+        assert validate_graph(graph).errors == []
+
+    def test_an_edge_from_a_note_does_not_steal_entry_status(self):
+        """A note takes no part in routing, so an edge out of one must not make
+        its target look like it has an incoming edge — that reported a missing
+        entry node on top of the note error describing the actual mistake."""
+        graph = empty_graph()
+        graph["nodes"] = [node_fixture("send_message", node_id="ask"), node_fixture("note", node_id="memo")]
+        graph["edges"] = [{"id": "e1", "source": "memo", "sourceHandle": "default", "target": "ask"}]
+
+        assert "no_entry_node" not in codes(graph)
+
+    def test_a_cycle_back_to_the_entry_says_which_loop_to_break(self):
+        graph = graph_for("send_message")
+        graph["edges"].append({"id": "back", "source": "sink", "sourceHandle": "default", "target": "subject"})
+
+        result = validate_graph(graph)
+
+        assert [issue.code for issue in result.errors] == ["no_entry_node"]
+        assert "break the loop" in result.errors[0].message
+
     def test_a_cycle_downstream_of_the_entry_is_allowed(self):
         """SPEC §9.1 allows cycles outright — the runtime's blocks_since_pause
         cap is what protects against a runaway loop, not the validator."""

@@ -8,7 +8,7 @@ publish.
 import pytest
 
 from apps.common.platforms import Platform
-from apps.flows.capabilities import CAPABILITIES, capabilities_for, connected_platforms
+from apps.flows.capabilities import BLOCK_TYPES, CAPABILITIES, capabilities_for, connected_platforms
 from apps.flows.fixtures import button_heavy_graph, graph_for, node_fixture
 from apps.flows.schema import empty_graph, validate_graph
 from apps.flows.services import create_flow, publish, save_draft
@@ -20,6 +20,23 @@ class TestTheTable:
 
     def test_an_unknown_platform_has_none(self):
         assert capabilities_for("carrier_pigeon") is None
+
+    def test_supports_block_answers_only_about_block_types(self):
+        """It used to resolve any graph-supplied string against the dataclass, so
+        `max_text_len` and `inbound` both reported as supported "blocks"."""
+        telegram = capabilities_for(Platform.TELEGRAM)
+
+        assert telegram.supports_block("image") is True
+        assert telegram.supports_block("max_text_len") is False
+        assert telegram.supports_block("inbound") is False
+        assert telegram.supports_block("window_hours") is False
+
+    def test_the_block_type_set_matches_the_schema(self):
+        """Two lists of block types is one too many; this is what stops them
+        drifting apart."""
+        from apps.flows.schema.nodes import SHARED_DEFS
+
+        assert set(SHARED_DEFS["message_block"]["discriminator"]["mapping"]) == BLOCK_TYPES
 
     def test_sms_has_no_buttons_and_email_takes_nothing_inbound(self):
         assert capabilities_for(Platform.SMS).buttons is False
@@ -59,7 +76,7 @@ class TestButtonHeavyOnSms:
         flow = create_flow(workspace=tenancy.workspace, name="Menu")
         save_draft(flow, button_heavy_graph(), user=tenancy.owner)
 
-        assert publish(flow, user=tenancy.owner).published is True
+        assert publish(flow, user=tenancy.owner).version.published is True
 
 
 class TestLimits:

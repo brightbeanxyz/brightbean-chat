@@ -79,6 +79,17 @@ class TestRead:
         assert payload["limits"]["max_nodes"] == 500
         assert payload["schema_url"] == reverse("flows:api_schema", kwargs={"workspace_id": tenancy.workspace.pk})
 
+    def test_a_flow_with_no_version_still_returns_a_valid_envelope(self, tenancy, client_for, flow):
+        """`{}` is not a graph: it fails the very schema this response links to,
+        so the client got three envelope errors about a graph nobody wrote."""
+        FlowVersion.objects.for_workspace(tenancy.workspace).filter(flow=flow).delete()
+
+        payload = client_for(tenancy.owner).get(detail_url(tenancy, flow)).json()
+
+        assert payload["version"] is None
+        assert payload["graph"] == empty_graph()
+        assert [issue["code"] for issue in payload["validation"]["errors"]] == ["no_entry_node"]
+
 
 class TestPicklists:
     def test_every_key_is_always_present(self, tenancy, client_for, flow):

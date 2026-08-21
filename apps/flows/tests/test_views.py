@@ -7,6 +7,7 @@ from django.urls import reverse
 from apps.flows.fixtures import graph_for
 from apps.flows.models import Flow, FlowStatus
 from apps.flows.services import archive_flow, create_flow, publish, save_draft
+from apps.flows.views import UNFILED_VALUE
 from apps.members.roles import WorkspaceRole
 
 pytestmark = pytest.mark.django_db
@@ -238,7 +239,7 @@ class TestFolderFilter:
         create_flow(workspace=tenancy.workspace, name="Loose")
         create_flow(workspace=tenancy.workspace, name="Filed", folder="Onboarding")
 
-        body = client_for(tenancy.owner).get(list_url(tenancy), {"folder": "Unfiled"}).content.decode()
+        body = client_for(tenancy.owner).get(list_url(tenancy), {"folder": UNFILED_VALUE}).content.decode()
 
         assert "Loose" in body
         assert "Filed" not in body
@@ -251,14 +252,38 @@ class TestFolderFilter:
 
         response = client_for(tenancy.owner).get(list_url(tenancy), {"folder": "Onboarding"})
 
-        assert response.context["folders"] == ["Ecommerce", "Onboarding"]
+        assert response.context["folder_options"] == [
+            (UNFILED_VALUE, "Unfiled"),
+            ("Ecommerce", "Ecommerce"),
+            ("Onboarding", "Onboarding"),
+        ]
 
-    def test_an_unknown_status_filter_is_ignored_rather_than_matched(self, tenancy, client_for):
+    def test_an_unknown_status_filter_falls_back_to_the_default_view(self, tenancy, client_for):
+        """Not merely "ignored": an if/elif here let an unrecognised value skip
+        the archived exclusion too, so `?status=bogus` listed archived flows
+        among the live ones."""
         create_flow(workspace=tenancy.workspace, name="Welcome")
+        archive_flow(create_flow(workspace=tenancy.workspace, name="Retired"))
 
         body = client_for(tenancy.owner).get(list_url(tenancy), {"status": "'; DROP TABLE"}).content.decode()
 
         assert "Welcome" in body
+        assert "Retired" not in body
+
+    def test_a_folder_named_unfiled_is_still_reachable(self, tenancy, client_for):
+        """The filter value is a sentinel, not the label, so a real folder of
+        that name is not shadowed by the "no folder" pseudo-group."""
+        create_flow(workspace=tenancy.workspace, name="Filed there", folder="Unfiled")
+        create_flow(workspace=tenancy.workspace, name="Genuinely loose")
+        client = client_for(tenancy.owner)
+
+        by_name = client.get(list_url(tenancy), {"folder": "Unfiled"}).content.decode()
+        assert "Filed there" in by_name
+        assert "Genuinely loose" not in by_name
+
+        by_sentinel = client.get(list_url(tenancy), {"folder": UNFILED_VALUE}).content.decode()
+        assert "Genuinely loose" in by_sentinel
+        assert "Filed there" not in by_sentinel
 
 
 class TestRenameValidation:

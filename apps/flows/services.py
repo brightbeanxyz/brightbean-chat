@@ -18,6 +18,7 @@ at all — the caller has already resolved the flow through
 clause that was going to filter on the primary key anyway.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 from django.db import transaction
@@ -28,13 +29,17 @@ from apps.flows.schema import ValidationResult, empty_graph, validate_graph
 
 __all__ = [
     "FlowValidationError",
+    "PublishResult",
     "archive_flow",
     "create_flow",
     "duplicate_flow",
     "latest_version",
     "publish",
+    "published_version",
     "rename_flow",
+    "restore_flow",
     "save_draft",
+    "set_folder",
     "validate_for_workspace",
 ]
 
@@ -47,14 +52,31 @@ class FlowValidationError(Exception):
         self.result = result
 
 
-def validate_for_workspace(graph: Any, workspace: Any) -> ValidationResult:
+@dataclass(frozen=True)
+class PublishResult:
+    """What :func:`publish` did, and what validation said while doing it.
+
+    The findings come back with the version because the caller needs them for
+    its response and ``publish`` has just computed them. Returning only the
+    version made every caller re-validate the same graph a second time, outside
+    the transaction that had just approved it.
+    """
+
+    version: "FlowVersion"
+    validation: ValidationResult
+
+
+def validate_for_workspace(graph: Any, workspace: Any, *, known_size: int | None = None) -> ValidationResult:
     """Validate a graph with this workspace's connected platforms in view.
 
     The platform list is empty until issue #4 ships ``ChannelConnection``, which
     means no capability warning is emitted in a running deployment yet — see
     :func:`apps.flows.capabilities.connected_platforms`.
+
+    ``known_size`` lets a caller that already knows an upper bound on the
+    serialized size skip re-measuring it (:func:`apps.flows.schema.envelope.check_limits`).
     """
-    return validate_graph(graph, platforms=connected_platforms(workspace))
+    return validate_graph(graph, platforms=connected_platforms(workspace), known_size=known_size)
 
 
 def _versions(flow: Flow) -> Any:
@@ -118,9 +140,14 @@ def duplicate_flow(flow: Flow, *, user: Any = None) -> Flow:
     and inheriting it would put an unreviewed flow live under a new name.
     """
     source = latest_version(flow)
+    # Trim the name, not the composed string: slicing after the concatenation
+    # drops the suffix entirely for a name at the field limit, and the copy then
+    # has a name identical to its original.
+    suffix = " (copy)"
+    limit = Flow._meta.get_field("name").max_length or 200
     copy = Flow(
         workspace=flow.workspace,
-        name=f"{flow.name} (copy)"[:200],
+        name=f"{flow.name[: limit - len(suffix)]}{suffix}",
         folder=flow.folder,
         status=FlowStatus.DRAFT,
     )
@@ -146,9 +173,12 @@ def save_draft(flow: Flow, graph_json: Any, *, user: Any = None) -> FlowVersion:
     latest = _versions(locked).order_by("-version").first()
 
     if latest is not None and not latest.published:
+        # `created_by` is not touched. It records who opened this revision, and
+        # SPEC §5 gives the column no other meaning; rewriting it on every
+        # autosave would make it name whoever last had the flow open, which
+        # during ordinary co-editing is not the author of anything.
         latest.graph_json = graph_json
-        latest.created_by = user or latest.created_by
-        latest.save(update_fields=["graph_json", "created_by", "updated_at"])
+        latest.save(update_fields=["graph_json", "updated_at"])
         return latest
 
     draft = FlowVersion(
@@ -163,7 +193,7 @@ def save_draft(flow: Flow, graph_json: Any, *, user: Any = None) -> FlowVersion:
 
 
 @transaction.atomic
-def publish(flow: Flow, *, user: Any = None) -> FlowVersion:
+def publish(flow: Flow, *, user: Any = None) -> PublishResult:
     """Validate strictly and publish the newest version. Raises on any error.
 
     Warnings do not stop a publish — SPEC §9.1 is explicit that capability
@@ -191,4 +221,4 @@ def publish(flow: Flow, *, user: Any = None) -> FlowVersion:
     # The caller holds the unlocked instance; keep it honest rather than making
     # every call site remember to refresh.
     flow.status = locked.status
-    return target
+    return PublishResult(version=target, validation=result)
