@@ -51,6 +51,7 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "target_id": lambda t: t.workspace.pk,
     "membership_id": lambda t: t.org_membership.pk,
     "invitation_id": lambda t: _victim_invitation(t).pk,
+    "flow_id": lambda t: _victim_flow(t).pk,
 }
 
 #: Kwargs that need *a* value but do not identify a tenant. A route made only of
@@ -68,6 +69,23 @@ WAIVED_ROUTES: dict[str, str] = {
         "Covered by apps/members/tests/test_invitations.py."
     ),
 }
+
+
+def _victim_flow(tenancy: Tenancy) -> Any:
+    """A flow owned by the victim, created on demand.
+
+    The sweep reaches these routes through the victim's ``workspace_id`` too, so
+    the middleware answers first; ``apps/flows/tests/test_api.py`` covers the
+    sharper case this cannot — the attacker's *own* workspace id paired with the
+    victim's flow id, where only ``get_scoped_object_or_404`` stands in the way.
+    """
+    from apps.flows.models import Flow
+    from apps.flows.services import create_flow
+
+    flow = Flow.objects.for_workspace(tenancy.workspace).first()
+    if flow is None:
+        flow = create_flow(workspace=tenancy.workspace, name="Victim onboarding")
+    return flow
 
 
 def _victim_invitation(tenancy: Tenancy) -> Any:

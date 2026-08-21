@@ -150,6 +150,7 @@ LOCAL_APPS = [
     "apps.workspaces",
     "apps.members",
     "apps.credentials",
+    "apps.flows",
     "theme",
 ]
 
