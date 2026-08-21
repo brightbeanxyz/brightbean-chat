@@ -39,6 +39,7 @@ __all__ = [
     "ban_seconds",
     "is_banned",
     "json_depth_limit",
+    "json_payload",
     "max_json_depth",
     "parse_json_body",
     "record_signature_failure",
@@ -67,7 +68,6 @@ DEFAULT_SIGNATURE_FAILURE_WINDOW = 300
 DEFAULT_SIGNATURE_BAN_SECONDS = 900
 
 _IP_NAMESPACE = "webhook-sig-ip"
-_CONNECTION_NAMESPACE = "webhook-sig-conn"
 
 
 def _setting(name: str, default: int) -> int:
@@ -138,46 +138,53 @@ def _ban_key(namespace: str, identity: str) -> str:
     return f"{namespace}:ban:{digest}"
 
 
-def is_banned(request: HttpRequest, connection_id: Any = None) -> bool:
-    """True when this source is serving a signature-failure ban.
+def is_banned(request: HttpRequest) -> bool:
+    """True when this **source** is serving a signature-failure ban.
 
-    One indexed lookup on a primary-key-like unique column, run before any HMAC
-    work — a caller who is already banned costs almost nothing.
+    One indexed lookup on a unique column, run before any HMAC work — a caller
+    who is already banned costs almost nothing.
     """
-    now = timezone.now()
-    keys = [_ban_key(_IP_NAMESPACE, client_identity(request))]
-    if connection_id is not None:
-        keys.append(_ban_key(_CONNECTION_NAMESPACE, str(connection_id)))
-    return RateLimitCounter.objects.filter(key__in=keys, expires_at__gt=now).exists()
+    return RateLimitCounter.objects.filter(
+        key=_ban_key(_IP_NAMESPACE, client_identity(request)),
+        expires_at__gt=timezone.now(),
+    ).exists()
 
 
 def record_signature_failure(request: HttpRequest, connection_id: Any = None) -> bool:
-    """Count one signature failure; return True when it triggered a ban.
+    """Count one signature failure against the **source**; True if it banned it.
 
-    Counted per source **and** per connection. Per source stops one host
-    grinding through secrets; per connection stops a distributed attempt at one
-    workspace's connection, which per-source counting alone would miss.
+    Counted per client address and nothing else. An earlier version also counted
+    per connection, and that was backwards: the connection id travels in the
+    webhook URL, which the operator pastes into the provider's console, so it is
+    known to the provider, sits in provider-side logs and is rendered on the
+    settings page. Anyone holding it could spend a handful of wrong signatures
+    and get the *victim's* connection refused — a ban keyed on the target rather
+    than on whoever is attacking it.
 
-    Only failures are counted. A busy, correctly configured connection never
-    approaches the limit, which is what keeps this from becoming an accidental
-    throughput cap on a live deployment.
+    Nor did it buy anything. What protects a webhook secret is its 256 bits of
+    entropy, not a counter: an attacker distributed across enough hosts to evade
+    per-source banning is still not going to guess one, and every host they use
+    is banned after ``WEBHOOK_SIGNATURE_FAILURE_LIMIT`` tries.
+
+    ``connection_id`` is still accepted, and is logged rather than counted, so
+    an operator can see *which* connection is misconfigured.
     """
     limit = _setting("WEBHOOK_SIGNATURE_FAILURE_LIMIT", DEFAULT_SIGNATURE_FAILURE_LIMIT)
     window = _setting("WEBHOOK_SIGNATURE_FAILURE_WINDOW_SECONDS", DEFAULT_SIGNATURE_FAILURE_WINDOW)
 
-    banned = False
-    targets = [(_IP_NAMESPACE, client_identity(request))]
-    if connection_id is not None:
-        targets.append((_CONNECTION_NAMESPACE, str(connection_id)))
-
-    for namespace, identity in targets:
-        if hit(window_key(namespace, identity, window_seconds=window), limit=limit, window_seconds=window):
-            _ban(namespace, identity)
-            banned = True
+    identity = client_identity(request)
+    banned = hit(
+        window_key(_IP_NAMESPACE, identity, window_seconds=window),
+        limit=limit,
+        window_seconds=window,
+    )
+    if banned:
+        _ban(_IP_NAMESPACE, identity)
 
     logger.warning(
-        "Webhook signature verification failed (path=%s, banned=%s)",
+        "Webhook signature verification failed (path=%s, connection=%s, source_banned=%s)",
         request.path,
+        connection_id,
         banned,
     )
     return banned
@@ -291,6 +298,31 @@ def scrub_nulls(value: Any) -> Any:
     if isinstance(value, list):
         return [scrub_nulls(item) for item in value]
     return value
+
+
+#: Sentinel for "not parsed yet", so a body that legitimately parses to None is
+#: not re-parsed on every access.
+_UNPARSED = object()
+
+
+def json_payload(request: HttpRequest) -> dict[str, Any] | None:
+    """The request's JSON body, parsed at most once.
+
+    The endpoint parses to decide whether a malformed body is a 400, and the
+    adapter parses again to read it — twice through up to
+    ``WEBHOOK_MAX_BODY_BYTES`` on the path SPEC §7.1 budgets at 1.5 s of wall
+    clock. Caching on the request rather than threading the payload through
+    :meth:`Adapter.parse_events` keeps that method's signature exactly as SPEC
+    §6.1 writes it, which is the one thing six future adapters will copy.
+
+    Adapters should call this instead of :func:`parse_json_body`.
+    """
+    cached = getattr(request, "_webhook_json_payload", _UNPARSED)
+    if cached is not _UNPARSED:
+        return cached  # type: ignore[return-value]
+    payload = parse_json_body(request.body)
+    request._webhook_json_payload = payload  # type: ignore[attr-defined]
+    return payload
 
 
 def parse_json_body(raw: bytes) -> dict[str, Any] | None:

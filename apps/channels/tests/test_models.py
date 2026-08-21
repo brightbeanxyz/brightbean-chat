@@ -146,13 +146,3 @@ class TestWebhookEventLog:
         WebhookEventLog.objects.create(connection=connection, platform=connection.platform, provider_event_id="e1")
         connection.delete()
         assert WebhookEventLog.objects.count() == 0
-
-    def test_mark_records_the_outcome(self, tenancy: Any) -> None:
-        connection = make_connection(tenancy.workspace)
-        row = WebhookEventLog.objects.create(
-            connection=connection, platform=connection.platform, provider_event_id="e1"
-        )
-        row.mark("processed")
-        row.refresh_from_db()
-        assert row.status == "processed"
-        assert row.processed_at is not None

@@ -177,6 +177,41 @@ class TestLifecycle:
         assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
 
 
+class TestEmailWebhookUrl:
+    """The provider segment tells the adapter which body shape to expect."""
+
+    @staticmethod
+    def _email(workspace: Any, **credentials: Any) -> ChannelConnection:
+        return ChannelConnection.objects.create(
+            workspace=workspace,
+            platform=Platform.EMAIL,
+            display_name="Sending domain",
+            external_id="mail.example.test",
+            # EncryptedJSONField stores JSON; django-stubs types the descriptor
+            # from its TextField base, so the dict is correct at runtime.
+            credentials=credentials,  # type: ignore[misc]
+        )
+
+    def test_it_defaults_to_smtp(self, tenancy: Any, client_for: Any) -> None:
+        email = self._email(tenancy.workspace)
+        body = client_for(tenancy.owner).get(url_for("detail", tenancy, email)).content.decode()
+        assert f"/webhooks/email/smtp/{email.pk}/" in body
+
+    def test_it_follows_the_connection_rather_than_a_hardcoded_literal(self, tenancy: Any, client_for: Any) -> None:
+        """A Resend deployment used to be shown an smtp URL, which routes but
+        hands the adapter the wrong shape hint."""
+        email = self._email(tenancy.workspace, provider="resend")
+        body = client_for(tenancy.owner).get(url_for("detail", tenancy, email)).content.decode()
+        assert f"/webhooks/email/resend/{email.pk}/" in body
+
+    @pytest.mark.parametrize("provider", ["../../etc", "", None, 123, "has space"])
+    def test_a_hostile_or_unusable_provider_falls_back(self, tenancy: Any, client_for: Any, provider: Any) -> None:
+        """It lands in a URL, so anything not a plain word is refused."""
+        email = self._email(tenancy.workspace, provider=provider)
+        body = client_for(tenancy.owner).get(url_for("detail", tenancy, email)).content.decode()
+        assert f"/webhooks/email/smtp/{email.pk}/" in body
+
+
 class TestListing:
     def test_only_this_workspaces_connections_are_listed(
         self, tenancy: Any, other_tenancy: Any, client_for: Any, connection: ChannelConnection

@@ -117,6 +117,14 @@ class TestSignatureFailureThrottle:
     def _request(ip: str = "203.0.113.5") -> Any:
         return RequestFactory().post("/webhooks/telegram/", REMOTE_ADDR=ip)
 
+    @override_settings(WEBHOOK_SIGNATURE_FAILURE_LIMIT=1)
+    def test_the_offending_source_is_still_banned(self) -> None:
+        """Dropping the per-connection ban must not weaken the per-source one."""
+        attacker = self._request("203.0.113.5")
+        security.record_signature_failure(attacker, "11111111-1111-1111-1111-111111111111")
+        security.record_signature_failure(attacker, "11111111-1111-1111-1111-111111111111")
+        assert security.is_banned(attacker) is True
+
     @override_settings(WEBHOOK_SIGNATURE_FAILURE_LIMIT=3)
     def test_a_source_is_banned_after_the_limit(self) -> None:
         request = self._request()
@@ -136,14 +144,24 @@ class TestSignatureFailureThrottle:
         assert security.is_banned(bystander) is False
 
     @override_settings(WEBHOOK_SIGNATURE_FAILURE_LIMIT=2)
-    def test_a_connection_is_banned_independently_of_the_source(self) -> None:
-        """Distributed guessing at one connection would slip past per-IP counting."""
+    def test_one_party_cannot_get_another_partys_connection_banned(self) -> None:
+        """The ban is keyed on the source, never on the connection it targets.
+
+        The connection id travels in the webhook URL, which the operator pastes
+        into the provider's console — so it is known to the provider, sits in
+        provider-side logs and is rendered on the settings page. An earlier
+        version also counted per connection, which meant anyone holding that id
+        could spend a few wrong signatures and have the *victim's* real
+        deliveries refused. Nothing an attacker sends may make a legitimate
+        delivery for that connection fail.
+        """
         connection_id = "11111111-1111-1111-1111-111111111111"
-        for index in range(5):
+        for index in range(10):
             security.record_signature_failure(self._request(f"203.0.113.{index}"), connection_id)
-        fresh_source = self._request("198.51.100.9")
-        assert security.is_banned(fresh_source) is False
-        assert security.is_banned(fresh_source, connection_id) is True
+
+        # The provider delivering for that same connection, from its own address.
+        provider = self._request("198.51.100.9")
+        assert security.is_banned(provider) is False
 
     @override_settings(WEBHOOK_SIGNATURE_BAN_SECONDS=-1, WEBHOOK_SIGNATURE_FAILURE_LIMIT=1)
     def test_the_ban_lifts_when_it_expires(self) -> None:

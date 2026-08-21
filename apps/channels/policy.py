@@ -79,11 +79,6 @@ _MESSENGER_TAG_TEXT = (
     "under a message tag violates Meta's policy and can disable the page."
 )
 
-_HUMAN_AGENT_TEXT = (
-    "HUMAN_AGENT extends the window for a human agent's reply only. Automation may never use it (SPEC §8)."
-)
-
-
 POLICIES: dict[str, PlatformPolicy] = {
     # SPEC §6.2: no messaging window at all. outside_window is unreachable —
     # has_window() is False — and is "blocked" rather than something permissive
@@ -162,8 +157,3 @@ def policy_for(platform: str) -> PlatformPolicy:
             f"apps.common.platforms.Platform, apps.channels.capabilities.CAPABILITIES "
             f"and this table together."
         ) from None
-
-
-# Referenced by the Instagram entry's docstring above and by L3-A's compliance
-# engine when it explains a HUMAN_AGENT denial to an operator.
-HUMAN_AGENT_ALLOWED_USE_TEXT = _HUMAN_AGENT_TEXT

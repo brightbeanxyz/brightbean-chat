@@ -59,7 +59,11 @@ class FakeAdapter(Adapter):
 
     def parse_events(self, request: HttpRequest, connection: ChannelConnection) -> list[NormalizedEvent]:
         """Defensive by contract: anything unrecognisable is dropped, not raised."""
-        payload = security.parse_json_body(request.body) or {}
+        # json_payload, not parse_json_body: the endpoint has already parsed
+        # this body to validate it, and this reads that result instead of
+        # decoding up to WEBHOOK_MAX_BODY_BYTES a second time. Real adapters
+        # should copy this.
+        payload = security.json_payload(request) or {}
         raw_events = payload.get("events")
         if not isinstance(raw_events, list):
             return []
@@ -78,7 +82,10 @@ class FakeAdapter(Adapter):
                     type=EventType.MESSAGE,
                     connection=connection,
                     platform_user_id=user[:200],
-                    provider_event_id=event_id[:200],
+                    # Not truncated here: the framework hashes an id that does
+                    # not fit rather than cutting it, so an adapter that trims
+                    # first would reintroduce the collision that fix removed.
+                    provider_event_id=event_id,
                     timestamp=datetime.now(UTC),
                     payload=EventPayload(text=text if isinstance(text, str) else ""),
                     raw=item,

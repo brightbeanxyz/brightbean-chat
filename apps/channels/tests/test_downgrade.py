@@ -258,6 +258,48 @@ class TestTextLength:
         assert all(len(text) <= 30 for text in texts(result.messages[0]))
 
 
+class TestSplittingEdgeCases:
+    """Regressions in _split_text, which is pure and has no way to complain."""
+
+    def test_leading_whitespace_does_not_produce_an_empty_message(self) -> None:
+        """An empty TextBlock is a blank message, which platforms reject."""
+        caps = Capabilities(max_text_len=10)
+        result = downgrade(OutboundMessage(blocks=(TextBlock(text=" " * 10 + "abcdefghijk"),)), caps)
+        parts = texts(result.messages[0])
+        assert parts == ["abcdefghij", "k"]
+        assert all(part.strip() for part in parts)
+
+    @pytest.mark.parametrize("limit", [0, -1])
+    def test_a_non_positive_limit_terminates(self, limit: int) -> None:
+        """limit <= 0 used to leave `remaining` unchanged and spin forever."""
+        caps = Capabilities(max_text_len=limit)
+        result = downgrade(OutboundMessage(blocks=(TextBlock(text="abc"),)), caps)
+        assert texts(result.messages[0]) == ["a", "b", "c"]
+
+    def test_an_all_whitespace_block_drops_out_rather_than_splitting_into_blanks(self) -> None:
+        caps = Capabilities(max_text_len=4)
+        result = downgrade(OutboundMessage(blocks=(TextBlock(text=" " * 20),)), caps)
+        assert texts(result.messages[0]) == []
+
+
+class TestQuickReplyRoom:
+    def test_a_second_resolve_does_not_exceed_the_cap(self) -> None:
+        """resolve_quick_replies must count what the message already holds."""
+        from apps.channels.downgrade import _Pending, _State
+
+        caps = Capabilities(quick_replies=True, max_quick_replies=2, max_text_len=999)
+        state = _State(caps)
+        target = _Pending()
+        first = (QuickReply(id="a", label="A"), QuickReply(id="b", label="B"))
+        second = (QuickReply(id="c", label="C"),)
+
+        state.resolve_quick_replies(first, target)
+        state.resolve_quick_replies(second, target)
+
+        assert len(target.quick_replies) == 2
+        assert state.numeric_replies == {"1": "c"}
+
+
 class TestIdempotence:
     """Downgrading twice equals downgrading once — the send path may retry."""
 

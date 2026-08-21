@@ -26,7 +26,6 @@ to hit.
 """
 
 import secrets
-from typing import Any
 
 from django.db import models
 from django.utils import timezone
@@ -136,10 +135,6 @@ class ChannelConnection(WorkspaceScopedModel):
     def __str__(self) -> str:
         return f"{self.get_platform_display()} · {self.display_name}"
 
-    @property
-    def is_active(self) -> bool:
-        return self.status == ConnectionStatus.ACTIVE
-
     def rotate_webhook_secret(self) -> str:
         """Mint a new secret, store both halves, and return the plaintext **once**.
 
@@ -235,11 +230,3 @@ class WebhookEventLog(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.platform}:{self.provider_event_id} ({self.status})"
-
-    def mark(self, status: str, **extra: Any) -> None:
-        """Record the outcome of processing, touching only what changed."""
-        self.status = status
-        self.processed_at = timezone.now()
-        for name, value in extra.items():
-            setattr(self, name, value)
-        self.save(update_fields=["status", "processed_at", "updated_at", *extra])

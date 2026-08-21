@@ -39,8 +39,10 @@ processor blowing up
 CSRF is exempt because there is no session: the signature is the credential.
 """
 
+import hashlib
 import json
 import logging
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -72,6 +74,9 @@ MAX_RAW_BYTES = 16 * 1024
 #: unauthenticated reflected-content endpoint from being useful for anything.
 MAX_CHALLENGE_LENGTH = 64
 
+#: The ``provider_event_id`` column's width. Longer ids are hashed, not cut.
+MAX_EVENT_ID_LENGTH = 200
+
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -85,7 +90,8 @@ def platform_webhook(request: HttpRequest, platform: str) -> HttpResponse:
     if platform not in Platform.values:
         raise Http404("No such platform.")
     if request.method == "GET":
-        return _hub_challenge(request, platform)
+        banned = _banned_response(request)
+        return banned if banned is not None else _hub_challenge(request, platform)
     early = _reject_early(request, connection_id=None)
     if early is not None:
         return early
@@ -231,24 +237,27 @@ def _ingest(
 
     if connection is None:
         connection = adapter.resolve_connection(request, raw_body)
-    if connection is not None and connection.status == ConnectionStatus.DISABLED:
-        # Enforced here rather than trusting each adapter's resolve_connection
-        # to remember: "disabled" has to mean disabled on every route, and a
-        # per-adapter check is one an adapter author can omit without anything
-        # noticing until a switched-off channel keeps ingesting.
+    if connection is not None and not _usable(connection, platform):
         connection = None
     if connection is None or not adapter.verify_webhook(request, connection):
         security.record_signature_failure(request, connection.pk if connection else None)
         return _forbidden()
 
-    if security.max_json_depth(raw_body) > security.json_depth_limit():
-        return HttpResponse("Bad request", status=400)
-    if adapter.webhook_content == "json" and security.parse_json_body(raw_body) is None:
-        # Sanctioned by SPEC §7.1 — "malformed payloads per platform
-        # requirements" — and correct here: a body that is not the JSON the
-        # platform promised is not something a retry will fix, but a 400 is what
-        # every platform's own documentation says to send.
-        return HttpResponse("Bad request", status=400)
+    if adapter.webhook_content == "json":
+        # Both checks are JSON-specific, and both are a full pass over the body.
+        # A form-encoded delivery (Twilio) has no brackets to nest and no JSON to
+        # fail on, so running them would be a scan of up to WEBHOOK_MAX_BODY_BYTES
+        # to learn nothing.
+        if security.max_json_depth(raw_body) > security.json_depth_limit():
+            return HttpResponse("Bad request", status=400)
+        if security.json_payload(request) is None:
+            # Sanctioned by SPEC §7.1 — "malformed payloads per platform
+            # requirements" — and correct here: a body that is not the JSON the
+            # platform promised is not something a retry will fix, but a 400 is
+            # what every platform's own documentation says to send. The parse is
+            # cached on the request, so the adapter reads it rather than
+            # repeating it.
+            return HttpResponse("Bad request", status=400)
 
     events = _parse_events(adapter, request, connection)
     _record(connection, events)
@@ -256,24 +265,57 @@ def _ingest(
 
 
 def _reject_early(request: HttpRequest, *, connection_id: Any) -> HttpResponse | None:
-    """Size and ban checks — everything that must precede real work.
-
-    ``connection_id`` is None on the shared ``/webhooks/<platform>/`` route,
-    where the connection is not known until the body has been read: only the
-    per-source ban applies there. That is the right split rather than a gap —
-    the per-connection counter exists for distributed guessing against a
-    connection id an attacker already has, and an id only appears in the URL on
-    the per-connection routes.
-    """
+    """Size and ban checks — everything that must precede real work."""
     if security.body_too_large(request):
         # No body read, no query run. The whole point of checking Content-Length
         # first is that this costs nothing to refuse.
         return HttpResponse("Payload too large", status=413)
-    if security.is_banned(request, connection_id):
-        response = HttpResponse("Too many requests", status=429)
-        response["Retry-After"] = str(security.ban_seconds())
-        return response
-    return None
+    return _banned_response(request)
+
+
+def _banned_response(request: HttpRequest) -> HttpResponse | None:
+    """429 when this source is serving a ban, otherwise None.
+
+    Split out from :func:`_reject_early` so the ``hub.challenge`` GET can use it
+    too. That path records signature failures for a wrong verify token, and for
+    a while it was the one entry point that never *checked* a ban — so a caller
+    could be banned by guessing on GET, have every POST refused, and go on
+    guessing on GET indefinitely. It cannot share ``_reject_early`` wholesale
+    because a GET carries no ``Content-Length`` and the size check refuses that
+    by design.
+    """
+    if not security.is_banned(request):
+        return None
+    response = HttpResponse("Too many requests", status=429)
+    response["Retry-After"] = str(security.ban_seconds())
+    return response
+
+
+def _usable(connection: ChannelConnection, platform: str) -> bool:
+    """Whether a resolved connection may be ingested into on this route.
+
+    Both checks live here rather than in each adapter's ``resolve_connection``,
+    for the same reason: they have to hold on every route, and a per-adapter
+    check is one an adapter author can omit with nothing noticing until a
+    switched-off channel keeps ingesting, or until a delivery lands on the wrong
+    platform's connection.
+
+    The platform check matters because the resolution helper this framework
+    advertises — ``ChannelConnection.resolve_by_webhook_secret`` — matches on the
+    secret digest alone, across every platform and every workspace. A connection
+    reached through the shared ``/webhooks/<platform>/`` URL must belong to the
+    platform whose adapter is about to verify and parse it.
+    """
+    if connection.status == ConnectionStatus.DISABLED:
+        return False
+    if connection.platform != platform:
+        logger.warning(
+            "Adapter for %s resolved a %s connection; refusing it",
+            platform,
+            connection.platform,
+        )
+        return False
+    return True
 
 
 def _forbidden() -> HttpResponse:
@@ -316,35 +358,124 @@ def _parse_events(adapter: Adapter, request: HttpRequest, connection: ChannelCon
         return []
 
 
+class _LogOutcome(StrEnum):
+    """Why one event did or did not get a log row.
+
+    Three unrelated things used to be reported as "duplicate", which is the one
+    of the three an operator can safely ignore. Someone reading the log while
+    messages went missing would conclude the platform was redelivering and never
+    find the parser bug or the rejected column value.
+    """
+
+    STORED = "stored"
+    DUPLICATE = "duplicate"
+    NO_ID = "no_id"
+    REJECTED = "rejected"
+
+
 def _record(connection: ChannelConnection, events: list[NormalizedEvent]) -> None:
-    """Dedup, persist, dispatch, and mark the outcome (SPEC §7.1 steps 2–4)."""
+    """Dedup, persist, dispatch, and mark the outcome (SPEC §7.1 steps 2-4).
+
+    Events are grouped by the connection they name rather than all being
+    attributed to the one that carried the delivery. One Meta delivery
+    legitimately spans several pages — several ChannelConnections, all signed
+    with the same app secret — and ``NormalizedEvent`` carries its own
+    ``connection`` precisely so an adapter can say which. Forcing the batch onto
+    the delivery-level connection logged and dispatched page B's messages as
+    page A's, which on a deployment hosting both is a cross-workspace
+    misattribution.
+
+    ``connection`` remains the fallback and the authority: an event naming a
+    connection on another platform is dropped by :func:`_event_connection`,
+    because the signature was verified against this platform's adapter.
+    """
+    grouped: dict[Any, list[NormalizedEvent]] = {}
+    owners: dict[Any, ChannelConnection] = {}
+    for event in events:
+        owner = _event_connection(event, connection)
+        if owner is None:
+            continue
+        grouped.setdefault(owner.pk, []).append(event)
+        owners[owner.pk] = owner
+
+    for pk, group in grouped.items():
+        _record_for(owners[pk], group)
+
+
+def _event_connection(event: NormalizedEvent, verified: ChannelConnection) -> ChannelConnection | None:
+    """Which connection an event belongs to, or None to drop it."""
+    owner = getattr(event, "connection", None)
+    if owner is None:
+        return verified
+    if owner.pk == verified.pk:
+        return verified
+    if owner.platform != verified.platform:
+        # The signature was checked against `verified`'s platform adapter; an
+        # event claiming a connection on some other platform was not covered by
+        # that check.
+        logger.warning(
+            "Dropped an event naming a %s connection on a %s delivery",
+            owner.platform,
+            verified.platform,
+        )
+        return None
+    return owner
+
+
+def _record_for(connection: ChannelConnection, events: list[NormalizedEvent]) -> None:
+    """Persist and dispatch one connection's share of a delivery."""
     fresh: list[NormalizedEvent] = []
     rows: list[WebhookEventLog] = []
-    duplicates = 0
+    counts: dict[str, int] = {}
 
     for event in events:
-        row = _log_event(connection, event)
+        row, outcome = _log_event(connection, event)
+        counts[outcome] = counts.get(outcome, 0) + 1
         if row is None:
-            duplicates += 1
             continue
         fresh.append(event)
         rows.append(row)
 
-    if duplicates:
-        logger.info("Skipped %s duplicate event(s) on connection %s", duplicates, connection.pk)
+    for outcome, message in (
+        (_LogOutcome.DUPLICATE, "Skipped %s duplicate event(s) on connection %s"),
+        (_LogOutcome.NO_ID, "Dropped %s event(s) with no usable id on connection %s"),
+        (_LogOutcome.REJECTED, "Dropped %s event(s) the database refused on connection %s"),
+    ):
+        if counts.get(outcome):
+            logger.info(message, counts[outcome], connection.pk)
 
     ok = ingest.process_events(connection, fresh)
 
     if rows:
+        now = timezone.now()
         WebhookEventLog.objects.filter(pk__in=[row.pk for row in rows]).update(
             status=WebhookEventStatus.PROCESSED if ok else WebhookEventStatus.FAILED,
-            processed_at=timezone.now(),
-            updated_at=timezone.now(),
+            processed_at=now,
+            updated_at=now,
         )
 
 
-def _log_event(connection: ChannelConnection, event: NormalizedEvent) -> WebhookEventLog | None:
-    """Insert one event-log row, or return None because it is a duplicate.
+def _dedup_id(raw_id: str) -> str:
+    """The value the ``(connection, provider_event_id)`` constraint sees.
+
+    Scrubbed **before** it is tested for emptiness, not after: an id of nothing
+    but NUL bytes is truthy, so scrubbing later let it past the "no id" guard and
+    stored it as the empty string — after which every later event whose id also
+    scrubbed to empty collided with it and was silently discarded as a duplicate.
+
+    Over-long ids are hashed rather than truncated. Truncating narrows the dedup
+    key without saying so, and two ids agreeing in their first 200 characters
+    would then collide and the second event would vanish. A digest keeps them
+    distinct and fits the column.
+    """
+    scrubbed = security.scrub_nulls(raw_id)
+    if len(scrubbed) <= MAX_EVENT_ID_LENGTH:
+        return scrubbed
+    return f"sha256:{hashlib.sha256(scrubbed.encode('utf-8')).hexdigest()}"
+
+
+def _log_event(connection: ChannelConnection, event: NormalizedEvent) -> tuple[WebhookEventLog | None, str]:
+    """Insert one event-log row; report what happened to it.
 
     The unique constraint on ``(connection, provider_event_id)`` does the work,
     which is what makes this correct under concurrency: two simultaneous
@@ -357,32 +488,32 @@ def _log_event(connection: ChannelConnection, event: NormalizedEvent) -> Webhook
     transaction unusable, so without ``atomic()`` here the first duplicate in a
     batch would poison every write after it.
     """
-    if not event.provider_event_id:
+    provider_event_id = _dedup_id(event.provider_event_id)
+    if not provider_event_id:
         logger.warning(
-            "Adapter for %s produced an event with no provider_event_id; it cannot be deduplicated. "
-            "Use apps.channels.ingest.synthetic_event_id.",
+            "Adapter for %s produced an event with no usable provider_event_id; it cannot be "
+            "deduplicated. Use apps.channels.ingest.synthetic_event_id.",
             connection.platform,
         )
-        return None
+        return None, _LogOutcome.NO_ID
     try:
         with transaction.atomic():
-            return WebhookEventLog.objects.create(
+            row = WebhookEventLog.objects.create(
                 connection=connection,
                 platform=connection.platform,
-                provider_event_id=security.scrub_nulls(event.provider_event_id)[:200],
+                provider_event_id=provider_event_id,
                 raw=_bounded_raw(event.raw),
                 status=WebhookEventStatus.RECEIVED,
             )
+        return row, _LogOutcome.STORED
     except IntegrityError:
-        return None
-    except DataError:
-        # The database refused the value itself — a NUL byte that survived
-        # scrubbing, a numeric out of range, something not yet imagined.
-        # scrub_nulls handles the case we know about; this is the backstop that
-        # keeps an exotic payload from turning into a 500 on the one endpoint
-        # strangers can reach. The event is dropped, loudly.
+        return None, _LogOutcome.DUPLICATE
+    except (DataError, TypeError, ValueError):
+        # The database or the JSON encoder refused the value itself. This is the
+        # backstop that keeps an exotic payload from turning into a 500 on the
+        # one endpoint strangers can reach. The event is dropped, loudly.
         logger.exception("Database refused a webhook event on connection %s", connection.pk)
-        return None
+        return None, _LogOutcome.REJECTED
 
 
 def _bounded_raw(raw: Any) -> dict[str, Any]:
@@ -395,10 +526,19 @@ def _bounded_raw(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
     try:
-        encoded = json.dumps(raw, default=str)
+        # No `default=str`. The lenient form serialised values the JSONField's
+        # own strict encoder then refused, so a raw payload holding, say, a
+        # datetime passed the size check and raised TypeError on the way to the
+        # column — past both except clauses in _log_event, and out as a 500.
+        # The check now fails exactly where the store would.
+        encoded = json.dumps(raw)
     except (TypeError, ValueError):
         return {"_unserializable": True}
-    if len(encoded) > MAX_RAW_BYTES:
-        return {"_truncated": True, "_bytes": len(encoded)}
+    # Bytes, not characters: len() of a str counts code points, so a payload of
+    # CJK or emoji message text encodes to three or four times its length and
+    # sailed past a cap named for bytes.
+    size = len(encoded.encode("utf-8"))
+    if size > MAX_RAW_BYTES:
+        return {"_truncated": True, "_bytes": size}
     # jsonb cannot hold \u0000 any more than a text column can hold \x00.
     return security.scrub_nulls(raw)

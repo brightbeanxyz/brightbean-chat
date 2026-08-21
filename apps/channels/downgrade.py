@@ -220,7 +220,12 @@ class _State:
             return
 
         supports = self.caps.quick_replies and self.caps.max_quick_replies > 0
-        room = self.caps.max_quick_replies if supports else 0
+        # Symmetric with resolve_buttons: count what this message already holds.
+        # Only one call per message reaches this today, but resolve_buttons is
+        # already called twice against one target (once per downgraded card,
+        # once for the message), and the asymmetry would overfill the moment
+        # anything else contributed quick replies.
+        room = max(0, self.caps.max_quick_replies - len(target.quick_replies)) if supports else 0
         target.quick_replies.extend(quick_replies[:room])
         overflow = quick_replies[room:]
 
@@ -294,7 +299,8 @@ class _State:
                 out.append(block)
                 continue
             parts = _split_text(block.text, limit)
-            self.notes.append(f"text: {len(block.text)} characters split into {len(parts)} parts")
+            if parts:
+                self.notes.append(f"text: {len(block.text)} characters split into {len(parts)} parts")
             out.extend(TextBlock(text=part) for part in parts)
         return out
 
@@ -305,7 +311,25 @@ def _split_text(text: str, limit: int) -> list[str]:
     A single word longer than the limit is cut mid-word: the alternative is
     emitting a piece the platform rejects outright, and a URL long enough to hit
     a 1000-character limit is not something to be precious about.
+
+    Two things this has to survive, because it is a pure function on the send
+    path with no way to report a problem:
+
+    ``limit`` below 1
+        Would make ``cut`` zero on every pass, so ``remaining`` never shrank and
+        the loop never ended — a hung request thread. A platform that accepts no
+        text at all is not a thing, but ``Capabilities`` is public and
+        ``capabilities_cache`` is documented as narrowing limits per connection,
+        so the value is constructible. Clamped rather than raised: one character
+        per message is visibly wrong, which is what you want, and a renderer that
+        throws mid-send is worse.
+
+    empty pieces
+        A run of whitespace filling the whole window used to yield ``""`` as a
+        part, which became an empty ``TextBlock`` and then a blank message that
+        Telegram and Meta both reject. Empty pieces are skipped.
     """
+    limit = max(1, limit)
     parts: list[str] = []
     remaining = text
     while len(remaining) > limit:
@@ -313,7 +337,9 @@ def _split_text(text: str, limit: int) -> list[str]:
         cut = max(window.rfind(" "), window.rfind("\n"))
         if cut <= 0:
             cut = limit
-        parts.append(remaining[:cut].rstrip())
+        piece = remaining[:cut].rstrip()
+        if piece:
+            parts.append(piece)
         remaining = remaining[cut:].lstrip()
     if remaining:
         parts.append(remaining)

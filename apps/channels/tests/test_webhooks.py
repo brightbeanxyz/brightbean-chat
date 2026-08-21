@@ -539,6 +539,184 @@ class TestHostilePayloads:
         assert post(client, TELEGRAM_URL, body_for("e1"), secret=secret).status_code == 200
 
 
+class TestEventIdHandling:
+    """The dedup key: what gets stored, and what must not silently collide."""
+
+    def test_an_id_of_only_nul_bytes_is_dropped_rather_than_stored_as_empty(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        """It used to pass the truthy "no id" guard and be scrubbed to '' after.
+
+        The row then occupied (connection, '') and every later event whose id
+        also scrubbed to empty collided with it and vanished as a duplicate.
+        """
+        first = json.dumps({"events": [{"id": "\u0000", "user": "u1", "text": "one"}]}).encode()
+        second = json.dumps({"events": [{"id": "\u0000\u0000", "user": "u1", "text": "two"}]}).encode()
+
+        assert post(client, TELEGRAM_URL, first, secret=secret).status_code == 200
+        assert post(client, TELEGRAM_URL, second, secret=secret).status_code == 200
+
+        # Neither is stored — an event with no usable id cannot be deduplicated —
+        # and, crucially, the second is not silently swallowed by the first.
+        assert WebhookEventLog.objects.count() == 0
+        assert collected == []
+
+    def test_two_long_ids_sharing_a_prefix_stay_distinct(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        """Truncating to the column width narrowed the dedup key silently."""
+        prefix = "x" * 250
+        body = json.dumps(
+            {
+                "events": [
+                    {"id": prefix + "-one", "user": "u1", "text": "one"},
+                    {"id": prefix + "-two", "user": "u1", "text": "two"},
+                ]
+            }
+        ).encode()
+
+        assert post(client, TELEGRAM_URL, body, secret=secret).status_code == 200
+        assert WebhookEventLog.objects.count() == 2
+        assert len(collected) == 2
+        stored = list(WebhookEventLog.objects.values_list("provider_event_id", flat=True))
+        assert all(value.startswith("sha256:") for value in stored)
+        assert len(set(stored)) == 2
+
+    def test_a_long_id_still_deduplicates(
+        self, client: Client, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        body = json.dumps({"events": [{"id": "y" * 400, "user": "u1", "text": "hi"}]}).encode()
+        post(client, TELEGRAM_URL, body, secret=secret)
+        post(client, TELEGRAM_URL, body, secret=secret)
+        assert WebhookEventLog.objects.count() == 1
+        assert len(collected) == 1
+
+
+class TestRawPayloadStorage:
+    def test_a_payload_the_json_encoder_would_refuse_does_not_500(
+        self, client: Client, secret: str, fake_adapter: Any, monkeypatch: Any
+    ) -> None:
+        """The size check used default=str, so a strict-encoder failure escaped
+        both except clauses and surfaced as a 500 on the public endpoint."""
+        from datetime import UTC, datetime
+
+        from apps.channels.events import EventPayload, EventType, NormalizedEvent
+
+        def parse(self: Any, request: Any, conn: Any) -> list[NormalizedEvent]:
+            return [
+                NormalizedEvent(
+                    type=EventType.MESSAGE,
+                    connection=conn,
+                    platform_user_id="u1",
+                    provider_event_id="e1",
+                    timestamp=datetime.now(UTC),
+                    payload=EventPayload(text="hi"),
+                    raw={"seen_at": datetime.now(UTC)},
+                )
+            ]
+
+        monkeypatch.setattr(fake_adapter, "parse_events", parse)
+        response = post(client, TELEGRAM_URL, body_for("e1"), secret=secret)
+
+        assert response.status_code == 200
+        assert WebhookEventLog.objects.get().raw == {"_unserializable": True}
+
+    def test_the_size_cap_counts_bytes_not_characters(self) -> None:
+        """A multi-byte payload used to pass a cap named for bytes."""
+        from apps.channels.views_webhooks import MAX_RAW_BYTES, _bounded_raw
+
+        # Comfortably under the cap in characters, over it in UTF-8 bytes.
+        payload = {"text": "\u4e16" * (MAX_RAW_BYTES // 2)}
+        assert _bounded_raw(payload)["_truncated"] is True
+
+
+class TestMultiConnectionDelivery:
+    def test_events_are_logged_against_the_connection_they_name(
+        self, client: Client, connection: ChannelConnection, secret: str, fake_adapter: Any
+    ) -> None:
+        """One Meta delivery legitimately spans several pages of the same app."""
+        from datetime import UTC, datetime
+
+        from apps.channels.events import EventType, NormalizedEvent
+
+        second = ChannelConnection(
+            workspace=connection.workspace,
+            platform=Platform.TELEGRAM,
+            display_name="Other bot",
+            external_id="bot-other",
+        )
+        second.rotate_webhook_secret()
+        second.save()
+
+        seen: list[tuple[Any, list[str]]] = []
+        ingest.register_processor(
+            lambda conn, events: seen.append((conn.pk, [e.provider_event_id for e in events])),
+            name="grouping",
+        )
+
+        def parse(self: Any, request: Any, conn: Any) -> list[NormalizedEvent]:
+            return [
+                NormalizedEvent(
+                    type=EventType.MESSAGE,
+                    connection=owner,
+                    platform_user_id="u1",
+                    provider_event_id=event_id,
+                    timestamp=datetime.now(UTC),
+                )
+                for owner, event_id in ((conn, "for-first"), (second, "for-second"))
+            ]
+
+        monkeypatch_target = fake_adapter
+        original = monkeypatch_target.parse_events
+        monkeypatch_target.parse_events = parse
+        try:
+            assert post(client, TELEGRAM_URL, body_for("ignored"), secret=secret).status_code == 200
+        finally:
+            monkeypatch_target.parse_events = original
+
+        rows = dict(WebhookEventLog.objects.values_list("provider_event_id", "connection_id"))
+        assert rows == {"for-first": connection.pk, "for-second": second.pk}
+        assert sorted(seen) == sorted([(connection.pk, ["for-first"]), (second.pk, ["for-second"])])
+
+    def test_an_event_naming_another_platforms_connection_is_dropped(
+        self, client: Client, connection: ChannelConnection, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        """The signature was verified by this platform's adapter, and covers only it."""
+        from datetime import UTC, datetime
+
+        from apps.channels.events import EventType, NormalizedEvent
+
+        foreign = ChannelConnection(
+            workspace=connection.workspace,
+            platform=Platform.MESSENGER,
+            display_name="A page",
+            external_id="page-1",
+        )
+        foreign.rotate_webhook_secret()
+        foreign.save()
+
+        def parse(self: Any, request: Any, conn: Any) -> list[NormalizedEvent]:
+            return [
+                NormalizedEvent(
+                    type=EventType.MESSAGE,
+                    connection=foreign,
+                    platform_user_id="u1",
+                    provider_event_id="smuggled",
+                    timestamp=datetime.now(UTC),
+                )
+            ]
+
+        original = fake_adapter.parse_events
+        fake_adapter.parse_events = parse
+        try:
+            assert post(client, TELEGRAM_URL, body_for("ignored"), secret=secret).status_code == 200
+        finally:
+            fake_adapter.parse_events = original
+
+        assert WebhookEventLog.objects.count() == 0
+        assert collected == []
+
+
 class TestDispatchSeam:
     def test_no_processor_registered_is_a_no_op(self, client: Client, secret: str, fake_adapter: Any) -> None:
         """The state this issue ships in: logged, dropped, 200."""
@@ -624,6 +802,19 @@ class TestMetaVerification:
             {"hub.mode": "subscribe", "hub.verify_token": "let-me-in", "hub.challenge": challenge},
         )
         assert response.status_code == 403
+
+    @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={"instagram": {"verify_token": "let-me-in"}})
+    @override_settings(WEBHOOK_SIGNATURE_FAILURE_LIMIT=2)
+    def test_a_banned_source_cannot_keep_guessing_the_verify_token(self, client: Client) -> None:
+        """This path records failures; for a while it was the only one that
+        never checked for a ban, so guessing here was free forever."""
+        wrong = {"hub.mode": "subscribe", "hub.verify_token": "guess", "hub.challenge": "1"}
+        for _ in range(3):
+            assert client.get(self.URL, wrong).status_code == 403
+
+        banned = client.get(self.URL, wrong)
+        assert banned.status_code == 429
+        assert banned["Retry-After"]
 
     @override_settings(PLATFORM_CREDENTIALS_FROM_ENV={})
     def test_an_unconfigured_platform_404s(self, client: Client) -> None:

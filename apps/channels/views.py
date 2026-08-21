@@ -60,6 +60,10 @@ CONNECT_FLOW_ISSUES: dict[str, str] = {
 #: would mean a connection stuck in a state nothing clears.
 SETTABLE_STATUSES = frozenset({ConnectionStatus.ACTIVE, ConnectionStatus.DISABLED})
 
+#: The email webhook's provider segment when the connection does not name one.
+#: SMTP is the only transport that needs no provider-specific parsing.
+DEFAULT_EMAIL_PROVIDER = "smtp"
+
 
 def _webhook_url(request: WorkspaceRequest, connection: ChannelConnection) -> str:
     """The URL to paste into the platform's console (SPEC §7.1).
@@ -70,10 +74,37 @@ def _webhook_url(request: WorkspaceRequest, connection: ChannelConnection) -> st
     if connection.platform == Platform.SMS:
         path = reverse("webhook_sms", kwargs={"connection_id": connection.pk})
     elif connection.platform == Platform.EMAIL:
-        path = reverse("webhook_email", kwargs={"provider": "smtp", "connection_id": connection.pk})
+        path = reverse(
+            "webhook_email",
+            kwargs={"provider": _email_provider(connection), "connection_id": connection.pk},
+        )
     else:
         path = reverse("webhook_platform", kwargs={"platform": connection.platform})
     return request.build_absolute_uri(path)
+
+
+def _email_provider(connection: ChannelConnection) -> str:
+    """Which provider segment this email connection's webhook URL should carry.
+
+    The segment tells the adapter which body shape to expect (SPEC §6.7), and
+    this URL is what the operator pastes into their provider's console — so
+    hardcoding one value meant a Resend or SES deployment configured a URL that
+    routed correctly and then handed the adapter the wrong shape hint, which
+    would read as a provider bug.
+
+    It comes from the connection's own credentials, which is where #21 (L5-E)
+    puts the provider choice. Until then there is nothing to read and the
+    default stands. Wrapped because ``credentials`` is an encrypted field: a
+    decryption failure must not take the settings page down with it.
+    """
+    try:
+        credentials: Any = connection.credentials or {}
+    except ValueError:
+        return DEFAULT_EMAIL_PROVIDER
+    provider = credentials.get("provider") if isinstance(credentials, dict) else None
+    if not isinstance(provider, str) or not provider.isalnum():
+        return DEFAULT_EMAIL_PROVIDER
+    return provider.lower()
 
 
 def _connection_context(request: WorkspaceRequest, connection: ChannelConnection) -> dict[str, Any]:
