@@ -90,29 +90,41 @@ def create_asset(
     if thumbnail is not None:
         asset.width, asset.height = thumbnail.width, thumbnail.height
 
-    # Assigning a *string* to a FileField leaves it "committed", so the save()
-    # below writes only the path column instead of re-uploading the bytes.
-    stored_name = default_storage.save(asset_upload_to(asset, uploaded_file.name), uploaded_file)
-    asset.file = stored_name
-
-    stored_thumbnail = ""
-    if thumbnail is not None and thumbnail.content is not None:
-        stored_thumbnail = default_storage.save(thumbnail_upload_to(asset, ""), thumbnail.content)
-        asset.thumbnail = stored_thumbnail
-
+    # Everything from the first byte written onwards is inside the guard. The
+    # thumbnail write used to sit above it, so a failure there — a full disk, a
+    # throttled bucket — propagated with the original already stored and no row
+    # pointing at it. There is no orphan sweep in this app to find it later.
+    written: list[str] = []
     try:
+        # Assigning a *string* to a FileField leaves it "committed", so the save()
+        # below writes only the path column instead of re-uploading the bytes.
+        asset.file = _write(written, asset_upload_to(asset, uploaded_file.name), uploaded_file)
+
+        if thumbnail is not None and thumbnail.content is not None:
+            asset.thumbnail = _write(written, thumbnail_upload_to(asset, ""), thumbnail.content)
+            asset.thumbnail_size = thumbnail.content.size
+
         with transaction.atomic():
             _lock_workspace(workspace)
-            check_workspace_quota(workspace, declared_size)
+            # The thumbnail counts too: it is bytes this upload put in the same
+            # bucket, and a quota that ignores them bills the operator for storage
+            # its own usage bar says is free.
+            check_workspace_quota(workspace, declared_size + asset.thumbnail_size)
             asset.save()
     except Exception:
-        for orphan in (stored_name, stored_thumbnail):
-            if orphan:
-                with contextlib.suppress(Exception):
-                    default_storage.delete(orphan)
+        for orphan in written:
+            with contextlib.suppress(Exception):
+                default_storage.delete(orphan)
         raise
 
     return asset
+
+
+def _write(written: list[str], name: str, content: Any) -> str:
+    """Store one object, remembering it so a later failure can undo it."""
+    stored = default_storage.save(name, content)
+    written.append(stored)
+    return stored
 
 
 def _lock_workspace(workspace: Any) -> None:
@@ -170,7 +182,7 @@ def delete_asset(asset: MediaAsset) -> None:
     storage delete that fails afterwards costs money, while a row that survives
     a successful storage delete would keep resolving to bytes that are gone.
     """
-    names = [asset.file.name, asset.thumbnail.name]
+    names = [asset.file.name, asset.thumbnail.name]  # the same objects _write tracked
     asset.delete()
     for name in names:
         if name:
@@ -179,8 +191,17 @@ def delete_asset(asset: MediaAsset) -> None:
 
 
 def create_folder(*, workspace: Any, name: str, parent: MediaFolder | None = None) -> MediaFolder:
+    from django.conf import settings
+
     if parent is not None and parent.workspace_id != workspace.pk:
         raise ValidationError("That folder belongs to a different workspace.")
+
+    # Depth is capped by MediaFolder.clean(); this caps breadth. Without it the
+    # picker payload, the move dropdown and the sidebar rail each render an
+    # unbounded list, and they all grow together.
+    limit = int(settings.MEDIA_MAX_FOLDERS_PER_WORKSPACE)
+    if MediaFolder.objects.for_workspace(workspace).count() >= limit:
+        raise ValidationError(f"This workspace already has the maximum of {limit} folders.")
     folder = MediaFolder(workspace=workspace, parent=parent, name=name.strip()[:255])
     # No ``exclude`` here, deliberately. Both uniqueness constraints are on
     # (workspace, ...), and Django skips validating any constraint that touches

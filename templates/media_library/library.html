@@ -104,9 +104,15 @@ design-system classes, so they live in theme/static_src/src/styles.css as
             hx-target="#media-grid"
             hx-swap="outerHTML"
             hx-trigger="change from:find input[type=file]">
-        {% if current_folder and current_folder != 'root' %}
-          <input type="hidden" name="folder" value="{{ current_folder }}">
-        {% endif %}
+        {% comment %}
+          The active filters ride along in the POST body. The response re-renders
+          the grid, and it reads these rather than request.GET — which is empty on
+          a POST, so without them an upload made from inside a folder came back
+          showing the whole unfiltered library.
+        {% endcomment %}
+        <input type="hidden" name="folder" value="{{ current_folder }}">
+        <input type="hidden" name="kind" value="{{ current_kind }}">
+        <input type="hidden" name="q" value="{{ query }}">
         <input type="file" name="files" id="media-files" multiple
                accept="{{ accepted_types }}" class="sr-only" x-ref="input">
         <p class="text-sm">

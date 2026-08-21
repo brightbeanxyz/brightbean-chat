@@ -179,7 +179,11 @@ def sniff(file_obj: BinaryIO | Any) -> str:
         if b"webm" in head:
             return "video/webm"
         raise UnsupportedMediaError("Matroska (.mkv) video is not accepted; convert it to MP4 or WebM.")
-    if head.startswith(b"ID3") or (head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+    # ``len(head) >= 2`` before indexing: every other branch here uses slicing
+    # or startswith, which are safe on a short buffer, but a bare ``head[1]``
+    # raises IndexError on a one-byte file — and a one-byte file whose only byte
+    # is 0xFF reaches exactly this test.
+    if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
         return "audio/mpeg"
     if head.startswith(b"%PDF-"):
         return "application/pdf"

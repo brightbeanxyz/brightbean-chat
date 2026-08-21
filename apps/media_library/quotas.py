@@ -54,16 +54,23 @@ def workspace_quota_bytes() -> int:
 
 
 def used_bytes(workspace: Any) -> int:
-    """Bytes currently stored for ``workspace``.
+    """Bytes currently stored for ``workspace``, thumbnails included.
 
     A live aggregate rather than a denormalised counter. At the scale this
     product targets that is one indexed sum, and a counter is a second source of
     truth that drifts the first time a delete path forgets to decrement it.
+
+    Both columns, because both are objects in the bucket. Summing ``size`` alone
+    would report a workspace of twenty thousand images as comfortably inside an
+    allowance it had already spent.
     """
     from apps.media_library.models import MediaAsset
 
-    total = MediaAsset.objects.for_workspace(workspace).aggregate(total=Sum("size"))["total"]
-    return int(total or 0)
+    totals = MediaAsset.objects.for_workspace(workspace).aggregate(
+        files=Sum("size"),
+        thumbnails=Sum("thumbnail_size"),
+    )
+    return int(totals["files"] or 0) + int(totals["thumbnails"] or 0)
 
 
 def _mb(value: int) -> str:

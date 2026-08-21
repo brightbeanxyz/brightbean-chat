@@ -1261,6 +1261,40 @@ span.flatpickr-weekday {
   font-weight: 600;
 }
 
+/* A folder row and the controls that appear beside it. The rename and delete
+   affordances are quiet until the row is hovered or focus lands inside it —
+   this is a navigation rail, and two buttons per row shouted at every folder
+   would drown the folder names they belong to. :focus-within keeps them
+   reachable from the keyboard, where hover does not exist. */
+.media-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: var(--radius-lg);
+}
+.media-folder-row .media-folder { flex: 1 1 auto; min-width: 0; }
+
+.media-folder-actions {
+  display: flex;
+  gap: 0.25rem;
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+.media-folder-row:hover .media-folder-actions,
+.media-folder-row:focus-within .media-folder-actions { opacity: 1; }
+
+.media-folder-action {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-ghost);
+  cursor: pointer;
+}
+.media-folder-action:hover { color: var(--text-primary); background: var(--surface-2); }
+
 .media-quota-bar {
   height: 0.375rem;
   border-radius: var(--radius-full);

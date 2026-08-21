@@ -18,7 +18,6 @@ from typing import Any
 
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
-from django.db.models import QuerySet
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.http.response import HttpResponseBase
 from django.shortcuts import render
@@ -27,10 +26,11 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.media_library import services
-from apps.media_library.delivery import delivery_response, delivery_url, read_token
+from apps.media_library.delivery import delivery_response, read_token
+from apps.media_library.filters import ROOT_FOLDER, filter_assets
 from apps.media_library.mimes import MediaKind, UnsupportedMediaError, accepted_upload_types
 from apps.media_library.models import MediaAsset, MediaFolder
-from apps.media_library.picker import DEFAULT_LIMIT, ROOT_FOLDER, picker_payload, search
+from apps.media_library.picker import DEFAULT_LIMIT, picker_payload
 from apps.media_library.quotas import QuotaExceededError, used_bytes, workspace_quota_bytes
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
@@ -86,51 +86,61 @@ def _folder_rows(workspace: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def _visible_assets(request: WorkspaceRequest) -> Any:
-    """The grid queryset for the current filters."""
-    assets: QuerySet = MediaAsset.objects.for_workspace(request.workspace).select_related("folder", "uploaded_by")
-
-    kind = request.GET.get("kind", "")
-    if kind in MediaKind.values:
-        assets = assets.filter(kind=kind)
-
-    folder = request.GET.get("folder", "")
-    if folder == ROOT_FOLDER:
-        assets = assets.filter(folder__isnull=True)
-    elif folder:
-        assets = assets.filter(folder=_folder_or_404(request, folder))
-
-    term = request.GET.get("q", "").strip()
-    if term:
-        assets = search(assets, term)
-
-    return assets.order_by("-created_at", "-id")
+def _can_manage(request: WorkspaceRequest) -> bool:
+    return bool(request.workspace_membership.effective_permissions.get("manage_media", False))
 
 
 # ---------------------------------------------------------------------------
 # Browsing
 # ---------------------------------------------------------------------------
+#
+# One context builder per fragment. They used to be a single function that built
+# the whole page for every render, so a grid refresh ran the folder query and a
+# SUM aggregate it never displayed, and a folder-rail refresh paginated 48 assets
+# it never displayed — twice over, because one `mediaChanged` event refreshes
+# both regions.
 
 
-def _library_context(request: WorkspaceRequest) -> dict[str, Any]:
-    """Everything both the full page and the grid partial need.
+def _grid_context(request: WorkspaceRequest, params: Any = None) -> dict[str, Any]:
+    """What ``_asset_grid.html`` draws.
 
-    A function rather than a view calling a view: ``library`` is decorated
-    ``@require_GET``, so ``upload`` re-entering it to re-render the grid after a
-    POST answered 405 — a 405 with an empty body, which htmx does not swap, so
-    the upload succeeded and the page silently showed nothing.
+    ``params`` defaults to ``request.GET`` but is passed explicitly by ``upload``,
+    which is a POST: reading ``request.GET`` there would find nothing and hand
+    back an unfiltered page-one grid, discarding whatever folder, kind or search
+    the user was looking at when they dropped the files.
     """
     from django.core.paginator import Paginator
 
+    params = request.GET if params is None else params
+    kind = params.get("kind", "")
+    folder = params.get("folder", "")
+    term = params.get("q", "").strip()
+
+    assets = filter_assets(request.workspace, kind=kind, folder=folder, term=term)
     return {
-        "page": Paginator(_visible_assets(request), GRID_PAGE_SIZE).get_page(request.GET.get("page", 1)),
+        "page": Paginator(assets.select_related("uploaded_by"), GRID_PAGE_SIZE).get_page(params.get("page", 1)),
+        "query": term,
+        "current_kind": kind,
+        "current_folder": folder,
+    }
+
+
+def _folders_context(request: WorkspaceRequest) -> dict[str, Any]:
+    """What ``_folder_rail.html`` draws."""
+    return {
         "folder_rows": _folder_rows(request.workspace),
-        "query": request.GET.get("q", "").strip(),
-        "current_kind": request.GET.get("kind", ""),
         "current_folder": request.GET.get("folder", ""),
+        "can_manage": _can_manage(request),
+    }
+
+
+def _library_context(request: WorkspaceRequest) -> dict[str, Any]:
+    """The full page: both fragments plus the chrome around them."""
+    return {
+        **_grid_context(request),
+        **_folders_context(request),
         "kinds": MediaKind.choices,
         "accepted_types": accepted_upload_types(),
-        "can_manage": request.workspace_membership.effective_permissions.get("manage_media", False),
         "used_bytes": used_bytes(request.workspace),
         "quota_bytes": workspace_quota_bytes(),
     }
@@ -139,15 +149,14 @@ def _library_context(request: WorkspaceRequest) -> dict[str, Any]:
 @login_required
 @require_GET
 def library(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    context = _library_context(request)
     if _is_htmx(request):
         # Two fragments, one endpoint. The folder rail sits outside #media-grid,
         # so the `mediaChanged` event that refreshes the grid would otherwise
         # leave a newly created folder invisible until a full page load.
         if request.GET.get("fragment") == "folders":
-            return render(request, "media_library/_folder_rail.html", context)
-        return render(request, "media_library/_asset_grid.html", context)
-    return render(request, "media_library/library.html", context)
+            return render(request, "media_library/_folder_rail.html", _folders_context(request))
+        return render(request, "media_library/_asset_grid.html", _grid_context(request))
+    return render(request, "media_library/library.html", _library_context(request))
 
 
 @login_required
@@ -157,8 +166,7 @@ def asset_detail(request: WorkspaceRequest, workspace_id: str, asset_id: str) ->
     context = {
         "asset": asset,
         "folders": MediaFolder.objects.for_workspace(request.workspace),
-        "delivery_url": delivery_url(asset),
-        "can_manage": request.workspace_membership.effective_permissions.get("manage_media", False),
+        "can_manage": _can_manage(request),
     }
     return render(request, "media_library/_asset_detail.html", context)
 
@@ -230,7 +238,7 @@ def upload(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
             errors.append({"filename": uploaded_file.name or "file", "error": str(exc)})
 
     if _is_htmx(request):
-        response = render(request, "media_library/_asset_grid.html", _library_context(request))
+        response = render(request, "media_library/_asset_grid.html", _grid_context(request, request.POST))
         tone = "warn" if errors else "success"
         title = f"{len(created)} uploaded" if created else "Nothing uploaded"
         body = "; ".join(f"{e['filename']}: {e['error']}" for e in errors[:3])
@@ -250,10 +258,12 @@ def upload(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 @require_POST
 def asset_edit(request: WorkspaceRequest, workspace_id: str, asset_id: str) -> HttpResponse:
     asset = get_scoped_object_or_404(MediaAsset, request.workspace, pk=asset_id)
+    # No "" default: update_asset treats None as "leave this alone", and passing
+    # "" for a field the caller never sent would silently erase it.
     services.update_asset(
         asset,
-        title=request.POST.get("title", ""),
-        alt_text=request.POST.get("alt_text", ""),
+        title=request.POST.get("title"),
+        alt_text=request.POST.get("alt_text"),
     )
     return toast_response(tone="success", title="Saved", events={"mediaChanged": True})
 
@@ -299,12 +309,12 @@ def asset_delete(request: WorkspaceRequest, workspace_id: str, asset_id: str) ->
 def folder_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     name = request.POST.get("name", "").strip()
     if not name:
-        return toast_response(tone="error", title="A folder needs a name")
+        return _rejected("A folder needs a name.")
     parent = _folder_or_404(request, request.POST.get("parent"))
     try:
         services.create_folder(workspace=request.workspace, name=name, parent=parent)
     except ValidationError as exc:
-        return toast_response(tone="error", title="Could not create that folder", body=_first_message(exc))
+        return _rejected(_first_message(exc))
     return toast_response(tone="success", title="Folder created", events={"mediaChanged": True})
 
 
@@ -315,11 +325,11 @@ def folder_rename(request: WorkspaceRequest, workspace_id: str, folder_id: str) 
     folder = get_scoped_object_or_404(MediaFolder, request.workspace, pk=folder_id)
     name = request.POST.get("name", "").strip()
     if not name:
-        return toast_response(tone="error", title="A folder needs a name")
+        return _rejected("A folder needs a name.")
     try:
         services.rename_folder(folder, name)
     except ValidationError as exc:
-        return toast_response(tone="error", title="Could not rename that folder", body=_first_message(exc))
+        return _rejected(_first_message(exc))
     return toast_response(tone="success", title="Folder renamed", events={"mediaChanged": True})
 
 
@@ -340,6 +350,24 @@ def folder_delete(request: WorkspaceRequest, workspace_id: str, folder_id: str) 
 def _first_message(exc: ValidationError) -> str:
     messages = getattr(exc, "messages", None)
     return messages[0] if messages else str(exc)
+
+
+def _rejected(message: str) -> HttpResponse:
+    """A validation failure the client can actually detect.
+
+    These used to answer 204 with an error-toned toast, which reads fine in a
+    screenshot and is wrong in every other way: htmx sets ``detail.successful``
+    from the status, so 204 made a rejected folder name indistinguishable from
+    an accepted one — the new-folder form's ``if (event.detail.successful)``
+    guard cleared the field on failure, and no non-browser caller could branch
+    at all.
+
+    400 with a short plain-text body is the shape the shell already handles:
+    templates/partials/_toast_host.html listens for ``htmx:responseError`` and
+    renders a body under 300 characters as the error toast, so the message still
+    reaches the user without a second convention.
+    """
+    return HttpResponse(message, status=400, content_type="text/plain; charset=utf-8")
 
 
 # ---------------------------------------------------------------------------

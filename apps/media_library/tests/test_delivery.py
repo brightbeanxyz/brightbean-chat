@@ -115,6 +115,52 @@ class TestTokensCannotBeForgedOrRepurposed:
         assert client.get(reverse("media_delivery", kwargs={"token": token})).status_code == 404
 
 
+class TestMissingBytesAreNotAServerError:
+    """A row can outlive its bytes; the public endpoint must still 404."""
+
+    def test_a_row_whose_file_was_never_written(self, client, workspace):
+        # make_asset points `file` at a path nothing ever stored.
+        orphan = f.make_asset(workspace)
+
+        assert client.get(_url(orphan)).status_code == 404
+
+    def test_a_row_whose_file_vanished_from_storage(self, client, asset, settings):
+        from pathlib import Path
+
+        Path(settings.MEDIA_ROOT, asset.file.name).unlink()
+
+        assert client.get(_url(asset)).status_code == 404
+
+    def test_a_thumbnail_that_vanished(self, client, asset, settings):
+        from pathlib import Path
+
+        Path(settings.MEDIA_ROOT, asset.thumbnail.name).unlink()
+
+        assert client.get(_url(asset, thumbnail=True)).status_code == 404
+
+
+class TestATokenCarryingANonUuid:
+    def test_it_404s_rather_than_reaching_the_query(self):
+        """read_token promises every failure is a 404, so it must parse the id.
+
+        A non-UUID string reaching ``filter(pk=...)`` makes Django raise instead
+        of matching nothing, which would turn the documented 404 into a 500.
+        """
+        from django.http import Http404
+
+        from apps.media_library.delivery import read_token
+
+        token = sign({"a": "not-a-uuid"}, purpose=PURPOSE)
+
+        with pytest.raises(Http404):
+            read_token(token)
+
+    def test_the_endpoint_agrees(self, client):
+        token = sign({"a": "../../etc/passwd"}, purpose=PURPOSE)
+
+        assert client.get(reverse("media_delivery", kwargs={"token": token})).status_code == 404
+
+
 class TestDeletionRevokesEveryUrl:
     def test_deleting_an_asset_404s_a_url_already_handed_out(self, client, asset):
         url = _url(asset)

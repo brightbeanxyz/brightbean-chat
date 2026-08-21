@@ -30,7 +30,11 @@ def test_two_simultaneous_uploads_cannot_both_spend_the_last_slot(settings, tmp_
     tenancy = create_tenancy("concurrent")
     workspace = tenancy.workspace
 
-    payload = f.real_png()
+    # A PDF, not an image: the quota counts generated thumbnails too, so an
+    # image's cost is its length plus a thumbnail whose size depends on JPEG
+    # encoding. This test is about the row lock, and it should not also be a
+    # test of how well Pillow compresses.
+    payload = f.PDF
     # Room for exactly one of the two uploads below.
     settings.MEDIA_WORKSPACE_QUOTA_BYTES = len(payload) + 1
 
@@ -43,7 +47,7 @@ def test_two_simultaneous_uploads_cannot_both_spend_the_last_slot(settings, tmp_
             start.wait(timeout=10)
             create_asset(
                 workspace=workspace,
-                uploaded_file=f.upload(payload, name="race.png"),
+                uploaded_file=f.upload(payload, name="race.pdf"),
                 uploaded_by=None,
             )
             result = "accepted"

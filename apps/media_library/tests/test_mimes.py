@@ -81,6 +81,17 @@ class TestRejectsHostileUploads:
             sniff(f.upload(f.MKV, name="clip.webm"))
         assert "Matroska" in str(exc.value)
 
+    @pytest.mark.parametrize("payload", [b"\xff", b"\xfb", b"I", b"\x1a"])
+    def test_a_single_byte_is_rejected_not_a_crash(self, payload):
+        """Every branch has to survive a buffer shorter than it wants to read.
+
+        ``head[1]`` in the MP3 frame-sync test used to run unguarded, so a
+        one-byte file whose only byte was 0xFF raised IndexError and the upload
+        endpoint answered 500.
+        """
+        with pytest.raises(UnsupportedMediaError):
+            sniff(f.upload(payload))
+
     def test_empty_file(self):
         with pytest.raises(UnsupportedMediaError):
             sniff(f.upload(b""))

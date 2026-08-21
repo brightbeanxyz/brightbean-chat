@@ -83,10 +83,28 @@ class TestFilters:
         assert len(picker_payload(workspace=workspace, folder="root")["results"]) == 1
         assert len(picker_payload(workspace=workspace, folder=str(folder.pk))["results"]) == 1
 
-    def test_a_junk_folder_id_returns_nothing_rather_than_the_root(self, workspace):
-        """``folder_id=None`` would render as IS NULL and quietly return the root."""
+    def test_a_junk_folder_id_is_a_404_not_a_silent_empty_list(self, workspace):
+        """The same answer the grid gives, and the same answer a foreign id gives.
+
+        Silence would be worse than an error here: a stale folder id cached by a
+        flow builder should say so rather than render an empty library.
+        """
+        from django.http import Http404
+
         f.make_asset(workspace, filename="loose.png")
-        assert picker_payload(workspace=workspace, folder="not-a-uuid")["results"] == []
+
+        with pytest.raises(Http404):
+            picker_payload(workspace=workspace, folder="not-a-uuid")
+
+    def test_another_workspaces_folder_id_is_a_404_too(self, workspace, other_tenancy):
+        from django.http import Http404
+
+        from apps.media_library.services import create_folder
+
+        theirs = create_folder(workspace=other_tenancy.workspace, name="Theirs")
+
+        with pytest.raises(Http404):
+            picker_payload(workspace=workspace, folder=str(theirs.pk))
 
 
 class TestPagination:

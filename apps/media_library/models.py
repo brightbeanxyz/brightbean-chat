@@ -46,9 +46,15 @@ class MediaFolder(WorkspaceScopedModel):
         db_table = "media_library_folder"
         ordering = ["name"]
         constraints = [
+            # violation_error_message on both, because these messages are shown
+            # to whoever typed the name. Django's default renders the constraint
+            # identifier verbatim — "Constraint “media_folder_unique_root_name”
+            # is violated." — which names a database object the reader has no
+            # way to act on.
             models.UniqueConstraint(
                 fields=["workspace", "parent", "name"],
                 name="media_folder_unique_name_per_parent",
+                violation_error_message="A folder with that name already exists here.",
             ),
             # A NULL parent is a NULL in the constraint above, and NULLs never
             # collide in SQL — so without this second constraint the whole root
@@ -58,6 +64,7 @@ class MediaFolder(WorkspaceScopedModel):
                 fields=["workspace", "name"],
                 condition=models.Q(parent__isnull=True),
                 name="media_folder_unique_root_name",
+                violation_error_message="A folder with that name already exists.",
             ),
         ]
 
@@ -111,6 +118,11 @@ class MediaAsset(WorkspaceScopedModel):
     #: From apps.media_library.mimes.sniff, never from the client's header.
     mime = models.CharField(max_length=100)
     size = models.PositiveBigIntegerField(default=0)
+    #: Bytes the generated thumbnail occupies. Counted separately from ``size``
+    #: because ``size`` is the asset's own length — what the platform ceilings in
+    #: platform_limits.py are compared against — while the quota has to account
+    #: for everything this upload actually put in the bucket.
+    thumbnail_size = models.PositiveBigIntegerField(default=0)
 
     width = models.PositiveIntegerField(default=0)
     height = models.PositiveIntegerField(default=0)

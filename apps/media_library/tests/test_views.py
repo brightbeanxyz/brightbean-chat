@@ -96,6 +96,28 @@ class TestMutations:
         asset.refresh_from_db()
         assert (asset.title, asset.alt_text) == ("Logo", "The company logo")
 
+    def test_a_title_only_post_leaves_alt_text_alone(self, editor_client, workspace):
+        """update_asset treats None as "leave this alone"; the view used to pass
+        "" for every absent field, erasing accessibility text nobody mentioned."""
+        asset = f.make_asset(workspace, title="Old", alt_text="A description worth keeping")
+        url = reverse("media:asset_edit", kwargs={"workspace_id": workspace.pk, "asset_id": asset.pk})
+
+        editor_client.post(url, {"title": "New"})
+
+        asset.refresh_from_db()
+        assert asset.title == "New"
+        assert asset.alt_text == "A description worth keeping"
+
+    def test_an_explicit_empty_value_still_clears(self, editor_client, workspace):
+        """Absent and empty are different: sending the field empty means clear it."""
+        asset = f.make_asset(workspace, alt_text="Some text")
+        url = reverse("media:asset_edit", kwargs={"workspace_id": workspace.pk, "asset_id": asset.pk})
+
+        editor_client.post(url, {"alt_text": ""})
+
+        asset.refresh_from_db()
+        assert asset.alt_text == ""
+
     def test_moving_an_asset(self, editor_client, workspace):
         asset = f.make_asset(workspace)
         folder = create_folder(workspace=workspace, name="Brand")
@@ -167,6 +189,46 @@ class TestHtmxWiring:
         assert 'id="media-folders"' in body
         assert "Brand" in body
         assert 'id="media-grid"' not in body
+
+
+class TestFragmentsPayOnlyForWhatTheyDraw:
+    """One context builder per fragment, not one for the whole page.
+
+    A single builder meant a grid refresh ran the folder query and the quota SUM
+    it never displays, and a rail refresh paginated 48 assets it never displays.
+    Both fire on every `mediaChanged`, so one delete paid for it twice.
+    """
+
+    def test_the_grid_fragment_does_not_query_folders_or_the_quota(
+        self, editor_client, workspace, django_assert_num_queries
+    ):
+        create_folder(workspace=workspace, name="Brand")
+        f.make_asset(workspace)
+
+        full = self._queries(editor_client, workspace, django_assert_num_queries, fragment=None)
+        grid = self._queries(editor_client, workspace, django_assert_num_queries, fragment="grid")
+
+        assert grid < full, f"grid fragment ran {grid} queries, full page ran {full}"
+
+    def test_the_folders_fragment_does_not_paginate_assets(self, editor_client, workspace, django_assert_num_queries):
+        create_folder(workspace=workspace, name="Brand")
+        f.make_asset(workspace)
+
+        full = self._queries(editor_client, workspace, django_assert_num_queries, fragment=None)
+        rail = self._queries(editor_client, workspace, django_assert_num_queries, fragment="folders")
+
+        assert rail < full, f"folders fragment ran {rail} queries, full page ran {full}"
+
+    @staticmethod
+    def _queries(client, workspace, assert_num_queries, *, fragment):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        params = {"fragment": fragment} if fragment == "folders" else {}
+        headers = {"HX-Request": "true"} if fragment else {}
+        with CaptureQueriesContext(connection) as captured:
+            client.get(_library(workspace, **params), headers=headers)
+        return len(captured)
 
 
 class TestRenderedUrls:

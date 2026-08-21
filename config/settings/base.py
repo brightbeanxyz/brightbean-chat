@@ -429,16 +429,23 @@ MEDIA_MAX_UPLOAD_BYTES_VIDEO = env.int("MEDIA_MAX_UPLOAD_BYTES_VIDEO", default=2
 MEDIA_MAX_UPLOAD_BYTES_FILE = env.int("MEDIA_MAX_UPLOAD_BYTES_FILE", default=25 * _MB)
 MEDIA_WORKSPACE_QUOTA_BYTES = env.int("MEDIA_WORKSPACE_QUOTA_BYTES", default=5 * 1024 * _MB)
 MEDIA_MAX_FILES_PER_UPLOAD = env.int("MEDIA_MAX_FILES_PER_UPLOAD", default=20)
+# Folders nest at most three deep but nothing bounded how WIDE a library could
+# get, and three separate surfaces render the whole set unpaginated — the picker
+# payload, the move dropdown and the sidebar rail. Capping creation bounds all
+# three at once, which is the level the limit belongs at.
+MEDIA_MAX_FOLDERS_PER_WORKSPACE = env.int("MEDIA_MAX_FOLDERS_PER_WORKSPACE", default=500)
 MEDIA_THUMBNAIL_SIZE = (400, 400)
 # Pillow decompression-bomb guard. A 10 KB PNG can declare 60000x60000 and cost
 # gigabytes to expand; apps.media_library.thumbnails checks the declared size
 # against this before any pixel data is decoded.
 MEDIA_MAX_IMAGE_PIXELS = env.int("MEDIA_MAX_IMAGE_PIXELS", default=50_000_000)
 
-# Django's own multipart guard, kept in step with the media library's batch cap
-# so a request carrying more parts is rejected by the framework before any view
-# code runs. The default is 100.
-DATA_UPLOAD_MAX_NUMBER_FILES = MEDIA_MAX_FILES_PER_UPLOAD
+# Django's own DATA_UPLOAD_MAX_NUMBER_FILES is deliberately left at its default
+# of 100. Pinning it to MEDIA_MAX_FILES_PER_UPLOAD would impose one app's batch
+# size on every multipart endpoint in the project, so a later bulk importer
+# would be refused by the framework with an error naming neither itself nor the
+# media library. The media cap is enforced where it means something — the upload
+# view — and Django's default still bounds the absurd case.
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

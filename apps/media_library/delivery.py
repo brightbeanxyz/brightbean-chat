@@ -43,17 +43,22 @@ into, and the pinned ``Content-Type`` removes the ambiguity sniffing exists to
 resolve. It is a residual, and it is written down here rather than glossed.
 """
 
+import logging
 from typing import Any
 from urllib.parse import urljoin
+from uuid import UUID
 
 from django.conf import settings
-from django.http import FileResponse, HttpResponseRedirect
+from django.core.exceptions import SuspiciousOperation
+from django.http import FileResponse, Http404, HttpResponseRedirect
 from django.http.response import HttpResponseBase
 from django.urls import reverse
 
 from apps.common.signing import sign, unsign_or_404
 from apps.media_library import storage
 from apps.media_library.mimes import INLINE_SAFE_MIMES
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["ASSET_KEY", "PURPOSE", "THUMBNAIL_KEY", "delivery_response", "delivery_url", "read_token"]
 
@@ -97,9 +102,16 @@ def read_token(token: str) -> tuple[str, bool]:
     payload = unsign_or_404(token, purpose=PURPOSE, max_age=None, accept_versions=ACCEPTED_VERSIONS)
     asset_id = payload.get(ASSET_KEY)
     if not isinstance(asset_id, str):
-        from django.http import Http404
-
         raise Http404
+    try:
+        # Parsed, not merely type-checked. A payload whose id is not a UUID would
+        # otherwise reach ``filter(pk=...)``, where Django raises rather than
+        # matching nothing — turning this function's one documented outcome for a
+        # bad token into a 500. Nothing mints such a token today; ACCEPTED_VERSIONS
+        # exists so the payload shape can change, and this is what keeps that safe.
+        UUID(asset_id)
+    except ValueError:
+        raise Http404 from None
     return asset_id, bool(payload.get(THUMBNAIL_KEY))
 
 
@@ -118,8 +130,6 @@ def delivery_response(asset: Any, *, thumbnail: bool = False) -> HttpResponseBas
         filename = asset.filename
 
     if not field:
-        from django.http import Http404
-
         raise Http404
 
     disposition = storage.content_disposition(inline=inline, filename=filename)
@@ -133,7 +143,19 @@ def delivery_response(asset: Any, *, thumbnail: bool = False) -> HttpResponseBas
 
     # Local disk, or an S3 deployment whose custom domain has disabled signing
     # (common.W001) — proxying is both correct and the only option that works.
-    response = FileResponse(field.open("rb"), content_type=mime)
+    #
+    # A row can outlive its bytes: a storage write that failed after the row
+    # committed, a lifecycle rule, a database restored from a snapshot older than
+    # the bucket. Without this the open() raises FileNotFoundError and the
+    # deployment's most exposed endpoint answers 500 — a stack trace under DEBUG,
+    # a paging alert otherwise — where this function's contract is a bare 404.
+    try:
+        handle = field.open("rb")
+    except (OSError, SuspiciousOperation) as exc:
+        logger.warning("Media asset %s has no bytes in storage: %s", asset.pk, exc)
+        raise Http404 from exc
+
+    response = FileResponse(handle, content_type=mime)
     response["Content-Disposition"] = disposition
     response["X-Content-Type-Options"] = "nosniff"
     response["Cache-Control"] = "private, max-age=3600"
