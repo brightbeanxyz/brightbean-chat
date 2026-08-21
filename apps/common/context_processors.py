@@ -25,11 +25,16 @@ from django.urls import NoReverseMatch, reverse
 class NavItem:
     """One row in a sidebar navigation group.
 
-    ``url_names`` is the set of URL names that light this row up. It is a set
-    rather than a single name because one nav entry legitimately covers several
-    routes — a list page and its detail page are the same *section* to a
-    reader, and Studio's "``create_landing`` or ``compose``" special case was
-    exactly this, hand-written.
+    ``url_name`` is the route to link to. ``url_names`` is the set of route
+    names that light the row up, defaulting to just ``url_name``. It is a set
+    because one nav entry legitimately covers several routes — a list page and
+    its detail page are the same *section* to a reader, and Studio's
+    "``create_landing`` or ``compose``" special case was exactly this, written
+    by hand at one call site.
+
+    Both are matched against ``resolver_match.view_name``, which includes the
+    namespace, so a later app registering a generic ``list`` route cannot
+    accidentally light up someone else's row.
     """
 
     key: str
@@ -42,7 +47,14 @@ class NavItem:
     def resolved(self, request: HttpRequest, badges: dict[str, int]) -> dict[str, Any]:
         matches = self.url_names or frozenset({self.url_name})
         match = request.resolver_match
-        current = match.url_name if match else None
+        # view_name, not url_name: it carries the namespace, so "contacts:list"
+        # and "flows:list" are different entries. Comparing bare url_name is
+        # what forced Studio to hand-write a compound
+        # `url_name == "list" and app_name == "notifications"` guard for the one
+        # nav row where the collision had already bitten. Layer 2 onwards adds
+        # namespaced apps with generic route names, so this is the difference
+        # between the convention holding and needing that patch again.
+        current = match.view_name if match else None
         try:
             url = reverse(self.url_name)
         except NoReverseMatch:
@@ -55,7 +67,8 @@ class NavItem:
             "icon": self.icon,
             "url": url,
             "active": current in matches,
-            "badge": badges.get(self.badge_key) or 0 if self.badge_key else 0,
+            # A blank badge_key is never a key in `badges`, so this is 0.
+            "badge": badges.get(self.badge_key, 0),
         }
 
 

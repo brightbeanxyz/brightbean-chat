@@ -3,9 +3,15 @@
 import pytest
 from django.contrib.auth.models import AnonymousUser
 from django.test import RequestFactory
-from django.urls import resolve
+from django.urls import ResolverMatch, resolve
 
-from apps.common.context_processors import MAIN_NAV, SETTINGS_NAV, navigation_context, sidebar_context
+from apps.common.context_processors import (
+    MAIN_NAV,
+    SETTINGS_NAV,
+    NavItem,
+    navigation_context,
+    sidebar_context,
+)
 
 
 def _request(path="/dashboard/"):
@@ -101,6 +107,36 @@ class TestActiveFlag:
 
         assert active(org, "settings_nav_groups") == ["org_general"]
         assert active(ws, "workspace_settings_nav_groups") == ["ws_general"]
+
+    def test_a_generic_route_name_in_another_namespace_does_not_light_a_row(self):
+        """Matching is on the namespaced view_name, not the bare url_name.
+
+        Studio compares url_name and had to hand-write a compound
+        `url_name == "list" and app_name == "notifications"` guard at the one
+        row where that had already collided. Layer 2 onwards adds namespaced
+        apps full of generic route names like `list` and `detail`, so this is
+        the difference between one convention holding and needing that patch
+        again at every call site.
+        """
+        item = NavItem(key="contacts", label="Contacts", icon="contacts", url_name="contacts")
+        request = RequestFactory().get("/flows/")
+        request.resolver_match = ResolverMatch(
+            func=lambda r: None, args=(), kwargs={}, url_name="contacts", namespaces=["flows"]
+        )
+
+        # view_name is "flows:contacts" — a different section entirely.
+        assert item.resolved(request, {})["active"] is False
+
+    def test_an_item_can_cover_several_routes(self):
+        item = NavItem(
+            key="contacts",
+            label="Contacts",
+            icon="contacts",
+            url_name="contacts",
+            url_names=frozenset({"contacts", "settings_ws_fields"}),
+        )
+
+        assert item.resolved(_request("/settings/workspace/fields/"), {})["active"] is True
 
     def test_a_route_outside_the_nav_lights_nothing_up(self):
         context = navigation_context(_request("/ui/"))
