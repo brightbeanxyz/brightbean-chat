@@ -34,7 +34,12 @@ services:
     # Deliberately no depends_on and no healthcheck: a CSS watcher is not part
     # of the app's boot path, and `docker compose up -d` must not wait on or
     # fail because of it.
-    restart: unless-stopped
+    #
+    # And deliberately no restart policy. `npm ci` exits non-zero on a registry
+    # blip or an out-of-sync lockfile, so `unless-stopped` would restart it
+    # straight back into the same failing install — a tight loop hammering the
+    # registry for as long as compose is up, in CI as well as on a laptop.
+    # A watcher that died should stay dead and be read in the logs.
 
 volumes:
   tailwind_node_modules:

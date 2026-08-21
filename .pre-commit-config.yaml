@@ -59,7 +59,7 @@ repos:
         entry: mypy
         language: system
         types: [python]
-        files: ^(apps|config|tests)/
+        files: ^(apps|config|theme|tests)/
         args: ["--ignore-missing-imports"]
 
   # gitleaks: block commits that contain secrets

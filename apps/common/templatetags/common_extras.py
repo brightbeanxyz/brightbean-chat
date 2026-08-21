@@ -15,6 +15,12 @@ from django.utils.safestring import SafeString, mark_safe
 
 register = template.Library()
 
+# The glyphs components/_filter_icon.html knows how to draw. Kept here so the
+# trigger's `has-icon` padding and the partial's output cannot disagree: the
+# template used to add 28px of left padding for ANY truthy icon name, so an
+# unrecognised one indented the label past empty space.
+FILTER_ICONS = frozenset({"status", "channel", "tag", "clock"})
+
 
 @register.filter(is_safe=True)
 def json_attr(value: Any) -> SafeString:
@@ -78,7 +84,8 @@ def ui_select(
                    per-option badge.
       icon         leading glyph for the trigger itself — one of
                    status / channel / tag / clock (see components/_filter_icon.html).
-                   Omit for no icon.
+                   Omit for no icon. An unknown name raises rather than
+                   rendering a padded gap where the glyph should be.
 
     Every parameter is keyword-only. With nine of them, a positional call would
     be unreadable, and this guarantees call sites document themselves.
@@ -111,6 +118,9 @@ def ui_select(
         # template's "all" reset writes, which is why the client-side
         # comparison is String(model) === '<value>'.
         norm.append({"value": str(value) if value is not None else "", "label": label, "icon": opt_icon})
+
+    if icon and icon not in FILTER_ICONS:
+        raise ValueError(f"ui_select: unknown icon {icon!r}; expected one of {sorted(FILTER_ICONS)}")
 
     return {
         "model": model,

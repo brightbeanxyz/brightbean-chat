@@ -81,7 +81,22 @@
     // The hidden input above is the single global CSRF source for every htmx
     // request. The cookie is deliberately not HttpOnly for the same reason,
     // but reading the input avoids depending on cookie parsing.
+    //
+    // The origin check is not optional. htmx will happily issue a cross-origin
+    // request, and attaching the token unconditionally means any hx-* pointing
+    // off-site hands the session's CSRF token to that host. Message text,
+    // usernames and media URLs all arrive from strangers
+    // (SECURITY-BASELINE §2), so from Layer 3 onwards this template renders
+    // attacker-influenced content — the guard belongs here, once, rather than
+    // in every surface that later learns to display it.
     document.body.addEventListener('htmx:configRequest', function (event) {
+        var target;
+        try {
+            target = new URL(event.detail.path, window.location.href);
+        } catch (e) {
+            return;  // Unparseable target: send nothing rather than guess.
+        }
+        if (target.origin !== window.location.origin) { return; }
         var token = document.querySelector('[name=csrfmiddlewaretoken]');
         if (token) { event.detail.headers['X-CSRFToken'] = token.value; }
     });
@@ -125,14 +140,15 @@
             <div class="relative" x-data="{ wsOpen: false }" @click.away="wsOpen = false">
                 <button type="button" @click="wsOpen = !wsOpen"
                         class="sidebar-ws-btn btn-neutral-100 w-full flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer">
-                    {% include "partials/_logo.html" with workspace=current_workspace %}
+                    {% include "partials/_logo.html" with workspace=current_workspace only %}
                     <span class="sidebar-nav-label text-sm font-semibold truncate" style="color: var(--text-primary);">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
                     <svg class="sidebar-nav-label ml-auto flex-shrink-0" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-ghost);"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg>
                 </button>
                 <div x-show="wsOpen" x-cloak class="anim-collapse absolute left-0 right-0 mt-1 z-50 rounded-lg py-1"
                      style="background: var(--surface-0); box-shadow: var(--shadow-lg); border: 1px solid var(--border);">
                     {% for ws in sidebar_workspaces %}
-                    <a href="{{ ws.url }}" class="block px-3 py-1.5 text-xs btn-surface-1" style="color: var(--text-secondary);">{{ ws.name }}</a>
+                    <a href="{{ ws.url }}" class="block px-3 py-1.5 text-xs btn-surface-1"
+                       style="color: {% if ws.is_current %}var(--brand-700){% else %}var(--text-secondary){% endif %};">{{ ws.name }}</a>
                     {% endfor %}
                     {% if can_create_workspace %}
                     <a href="{{ create_workspace_url }}" class="block px-3 py-1.5 text-xs btn-surface-1" style="color: var(--primary);">New workspace</a>
@@ -141,7 +157,7 @@
             </div>
             {% else %}
             <div class="sidebar-ws-btn flex items-center gap-2 px-2 py-1.5">
-                {% include "partials/_logo.html" %}
+                {% include "partials/_logo.html" only %}
                 <span class="sidebar-nav-label text-sm font-semibold truncate" style="color: var(--text-primary);">BrightBean Chat</span>
             </div>
             {% endif %}
@@ -156,7 +172,7 @@
         <!-- Footer: collapse toggle, settings, sign out -->
         <div class="sidebar-org-footer flex-shrink-0 p-3 border-t" style="border-color: var(--border);">
             <div class="sidebar-org-expanded flex items-center gap-1" x-show="!sidebarCollapsed">
-                <a href="{{ settings_nav_groups.0.items.0.url|default:'#' }}" class="sidebar-nav-item flex-1" title="Settings">
+                <a href="{{ settings_home_url|default:'#' }}" class="sidebar-nav-item flex-1" title="Settings">
                     {% include "partials/_nav_icon.html" with name="settings" %}
                     <span class="sidebar-nav-label">Settings</span>
                 </a>
@@ -198,7 +214,7 @@
                 </svg>
             </button>
             <div class="flex items-center gap-2">
-                {% include "partials/_logo.html" with size="sm" %}
+                {% include "partials/_logo.html" with size="sm" only %}
                 <span class="text-sm font-semibold truncate max-w-[160px]" style="color: var(--text-primary);">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
             </div>
             <div class="w-9"></div>

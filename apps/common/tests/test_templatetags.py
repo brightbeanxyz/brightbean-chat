@@ -251,6 +251,25 @@ class TestUiSelectRendering:
         assert "pi-telegram" in html
         assert 'aria-label="telegram"' in html
 
+    def test_an_unknown_trigger_icon_raises_instead_of_padding_a_gap(self):
+        """`has-icon` is 28px of left padding. The template used to add it for
+        any truthy name while _filter_icon.html draws only four, so an
+        unrecognised one indented the label past empty space."""
+        with pytest.raises(ValueError, match="unknown icon"):
+            ui_select(model="m", options=[], icon="platform")
+
+    @pytest.mark.parametrize("icon", ["status", "channel", "tag", "clock"])
+    def test_each_known_icon_pairs_the_padding_with_a_glyph(self, icon):
+        html = self._render(icon=icon)
+
+        assert "has-icon" in html
+        assert "bb-filter-icon" in html
+
+    def test_no_icon_means_no_padding_class(self):
+        html = self._render()
+
+        assert "has-icon" not in html
+
     def test_no_inline_event_handler_attributes_are_emitted(self):
         """SECURITY-BASELINE §8: the CSP forbids inline handlers. Alpine's
         @click/x-on are compiled by Alpine, not by the HTML parser, so they are

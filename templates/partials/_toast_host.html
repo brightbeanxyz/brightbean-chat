@@ -30,7 +30,14 @@ Carried over unchanged, because each exists for a reason:
   * the init guard, because htmx executes <script> tags inside swapped-in HTML
     and a second registration would double every toast.
 {% endcomment %}
-<div id="bb-toast-host" aria-live="polite" aria-atomic="false"></div>
+{% comment %}
+The host is a plain container: no aria-live. Each toast carries its own
+role (status for the quiet tones, alert for errors), which IS a live region,
+so announcing the host as well made a screen reader read every toast twice.
+Per-toast roles also get the politeness right — an error interrupts, a
+success waits — which a single aria-live on the container cannot express.
+{% endcomment %}
+<div id="bb-toast-host"></div>
 <script nonce="{{ request.csp_nonce }}">
 (function () {
     if (window.__bbToastInit) { return; }

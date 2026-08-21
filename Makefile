@@ -67,7 +67,7 @@ format: ## Auto-fix lint and formatting issues
 	ruff format .
 
 typecheck: ## Run mypy type checker
-	mypy apps/ config/ tests/ --ignore-missing-imports
+	mypy apps/ config/ theme/ tests/ --ignore-missing-imports
 
 audit: ## Run the dependency audits CI runs (SECURITY-BASELINE §10)
 	pip-audit --strict --requirement requirements.txt --requirement requirements-dev.txt

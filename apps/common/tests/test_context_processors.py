@@ -150,6 +150,38 @@ class TestActiveFlag:
         assert not [i for g in context["nav_groups"] for i in g["items"] if i["active"]]
 
 
+class TestReverseCache:
+    def test_a_resolvable_name_is_cached_and_stable(self):
+        from apps.common.context_processors import reverse_cached
+
+        assert reverse_cached("dashboard") == "/dashboard/"
+        assert reverse_cached("dashboard") == "/dashboard/"
+
+    def test_an_unresolvable_name_is_none_and_is_not_retried_into_an_exception(self):
+        """The point of caching it: `account_logout` does not exist until #31,
+        so before this every authenticated request built a NoReverseMatch just
+        to throw it away."""
+        from apps.common.context_processors import _URL_CACHE, reverse_cached
+
+        assert reverse_cached("account_logout") is None
+        assert (None, "account_logout") in _URL_CACHE or any(k[1] == "account_logout" for k in _URL_CACHE)
+
+    def test_the_cache_is_dropped_when_the_urlconf_changes(self):
+        """Otherwise one test's routes leak into the next through a module-level
+        dict — override_settings(ROOT_URLCONF=...) is common in Django suites."""
+        from django.test import override_settings
+
+        from apps.common.context_processors import _URL_CACHE, reverse_cached
+
+        reverse_cached("dashboard")
+        assert _URL_CACHE
+
+        with override_settings(ROOT_URLCONF="tests.testapp.urls_does_not_exist"):
+            assert _URL_CACHE == {}
+
+        assert _URL_CACHE == {}
+
+
 class TestNavStructure:
     def test_every_nav_target_resolves_to_a_real_url(self):
         """A nav entry pointing at a name nothing registers renders "#", which

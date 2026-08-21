@@ -70,7 +70,7 @@ jobs:
       - name: mypy
         # django-stubs loads config.settings.test, which supplies its own
         # SECRET_KEY / ENCRYPTION_KEY_SALT defaults — no secrets needed here.
-        run: mypy apps/ config/ tests/ --ignore-missing-imports
+        run: mypy apps/ config/ theme/ tests/ --ignore-missing-imports
 
   test:
     name: Test (pytest)
@@ -236,7 +236,14 @@ jobs:
         # the copy and diffing makes that impossible to merge.
         run: |
           npm run vendor
-          if ! git diff --exit-code -- static/js/vendor; then
+          # `git status --porcelain`, not `git diff`: diff only reports tracked
+          # files, so adding an entry to ASSETS and forgetting to commit the
+          # file it produces would leave this step green while the asset 404s
+          # at runtime and fails the image build under manifest storage.
+          drift="$(git status --porcelain -- static/js/vendor)"
+          if [ -n "${drift}" ]; then
+            echo "${drift}"
+            git diff -- static/js/vendor || true
             echo "::error::static/js/vendor is stale — run \`npm run vendor\` and commit the result."
             exit 1
           fi

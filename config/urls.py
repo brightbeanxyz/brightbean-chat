@@ -9,9 +9,11 @@ from apps.common import views
 # navigation itself is complete from day one so the shell is reviewable and so
 # a later issue swaps a view rather than editing the nav (see
 # apps.common.context_processors.MAIN_NAV / SETTINGS_NAV).
-_APP_LAYOUT = "base.html"
-_SETTINGS_LAYOUT = "layouts/settings.html"
-_WS_SETTINGS_LAYOUT = "layouts/workspace_settings.html"
+# Keys of apps.common.views._LAYOUTS, not template paths — see the note
+# there for why the view resolves the name rather than receiving it.
+_APP_LAYOUT = "app"
+_SETTINGS_LAYOUT = "settings"
+_WS_SETTINGS_LAYOUT = "workspace_settings"
 
 # (route, url name, heading, owning issue, layout)
 _STUBS: list[tuple[str, str, str, str, str]] = [

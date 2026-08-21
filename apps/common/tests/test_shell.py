@@ -4,6 +4,8 @@ import re
 from pathlib import Path
 
 import pytest
+from django.test import RequestFactory
+from django.urls import resolve
 
 NONCE_ATTR_RE = re.compile(r'nonce="([A-Za-z0-9+/=]+)"')
 INLINE_SCRIPT_RE = re.compile(r"<(script|style)(?![^>]*\bsrc=)([^>]*)>", re.I)
@@ -15,10 +17,22 @@ SHELL_URLS = ["/", "/ui/", "/dashboard/", "/inbox/", "/settings/profile/", "/set
 def member(client, django_user_model):
     """A signed-in user, so base.html renders the shell branch.
 
-    Uses get_user_model() indirectly via pytest-django's fixture, so this keeps
-    working when issue #31 swaps in a custom AUTH_USER_MODEL.
+    The identifying field is read off the model rather than hardcoded as
+    ``username=``. Issue #31 swaps in a User with ``USERNAME_FIELD = "email"``
+    and no username field at all, at which point ``create_user(username=...)``
+    raises and takes roughly forty tests with it — during the sibling
+    workstream's rebase, which is the worst possible moment to be debugging a
+    fixture.
     """
-    user = django_user_model.objects.create_user(username="member", password="pw-for-tests-only")
+    field = django_user_model.USERNAME_FIELD
+    identifier = "member@example.com" if "email" in field else "member"
+    credentials = {field: identifier, "password": "pw-for-tests-only"}
+    # An email-based User still declares EMAIL_FIELD; fill it when it is a
+    # separate required field so create_user does not trip over a blank.
+    email_field = getattr(django_user_model, "EMAIL_FIELD", "email")
+    if email_field != field:
+        credentials.setdefault(email_field, "member@example.com")
+    user = django_user_model.objects.create_user(**credentials)
     client.force_login(user)
     return user
 
@@ -241,6 +255,73 @@ class TestSidebarCollapse:
 
 
 @pytest.mark.django_db
+class TestWorkspaceSwitcher:
+    """The `{% if sidebar_workspaces %}` branch of base.html.
+
+    It renders for nobody until issue #31 populates the list, which is exactly
+    why it needs covering here: unexercised markup is where a dead `href=""`
+    hides. Two of them did — `create_workspace_url` was referenced by the
+    template and supplied by nothing, and `ws.url` was an attribute no
+    Workspace model has — and neither the suite nor a browser pass caught it,
+    because the branch never ran.
+    """
+
+    def _render(self, **overrides):
+        from django.template.loader import render_to_string
+
+        from apps.common.context_processors import navigation_context
+
+        request = RequestFactory().get("/dashboard/")
+        request.resolver_match = resolve("/dashboard/")
+        context = navigation_context(request)
+        context.update(
+            {
+                "sidebar_workspaces": [
+                    {"name": "Acme Support", "url": "/w/acme/", "is_current": True},
+                    {"name": "Beta Co", "url": "/w/beta/", "is_current": False},
+                ],
+                "current_workspace": {"name": "Acme Support"},
+                "can_create_workspace": True,
+            }
+        )
+        context.update(overrides)
+        return render_to_string("base.html", context, request=request)
+
+    def test_every_workspace_row_has_a_real_href(self):
+        html = self._render()
+
+        assert 'href="/w/acme/"' in html
+        assert 'href="/w/beta/"' in html
+
+    def test_the_create_link_has_a_real_href(self):
+        """An undefined variable renders as "" and `href=""` reloads the current
+        page — a dead control that looks alive."""
+        html = self._render()
+
+        assert "New workspace" in html
+        assert 'href=""' not in html
+
+    def test_no_anchor_in_the_shell_has_an_empty_href(self):
+        """Catches the whole class, not just the two known instances."""
+        html = self._render()
+
+        assert not re.findall(r'<a\s[^>]*href=""', html)
+
+    def test_workspace_names_are_escaped(self):
+        html = self._render(
+            sidebar_workspaces=[{"name": "<script>alert(1)</script>", "url": "/w/x/", "is_current": False}]
+        )
+
+        assert "<script>alert(1)</script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_the_switcher_is_absent_when_there_are_no_workspaces(self):
+        html = self._render(sidebar_workspaces=[], can_create_workspace=False)
+
+        assert "New workspace" not in html
+
+
+@pytest.mark.django_db
 class TestToastHost:
     def test_the_host_is_on_every_page_with_no_per_page_include(self, client, member):
         """Deviation 2. Studio's host is a partial each template must remember."""
@@ -285,6 +366,20 @@ class TestToastHost:
     def test_init_is_idempotent_because_htmx_reruns_swapped_in_scripts(self, client, member):
         assert "__bbToastInit" in client.get("/dashboard/").content.decode()
 
+    def test_the_host_is_not_itself_a_live_region(self, client, member):
+        """Each toast carries its own role, which IS a live region. Announcing
+        the host as well made a screen reader read every toast twice."""
+        body = client.get("/dashboard/").content.decode()
+
+        assert '<div id="bb-toast-host"></div>' in body
+
+    def test_errors_interrupt_and_quiet_tones_do_not(self, client, member):
+        """Politeness per tone is the reason the roles live on the toasts
+        rather than as one aria-live on the container."""
+        body = client.get("/dashboard/").content.decode()
+
+        assert "tone === 'error' ? 'alert' : 'status'" in body
+
     def test_a_view_fires_a_toast_over_hx_trigger(self, client):
         import json
 
@@ -312,6 +407,23 @@ class TestCsrfWiring:
         assert "htmx:configRequest" in body
         assert "X-CSRFToken" in body
         assert "csrfmiddlewaretoken" in body
+
+    def test_the_token_is_gated_on_a_same_origin_check(self, client, member):
+        """htmx will issue a cross-origin request happily, and an unconditional
+        header hands the session's CSRF token to whatever host an hx-* points
+        at. From Layer 3 this template renders platform-supplied content
+        (SECURITY-BASELINE §2), so the guard belongs here once rather than in
+        every surface that later learns to display it.
+
+        Behaviour was verified in a browser by dispatching htmx:configRequest
+        against same-origin, cross-origin, protocol-relative, other-port and
+        unparseable targets; only the same-origin ones received the header.
+        """
+        body = client.get("/dashboard/").content.decode()
+
+        assert "target.origin !== window.location.origin" in body
+        # The check has to come before the header is set, or it guards nothing.
+        assert body.index("target.origin !==") < body.index("headers['X-CSRFToken']")
 
 
 @pytest.mark.django_db
@@ -374,6 +486,44 @@ class TestPlatformIcon:
 
         html = Template('{% include "partials/_platform_icon.html" with platform="sms" %}').render(Context())
         assert 'width="16"' in html
+
+
+@pytest.mark.django_db
+class TestLogoSizing:
+    def _render(self, **ctx):
+        from django.template import Context, Template
+
+        return Template('{% include "partials/_logo.html" with size=size only %}').render(Context(ctx))
+
+    def test_the_small_variant_uses_a_component_class_not_a_utility(self):
+        """Everything in styles.css is unlayered and Tailwind's utilities live
+        in @layer utilities, so unlayered wins: `w-7 h-7` next to
+        .sidebar-logo-mark was silently ignored and size="sm" did nothing."""
+        html = self._render(size="sm")
+
+        assert "sidebar-logo-mark-sm" in html
+        assert "w-7" not in html
+
+    def test_the_default_variant_carries_no_modifier(self):
+        assert "sidebar-logo-mark-sm" not in self._render(size="md")
+
+    def test_the_modifier_exists_in_the_compiled_stylesheet(self):
+        """A class the template emits and the bundle never defines is the same
+        no-op in a different place."""
+        from django.contrib.staticfiles import finders
+
+        bundle = Path(finders.find("css/dist/styles.css")).read_text()
+
+        assert ".sidebar-logo-mark-sm{" in bundle
+
+    def test_ambient_context_cannot_resize_the_mark(self):
+        """The include passes `only`; without it a stray `size` in the page
+        context would silently change the logo."""
+        from django.template import Context, Template
+
+        html = Template('{% include "partials/_logo.html" only %}').render(Context({"size": "sm"}))
+
+        assert "sidebar-logo-mark-sm" not in html
 
 
 @pytest.mark.django_db

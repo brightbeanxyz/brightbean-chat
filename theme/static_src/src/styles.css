@@ -242,6 +242,20 @@ body {
 img.sidebar-logo-mark {
   background: transparent;
 }
+/* Size modifier.
+   It has to be a component class rather than a Tailwind `w-7 h-7` on the call
+   site: everything in this stylesheet is UNLAYERED, while Tailwind emits its
+   utilities inside `@layer utilities`, and unlayered rules beat every cascade
+   layer regardless of source order. So a utility added next to a component
+   class that sets the same property is silently ignored — which is exactly
+   what made `w-auto` unusable on .btn-outline (hence .btn-inline) and what
+   made this partial's size="sm" a no-op. Any component class here that sets
+   width, height, background or colour needs its own modifier for the same
+   reason; a caller cannot override it from the outside. */
+.sidebar-logo-mark-sm {
+  width: 28px;
+  height: 28px;
+}
 
 /* Sidebar collapsed state - desktop only */
 @media (min-width: 1024px) {

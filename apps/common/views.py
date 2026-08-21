@@ -2,6 +2,7 @@
 probe, and the "coming soon" stubs behind the sidebar navigation."""
 
 import logging
+from typing import cast
 
 from django.db import Error as DatabaseError
 from django.db import connections
@@ -77,28 +78,45 @@ def ui_demo(request: HttpRequest) -> HttpResponse:
 @require_POST
 def ui_demo_toast(request: HttpRequest) -> HttpResponse:
     """Fire a toast of the requested tone, to prove the host needs no include."""
-    # A dict keyed by the literal type rather than an `in` check, so mypy can
-    # see that whatever comes out of untrusted POST data really is a Tone.
     bodies: dict[Tone, str] = {
         "success": "Nothing was saved — this is the style guide.",
         "info": "Toasts arrive over HX-Trigger, rendered by the host in base.html.",
         "warn": "The body is written with textContent, so markup here is inert.",
         "error": "Errors stay visible longer and use the alert role.",
     }
-    tones: dict[str, Tone] = {"success": "success", "info": "info", "warn": "warn", "error": "error"}
-    tone: Tone = tones.get(request.POST.get("tone", ""), "info")
+    # One table, not two. The keys of `bodies` already are the valid tones, so a
+    # second dict listing them again is a place for the two to drift — add a
+    # fifth tone, forget one, and it silently degrades to "info". The cast is
+    # what the membership test has just proved.
+    raw = request.POST.get("tone", "")
+    tone: Tone = cast(Tone, raw) if raw in bodies else "info"
     return toast_response(tone=tone, title=f"{tone.title()} toast", body=bodies[tone])
 
 
-def coming_soon(request: HttpRequest, *, section: str, issue: str, layout: str = "base.html") -> HttpResponse:
+# The shells a stub may render into, keyed by a symbolic name. A dict rather
+# than a template path passed straight through: `layout` reaches
+# {% extends %}, and a template name that can be influenced by request data is
+# how a URLconf change one refactor from now turns into arbitrary template
+# disclosure. SECURITY-BASELINE §3 bans user input reaching the template
+# engine; this keeps the ban true by construction rather than by review.
+_LAYOUTS = {
+    "app": "base.html",
+    "settings": "layouts/settings.html",
+    "workspace_settings": "layouts/workspace_settings.html",
+}
+
+
+def coming_soon(request: HttpRequest, *, section: str, issue: str, layout: str = "app") -> HttpResponse:
     """Placeholder for a sidebar destination a later issue owns.
 
     The navigation is complete from day one so the shell can be reviewed and so
     later issues change a view, not the nav. Each stub names the issue that
     replaces it.
 
-    ``layout`` picks the shell the stub renders into, so the settings routes
-    exercise ``layouts/settings.html`` and ``layouts/workspace_settings.html``
-    rather than leaving both layouts unrendered by anything until Layer 2.
+    ``layout`` is a key of :data:`_LAYOUTS`, not a template path, so the
+    settings routes exercise ``layouts/settings.html`` and
+    ``layouts/workspace_settings.html`` without the template name ever being a
+    function of request data. An unknown key falls back to the app shell.
     """
-    return render(request, "coming_soon.html", {"section": section, "issue": issue, "layout": layout})
+    context = {"section": section, "issue": issue, "layout": _LAYOUTS.get(layout, _LAYOUTS["app"])}
+    return render(request, "coming_soon.html", context)
