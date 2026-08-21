@@ -1,0 +1,59 @@
+{% comment %}
+The bell dropdown's contents. Re-fetched on every open, so it is never stale.
+
+Ends with the out-of-band badge fragment, so marking something read updates the
+count in the same response — no second request, and no custom JS event (which
+would need Alpine's `.camel` modifier to survive htmx's lowercase event names).
+{% endcomment %}
+<div class="flex items-center justify-between px-4 pt-3 pb-2">
+    <span class="text-[13px] font-semibold" style="color: var(--text-primary);">Notifications</span>
+    {% if unread_notification_count %}
+    <button type="button"
+            hx-post="{% url 'notifications:mark_all_read' %}"
+            hx-target="#notification-panel-body"
+            hx-swap="innerHTML"
+            class="text-[11px] font-semibold cursor-pointer btn-text-hover-primary"
+            style="color: var(--primary);">Mark all read</button>
+    {% endif %}
+</div>
+
+<div class="max-h-96 overflow-y-auto overscroll-contain">
+    {% for n in notifications %}
+    <a href="{% if n.payload.action_url %}{{ n.payload.action_url }}{% else %}{% url 'notifications:list' %}{% endif %}"
+       class="notif-item{% if not n.is_read %} is-unread{% endif %} btn-surface-1 flex gap-3 px-4 py-3"
+       {% if not n.is_read %}
+       hx-post="{% url 'notifications:mark_read' n.id %}"
+       hx-target="#notification-panel-body"
+       hx-swap="innerHTML"
+       {% endif %}>
+        <span class="notif-icon notif-icon-{{ n.payload.tone|default:'info' }} flex-shrink-0">
+            {% include "partials/_nav_icon.html" with name=n.payload.icon|default:"bell" %}
+        </span>
+        <span class="flex-1 min-w-0">
+            <span class="block text-[13px] font-semibold leading-snug truncate" style="color: var(--text-primary);">{{ n.title }}</span>
+            {% if n.body %}
+            <span class="block text-[12px] leading-relaxed mt-0.5" style="color: var(--text-secondary);">{{ n.body|truncatechars:120 }}</span>
+            {% endif %}
+            <span class="block text-[11px] mt-1 tabular-nums" style="color: var(--text-ghost);">{{ n.created_at|timesince }} ago</span>
+        </span>
+    </a>
+    {% empty %}
+    <div class="flex flex-col items-center justify-center py-10 px-6 text-center">
+        <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-3"
+             style="background: var(--surface-2); color: var(--text-ghost);">
+            {% include "partials/_nav_icon.html" with name="bell" %}
+        </div>
+        <p class="text-sm font-medium" style="color: var(--text-primary);">All caught up</p>
+        <p class="text-xs mt-1" style="color: var(--text-tertiary);">Nothing needs you right now.</p>
+    </div>
+    {% endfor %}
+</div>
+
+{% if notifications %}
+<div class="px-4 py-2.5 border-t" style="border-color: var(--border);">
+    <a href="{% url 'notifications:list' %}" class="block text-center text-[11px] font-semibold btn-text-hover-primary"
+       style="color: var(--primary);">View all notifications</a>
+</div>
+{% endif %}
+
+{% include "notifications/partials/_badge.html" %}

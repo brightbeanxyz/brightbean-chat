@@ -1,0 +1,64 @@
+{% comment %}
+The history page's rows, swapped in by the filter controls.
+
+Args: notifications, page, has_next, has_previous, selected_* (for the pager's
+hx-get, which has to carry the current filters forward).
+{% endcomment %}
+{% if notifications %}
+<ul class="divide-y" style="border-color: var(--border);">
+    {% for n in notifications %}
+    <li class="notif-item{% if not n.is_read %} is-unread{% endif %} flex gap-3 px-4 py-3.5">
+        <span class="notif-icon notif-icon-{{ n.payload.tone|default:'info' }} flex-shrink-0">
+            {% include "partials/_nav_icon.html" with name=n.payload.icon|default:"bell" %}
+        </span>
+        <div class="flex-1 min-w-0">
+            <p class="text-[13px] font-semibold leading-snug" style="color: var(--text-primary);">{{ n.title }}</p>
+            {% if n.body %}
+            <p class="text-[12px] leading-relaxed mt-0.5" style="color: var(--text-secondary);">{{ n.body }}</p>
+            {% endif %}
+            <p class="text-[11px] mt-1 tabular-nums" style="color: var(--text-ghost);">
+                {{ n.created_at|timesince }} ago
+                {% if n.payload.workspace_name %} · {{ n.payload.workspace_name }}{% endif %}
+            </p>
+        </div>
+        {% if not n.is_read %}
+        <button type="button"
+                hx-post="{% url 'notifications:mark_read' n.id %}"
+                hx-target="#notification-history"
+                hx-swap="innerHTML"
+                class="btn-text-hover-primary flex-shrink-0 self-start text-[11px] font-semibold cursor-pointer"
+                style="color: var(--primary);">Mark read</button>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+
+{% if has_previous or has_next %}
+<div class="flex items-center justify-between px-4 py-3 border-t" style="border-color: var(--border);">
+    {% if has_previous %}
+    <button type="button" class="btn-outline btn-inline text-xs"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'-1' }}&event_type={{ selected_event_type }}&read_state={{ selected_read_state }}"
+            hx-target="#notification-history" hx-swap="innerHTML">Newer</button>
+    {% else %}<span></span>{% endif %}
+    {% if has_next %}
+    <button type="button" class="btn-outline btn-inline text-xs"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'1' }}&event_type={{ selected_event_type }}&read_state={{ selected_read_state }}"
+            hx-target="#notification-history" hx-swap="innerHTML">Older</button>
+    {% else %}<span></span>{% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="flex flex-col items-center justify-center py-16 px-6 text-center">
+    <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+         style="background: var(--surface-2); color: var(--text-ghost);">
+        {% include "partials/_nav_icon.html" with name="bell" %}
+    </div>
+    <p class="text-sm font-medium" style="color: var(--text-primary);">Nothing here</p>
+    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+        {% if selected_event_type or selected_read_state %}No notifications match this filter.{% else %}Notifications about your flows, channels and broadcasts will appear here.{% endif %}
+    </p>
+</div>
+{% endif %}
+
+{% include "notifications/partials/_badge.html" %}

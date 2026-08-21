@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Notifications · BrightBean Chat{% endblock %}
+
+{% block page_header %}<h1>Notifications</h1>{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <p class="text-sm" style="color: var(--text-secondary);">
+        {% if unread_notification_count %}{{ unread_notification_count }} unread{% else %}All caught up{% endif %}
+    </p>
+    <div class="flex items-center gap-3">
+        {% comment %}
+          The single preference issue #7 allows. It lives here rather than under
+          /accounts/preferences/, which is another issue's stub ("#31
+          follow-up") — and when that page is built, adopting this control is a
+          one-line {% include %}.
+        {% endcomment %}
+        <form hx-post="{% url 'notifications:email_preference' %}" hx-trigger="change" hx-swap="none">
+            <label class="bb-toggle text-xs" style="color: var(--text-secondary);">
+                <input type="checkbox" name="email_enabled" {% if email_enabled %}checked{% endif %}>
+                <span class="bb-toggle-track"></span>
+                <span>Email me</span>
+            </label>
+        </form>
+        {% if unread_notification_count %}
+        <button type="button" class="btn-outline btn-inline text-xs"
+                hx-post="{% url 'notifications:mark_all_read' %}"
+                hx-target="#notification-history" hx-swap="innerHTML">Mark all read</button>
+        {% endif %}
+    </div>
+</div>
+
+<div class="flex flex-wrap items-center gap-2 mb-4">
+    <select name="event_type" aria-label="Filter by type" class="bb-filter-select"
+            hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
+            hx-include="[name='read_state']">
+        <option value="">All types</option>
+        {% for value, label in event_type_choices %}
+        <option value="{{ value }}" {% if value == selected_event_type %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+    <select name="read_state" aria-label="Filter by read state" class="bb-filter-select"
+            hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
+            hx-include="[name='event_type']">
+        <option value="">Read and unread</option>
+        <option value="unread" {% if selected_read_state == "unread" %}selected{% endif %}>Unread only</option>
+        <option value="read" {% if selected_read_state == "read" %}selected{% endif %}>Read only</option>
+    </select>
+</div>
+
+<div id="notification-history" class="rounded-xl border overflow-hidden"
+     style="background: var(--surface-0); border-color: var(--border);">
+    {% include "notifications/partials/_history_list.html" %}
+</div>
+{% endblock %}
