@@ -1,7 +1,9 @@
 """The shared template tags (apps/common/templatetags/common_extras.py)."""
 
 import json
+import re
 import uuid
+from pathlib import Path
 
 import pytest
 from django.template import Context, Template
@@ -278,3 +280,51 @@ class TestUiSelectRendering:
 
         for attr in ["onclick=", "onchange=", "onmouseover=", "onerror="]:
             assert attr not in html.lower()
+
+
+class TestPlatformClass:
+    """The chip modifier for a platform key.
+
+    Call sites used to interpolate `pi-{{ key }}`, which for anything outside
+    PLATFORMS is a class no stylesheet defines. Combined with `.pi-chip`, which
+    paints the glyph white to sit on a coloured chip, that rendered a white
+    glyph on a transparent chip — invisible against the white dropdown panel,
+    which is exactly where the fallback matters.
+    """
+
+    @pytest.mark.parametrize("platform", ["telegram", "instagram", "messenger", "whatsapp", "sms", "email"])
+    def test_known_platforms_get_their_own_chip(self, platform):
+        from apps.common.templatetags.common_extras import platform_class
+
+        assert platform_class(platform) == f"pi-{platform}"
+
+    @pytest.mark.parametrize("platform", ["carrier-pigeon", "", None, "TELEGRAM", "tiktok"])
+    def test_everything_else_falls_back_to_the_neutral_chip(self, platform):
+        from apps.common.templatetags.common_extras import platform_class
+
+        assert platform_class(platform) == "pi-unknown"
+
+    def test_every_class_it_can_emit_exists_in_the_stylesheet(self):
+        """A fallback that names an undefined class is the same bug moved."""
+        from apps.common.templatetags.common_extras import PLATFORMS, platform_class
+
+        source = (Path(__file__).parents[3] / "theme/static_src/src/styles.css").read_text()
+
+        for key in [*PLATFORMS, "carrier-pigeon"]:
+            assert f".{platform_class(key)} " in source or f".{platform_class(key)}{{" in source
+
+    def test_the_ink_variant_tints_known_platforms_and_leaves_others_alone(self):
+        from apps.common.templatetags.common_extras import platform_ink_class
+
+        assert platform_ink_class("telegram") == "pi-ink-telegram"
+        assert platform_ink_class("carrier-pigeon") == ""
+
+    def test_the_partial_and_the_python_list_agree(self):
+        """The partial decides which glyph is drawn, PLATFORMS decides which
+        chip colour it sits on. Drift either way is a rendering bug."""
+        from apps.common.templatetags.common_extras import PLATFORMS
+
+        partial = (Path(__file__).parents[3] / "templates/partials/_platform_icon.html").read_text()
+        drawn = set(re.findall(r'platform == "([a-z_]+)"', partial))
+
+        assert drawn == set(PLATFORMS)

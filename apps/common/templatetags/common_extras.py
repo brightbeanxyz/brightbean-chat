@@ -22,6 +22,45 @@ register = template.Library()
 FILTER_ICONS = frozenset({"status", "channel", "tag", "clock"})
 
 
+# The platforms partials/_platform_icon.html draws a real glyph for. Anything
+# else gets that partial's fallback glyph, and must get the matching neutral
+# chip — see :func:`platform_class`.
+#
+# Issue #4 (L2-B) owns the canonical platform list on the channel model; this
+# is only the render-time question of which glyph and which colour, so the two
+# are allowed to differ (a platform can exist before it has artwork). Keep this
+# in step with the branches in partials/_platform_icon.html.
+PLATFORMS = frozenset({"telegram", "instagram", "messenger", "whatsapp", "sms", "email"})
+
+
+@register.filter
+def platform_class(platform: Any) -> str:
+    """The ``.pi-*`` modifier for a platform key, falling back to ``pi-unknown``.
+
+    Call sites used to interpolate ``pi-{{ key }}`` directly, which produced a
+    class no stylesheet defines for any key outside :data:`PLATFORMS`. Paired
+    with ``.pi-chip`` — which paints the glyph white for contrast against a
+    coloured chip — that meant an unrecognised platform rendered a white glyph
+    on a chip with no background: invisible on the white dropdown panel,
+    exactly where the fallback is supposed to be doing its job.
+
+    Unknown keys are the normal case here, not the exotic one: a platform
+    reaches the UI as soon as issue #4 adds it to the model, whereas its
+    artwork lands with the adapter, several layers later.
+    """
+    return f"pi-{platform}" if platform in PLATFORMS else "pi-unknown"
+
+
+@register.filter
+def platform_ink_class(platform: Any) -> str:
+    """Like :func:`platform_class` but tints the glyph instead of a chip.
+
+    Unknown keys get no tint at all rather than a made-up one: the fallback
+    glyph inherits the surrounding text colour, which is always legible.
+    """
+    return f"pi-ink-{platform}" if platform in PLATFORMS else ""
+
+
 @register.filter(is_safe=True)
 def json_attr(value: Any) -> SafeString:
     """Serialize a value as a JSON literal safe to embed in an HTML attribute.

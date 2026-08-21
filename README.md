@@ -57,8 +57,15 @@ make css-watch    # rebuild on save, alongside `make server`
 
 `make setup` runs `make frontend` for you. The vendored JavaScript is committed,
 so a clone with no Node still serves working pages — only the stylesheet needs
-building. `docker compose up` runs a `tailwind` service that watches and
-rebuilds it, and the Docker image compiles it in a Node stage.
+building.
+
+Under `docker compose up` the bundle is never missing: the image compiles it in
+a Node stage, and the app mounts it as a named volume that Docker seeds from
+the image, so the first request is styled even before the `tailwind` watcher has
+finished `npm ci`. The watcher then rebuilds into that same volume as you edit,
+which also keeps its output off the host — it runs as root, and a bind-mounted
+write would leave root-owned files in your checkout. `docker compose down -v`
+resets the volume if a stale bundle ever outlives an image rebuild.
 
 To bump a vendored library, change the pin in `package.json`, run
 `npm install && npm run vendor`, and commit both the lockfile and the refreshed

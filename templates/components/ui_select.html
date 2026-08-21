@@ -53,7 +53,7 @@ page except that one.
         {% if multiple %}
         <label class="btn-surface-1 flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer" style="color: var(--text-secondary);" role="option">
             <input type="checkbox" class="bb-checkbox" value="{{ opt.value }}" x-model="{{ model }}" @change="{{ onchange }}">
-            {% if opt.icon %}<span class="pi-chip pi-{{ opt.icon }} w-4 h-4">{% include "partials/_platform_icon.html" with platform=opt.icon size="sm" %}</span>{% endif %}
+            {% if opt.icon %}<span class="pi-chip {{ opt.icon|platform_class }} w-4 h-4">{% include "partials/_platform_icon.html" with platform=opt.icon size="sm" %}</span>{% endif %}
             <span class="truncate">{{ opt.label }}</span>
         </label>
         {% else %}
@@ -62,7 +62,7 @@ page except that one.
                 style="color: var(--text-secondary);"
                 role="option" :aria-selected="String({{ model }}) === '{{ opt.value|escapejs }}' ? 'true' : 'false'"
                 :class="String({{ model }}) === '{{ opt.value|escapejs }}' && 'bb-option-selected'">
-            {% if opt.icon %}<span class="pi-chip pi-{{ opt.icon }} w-4 h-4">{% include "partials/_platform_icon.html" with platform=opt.icon size="sm" %}</span>{% endif %}
+            {% if opt.icon %}<span class="pi-chip {{ opt.icon|platform_class }} w-4 h-4">{% include "partials/_platform_icon.html" with platform=opt.icon size="sm" %}</span>{% endif %}
             <span class="truncate">{{ opt.label }}</span>
         </button>
         {% endif %}

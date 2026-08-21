@@ -26,6 +26,14 @@ Usage:
 Args:
   platform: one of telegram, instagram, messenger, whatsapp, sms, email.
   size: "sm" (16px, default) or "md" (20px).
+
+The branch list below must stay in step with PLATFORMS in
+apps/common/templatetags/common_extras.py, which decides the chip colour. A
+key with a glyph here but no entry there renders on a neutral chip; a key with
+an entry there but no glyph here renders the fallback on a coloured one.
+Never build a chip class as `pi-{{ key }}`: use the platform_class filter, or
+an unrecognised key produces a class no stylesheet defines and .pi-chip's
+white glyph disappears against the panel.
 {% endcomment %}{% spaceless %}
 {% with px=size|default:"sm" %}
 <svg class="bb-platform-icon" width="{% if px == 'md' %}20{% else %}16{% endif %}" height="{% if px == 'md' %}20{% else %}16{% endif %}" viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="{{ platform|default:'Unknown platform' }}">
