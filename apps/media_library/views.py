@@ -141,6 +141,11 @@ def _library_context(request: WorkspaceRequest) -> dict[str, Any]:
 def library(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     context = _library_context(request)
     if _is_htmx(request):
+        # Two fragments, one endpoint. The folder rail sits outside #media-grid,
+        # so the `mediaChanged` event that refreshes the grid would otherwise
+        # leave a newly created folder invisible until a full page load.
+        if request.GET.get("fragment") == "folders":
+            return render(request, "media_library/_folder_rail.html", context)
         return render(request, "media_library/_asset_grid.html", context)
     return render(request, "media_library/library.html", context)
 

@@ -32,7 +32,14 @@ refreshes itself and this panel does not have to know it exists.
   <p class="text-xs muted break-all mb-3">{% media_url asset %}</p>
 
   {% if can_manage %}
-    <form hx-post="{% url 'media:asset_edit' workspace_id=request.workspace.id asset_id=asset.id %}">
+    {% comment %}
+      hx-swap="none" on all three: they answer 204 and carry their result in
+      HX-Trigger. Without it htmx swaps the response into the form itself, so an
+      unexpected body — a session-expiry redirect to the login page, say — is
+      injected into the panel.
+    {% endcomment %}
+    <form hx-post="{% url 'media:asset_edit' workspace_id=request.workspace.id asset_id=asset.id %}"
+          hx-swap="none">
       <label for="asset-title">Title</label>
       <input type="text" id="asset-title" name="title" value="{{ asset.title }}" maxlength="255">
 
@@ -43,7 +50,8 @@ refreshes itself and this panel does not have to know it exists.
       <button type="submit" class="mt-2">Save</button>
     </form>
 
-    <form hx-post="{% url 'media:asset_move' workspace_id=request.workspace.id asset_id=asset.id %}">
+    <form hx-post="{% url 'media:asset_move' workspace_id=request.workspace.id asset_id=asset.id %}"
+          hx-swap="none">
       <label for="asset-folder">Folder</label>
       <select id="asset-folder" name="folder">
         <option value="">No folder</option>
@@ -55,6 +63,7 @@ refreshes itself and this panel does not have to know it exists.
     </form>
 
     <form hx-post="{% url 'media:asset_delete' workspace_id=request.workspace.id asset_id=asset.id %}"
+          hx-swap="none"
           hx-confirm="Delete {{ asset.filename }}? Any flow or broadcast still referencing it will fail to send that block.">
       <button type="submit" class="btn-danger-soft">Delete</button>
     </form>

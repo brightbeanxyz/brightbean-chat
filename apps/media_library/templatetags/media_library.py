@@ -17,9 +17,16 @@ register = template.Library()
 
 @register.simple_tag
 def media_url(asset: Any, *, thumbnail: bool = False) -> str:
-    """The asset's public, signed delivery URL.
+    """The asset's signed delivery URL, **relative** to this origin.
 
-    Absolute, because the same markup is rendered into email bodies and picker
-    payloads that leave this origin.
+    Relative rather than absolute, which is the opposite of what the picker
+    payload and :func:`apps.media_library.resolution.resolve` hand out — and for
+    the opposite reason. Those two serve consumers with no origin of their own
+    (a platform fetching an image, an email body), so they need
+    ``APP_URL``-based absolute URLs. A page rendered by this server already has
+    an origin, and using it has two advantages: the URL matches the CSP's
+    ``'self'`` for ``img-src`` whatever ``APP_URL`` says, and a deployment whose
+    ``APP_URL`` is stale or wrong still renders its own library correctly
+    instead of showing a grid of broken images.
     """
-    return delivery_url(asset, thumbnail=thumbnail)
+    return delivery_url(asset, thumbnail=thumbnail, absolute=False)

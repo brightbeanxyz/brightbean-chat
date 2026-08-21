@@ -41,22 +41,18 @@ design-system classes, so they live in theme/static_src/src/styles.css as
   {# ── Folder rail ─────────────────────────────────────────────── #}
   <aside class="lg:w-56 flex-shrink-0">
     <h2>Folders</h2>
-    <nav aria-label="Media folders" class="space-y-0.5">
-      <a class="media-folder {% if not current_folder %}is-active{% endif %}"
-         href="{% url 'media:library' workspace_id=request.workspace.id %}">All media</a>
-      <a class="media-folder {% if current_folder == 'root' %}is-active{% endif %}"
-         href="?folder=root">Not in a folder</a>
-      {% for row in folder_rows %}
-        <a class="media-folder {% if current_folder == row.id %}is-active{% endif %}"
-           href="?folder={{ row.id }}"
-           style="padding-left: {{ row.indent }}rem;">{{ row.name }}</a>
-      {% empty %}
-        <p class="text-xs muted px-2.5 py-1.5">No folders yet.</p>
-      {% endfor %}
-    </nav>
+    {% include "media_library/_folder_rail.html" %}
 
     {% if can_manage %}
-      <form class="mt-3" hx-post="{% url 'media:folder_create' workspace_id=request.workspace.id %}">
+      {% comment %}
+        Clear the field only on success, so a rejected name (a duplicate, say)
+        stays in the box for the user to correct rather than vanishing along
+        with the error toast.
+      {% endcomment %}
+      <form class="mt-3"
+            hx-post="{% url 'media:folder_create' workspace_id=request.workspace.id %}"
+            hx-swap="none"
+            hx-on::after-request="if (event.detail.successful) this.reset()">
         <label for="new-folder" class="sr-only">New folder name</label>
         <input type="text" id="new-folder" name="name" placeholder="New folder" maxlength="255" required>
         {% if current_folder and current_folder != 'root' %}

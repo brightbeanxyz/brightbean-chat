@@ -122,6 +122,72 @@ class TestMutations:
         assert "mediaChanged" in editor_client.post(url, {"title": "x"})["HX-Trigger"]
 
 
+class TestHtmxWiring:
+    """Regressions found by driving the page in a browser, not by reading it."""
+
+    def test_no_hx_post_form_falls_back_to_swapping_into_itself(self, editor_client, workspace):
+        """htmx's default target is the element that made the request.
+
+        Every hx-post form here must say where its response goes — an explicit
+        hx-target for the ones that return markup, hx-swap="none" for the ones
+        that answer 204 and carry their result in HX-Trigger. Left to the
+        default, a 204 swaps nothing and looks fine, and then one day the
+        response has a body — a session-expiry redirect to the login page — and
+        the login form renders inside the sidebar. Seen in a browser exactly
+        that way.
+        """
+        f.make_asset(workspace)
+        pages = [
+            editor_client.get(_library(workspace)).content.decode(),
+            editor_client.get(
+                reverse(
+                    "media:asset_detail",
+                    kwargs={"workspace_id": workspace.pk, "asset_id": f.make_asset(workspace).pk},
+                )
+            ).content.decode(),
+        ]
+        for body in pages:
+            for form in body.split("<form")[1:]:
+                head = form.split(">")[0]
+                if "hx-post" not in head:
+                    continue
+                declares_destination = 'hx-swap="none"' in head or "hx-target=" in head
+                assert declares_destination, f"hx-post form with no destination: {head[:120]}"
+
+    def test_the_folder_rail_refreshes_itself_on_mediachanged(self, editor_client, workspace):
+        """It lives outside #media-grid, so the grid's refresh does not cover it."""
+        body = editor_client.get(_library(workspace)).content.decode()
+        rail = body.split('id="media-folders"')[1].split(">")[0]
+        assert "mediaChanged from:body" in rail
+
+    def test_the_rail_fragment_is_served_by_the_same_endpoint(self, editor_client, workspace):
+        create_folder(workspace=workspace, name="Brand")
+        response = editor_client.get(_library(workspace, fragment="folders"), headers={"HX-Request": "true"})
+        body = response.content.decode()
+        assert 'id="media-folders"' in body
+        assert "Brand" in body
+        assert 'id="media-grid"' not in body
+
+
+class TestRenderedUrls:
+    """In-app markup uses relative delivery URLs; consumers get absolute ones."""
+
+    def test_a_card_thumbnail_is_relative_to_this_origin(self, editor_client, workspace, settings):
+        settings.APP_URL = "https://configured-elsewhere.example"
+        f.make_asset(workspace, thumbnail="media/test/thumb.jpg")
+        body = editor_client.get(_library(workspace)).content.decode()
+        assert 'src="/m/' in body
+        # An absolute URL built from a stale APP_URL renders a broken image and,
+        # off-origin, is blocked by the CSP's img-src 'self'.
+        assert "configured-elsewhere" not in body
+
+    def test_the_picker_still_hands_out_absolute_urls(self, editor_client, workspace, settings):
+        settings.APP_URL = "https://chat.example.test"
+        f.make_asset(workspace)
+        url = reverse("media:picker", kwargs={"workspace_id": workspace.pk})
+        assert editor_client.get(url).json()["results"][0]["url"].startswith("https://chat.example.test/m/")
+
+
 class TestNavigation:
     def test_the_sidebar_links_to_the_library(self, editor_client, workspace):
         body = editor_client.get(_library(workspace)).content.decode()

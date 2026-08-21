@@ -1,0 +1,26 @@
+{% comment %}
+The folder rail, refreshable on its own.
+
+It lives outside #media-grid, so the `mediaChanged` event that refreshes the
+grid would otherwise leave a newly created folder invisible until a full page
+load. It re-fetches itself from the same view with ?fragment=folders rather
+than from a second route — one endpoint, two fragments.
+{% endcomment %}
+<nav id="media-folders"
+     aria-label="Media folders"
+     class="space-y-0.5"
+     hx-get="{% url 'media:library' workspace_id=request.workspace.id %}?fragment=folders"
+     hx-trigger="mediaChanged from:body"
+     hx-swap="outerHTML">
+  <a class="media-folder {% if not current_folder %}is-active{% endif %}"
+     href="{% url 'media:library' workspace_id=request.workspace.id %}">All media</a>
+  <a class="media-folder {% if current_folder == 'root' %}is-active{% endif %}"
+     href="?folder=root">Not in a folder</a>
+  {% for row in folder_rows %}
+    <a class="media-folder {% if current_folder == row.id %}is-active{% endif %}"
+       href="?folder={{ row.id }}"
+       style="padding-left: {{ row.indent }}rem;">{{ row.name }}</a>
+  {% empty %}
+    <p class="text-xs muted px-2.5 py-1.5">No folders yet.</p>
+  {% endfor %}
+</nav>
