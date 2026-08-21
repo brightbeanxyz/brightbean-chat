@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% comment %}
+Settings layout. Studio's approach is kept: a "settings section" is expressed
+by overriding {% block sidebar_nav %} wholesale — no {{ block.super }}, no tab
+bar, no two-column split. The workspace switcher, footer and main column all
+still come from base.html; only the nav swaps.
+
+What does NOT carry over is how the active row is decided. Studio uses a
+`settings_active` string that 11 different views across 8 apps have to
+remember to put in their context — a second convention on top of the
+resolver_match checks the main nav uses. Both are gone: the settings nav is
+the same data structure the main nav is, active flag included.
+
+Concrete settings pages extend this and fill {% block content %}, which is
+re-declared empty below so it is available to grandchildren.
+{% endcomment %}
+
+{% block page_header %}{% endblock %}
+
+{% block sidebar_nav %}
+<a href="{{ app_home_url|default:'/' }}" class="sidebar-nav-item mb-2">
+    <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+    <span class="sidebar-nav-label">Back to app</span>
+</a>
+{% include "partials/_nav_groups.html" with groups=settings_nav_groups %}
+{% endblock %}
+
+{% block content %}{% endblock %}

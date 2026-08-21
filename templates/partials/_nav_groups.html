@@ -1,0 +1,30 @@
+{% comment %}
+Renders a navigation structure built by apps.common.context_processors.
+
+DEVIATION 4 of the L1-B brief. Studio writes each nav row by hand and computes
+`active` inline against request.resolver_match — at three different
+granularities across 13 call sites — while its settings layouts use a fourth
+convention, a view-supplied `settings_active` string that 11 views have to
+remember to set. Here `active` is computed once, in Python, and every nav in
+the product is this one loop.
+
+Args:
+  groups: list of {label, items: [{key,label,icon,url,active,badge}]}
+{% endcomment %}
+{% for group in groups %}
+{% if group.label %}
+<div class="sidebar-section-label-wrap">
+    <div class="sidebar-section-label">{{ group.label }}</div>
+</div>
+{% endif %}
+{% for item in group.items %}
+<a href="{{ item.url }}"
+   class="mb-1 sidebar-nav-item{% if item.active %} active{% endif %}"
+   {% if item.active %}aria-current="page"{% endif %}
+   title="{{ item.label }}">
+    {% include "partials/_nav_icon.html" with name=item.icon %}
+    <span class="sidebar-nav-label">{{ item.label }}</span>
+    {% if item.badge %}<span class="sidebar-badge">{{ item.badge }}</span>{% endif %}
+</a>
+{% endfor %}
+{% endfor %}

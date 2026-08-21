@@ -43,6 +43,23 @@ class TestCrossTenantIsolation:
             "organizations:set_workspace_archived",
         } <= names
 
+    def test_the_sweep_covers_the_shell_placeholders(self):
+        """Issue #32's sidebar destinations are real endpoints under
+        /w/<uuid>/, so baseline §1 binds them like any other: a member of
+        another workspace must get a 404. They are placeholders today, but the
+        route and its guard outlive the placeholder."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "contacts",
+            "flows",
+            "inbox",
+            "sequences",
+            "broadcasts",
+            "settings_ws_fields",
+            "settings_ws_tags",
+        } <= names
+
     def test_every_waiver_states_a_reason(self):
         assert all(reason.strip() for reason in WAIVED_ROUTES.values())
 

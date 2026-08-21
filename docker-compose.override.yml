@@ -1,10 +1,10 @@
 # Loaded automatically by `docker compose up`. Bind-mounts the working tree and
 # swaps gunicorn for runserver so edits reload without a rebuild.
 #
-# Studio's override also runs a node:20-slim `tailwind` service. There is no
-# Tailwind toolchain here yet — issue #32 adds theme/static_src and the npm
-# scripts — and a service pointing at a missing directory would break
-# `docker compose up` for everyone.
+# The bind-mount is why the Tailwind bundle needs handling here at all: `.:/app`
+# shadows the stylesheet the Dockerfile's node stage compiled into the image, so
+# without the `theme_css` volume below a clean checkout serves the whole app
+# unstyled until — and only if — a watcher gets around to building one.
 
 services:
   migrate:
@@ -15,3 +15,52 @@ services:
     command: python manage.py runserver 0.0.0.0:8000
     volumes:
       - .:/app
+      # Mounted over the hole the bind-mount above punches in the image.
+      #
+      # Docker seeds an empty named volume from the image's contents at that
+      # path, and it does so even when a bind-mount covers the parent — so the
+      # app serves the stylesheet baked at build time from its very first
+      # request. That matters because `app` deliberately does not wait for the
+      # watcher: if `npm ci` is slow, or the registry is unreachable, or the
+      # watcher dies, the page stays styled instead of silently losing its CSS.
+      - theme_css:/app/theme/static/css/dist
+
+  tailwind:
+    image: node:20-slim
+    working_dir: /app
+    # `npm ci` on start rather than a baked image: the lockfile is the source of
+    # truth and this way a dependency bump needs no rebuild. `watch:css` does an
+    # initial build before it starts watching, so the seeded stylesheet is
+    # replaced by a current one within seconds of `up`.
+    command: sh -c "npm ci --no-audit --no-fund && npm run watch:css"
+    # Without a TTY the Tailwind CLI's watcher sees stdin close the moment
+    # `docker compose up -d` detaches and shuts itself down — it did its first
+    # build and exited 0, so `up` looked entirely healthy while nothing was
+    # actually watching and no edit ever rebuilt.
+    tty: true
+    volumes:
+      - .:/app
+      # The same volume the app reads, so a rebuild reaches it — and, just as
+      # importantly, so the output does NOT go through the host bind-mount.
+      # This container is root (node:20-slim has no non-root default), and on
+      # native Linux a bind-mounted write would leave root-owned files in the
+      # developer's checkout that a later host-side `npm run build:css` or a
+      # plain `rm -rf` then cannot touch without sudo.
+      - theme_css:/app/theme/static/css/dist
+      # node_modules likewise: the container's linux binaries (esbuild,
+      # @parcel/watcher) must never clobber a macOS or Windows host install.
+      - tailwind_node_modules:/app/node_modules
+    # Deliberately no depends_on and no healthcheck: a CSS watcher is not part
+    # of the app's boot path, and `docker compose up -d` must not wait on or
+    # fail because of it.
+    #
+    # And deliberately no restart policy. `npm ci` exits non-zero on a registry
+    # blip or an out-of-sync lockfile, so `unless-stopped` would restart it
+    # straight back into the same failing install — a tight loop hammering the
+    # registry for as long as compose is up, in CI as well as on a laptop.
+    # A watcher that died should stay dead and be read in the logs; the app is
+    # still styled from the seeded bundle either way.
+
+volumes:
+  theme_css:
+  tailwind_node_modules:

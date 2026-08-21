@@ -1,8 +1,23 @@
 {
   "name": "brightbean-chat",
   "private": true,
-  "description": "Placeholder manifest. The Tailwind 4 toolchain and npm scripts arrive with issue #32; this exists so the `npm audit` gate in CI is wired from Layer 0 onwards.",
+  "description": "Frontend toolchain: the Tailwind 4 build for theme/static_src and the vendored runtime libraries in static/js.",
   "license": "AGPL-3.0-or-later",
-  "dependencies": {},
-  "devDependencies": {}
+  "scripts": {
+    "build:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --minify",
+    "watch:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --watch",
+    "vendor": "node scripts/vendor-js.mjs",
+    "build": "npm run build:css && npm run vendor"
+  },
+  "dependencies": {
+    "alpinejs": "3.16.2",
+    "chart.js": "4.5.1",
+    "flatpickr": "4.6.13",
+    "htmx.org": "2.0.10",
+    "sortablejs": "1.15.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "tailwindcss": "4.3.3"
+  }
 }

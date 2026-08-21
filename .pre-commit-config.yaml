@@ -8,12 +8,19 @@ default_language_version:
 
 repos:
   # Basic hygiene: trailing whitespace, EOF newlines, large files, merge conflicts, etc.
+  #
+  # The formatting hooks skip static/js/vendor/: those files are third-party
+  # bundles copied verbatim out of node_modules by `npm run vendor`, and CI
+  # re-runs that copy and diffs it. A hook that rewrote one would put the tree
+  # in a state the vendor step can never reproduce, failing the build with no
+  # way to satisfy both.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: \.md$
+        exclude: ^(static/js/vendor/|.*\.md$)
       - id: end-of-file-fixer
+        exclude: ^static/js/vendor/
       - id: check-yaml
       - id: check-toml
       - id: check-json
@@ -25,6 +32,7 @@ repos:
       - id: detect-private-key
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        exclude: ^static/js/vendor/
 
   # Ruff: lint + format (replaces black, isort, flake8, pyupgrade, bandit)
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -51,7 +59,7 @@ repos:
         entry: mypy
         language: system
         types: [python]
-        files: ^(apps|config|tests)/
+        files: ^(apps|config|theme|tests)/
         args: ["--ignore-missing-imports"]
 
   # gitleaks: block commits that contain secrets

@@ -4,7 +4,8 @@
 {% block title %}Sign in · BrightBean Chat{% endblock %}
 
 {% block auth_content %}
-  <h2>Sign in</h2>
+<div class="auth-card">
+  {% include "partials/_auth_brand.html" with heading="Sign in" subheading="Welcome back to BrightBean Chat." %}
 
   {% comment %}
   The provider button is a POST form, not a link: SOCIALACCOUNT_LOGIN_ON_GET is
@@ -21,30 +22,21 @@
         {% if redirect_field_value %}
           <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}" />
         {% endif %}
-        <button type="submit">Continue with {{ provider.name }}</button>
+        <button type="submit" class="btn-social">Continue with {{ provider.name }}</button>
       </form>
     {% endfor %}
-    <p class="muted">or</p>
+    <div class="divider-text my-5">or</div>
   {% endif %}
 
   <form method="post" action="{% url 'account_login' %}">
     {% csrf_token %}
-    {{ form.non_field_errors }}
-    {% for field in form %}
-      <p>
-        <label for="{{ field.id_for_label }}">{{ field.label }}</label><br />
-        {{ field }}
-        {{ field.errors }}
-      </p>
-    {% endfor %}
+    {% include "partials/_auth_form_fields.html" %}
     {{ redirect_field }}
-    <button type="submit">Sign in</button>
+    <button type="submit" class="btn-brand mt-1">Sign in</button>
   </form>
 
-  <p>
-    <a href="{% url 'account_reset_password' %}">Forgot your password?</a>
+  <p class="text-center text-sm mt-5" style="color: var(--text-secondary);">
+    No account yet? <a href="{% url 'account_signup' %}" style="color: var(--primary);">Create one</a>.
   </p>
-  <p>
-    No account yet? <a href="{% url 'account_signup' %}">Create one</a>.
-  </p>
+</div>
 {% endblock %}

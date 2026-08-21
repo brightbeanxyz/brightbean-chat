@@ -1,0 +1,128 @@
+{% comment %}
+The single global toast surface. Included once by base.html, so it is on every
+page — authenticated or not — and no view needs a per-page include.
+
+DEVIATION 2 of the L1-B brief. Studio ships two independent, non-communicating
+systems:
+
+  * an Alpine red error box in base.html, fed by htmx:responseError, that can
+    only ever show errors; and
+  * a vanilla-JS bottom-centre host in approvals/partials/_toasts.html which
+    renders the four tones but has to be included by hand on each page,
+    outside any htmx-swapped region, or a list refresh fired by the same
+    response tears the toast down before it is read.
+
+They are merged here. This host listens for BOTH `showToast` (dispatched by
+htmx from the HX-Trigger header that apps.common.htmx.toast_response sets) and
+htmx:responseError, so toast_response(...) works from any view on any page and
+a server error still surfaces instead of dying in the console.
+
+Carried over unchanged, because each exists for a reason:
+  * server-supplied strings only ever reach the DOM through textContent; the
+    element skeleton is built from a hard-coded table in this file. Toast
+    bodies carry platform-supplied content (SECURITY-BASELINE §2).
+  * error responses are parsed with DOMParser, which builds an INERT document:
+    no script runs, no <img>/<iframe> fetches. Extracting .body.textContent
+    from a Django 500 page is safe.
+  * data-no-error-toast opts a region out of error toasts entirely;
+    data-inline-error="#selector" routes the message into a form's own error
+    container instead.
+  * the init guard, because htmx executes <script> tags inside swapped-in HTML
+    and a second registration would double every toast.
+{% endcomment %}
+{% comment %}
+The host is a plain container: no aria-live. Each toast carries its own
+role (status for the quiet tones, alert for errors), which IS a live region,
+so announcing the host as well made a screen reader read every toast twice.
+Per-toast roles also get the politeness right — an error interrupts, a
+success waits — which a single aria-live on the container cannot express.
+{% endcomment %}
+<div id="bb-toast-host"></div>
+<script nonce="{{ request.csp_nonce }}">
+(function () {
+    if (window.__bbToastInit) { return; }
+    window.__bbToastInit = true;
+
+    var DEFAULT_DURATION = 5000;
+    var ERROR_DURATION = 8000;
+
+    // Tone table. Every value here is authored in this file — nothing from a
+    // response ever reaches innerHTML.
+    var TONES = {
+        success: '<circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/>',
+        info: '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+        warn: '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+        error: '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>'
+    };
+    var DISMISS_ICON = '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>';
+
+    function svg(paths, size) {
+        return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" ' +
+            'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ' +
+            'aria-hidden="true">' + paths + '</svg>';
+    }
+
+    function render(detail) {
+        if (!detail || !detail.title) { return; }
+        var host = document.getElementById('bb-toast-host');
+        if (!host) { return; }
+
+        var tone = Object.prototype.hasOwnProperty.call(TONES, detail.tone) ? detail.tone : 'info';
+        var el = document.createElement('div');
+        el.className = 'bb-toast bb-toast-' + tone;
+        el.setAttribute('role', tone === 'error' ? 'alert' : 'status');
+
+        // Skeleton only: template-authored markup, empty text nodes.
+        el.innerHTML =
+            '<span class="bb-toast-icon">' + svg(TONES[tone], 17) + '</span>' +
+            '<div class="min-w-0"><div class="bb-toast-title"></div>' +
+            (detail.body ? '<div class="bb-toast-body"></div>' : '') + '</div>' +
+            '<button type="button" class="bb-toast-dismiss" aria-label="Dismiss">' + svg(DISMISS_ICON, 14) + '</button>';
+
+        // Server-supplied text, via textContent only.
+        el.querySelector('.bb-toast-title').textContent = detail.title;
+        if (detail.body) { el.querySelector('.bb-toast-body').textContent = detail.body; }
+
+        var timer = null;
+        function dismiss() { window.clearTimeout(timer); el.remove(); }
+        el.querySelector('.bb-toast-dismiss').addEventListener('click', dismiss);
+
+        host.appendChild(el);
+        var ms = detail.duration || (tone === 'error' ? ERROR_DURATION : DEFAULT_DURATION);
+        timer = window.setTimeout(dismiss, ms);
+    }
+
+    // Path 1: HX-Trigger {"showToast": {tone, title, body}} from a view, or a
+    // manual dispatch from a fetch()-based caller.
+    document.body.addEventListener('showToast', function (event) { render(event.detail); });
+
+    // Path 2: htmx does not swap non-2xx responses, so without this the
+    // server's error text is dropped and only a console entry survives.
+    document.body.addEventListener('htmx:responseError', function (event) {
+        var elt = event.detail.elt;
+        if (elt && elt.closest('[data-no-error-toast]')) { return; }
+
+        var responseText = (event.detail.xhr && event.detail.xhr.responseText) || '';
+        var parsed = new DOMParser().parseFromString(responseText, 'text/html').body;
+        var message = ((parsed && parsed.textContent) || '').trim();
+        if (!message || message.length > 300) {
+            // A short body is a real message a view wrote for the user. Anything
+            // longer is a whole HTML error page flattened to text — paragraphs of
+            // boilerplate the user cannot act on, and under DEBUG the exception
+            // and traceback from Django's technical 500 page. Neither belongs in
+            // a toast. Studio renders whatever it gets.
+            message = 'Something went wrong. Please try again.';
+        }
+
+        var inline = elt && elt.closest('[data-inline-error]');
+        if (inline) {
+            var target = document.querySelector(inline.getAttribute('data-inline-error'));
+            // Falls through to the toast when the selector misses, so an error
+            // is never swallowed by a stale selector.
+            if (target) { target.textContent = message; return; }
+        }
+
+        render({ tone: 'error', title: 'Request failed', body: message });
+    });
+})();
+</script>

@@ -87,11 +87,13 @@ class TestAppPagesRender:
 
 
 @pytest.mark.django_db
-class TestTheBaseTemplateIsIssue32sToReplace:
-    def test_it_lives_under_the_app_loader_so_the_project_one_wins(self):
-        """templates/ (TEMPLATES["DIRS"]) is searched before app directories, so
-        the moment #32 adds templates/base.html it takes over with no conflict
-        and this placeholder can be deleted."""
+class TestTheShellHandoverIsComplete:
+    """Issue #31 shipped a placeholder `base.html` under the app-templates
+    directory so its pages rendered while both branches were open, on the
+    understanding that #32's project-level `templates/base.html` would take
+    over and the placeholder would be deleted. This is that handover."""
+
+    def test_the_real_shell_is_the_one_being_used(self):
         from pathlib import Path
 
         from django.conf import settings
@@ -99,7 +101,23 @@ class TestTheBaseTemplateIsIssue32sToReplace:
 
         origin = Path(get_template("base.html").origin.name)
 
-        assert origin == Path(settings.BASE_DIR) / "apps" / "common" / "templates" / "base.html"
+        assert origin == Path(settings.BASE_DIR) / "templates" / "base.html"
+
+    def test_the_placeholder_is_gone(self):
+        """Leaving it would be a second shell that silently shadows nothing —
+        until someone reorders TEMPLATES["DIRS"] and it shadows everything."""
+        from pathlib import Path
+
+        from django.conf import settings
+
+        assert not (Path(settings.BASE_DIR) / "apps" / "common" / "templates" / "base.html").exists()
+
+    def test_the_auth_pages_render_inside_the_real_shell(self, client):
+        """The block contract #31 wrote against is the one #32 shipped."""
+        body = client.get("/accounts/login/").content.decode()
+
+        assert "auth-card" in body
+        assert "css/dist/styles.css" in body
 
     def test_inline_scripts_carry_the_csp_nonce(self, client):
         """SECURITY-BASELINE §8, and the pattern #32 keeps for the real shell."""

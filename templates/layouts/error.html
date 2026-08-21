@@ -1,0 +1,30 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}BrightBean Chat{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{% static 'favicon/favicon.svg' %}">
+    <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+</head>
+{% comment %}
+Deliberately NOT {% extends "base.html" %}.
+
+django.views.defaults.server_error renders 500.html with a bare Context() — no
+RequestContext, so no context processors and no `request` in scope. A 500 page
+that inherits the shell would silently lose its nonce, its navigation and its
+user, and any template logic touching `request` would render blank. Worse, the
+error page is the one page that must never itself raise.
+
+So: no `request`, no inline script, no context processor output. Only
+{% static %}, which needs none of them.
+{% endcomment %}
+<body class="auth-bg min-h-screen flex items-center justify-center py-12 px-4" style="font-family: var(--font-body);">
+    <div class="auth-card text-center">
+        <img src="{% static 'img/brightbean-logo.webp' %}" alt="BrightBean Chat" width="40" height="40" class="mx-auto mb-5">
+        <h1 class="text-lg font-semibold mb-2" style="color: var(--text-primary);">{% block heading %}{% endblock %}</h1>
+        <p class="text-sm mb-6" style="color: var(--text-secondary);">{% block message %}{% endblock %}</p>
+        <a href="/" class="btn-outline btn-inline">Back to BrightBean Chat</a>
+    </div>
+</body>
+</html>

@@ -223,8 +223,15 @@ staticfiles/
 media/
 test_media/
 
-# Node (the Tailwind toolchain arrives with issue #32)
+# Node
 node_modules/
+
+# Compiled Tailwind bundle. A build artefact: `npm run build:css` regenerates
+# it from theme/static_src/src/styles.css, the Dockerfile builds it in a node
+# stage, and the compose `tailwind` service rebuilds it on save in dev.
+# (static/js/vendor/ is deliberately NOT ignored — those copies are committed
+# so a clone without Node still runs; see scripts/vendor-js.mjs.)
+theme/static/css/dist/
 
 # Tooling caches
 .ruff_cache/

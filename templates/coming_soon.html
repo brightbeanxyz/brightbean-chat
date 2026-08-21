@@ -1,0 +1,28 @@
+{% extends layout|default:"base.html" %}
+{% comment %}
+Placeholder behind a sidebar destination. The owning issue replaces the view in
+config/urls.py; this template and the nav entry stay put.
+{% endcomment %}
+
+{% block title %}{{ section }} — BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ section }}</h1>
+{% endblock %}
+
+{% comment %}
+Rendered in both branches of base.html. Signed in it fills the shell's content
+area; signed out it fills the centred auth layout, because until issue #31
+adds @login_required these routes are reachable anonymously and an empty page
+is worse than an honest one.
+{% endcomment %}
+
+{% block auth_content %}
+<div class="auth-card text-center">{% include "partials/_coming_soon_body.html" %}</div>
+{% endblock %}
+
+{% block content %}
+<div class="flex-1 flex flex-col items-center justify-center text-center py-16">
+    {% include "partials/_coming_soon_body.html" %}
+</div>
+{% endblock %}

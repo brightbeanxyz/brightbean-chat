@@ -1,13 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>404 Not Found &mdash; BrightBean Chat</title>
-  </head>
-  <body>
-    <h1>404 Not Found</h1>
-    <p>That page does not exist.</p>
-    <p><a href="/">Back to the start</a></p>
-  </body>
-</html>
+{% extends "layouts/error.html" %}
+{% block title %}404 Not Found — BrightBean Chat{% endblock %}
+{% block heading %}404 Not Found{% endblock %}
+{% block message %}That page does not exist.{% endblock %}

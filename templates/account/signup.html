@@ -4,12 +4,13 @@
 {% block title %}Create your account · BrightBean Chat{% endblock %}
 
 {% block auth_content %}
-  <h2>Create your account</h2>
+<div class="auth-card">
+  {% include "partials/_auth_brand.html" with heading="Create your account" %}
 
   {% if invited_email_locked %}
-    <p class="muted">
+    <div class="alert-info mb-4">
       You were invited to join an organization. Signing up here adds you to it.
-    </p>
+    </div>
   {% endif %}
 
   {% if google_configured %}
@@ -18,32 +19,41 @@
       {% provider_login_url provider process="login" as provider_url %}
       <form method="post" action="{{ provider_url }}">
         {% csrf_token %}
-        <button type="submit">Continue with {{ provider.name }}</button>
+        <button type="submit" class="btn-social">Continue with {{ provider.name }}</button>
       </form>
     {% endfor %}
-    <p class="muted">or</p>
+    <div class="divider-text my-5">or</div>
   {% endif %}
 
   <form method="post" action="{% url 'account_signup' %}">
     {% csrf_token %}
-    {{ form.non_field_errors }}
+    {% if form.non_field_errors %}
+    <div class="alert-error mb-4">
+      {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+    </div>
+    {% endif %}
     {% for field in form %}
-      <p>
-        <label for="{{ field.id_for_label }}">{{ field.label }}</label><br />
+      <div class="mb-4">
+        <label for="{{ field.id_for_label }}" class="block text-sm font-medium mb-1.5" style="color: var(--text-primary);">{{ field.label }}</label>
         {% if field.name == "email" and invited_email_locked %}
           {# Convenience only. The invitation token is the authorization — see #}
           {# apps/accounts/views_signup.py for why the server does not enforce a match. #}
           <input type="email" name="{{ field.html_name }}" id="{{ field.id_for_label }}"
-                 value="{{ field.value|default:'' }}" readonly required />
+                 value="{{ field.value|default:'' }}" readonly required class="form-input-styled" />
         {% else %}
           {{ field }}
         {% endif %}
-        {{ field.errors }}
-      </p>
+        {% for error in field.errors %}
+        <p class="text-xs mt-1" style="color: var(--error-700);">{{ error }}</p>
+        {% endfor %}
+      </div>
     {% endfor %}
     {{ redirect_field }}
-    <button type="submit">Create account</button>
+    <button type="submit" class="btn-brand mt-1">Create account</button>
   </form>
 
-  <p>Already have an account? <a href="{% url 'account_login' %}">Sign in</a>.</p>
+  <p class="text-center text-sm mt-5" style="color: var(--text-secondary);">
+    Already have an account? <a href="{% url 'account_login' %}" style="color: var(--primary);">Sign in</a>.
+  </p>
+</div>
 {% endblock %}

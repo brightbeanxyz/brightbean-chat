@@ -1,4 +1,4 @@
-.PHONY: help setup lock server worker migrate migrations test test-cov lint format typecheck audit \
+.PHONY: help setup lock frontend css-watch server worker migrate migrations test test-cov lint format typecheck audit \
         docker-up docker-down docker-build docker-logs
 
 help: ## Show this help
@@ -6,9 +6,10 @@ help: ## Show this help
 
 # Setup
 
-setup: ## Initial project setup (copy env, install deps, migrate)
+setup: ## Initial project setup (copy env, install deps, build CSS, migrate)
 	@test -f .env || cp .env.example .env
 	pip install --require-hashes -r requirements-dev.txt
+	$(MAKE) frontend
 	python manage.py migrate
 	@echo ""
 	@echo "Setup complete. Run 'python manage.py createsuperuser' to create an admin account."
@@ -19,6 +20,19 @@ lock: ## Recompile requirements*.txt from requirements*.in (run after editing ei
 		--output-file requirements.txt requirements.in
 	pip-compile --generate-hashes --strip-extras --allow-unsafe \
 		--output-file requirements-dev.txt requirements-dev.in
+
+# Frontend
+#
+# The vendored libraries in static/js/vendor/ are committed, so a clone with no
+# Node at all still serves working JavaScript. Only the Tailwind bundle needs
+# building: it is a gitignored artefact.
+
+frontend: ## Install JS deps and build the Tailwind bundle + vendored JS
+	npm ci
+	npm run build
+
+css-watch: ## Rebuild the Tailwind bundle on save (leave running alongside `make server`)
+	npm run watch:css
 
 # Development
 
@@ -53,7 +67,7 @@ format: ## Auto-fix lint and formatting issues
 	ruff format .
 
 typecheck: ## Run mypy type checker
-	mypy apps/ config/ tests/ --ignore-missing-imports
+	mypy apps/ config/ theme/ tests/ --ignore-missing-imports
 
 audit: ## Run the dependency audits CI runs (SECURITY-BASELINE §10)
 	pip-audit --strict --requirement requirements.txt --requirement requirements-dev.txt

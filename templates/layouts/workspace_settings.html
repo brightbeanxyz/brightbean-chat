@@ -1,0 +1,21 @@
+{% extends "layouts/settings.html" %}
+{% comment %}
+Workspace-scoped settings. Same structure as layouts/settings.html — a
+sidebar_nav override, no tab bar, no second column — but a different nav,
+because the two are different permission scopes: once issue #31 lands RBAC an
+Editor reaches workspace settings without being able to see organization
+settings, so showing one nav for both would advertise pages the viewer cannot
+open.
+
+Both navs come from the single SETTINGS_NAV structure in
+apps.common.context_processors; the split is a filter over it, not a second
+copy to keep in sync.
+{% endcomment %}
+
+{% block sidebar_nav %}
+<a href="{{ app_home_url|default:'/' }}" class="sidebar-nav-item mb-2">
+    <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+    <span class="sidebar-nav-label">Back to app</span>
+</a>
+{% include "partials/_nav_groups.html" with groups=workspace_settings_nav_groups %}
+{% endblock %}

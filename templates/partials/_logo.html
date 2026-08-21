@@ -1,0 +1,24 @@
+{% load static %}{% comment %}
+The product/workspace mark. Renders the workspace icon when there is one, the
+workspace's initial when there is not, and the BrightBean Chat logo when there
+is no workspace at all (the anonymous and pre-tenancy case).
+
+Include this with `only`: the size is read from an argument, and without `only`
+an unrelated `size` in the surrounding context would silently resize the mark.
+
+Args:
+  workspace: optional object with .icon and .name.
+  size: "sm" (28px) or "md" (30px, default).
+
+The size modifier is a class from the design system, not a Tailwind utility.
+.sidebar-logo-mark is unlayered CSS and Tailwind's w-7/h-7 live in
+@layer utilities, so the utility loses the cascade and never applies.
+{% endcomment %}{% with px=size|default:"md" %}
+{% if workspace and workspace.icon %}
+<img src="{{ workspace.icon.url }}" alt="" class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">
+{% elif workspace %}
+<div class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">{{ workspace.name|make_list|first|upper }}</div>
+{% else %}
+<img src="{% static 'img/brightbean-logo.webp' %}" alt="BrightBean Chat" class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">
+{% endif %}
+{% endwith %}

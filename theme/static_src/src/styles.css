@@ -1,0 +1,1268 @@
+@import "tailwindcss";
+
+/* Scan all template directories for Tailwind class usage */
+@source "../../../templates/**/*.html";
+@source "../../../apps/**/templates/**/*.html";
+
+/* ═══════════════════════════════════════════════════════════════
+   WHITE-LABEL TOKEN ARCHITECTURE
+   Layer 1 → Brand Tokens   (swap these to white-label)
+   Layer 2 → Semantic Tokens (reference brand tokens)
+   Layer 3 → Component Tokens (reference semantic tokens)
+   To rebrand: change ONLY the brand token values below.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Brand Tokens - BrightBean Orange */
+  --brand-50:  #FFF7ED;
+  --brand-100: #FFEDD5;
+  --brand-200: #FED7AA;
+  --brand-300: #FDBA74;
+  --brand-400: #FB923C;
+  --brand-500: #F97316;
+  --brand-600: #EA580C;
+  --brand-700: #C2410C;
+  --brand-800: #9A3412;
+  --brand-900: #7C2D12;
+
+  /* Brand Tokens - BrightBean Green (the bean in the logo) — used for
+     selection controls (checkboxes, toggle switches) */
+  --brand-green-100: #EFF2DC;
+  --brand-green-200: #DDE4B9;
+  --brand-green-500: #94A43F;
+  --brand-green-600: #7B8A33;
+
+  /* Brand Tokens - channel triplets. Needed wherever a colour is used at
+     partial alpha: CSS cannot extract the channels out of a hex custom
+     property, so rgba() needs them spelled out. Studio references
+     --primary-rgb from .btn-primary-tint but never defines it, so that
+     utility silently falls back to a literal and stops white-labelling. */
+  --brand-500-rgb:   249, 115, 22;
+  --error-500-rgb:   239, 68, 68;
+  --success-500-rgb: 34, 197, 94;
+  --info-500-rgb:    59, 130, 246;
+  --warning-500-rgb: 234, 179, 8;
+  --accent-teal-rgb: 20, 184, 166;
+  /* Neutral scrim for hover washes and knob shadows — black, not a brand hue,
+     but tokenised so no literal colour survives outside this block. */
+  --scrim-rgb:       0, 0, 0;
+
+  /* Brand Tokens - messaging platforms. Their official marks, kept here in
+     Layer 1 because they are brand values a white-label deployment may need
+     to override, and because the "no hardcoded colours outside Layer 1" rule
+     applies to them too. Consumed by the .pi-* chips in Layer 3. */
+  --platform-telegram:  #26A5E4;
+  --platform-instagram: #E4405F;
+  --platform-messenger: #0084FF;
+  --platform-whatsapp:  #25D366;
+  --platform-sms:       #6366F1;
+  --platform-email:     #57534E;
+
+  --brand-font-display: Georgia, 'Times New Roman', serif;
+  --brand-font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --brand-font-mono: ui-monospace, SFMono-Regular, 'Cascadia Code', 'Consolas', monospace;
+
+  /* Semantic Tokens */
+  --primary:       var(--brand-500);
+  --primary-hover: var(--brand-600);
+  --primary-soft:  var(--brand-50);
+  --primary-muted: var(--brand-100);
+  --primary-ring:  var(--brand-200);
+  /* Studio's .btn-primary-tint reads var(--primary-rgb, 249, 115, 22) with no
+     definition anywhere, so the fallback always won and the tint stayed orange
+     after a rebrand. Defined here, it tracks the brand ramp like everything else. */
+  --primary-rgb:   var(--brand-500-rgb);
+
+  /* Neutrals - warm stone */
+  --neutral-950: #171412;
+  --neutral-900: #1C1917;
+  --neutral-800: #292524;
+  --neutral-700: #44403C;
+  --neutral-600: #57534E;
+  --neutral-500: #78716C;
+  --neutral-400: #A8A29E;
+  --neutral-300: #D6D3D1;
+  --neutral-200: #E7E5E4;
+  --neutral-100: #F5F5F4;
+  --neutral-50:  #FAFAF9;
+
+  /* Surfaces */
+  --surface-0: #FFFFFF;
+  --surface-page: rgb(247, 246, 242);
+  --surface-1: var(--neutral-50);
+  --surface-2: var(--neutral-100);
+  --surface-3: var(--neutral-200);
+  --border:    var(--neutral-200);
+  --border-hover: var(--neutral-300);
+
+  /* Text */
+  --text-primary:   var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --text-tertiary:  var(--neutral-500);
+  --text-ghost:     var(--neutral-400);
+  --text-inverse:   #FFFFFF;
+
+  /* Illustrations */
+  --color-illustration-border: var(--neutral-200);
+  --color-illustration-card: #FFFFFF;
+  --color-illustration-element: var(--neutral-200);
+  --color-illustration-secondary-element: var(--neutral-100);
+  --color-illustration-accent: var(--brand-500);
+
+  /* Status */
+  /* Studio's quads are 50/500/700. Two extra steps are added: --warning-200
+     and --error-600, both of which Studio's component classes already
+     referenced through literal fallbacks. */
+  --success-500: #22C55E; --success-50: #F0FDF4; --success-700: #15803D;
+  --warning-500: #EAB308; --warning-50: #FEFCE8; --warning-700: #A16207;
+  --warning-200: #FDE68A;
+  --error-500:   #EF4444; --error-50:   #FEF2F2; --error-700:   #B91C1C;
+  --error-600:   #DC2626;
+  --error-rgb:   var(--error-500-rgb);
+  --success-rgb: var(--success-500-rgb);
+  --info-rgb:    var(--info-500-rgb);
+  --warning-rgb: var(--warning-500-rgb);
+  --info-500:    #3B82F6; --info-50:    #EFF6FF; --info-700:    #1D4ED8;
+
+  /* Accent palette */
+  --accent-teal:    #14B8A6; --accent-teal-soft:    #F0FDFA;
+  --accent-sky:     #0EA5E9; --accent-sky-soft:     #F0F9FF;
+  --accent-rose:    #F43F5E; --accent-rose-soft:    #FFF1F2;
+  --accent-amber:   #F59E0B; --accent-amber-soft:   #FFFBEB;
+  --accent-indigo:  #6366F1; --accent-indigo-soft:  #EEF2FF;
+  --accent-emerald: #10B981; --accent-emerald-soft: #ECFDF5;
+
+  /* Shadows */
+  --shadow-xs:  0 1px 2px rgba(23,20,18,0.05);
+  --shadow-sm:  0 1px 3px rgba(23,20,18,0.08), 0 1px 2px rgba(23,20,18,0.04);
+  --shadow-md:  0 4px 6px rgba(23,20,18,0.06), 0 2px 4px rgba(23,20,18,0.04);
+  --shadow-lg:  0 10px 15px rgba(23,20,18,0.08), 0 4px 6px rgba(23,20,18,0.04);
+  --shadow-xl:  0 20px 25px rgba(23,20,18,0.08), 0 8px 10px rgba(23,20,18,0.04);
+  --shadow-primary: 0 4px 14px rgba(var(--brand-500-rgb), 0.28);
+  /* The toast host floats over content and needs more lift than --shadow-xl. */
+  --shadow-toast: 0 12px 30px rgba(23, 20, 18, 0.32);
+
+  /* Radii */
+  --radius-sm:   0.25rem;
+  --radius-md:   0.375rem;
+  --radius-lg:   0.5rem;
+  --radius-xl:   0.75rem;
+  --radius-2xl:  1rem;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast:    150ms;
+  --dur-base:    200ms;
+  --dur-slow:    350ms;
+
+  /* Inline SVG chevrons. A data: URI cannot read a custom property or
+     currentColor, so the stroke colour has to be baked into the encoded
+     markup — keeping the whole value here means there is still exactly one
+     place to change it. %2378716C is --neutral-500. */
+  --chevron-neutral: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2378716C' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+  --chevron-neutral-sm: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  /* Fonts */
+  --font-display: var(--brand-font-display);
+  --font-body:    var(--brand-font-body);
+  --font-mono:    var(--brand-font-mono);
+}
+
+/* Base */
+body {
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Auth page background pattern */
+.auth-bg {
+  background-color: var(--surface-1);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(var(--brand-500-rgb), 0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(var(--accent-teal-rgb), 0.04), transparent);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR - uses CSS variables that Tailwind can't express
+   ═══════════════════════════════════════════════════════════════ */
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--dur-fast) ease;
+  text-decoration: none;
+}
+.sidebar-nav-item:hover {
+  background: rgba(var(--scrim-rgb), 0.04);
+  color: var(--text-primary);
+}
+.sidebar-nav-item.active {
+  background: var(--primary-soft);
+  color: var(--brand-700);
+  font-weight: 600;
+}
+.sidebar-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-ghost);
+  padding: 14px 10px 4px;
+}
+.sidebar-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+}
+.sidebar-logo-mark {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+img.sidebar-logo-mark {
+  background: transparent;
+}
+/* Size modifier.
+   It has to be a component class rather than a Tailwind `w-7 h-7` on the call
+   site: everything in this stylesheet is UNLAYERED, while Tailwind emits its
+   utilities inside `@layer utilities`, and unlayered rules beat every cascade
+   layer regardless of source order. So a utility added next to a component
+   class that sets the same property is silently ignored — which is exactly
+   what made `w-auto` unusable on .btn-outline (hence .btn-inline) and what
+   made this partial's size="sm" a no-op. Any component class here that sets
+   width, height, background or colour needs its own modifier for the same
+   reason; a caller cannot override it from the outside. */
+.sidebar-logo-mark-sm {
+  width: 28px;
+  height: 28px;
+}
+
+/* Sidebar collapsed state - desktop only */
+@media (min-width: 1024px) {
+  .sidebar-collapsed .sidebar-nav-item {
+    justify-content: center;
+    padding: 8px;
+    gap: 0;
+  }
+  .sidebar-collapsed .sidebar-nav-label,
+  .sidebar-collapsed .sidebar-section-label,
+  .sidebar-collapsed .sidebar-section-label-wrap,
+  .sidebar-collapsed .sidebar-badge {
+    display: none;
+  }
+}
+
+/* Mobile: larger touch targets for sidebar nav */
+@media (max-width: 1023px) {
+  .sidebar-nav-item {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+}
+
+/* Focus ring utility */
+.focus-ring:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+
+/* Interactive element utilities — CSP-safe replacements for inline handlers */
+.btn-neutral {
+  transition: background var(--dur-fast) ease;
+}
+.btn-neutral:hover {
+  background: var(--neutral-200) !important;
+}
+
+.btn-neutral-surface:hover {
+  background: var(--neutral-50) !important;
+}
+
+.btn-neutral-100 {
+  transition: background var(--dur-fast) ease;
+}
+.btn-neutral-100:hover {
+  background: var(--neutral-100) !important;
+}
+
+.btn-danger-soft {
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.btn-danger-soft:hover {
+  background: var(--error-500) !important;
+  color: white !important;
+}
+
+.btn-danger-soft-bg {
+  transition: background var(--dur-fast) ease;
+}
+.btn-danger-soft-bg:hover {
+  background: var(--error-50) !important;
+}
+
+.btn-primary-hover {
+  transition: background var(--dur-fast) ease;
+}
+.btn-primary-hover:hover {
+  background: var(--primary-hover) !important;
+}
+
+.btn-primary-lift {
+  transition: background var(--dur-fast) ease, transform var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.btn-primary-lift:hover {
+  background: var(--primary-hover) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(var(--primary-rgb), 0.35);
+}
+
+.card-hover-lift {
+  transition: box-shadow var(--dur-fast) ease, border-color var(--dur-fast) ease, transform var(--dur-fast) ease;
+}
+.card-hover-lift:hover {
+  box-shadow: var(--shadow-lg) !important;
+  border-color: transparent !important;
+  transform: translateY(-2px);
+}
+
+.btn-surface-1:hover {
+  background: var(--surface-1) !important;
+}
+.btn-surface-2:hover {
+  background: var(--surface-2) !important;
+}
+
+.btn-error-darker {
+  transition: background var(--dur-fast) ease;
+}
+.btn-error-darker:hover {
+  background: var(--error-600) !important;
+}
+
+.btn-opacity:hover {
+  opacity: 0.9;
+}
+
+.btn-text-hover-primary {
+  transition: color var(--dur-fast) ease;
+}
+.btn-text-hover-primary:hover {
+  color: var(--text-primary) !important;
+}
+
+.btn-icon-hover {
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.btn-icon-hover:hover {
+  background: var(--surface-2) !important;
+  color: var(--text-primary) !important;
+}
+
+.btn-surface-neutral-50 {
+  transition: background var(--dur-fast) ease;
+}
+.btn-surface-neutral-50:hover {
+  background: var(--neutral-50) !important;
+}
+
+.btn-amber {
+  transition: background var(--dur-fast) ease;
+}
+.btn-amber:hover {
+  background: var(--warning-200) !important;
+}
+
+.btn-danger-tint {
+  transition: background var(--dur-fast) ease;
+}
+.btn-danger-tint:hover {
+  background: rgba(var(--error-rgb), 0.08) !important;
+}
+
+.btn-primary-tint {
+  transition: background var(--dur-fast) ease;
+}
+.btn-primary-tint:hover {
+  background: rgba(var(--primary-rgb), 0.2) !important;
+}
+
+.input-focus {
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.input-focus:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px var(--primary-ring) !important;
+}
+.input-focus:not(:focus) {
+  border-color: var(--border);
+  box-shadow: none;
+}
+
+.input-focus-surface {
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.input-focus-surface:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px var(--primary-ring) !important;
+  background: var(--surface-0) !important;
+}
+.input-focus-surface:not(:focus) {
+  border-color: var(--border);
+  box-shadow: none;
+  background: var(--surface-1);
+}
+
+/* Form input base */
+.form-input-styled {
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  padding: 0.625rem 0.875rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  transition: all var(--dur-fast) ease;
+  outline: none;
+  width: 100%;
+}
+.form-input-styled::placeholder {
+  color: var(--text-ghost);
+}
+.form-input-styled:hover {
+  border-color: var(--border-hover);
+}
+.form-input-styled:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.form-input-styled.is-error {
+  border-color: var(--error-500);
+}
+.form-input-styled.is-error:focus {
+  box-shadow: 0 0 0 3px rgba(var(--error-rgb), 0.15);
+}
+
+/* Primary button */
+.btn-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.5rem;
+  border-radius: var(--radius-full);
+  border: none;
+  cursor: pointer;
+  transition: all var(--dur-base) var(--ease-out);
+  letter-spacing: 0.005em;
+  background: var(--primary);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-primary);
+  width: 100%;
+}
+.btn-brand:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(var(--primary-rgb), 0.35);
+}
+.btn-brand:active {
+  transform: translateY(0);
+}
+
+/* Width modifier. .btn-brand and .btn-outline are width:100% because Studio
+   only ever used them in auth forms, and a plain Tailwind `w-auto` cannot undo
+   that: these rules are unlayered, and unlayered CSS wins over the utilities
+   Tailwind emits inside a cascade layer. */
+.btn-brand.btn-inline,
+.btn-outline.btn-inline,
+.btn-social.btn-inline {
+  width: auto;
+}
+
+/* Secondary / outline button */
+.btn-outline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.5rem;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--dur-base) var(--ease-out);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-xs);
+  border: 1.5px solid var(--border);
+  width: 100%;
+}
+.btn-outline:hover {
+  background: var(--surface-1);
+  border-color: var(--border-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Ghost/link button */
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-full);
+  border: none;
+  cursor: pointer;
+  transition: all var(--dur-fast) ease;
+  background: transparent;
+  color: var(--primary);
+}
+.btn-link:hover {
+  background: var(--primary-soft);
+}
+
+/* Social login button */
+.btn-social {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--dur-base) var(--ease-out);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  border: 1.5px solid var(--border);
+  width: 100%;
+  text-decoration: none;
+}
+.btn-social:hover {
+  background: var(--surface-1);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+/* Divider with text */
+.divider-text {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: var(--text-ghost);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.divider-text::before,
+.divider-text::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Auth-page form styling, applied by scope rather than by class.
+   allauth ships its own templates for password reset, email confirmation,
+   provider connections and the rest, and renders their widgets itself — we do
+   not control those elements' attributes without forking every template. One
+   override of allauth/layouts/base.html plus these rules styles all of them.
+   Every declaration mirrors .form-input-styled; keep the two in step. */
+.auth-card input[type="text"],
+.auth-card input[type="email"],
+.auth-card input[type="password"],
+.auth-card input[type="url"],
+.auth-card input[type="tel"],
+.auth-card select,
+.auth-card textarea {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  padding: 0.625rem 0.875rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.auth-card input:focus,
+.auth-card select:focus,
+.auth-card textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.auth-card input[readonly] {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+.auth-card input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  accent-color: var(--brand-green-500);
+}
+.auth-card button[type="submit"]:not([class]) {
+  /* allauth's own submit buttons carry no class of their own. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.625rem 1.5rem;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  background: var(--primary);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-primary);
+  transition: all var(--dur-base) var(--ease-out);
+}
+.auth-card button[type="submit"]:not([class]):hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+/* Body copy inside an allauth page: its templates emit bare <p>, <ul> and <a>. */
+.auth-prose { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.6; }
+.auth-prose h1, .auth-prose h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+.auth-prose p { margin-bottom: 1rem; }
+.auth-prose a { color: var(--primary); }
+.auth-prose ul { margin: 0 0 1rem 1.125rem; list-style: disc; }
+.auth-prose label { display: block; font-weight: 500; color: var(--text-primary); margin-bottom: 0.375rem; }
+.auth-prose .errorlist {
+  list-style: none;
+  margin: 0.375rem 0 0;
+  padding: 0;
+  color: var(--error-700);
+  font-size: 0.75rem;
+}
+
+/* Auth card */
+.auth-card {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
+  padding: 2.5rem;
+  width: 100%;
+  max-width: 420px;
+}
+
+@media (max-width: 480px) {
+  .auth-card {
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 2rem 1.5rem;
+    max-width: 100%;
+  }
+}
+
+/* Alert boxes */
+.alert-error {
+  background: var(--error-50);
+  border: 1px solid rgba(var(--error-rgb), 0.2);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  color: var(--error-700);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.alert-success {
+  background: var(--success-50);
+  border: 1px solid rgba(var(--success-rgb), 0.2);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  color: var(--success-700);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+/* Studio ships error/success/info only, but apps.common.htmx.toast_response
+   takes tone in {success, info, warn, error} — the fourth had nowhere to land. */
+.alert-warning {
+  background: var(--warning-50);
+  border: 1px solid rgba(var(--warning-rgb), 0.2);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  color: var(--warning-700);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.alert-info {
+  background: var(--info-50);
+  border: 1px solid rgba(var(--info-rgb), 0.2);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  color: var(--info-700);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+/* Date & time picker */
+.form-datetime {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  padding: 0.5rem 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  outline: none;
+  width: 100%;
+  transition: all var(--dur-fast) ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.form-datetime::placeholder {
+  color: var(--text-ghost);
+  font-weight: 400;
+}
+.form-datetime:hover {
+  border-color: var(--border-hover);
+}
+.form-datetime:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+/* Flatpickr alt-input inherits .form-datetime styling */
+.form-datetime.flatpickr-input + .form-datetime {
+  cursor: pointer;
+}
+
+/* ── Flatpickr theme overrides ──────────────────────────────── */
+.flatpickr-calendar {
+  font-family: var(--font-body);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.flatpickr-calendar.arrowTop::before,
+.flatpickr-calendar.arrowTop::after,
+.flatpickr-calendar.arrowBottom::before,
+.flatpickr-calendar.arrowBottom::after {
+  display: none;
+}
+.flatpickr-months {
+  padding: 0.25rem 0.25rem 0;
+}
+.flatpickr-months .flatpickr-month {
+  height: 36px;
+}
+.flatpickr-current-month {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.flatpickr-current-month .flatpickr-monthDropdown-months {
+  font-weight: 600;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.flatpickr-months .flatpickr-prev-month,
+.flatpickr-months .flatpickr-next-month {
+  padding: 6px;
+  border-radius: var(--radius-md);
+  transition: background var(--dur-fast) ease;
+}
+.flatpickr-months .flatpickr-prev-month:hover,
+.flatpickr-months .flatpickr-next-month:hover {
+  background: var(--surface-2);
+}
+.flatpickr-months .flatpickr-prev-month svg,
+.flatpickr-months .flatpickr-next-month svg {
+  fill: var(--text-secondary);
+}
+span.flatpickr-weekday {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-ghost);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.flatpickr-day {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  border: 2px solid transparent;
+  transition: all var(--dur-fast) ease;
+  max-width: 36px;
+  height: 36px;
+  line-height: 32px;
+}
+.flatpickr-day:hover {
+  background: var(--surface-2);
+  border-color: transparent;
+}
+.flatpickr-day.today:not(.selected) {
+  border-color: var(--primary-muted);
+  background: transparent;
+}
+.flatpickr-day.today:not(.selected):hover {
+  background: var(--primary-soft);
+  border-color: var(--primary-muted);
+}
+.flatpickr-day.selected,
+.flatpickr-day.selected:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--text-inverse);
+}
+.flatpickr-day.prevMonthDay,
+.flatpickr-day.nextMonthDay {
+  color: var(--text-ghost);
+}
+.flatpickr-day.flatpickr-disabled,
+.flatpickr-day.flatpickr-disabled:hover {
+  color: var(--neutral-300);
+}
+/* Time picker */
+.flatpickr-time {
+  border-top: 1px solid var(--border);
+}
+.flatpickr-time input {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.flatpickr-time .flatpickr-am-pm {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.flatpickr-time .flatpickr-am-pm:hover,
+.flatpickr-time .flatpickr-am-pm:focus {
+  background: var(--surface-2);
+}
+.flatpickr-time input:hover,
+.flatpickr-time input:focus {
+  background: var(--surface-1);
+}
+.flatpickr-time .numInputWrapper span.arrowUp::after {
+  border-bottom-color: var(--text-secondary);
+}
+.flatpickr-time .numInputWrapper span.arrowDown::after {
+  border-top-color: var(--text-secondary);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FORM SELECTION CONTROLS — bean-green accents
+   Native checkboxes pick up the brand green via accent-color (the
+   Tailwind forms plugin isn't installed, so text-* utilities don't
+   restyle them and browsers fall back to their default blue).
+   ═══════════════════════════════════════════════════════════════ */
+.bb-checkbox {
+  accent-color: var(--brand-green-500);
+}
+.bb-checkbox:focus-visible {
+  outline: 2px solid var(--brand-green-200);
+  outline-offset: 1px;
+}
+
+/* Select with a custom chevron inset from the edge (the native arrow hugs
+   the right border). Pair with the usual border/padding utility classes. */
+.bb-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--chevron-neutral);
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1rem 1rem;
+  padding-right: 2.5rem;
+}
+
+/* Toggle switch:
+   <label class="bb-toggle"><input type="checkbox" …><span class="bb-toggle-track"></span></label> */
+.bb-toggle {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
+}
+.bb-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.bb-toggle-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--neutral-300);
+  transition: background 0.15s ease;
+}
+.bb-toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--surface-0);
+  box-shadow: 0 1px 2px rgba(var(--scrim-rgb), 0.2);
+  transition: transform 0.15s ease;
+}
+.bb-toggle input:checked + .bb-toggle-track {
+  background: var(--brand-green-500);
+}
+.bb-toggle input:checked + .bb-toggle-track::after {
+  transform: translateX(16px);
+}
+.bb-toggle input:focus-visible + .bb-toggle-track {
+  outline: 2px solid var(--brand-green-200);
+  outline-offset: 1px;
+}
+.bb-toggle input:disabled + .bb-toggle-track {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TOOLBAR FILTER CONTROLS — the {% ui_select %} trigger
+   Studio defines these as .cal-filter-select / .cal-filter-icon inline in
+   templates/calendar/calendar.html (with a duplicate .publish-filter-* twin),
+   so the shared component is unstyled on every other page. They live here
+   now, renamed generically, with the raw hexes resolved to tokens.
+   ═══════════════════════════════════════════════════════════════ */
+.bb-filter-select {
+  padding: 6px 28px 6px 10px;
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--neutral-600);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all var(--dur-fast) ease;
+  appearance: none;
+  -webkit-appearance: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background-image: var(--chevron-neutral-sm);
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+.bb-filter-select.has-icon {
+  padding-left: 28px;
+}
+.bb-filter-select:hover {
+  border-color: var(--border-hover);
+}
+.bb-filter-select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.15);
+}
+.bb-filter-select.is-active {
+  border-color: var(--brand-300);
+  color: var(--brand-700);
+}
+.bb-filter-icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--neutral-500);
+  pointer-events: none;
+}
+/* The {% ui_select %} dropdown panel.
+   Its chrome lives here rather than in a style="" attribute because the panel
+   is positioned with Alpine's :style, and that binding REPLACES the inline
+   style attribute — declaring background/border/shadow inline meant they
+   vanished the moment the panel was anchored, and it opened transparent. */
+.bb-select-panel {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+}
+
+/* Option-row states inside the {% ui_select %} panel. These exist as classes
+   rather than inline styles because Alpine toggles them through :class, and
+   an inline event handler or style is not an option under the CSP. */
+.bb-option-selected {
+  background: var(--primary-soft);
+  color: var(--brand-700) !important;
+}
+.bb-option-reset-active { color: var(--primary) !important; }
+.bb-option-reset-idle   { color: var(--text-tertiary) !important; }
+
+/* Hide the scrollbar on horizontally scrolling filter rows. */
+.bb-filters-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PLATFORM CHIPS
+   A tinted square behind a currentColor platform glyph. Studio keeps the
+   equivalent .pi-* rules inline in calendar.html with raw brand hex; here the
+   colours are Layer-1 tokens and the glyph inherits via currentColor, so the
+   same partial works on a white chip, a coloured chip or bare text.
+   ═══════════════════════════════════════════════════════════════ */
+.pi-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-inverse);
+}
+.pi-telegram  { background: var(--platform-telegram); }
+.pi-instagram { background: var(--platform-instagram); }
+.pi-messenger { background: var(--platform-messenger); }
+.pi-whatsapp  { background: var(--platform-whatsapp); }
+.pi-sms       { background: var(--platform-sms); }
+.pi-email     { background: var(--platform-email); }
+/* Unknown platform key — the partial's fallback glyph on a neutral chip. */
+.pi-unknown   { background: var(--neutral-400); }
+
+/* Tint the glyph itself rather than the chip behind it. */
+.pi-ink-telegram  { color: var(--platform-telegram); }
+.pi-ink-instagram { color: var(--platform-instagram); }
+.pi-ink-messenger { color: var(--platform-messenger); }
+.pi-ink-whatsapp  { color: var(--platform-whatsapp); }
+.pi-ink-sms       { color: var(--platform-sms); }
+.pi-ink-email     { color: var(--platform-email); }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOAST HOST — the single global surface (see templates/base.html)
+   Studio splits this between an Alpine error box in base.html and a
+   vanilla-JS host in approvals/partials/_toasts.html that has to be included
+   once per page. One host, one stylesheet entry, every page.
+   ═══════════════════════════════════════════════════════════════ */
+@keyframes bb-toast-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+#bb-toast-host {
+  position: fixed;
+  z-index: 200;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.bb-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem 0.625rem 0.75rem;
+  border-radius: var(--radius-xl);
+  max-width: min(28rem, calc(100vw - 2rem));
+  background: var(--neutral-900);
+  color: var(--text-inverse);
+  box-shadow: var(--shadow-toast);
+  animation: bb-toast-pop var(--dur-slow) var(--ease-out);
+  pointer-events: auto;
+}
+.bb-toast-icon {
+  display: flex;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.bb-toast-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.bb-toast-body {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--neutral-400);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.bb-toast-dismiss {
+  flex-shrink: 0;
+  margin-left: 0.25rem;
+  color: var(--neutral-400);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  line-height: 0;
+  transition: color var(--dur-fast) ease;
+}
+.bb-toast-dismiss:hover { color: var(--text-inverse); }
+.bb-toast-success .bb-toast-icon { color: var(--success-500); }
+.bb-toast-info    .bb-toast-icon { color: var(--brand-400); }
+.bb-toast-warn    .bb-toast-icon { color: var(--warning-500); }
+.bb-toast-error   { background: var(--error-700); }
+.bb-toast-error   .bb-toast-icon { color: var(--error-50); }
+.bb-toast-error   .bb-toast-body { color: var(--error-50); opacity: 0.85; }
+
+/* ═══════════════════════════════════════════════════════════════
+   SHARED ANIMATIONS
+   Studio ships these inside approvals/partials/_toasts.html, so a page gets
+   them only if it happens to include the toast partial. They belong to the
+   design system, not to a partial's side effects.
+   ═══════════════════════════════════════════════════════════════ */
+@keyframes bb-modal-pop {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal-pop { animation: bb-modal-pop var(--dur-base) var(--ease-out); }
+
+@keyframes bb-collapse-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.anim-collapse { animation: bb-collapse-in var(--dur-base) ease; }
+
+/* ═══════════════════════════════════════════════════════════════
+   UNCLASSED CONTENT DEFAULTS
+   Issue #31 shipped its pages as plain semantic HTML on the
+   understanding that #32 would style them. Rather than fork
+   seventeen templates, these give bare <table>, <form>, <h*> and
+   friends a sensible look inside the app's main content area.
+
+   IN @layer base ON PURPOSE. Everything else in this file is
+   unlayered and therefore beats Tailwind's utilities — which is the
+   right call for a component class a caller must not override by
+   accident, and exactly the wrong call here. These are defaults: the
+   moment a later issue rewrites one of those pages with real classes,
+   its utilities and component classes must win without a fight. Base
+   sits below both.
+   ═══════════════════════════════════════════════════════════════ */
+@layer base {
+  .app-content h1 { font-size: 1.125rem; font-weight: 600; color: var(--text-primary); }
+  .app-content h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem; }
+  .app-content h3 { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+  .app-content p { font-size: 0.875rem; color: var(--text-secondary); }
+  .app-content a { color: var(--primary); }
+  .app-content hr { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
+
+  .app-content table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    margin-bottom: 1.5rem;
+  }
+  .app-content th {
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-ghost);
+    padding: 0 0.75rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .app-content td {
+    padding: 0.75rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  .app-content label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 0.375rem;
+  }
+  .app-content input[type="text"],
+  .app-content input[type="email"],
+  .app-content input[type="password"],
+  .app-content input[type="url"],
+  .app-content select,
+  .app-content textarea {
+    font-family: var(--font-body);
+    font-size: 0.875rem;
+    padding: 0.5rem 0.75rem;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface-0);
+    color: var(--text-primary);
+    max-width: 26rem;
+    width: 100%;
+  }
+  .app-content input:focus,
+  .app-content select:focus,
+  .app-content textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-ring);
+  }
+  .app-content input[type="checkbox"] {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--brand-green-500);
+  }
+  .app-content button:not([class]),
+  .app-content input[type="submit"]:not([class]) {
+    font-family: var(--font-body);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface-0);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all var(--dur-fast) ease;
+  }
+  .app-content button:not([class]):hover,
+  .app-content input[type="submit"]:not([class]):hover {
+    background: var(--surface-1);
+    border-color: var(--border-hover);
+  }
+  .app-content ul:not([class]) { margin: 0 0 1rem 1.125rem; list-style: disc; font-size: 0.875rem; color: var(--text-secondary); }
+  .app-content form { margin-bottom: 1rem; }
+  .app-content .errorlist { list-style: none; margin: 0.375rem 0 0; padding: 0; color: var(--error-700); font-size: 0.75rem; }
+}

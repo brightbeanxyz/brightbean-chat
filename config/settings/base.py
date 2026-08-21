@@ -135,6 +135,14 @@ THIRD_PARTY_APPS = [
 
 # Domain apps arrive from Layer 2 onwards; these five are the tenancy, auth and
 # credential substrate (issue #31).
+#
+# ``theme`` holds the compiled Tailwind bundle. It has to be an installed app
+# rather than a STATICFILES_DIRS entry, because that is what puts
+# theme/static/ in front of the app-directories finder and makes
+# {% static 'css/dist/styles.css' %} resolve. There is deliberately no
+# django-tailwind dependency and no TAILWIND_APP_NAME: Studio carries both and
+# never invokes `manage.py tailwind`, so the npm scripts in package.json are
+# the real build (deviation 1 of the L1-B brief).
 LOCAL_APPS = [
     "apps.common",
     "apps.accounts",
@@ -142,6 +150,7 @@ LOCAL_APPS = [
     "apps.workspaces",
     "apps.members",
     "apps.credentials",
+    "theme",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -180,6 +189,11 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.accounts.context_processors.auth_providers",
+                # Supplies the sidebar navigation with its `active` flag already
+                # computed — the single active-state convention the whole UI
+                # uses (deviation 4). Returns {} for anonymous requests, so the
+                # auth pages cost nothing.
+                "apps.common.context_processors.sidebar_context",
             ],
         },
     },

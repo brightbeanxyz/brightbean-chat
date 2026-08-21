@@ -20,7 +20,7 @@ ignore = [
 "tests/*" = ["S101", "S105", "S106"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["apps", "config"]
+known-first-party = ["apps", "config", "theme"]
 
 [tool.mypy]
 python_version = "3.12"
