@@ -36,10 +36,13 @@ __all__ = [
     "FacadeUnavailableError",
     "assign_conversation",
     "available",
+    "bounded_address",
     "close_conversation",
     "message_idempotency_key",
     "open_conversation",
     "pause_automation",
+    "resolve_identity",
+    "send_bucket_tokens",
     "send_outbound",
     "upsert_contact_identity",
 ]
@@ -159,3 +162,75 @@ def message_idempotency_key(execution: Any, node_id: str, attempt: int = 0) -> s
     re-run of the same step does not.
     """
     return f"exec:{execution.pk}:node:{node_id}:{attempt}"
+
+
+# ---------------------------------------------------------------------------
+# Inbound routing's reads (issue #11)
+# ---------------------------------------------------------------------------
+#
+# Contract 1 is about *mutating* messaging state, and none of these three do —
+# they read. They live here anyway, for the second reason in the module
+# docstring: this is the one seam, and a routing module that reached straight
+# into ``apps.messaging.identities`` would be a hard import at a new call site
+# and a second thing to fake. ``_MODULE`` is services; these name their own.
+
+_IDENTITIES_MODULE = "apps.messaging.identities"
+_BUCKETS_MODULE = "apps.messaging.buckets"
+
+
+def _module(path: str) -> ModuleType | None:
+    if not django_apps.is_installed(_APP):
+        return None
+    try:
+        return importlib.import_module(path)
+    except ImportError:  # pragma: no cover - installed but without the module
+        logger.exception("%s is installed but %s could not be imported.", _APP, path)
+        return None
+
+
+def bounded_address(platform_user_id: Any) -> str:
+    """The stored form of a platform user id, so a lookup finds what ingest wrote.
+
+    Bounding is not truncation — over-long values are hashed — so re-deriving it
+    locally would be a second implementation that silently stops agreeing.
+    Falls back to the raw value only when messaging is absent, which is a tree
+    where nothing wrote an identity either.
+    """
+    identities = _module(_IDENTITIES_MODULE)
+    if identities is None:  # pragma: no cover - messaging is installed everywhere
+        return str(platform_user_id or "")
+    return str(identities.bounded_address(platform_user_id))
+
+
+def resolve_identity(connection: Any, platform_user_id: str, *, occurred_at: Any = None) -> Any:
+    """Create or refresh the identity behind a platform user id.
+
+    Routing needs this for exactly one case: a comment, which
+    ``apps.messaging.ingest`` deliberately persists no identity for. Every other
+    inbound type already has one by the time routing runs, and looking one up is
+    a read.
+    """
+    identities = _module(_IDENTITIES_MODULE)
+    if identities is None:
+        raise FacadeUnavailableError(
+            f"resolve_identity() needs {_IDENTITIES_MODULE} (ROADMAP contract 1), which this deployment does not have."
+        )
+    return identities.resolve_identity(connection, platform_user_id, occurred_at=occurred_at)
+
+
+def send_bucket_tokens(connection: Any) -> float | None:
+    """How many send tokens this connection has, **without spending one**.
+
+    ``cost=0.0`` is a peek by construction rather than by convention: the bucket
+    refills by elapsed time and then debits nothing, so the caller learns what is
+    there and the one real debit stays in ``send_outbound``. Gating the inline
+    path with a debiting acquire would charge every inline send twice.
+
+    ``None`` means messaging is not installed, which the caller reads as "do not
+    let a missing app block routing".
+    """
+    buckets = _module(_BUCKETS_MODULE)
+    if buckets is None:  # pragma: no cover - messaging is installed everywhere
+        return None
+    acquisition = buckets.try_acquire(connection, cost=0.0)
+    return float(getattr(acquisition, "tokens_left", 0.0))

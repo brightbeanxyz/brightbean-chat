@@ -106,6 +106,29 @@ class TestCrossTenantIsolation:
             "flows:api_schema",
         } <= names
 
+    def test_the_sweep_covers_the_trigger_routes(self):
+        """Issue #11's Triggers panel.
+
+        Eight partial routes and one image, all naming a flow and most naming a
+        trigger, so every one of them is a place a trigger id from another
+        workspace could be handed in. The QR endpoint is the sharpest of them:
+        it renders bytes rather than a page, and it takes a *connection* id
+        beside the trigger id, so it is the one route here that could leak one
+        tenant's deep link into another tenant's response.
+        """
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "flows:trigger_panel",
+            "flows:trigger_form",
+            "flows:trigger_create",
+            "flows:trigger_update",
+            "flows:trigger_toggle",
+            "flows:trigger_move",
+            "flows:trigger_delete",
+            "flows:trigger_qr",
+        } <= names
+
     def test_every_waiver_states_a_reason(self):
         assert all(reason.strip() for reason in WAIVED_ROUTES.values())
 

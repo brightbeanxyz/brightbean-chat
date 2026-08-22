@@ -1,0 +1,67 @@
+{% comment %}
+The Triggers drawer's body (issue #11, SPEC §10).
+
+Rendered inside edit.html on first open and re-fetched whole on every
+`triggersChanged` event, so there is exactly one renderer for the list — a
+filtered view and a post-mutation refresh can never disagree about what a row
+looks like. Same pattern as contacts/_tag_rows.html and flows/_list_rows.html.
+
+Everything platform-supplied here (a keyword, a ref, a connection's display
+name) is attacker-adjacent user text and is rendered escaped. No mark_safe, no
+`|safe`.
+{% endcomment %}
+<div id="flow-triggers"
+     hx-get="{% url 'flows:trigger_panel' workspace_id=request.workspace.id flow_id=flow.id %}"
+     hx-trigger="triggersChanged from:body"
+     hx-swap="outerHTML"
+     class="p-4">
+
+    <div class="flex items-center justify-between gap-2 mb-1">
+        <h2 class="text-sm font-semibold" style="color: var(--text-primary);">Triggers</h2>
+        <button type="button" class="btn-link text-xs"
+                @click="triggersOpen = false">Close</button>
+    </div>
+    <p class="text-xs mb-4" style="color: var(--text-tertiary);">
+        What starts this flow. Lower numbers run first, and the first match wins.
+    </p>
+
+    {% for type in duplicate_stage_types %}
+    <div class="alert-error text-xs mb-3">
+        More than one {{ type }} trigger is enabled on this flow. Only the one with the
+        lowest number will ever run.
+    </div>
+    {% endfor %}
+
+    {% if not triggers %}
+    <div class="rounded-xl border p-6 text-center mb-4"
+         style="border-color: var(--border); background: var(--surface-1);">
+        <p class="text-sm font-medium" style="color: var(--text-primary);">No triggers yet</p>
+        <p class="text-xs mt-1" style="color: var(--text-secondary);">
+            A published flow with no trigger never runs. Add one below.
+        </p>
+    </div>
+    {% else %}
+    <div class="rounded-xl border divide-y mb-4"
+         style="border-color: var(--border); background: var(--surface-1);">
+        {% for row in triggers %}
+        {% include "flows/_trigger_row.html" %}
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if can_edit %}
+    <form class="flex items-center gap-2"
+          hx-get="{% url 'flows:trigger_form' workspace_id=request.workspace.id flow_id=flow.id %}"
+          hx-target="#trigger-form"
+          hx-swap="innerHTML">
+        <select name="type" class="form-input-styled" aria-label="Trigger type" style="flex: 1 1 auto;">
+            {% for spec in trigger_types %}
+            <option value="{{ spec.type }}">{{ spec.label }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn-brand btn-inline">Add</button>
+    </form>
+    {% endif %}
+
+    <div id="trigger-form" class="mt-4"></div>
+</div>

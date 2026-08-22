@@ -1,0 +1,58 @@
+{% comment %}
+One trigger in the drawer. `row` carries the trigger, its spec, a one-line
+summary and (for ref triggers) its per-connection links.
+{% endcomment %}
+<div class="p-3 flex flex-wrap items-start gap-3">
+    <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-medium" style="color: var(--text-primary);">
+                {{ row.spec.label|default:row.trigger.type }}
+            </span>
+            <span class="text-xs" style="color: var(--text-tertiary);">#{{ row.trigger.priority }}</span>
+            {% if not row.trigger.enabled %}
+            <span class="status-pill status-pill-disabled">Paused</span>
+            {% endif %}
+        </div>
+
+        <p class="text-xs mt-0.5 break-words" style="color: var(--text-secondary);">{{ row.summary }}</p>
+
+        <div class="flex items-center gap-1.5 mt-1.5 text-xs" style="color: var(--text-tertiary);">
+            {% if row.trigger.channel_connection %}
+            <span class="pi-chip pi-{{ row.trigger.channel_connection.platform }}" style="width: 1.1rem; height: 1.1rem;">
+                {% include "partials/_platform_icon.html" with platform=row.trigger.channel_connection.platform size="sm" %}
+            </span>
+            <span class="truncate">{{ row.trigger.channel_connection.display_name }}</span>
+            {% else %}
+            <span>All matching channels</span>
+            {% endif %}
+        </div>
+
+        {% if row.links %}
+        {% include "flows/_trigger_ref_links.html" with trigger=row.trigger links=row.links %}
+        {% endif %}
+    </div>
+
+    {% if can_edit %}
+    <div class="flex items-center gap-1">
+        <label class="bb-toggle" title="{% if row.trigger.enabled %}Pause{% else %}Enable{% endif %} this trigger">
+            <input type="checkbox" {% if row.trigger.enabled %}checked{% endif %}
+                   aria-label="Trigger enabled"
+                   hx-post="{% url 'flows:trigger_toggle' workspace_id=request.workspace.id flow_id=flow.id trigger_id=row.trigger.id %}"
+                   hx-swap="none">
+            <span class="bb-toggle-track"></span>
+        </label>
+        <button type="button" class="btn-outline btn-inline" title="Run this trigger earlier"
+                hx-post="{% url 'flows:trigger_move' workspace_id=request.workspace.id flow_id=flow.id trigger_id=row.trigger.id %}"
+                hx-vals='{"direction": "up"}' hx-swap="none" aria-label="Move up">↑</button>
+        <button type="button" class="btn-outline btn-inline" title="Run this trigger later"
+                hx-post="{% url 'flows:trigger_move' workspace_id=request.workspace.id flow_id=flow.id trigger_id=row.trigger.id %}"
+                hx-vals='{"direction": "down"}' hx-swap="none" aria-label="Move down">↓</button>
+        <button type="button" class="btn-outline btn-inline"
+                hx-get="{% url 'flows:trigger_form' workspace_id=request.workspace.id flow_id=flow.id %}?trigger={{ row.trigger.id }}"
+                hx-target="#trigger-form" hx-swap="innerHTML">Edit</button>
+        <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                hx-post="{% url 'flows:trigger_delete' workspace_id=request.workspace.id flow_id=flow.id trigger_id=row.trigger.id %}"
+                hx-confirm="Delete this trigger?" hx-swap="none">Delete</button>
+    </div>
+    {% endif %}
+</div>

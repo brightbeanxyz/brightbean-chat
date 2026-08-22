@@ -57,6 +57,7 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "asset_id": lambda t: _victim_media_asset(t).pk,
     "folder_id": lambda t: _victim_media_folder(t).pk,
     "flow_id": lambda t: _victim_flow(t).pk,
+    "trigger_id": lambda t: _victim_trigger(t).pk,
     # Notifications (issue #7) are keyed by user, not by workspace, so "the
     # victim" here is a person rather than a tenant. Registering it is an
     # opt-in: iter_tenant_routes() skips a route carrying no *registered*
@@ -140,6 +141,31 @@ def _victim_flow(tenancy: Tenancy) -> Any:
     if flow is None:
         flow = create_flow(workspace=tenancy.workspace, name="Victim onboarding")
     return flow
+
+
+def _victim_trigger(tenancy: Tenancy) -> Any:
+    """A ref-URL trigger owned by the victim, created on demand.
+
+    Built on ``_victim_flow`` and ``_victim_connection`` rather than on fresh
+    objects, so the flow the route names and the trigger it names belong to the
+    same workspace — a trigger whose flow was somebody else's would make the
+    sweep pass for the wrong reason.
+
+    ``ref_url`` specifically, because the QR endpoint 404s any other type and a
+    route that 404s for a reason other than tenancy proves nothing.
+    """
+    from apps.flows.models import Trigger, TriggerType
+
+    trigger = Trigger.objects.for_workspace(tenancy.workspace).first()
+    if trigger is None:
+        trigger = Trigger(
+            flow=_victim_flow(tenancy),
+            channel_connection=_victim_connection(tenancy),
+            type=TriggerType.REF_URL,
+            config_json={"ref": f"ref-{tenancy.slug}"},
+        )
+        trigger.save()
+    return trigger
 
 
 def _victim_invitation(tenancy: Tenancy) -> Any:

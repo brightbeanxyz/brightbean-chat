@@ -205,22 +205,38 @@ def connection_for(workspace: Any, *, platform: str = "telegram", external_id: s
     )
 
 
-def inbound(connection: Any, *, text: str = "", button_id: str = "", event_id: str = "evt-1") -> Any:
-    """One inbound ``NormalizedEvent``, the shape L4-A will hand ``attempt_resume``.
+def inbound(
+    connection: Any,
+    *,
+    text: str = "",
+    button_id: str = "",
+    event_id: str = "evt-1",
+    kind: Any = None,
+    ref: str = "",
+    user: str = "tg-1",
+    extra: dict[str, Any] | None = None,
+) -> Any:
+    """One inbound ``NormalizedEvent``, the shape L4-A hands ``attempt_resume``.
 
     Built from ``apps.channels.events`` rather than a stand-in: the matching
     logic reads ``payload.button_id`` and ``payload.text``, and a duck-typed
     double would keep passing if either name changed.
+
+    ``kind`` names the event type explicitly. Without it the type is inferred
+    from what was passed, which covers the two shapes the engine tests need and
+    none of the five issue #11 routes on.
     """
     from django.utils import timezone
 
     from apps.channels.events import EventPayload, EventType, NormalizedEvent
 
+    if kind is None:
+        kind = EventType.POSTBACK if button_id else EventType.MESSAGE
     return NormalizedEvent(
-        type=EventType.POSTBACK if button_id else EventType.MESSAGE,
+        type=kind,
         connection=connection,
-        platform_user_id="tg-1",
+        platform_user_id=user,
         provider_event_id=event_id,
         timestamp=timezone.now(),
-        payload=EventPayload(text=text, button_id=button_id),
+        payload=EventPayload(text=text, button_id=button_id, ref=ref, extra=dict(extra or {})),
     )

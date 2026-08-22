@@ -1850,3 +1850,48 @@ span.flatpickr-weekday {
   .app-content form { margin-bottom: 1rem; }
   .app-content .errorlist { list-style: none; margin: 0.375rem 0 0; padding: 0; color: var(--error-700); font-size: 0.75rem; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   TRIGGERS DRAWER (issue #11)
+   The flow page's Triggers panel and its keyword mode chips. Written here
+   rather than as Tailwind utilities at the call site for the reason this whole
+   file exists: everything in it is unlayered and therefore beats
+   @layer utilities, so a `bg-surface-0` beside a component class would lose
+   silently. There is no generic drawer in the design system yet — .bb-drawer is
+   the first one, and it is deliberately positioned by the caller (absolute,
+   inset-y-0, right-0) so a future full-height variant needs no new class.
+   ═══════════════════════════════════════════════════════════════ */
+.bb-drawer {
+  background: var(--surface-0);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  border-top-left-radius: var(--radius-lg);
+  border-bottom-left-radius: var(--radius-lg);
+}
+
+/* A keyword's mode. A <button type="button"> so a click never submits the form
+   it lives in; the value actually posted is the hidden input beside it. */
+.bb-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.bb-chip:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+.bb-chip-selected,
+.bb-chip-selected:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}

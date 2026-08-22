@@ -76,6 +76,7 @@ export function makeDetail(graph: FlowGraph = makeSampleGraph(), overrides: Part
     graph,
     published_version: null,
     picklists: EMPTY_PICKLISTS,
+    triggers: [],
     validation: { errors: [], warnings: [] },
     limits: {
       schema_version: SCHEMA_VERSION,

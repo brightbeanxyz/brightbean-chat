@@ -1,0 +1,50 @@
+{% comment %}
+A comment trigger. Everything here is platform-agnostic and takes effect as soon
+as an Instagram or Messenger adapter parses comment events — L4-A ships the
+config, the matcher and the once-per-commenter guard; L5-A and L5-B add the
+public reply, the like and the post picker, which is why post ids are typed in
+for now.
+{% endcomment %}
+<label class="block text-xs font-medium mb-1" for="trigger-post-scope" style="color: var(--text-primary);">Posts</label>
+<select id="trigger-post-scope" name="post_scope" class="form-input-styled mb-2">
+    <option value="all" {% if config.post_scope != "specific" %}selected{% endif %}>Any post</option>
+    <option value="specific" {% if config.post_scope == "specific" %}selected{% endif %}>Only these posts</option>
+</select>
+<textarea name="post_ids" rows="2" class="form-input-styled mb-3"
+          placeholder="One post id per line">{{ config.post_ids|join:"
+" }}</textarea>
+
+<label class="block text-xs font-medium mb-1" for="trigger-include" style="color: var(--text-primary);">Only when the comment contains</label>
+<textarea id="trigger-include" name="include_keywords" rows="2" class="form-input-styled mb-3"
+          placeholder="One word or phrase per line. Blank matches every comment.">{{ config.include_keywords|join:"
+" }}</textarea>
+
+<label class="block text-xs font-medium mb-1" for="trigger-exclude" style="color: var(--text-primary);">Never when it contains</label>
+<textarea id="trigger-exclude" name="exclude_keywords" rows="2" class="form-input-styled mb-3">{{ config.exclude_keywords|join:"
+" }}</textarea>
+
+<label class="flex items-center gap-2 text-xs mb-1.5" style="color: var(--text-primary);">
+    <input type="checkbox" name="top_level_only" {% if config.top_level_only %}checked{% endif %}>
+    Ignore replies to other comments
+</label>
+<label class="flex items-center gap-2 text-xs mb-1.5" style="color: var(--text-primary);">
+    <input type="checkbox" name="once_per_contact_per_post" {% if config.once_per_contact_per_post %}checked{% endif %}>
+    Only reply once per person per post
+</label>
+<label class="flex items-center gap-2 text-xs mb-3" style="color: var(--text-primary);">
+    <input type="checkbox" name="like_comment" {% if config.like_comment %}checked{% endif %}>
+    Like the comment
+</label>
+
+<label class="block text-xs font-medium mb-1" for="trigger-public-reply" style="color: var(--text-primary);">Public reply</label>
+<select id="trigger-public-reply" name="public_reply_mode" class="form-input-styled mb-2">
+    <option value="none" {% if config.public_reply.mode == "none" %}selected{% endif %}>None</option>
+    <option value="static" {% if config.public_reply.mode == "static" %}selected{% endif %}>Always this text</option>
+    <option value="random" {% if config.public_reply.mode == "random" %}selected{% endif %}>One of these, at random</option>
+</select>
+<textarea name="public_reply_texts" rows="2" class="form-input-styled"
+          placeholder="One reply per line">{{ config.public_reply.texts|join:"
+" }}</textarea>
+<p class="text-xs mt-1" style="color: var(--text-tertiary);">
+    Public replies and likes are sent once an Instagram or Messenger channel is connected.
+</p>

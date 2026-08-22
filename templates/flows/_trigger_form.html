@@ -1,0 +1,51 @@
+{% comment %}
+Create or edit one trigger. Loaded into #trigger-form by htmx.
+
+hx-swap="none" on the form is load-bearing, not tidiness: without it htmx swaps
+the response into the form itself, so an unexpected body — a session-expiry
+redirect to the login page — would be injected into the drawer. The same reason
+media_library/_asset_detail.html states.
+{% endcomment %}
+<form class="rounded-xl border p-3 anim-collapse"
+      style="border-color: var(--border); background: var(--surface-1);"
+      hx-post="{% if trigger %}{% url 'flows:trigger_update' workspace_id=request.workspace.id flow_id=flow.id trigger_id=trigger.id %}{% else %}{% url 'flows:trigger_create' workspace_id=request.workspace.id flow_id=flow.id %}{% endif %}"
+      hx-swap="none"
+      x-data
+      @htmx:after-request="if (event.detail.successful) $el.closest('#trigger-form').innerHTML = ''">
+    {% csrf_token %}
+    <input type="hidden" name="type" value="{{ spec.type }}">
+
+    <h3 class="text-sm font-semibold" style="color: var(--text-primary);">
+        {% if trigger %}Edit{% else %}New{% endif %} {{ spec.label|lower }} trigger
+    </h3>
+    <p class="text-xs mt-0.5 mb-3" style="color: var(--text-secondary);">{{ spec.description }}</p>
+
+    {% if spec.bindable %}
+    <label class="block text-xs font-medium mb-1" for="trigger-connection" style="color: var(--text-primary);">Channel</label>
+    <select id="trigger-connection" name="channel_connection" class="form-input-styled mb-3">
+        <option value="">All matching channels</option>
+        {% for option in connection_options %}
+        <option value="{{ option.value }}"
+                {% if trigger and trigger.channel_connection_id|stringformat:"s" == option.value %}selected{% endif %}>
+            {{ option.label }}
+        </option>
+        {% endfor %}
+    </select>
+    {% endif %}
+
+    {% if spec.type == "keyword" or spec.type == "story_reply" %}
+    {% include "flows/triggers/_form_keyword.html" %}
+    {% elif spec.type == "ref_url" %}
+    {% include "flows/triggers/_form_ref_url.html" %}
+    {% elif spec.type == "comment" %}
+    {% include "flows/triggers/_form_comment.html" %}
+    {% elif spec.type == "rule" %}
+    {% include "flows/triggers/_form_rule.html" %}
+    {% endif %}
+
+    <div class="flex items-center gap-2 mt-3">
+        <button type="submit" class="btn-brand btn-inline">Save</button>
+        <button type="button" class="btn-outline btn-inline"
+                @click="$el.closest('#trigger-form').innerHTML = ''">Cancel</button>
+    </div>
+</form>
