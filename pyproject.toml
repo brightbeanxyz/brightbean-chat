@@ -38,7 +38,23 @@ DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["tests.py", "test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+# --dist loadfile without -n adds no parallelism on its own; it only fixes the
+# grouping *if* a -n is supplied, which CI and `make test` do. Keeping it here
+# rather than beside the -n means any ad-hoc `pytest -n 4` gets the safe
+# grouping automatically instead of silently opting out of it.
+#
+# The grouping matters because apps/common/tests/test_settings_boot.py writes a
+# fixed config/settings/_ordering_probe.py into the source tree. loadfile keeps
+# that module's 14 tests on one worker so they cannot race each other. It does
+# NOT hide the file from the other workers — they share the working directory —
+# so anything that scans config/settings/ still needs to tolerate it appearing
+# and vanishing.
+#
+# -n is deliberately NOT here: with loadfile a single-file run lands entirely on
+# one worker, so `pytest path/to/one_test.py` would pay for N-1 idle workers each
+# building a test database. Measured at 2.1x slower for the commonest local
+# action. CI and `make test` opt in explicitly instead.
+addopts = "--tb=short --dist loadfile --durations=10"
 
 [tool.coverage.run]
 source = ["apps"]

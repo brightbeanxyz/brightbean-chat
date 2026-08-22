@@ -15,11 +15,13 @@ than a guess about an API.
 """
 
 import smtplib
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from django.core import mail
+from django.utils import timezone
 
 from apps.notifications import queue
 from apps.notifications.engine import notify
@@ -303,6 +305,15 @@ class TestEndToEndThroughTheRealWorker:
         assert action.status == "pending"
         assert mail.outbox == []
         assert NotificationDelivery.objects.get().status == DeliveryStatus.QUEUED
+
+        # Nudge the row unambiguously into the past before draining. `run_at` is
+        # stamped from Python's clock (`queue.enqueue_email`) and the claim
+        # compares it against Postgres's `now()`, and the two are not the same
+        # clock: this database reads a fraction of a millisecond behind the test
+        # process, so a row scheduled for "now" is intermittently not yet due and
+        # the batch comes back empty. The test is about the handler being
+        # findable and callable, not about sub-millisecond due-ness.
+        ScheduledAction.objects.unscoped().filter(pk=action.pk).update(run_at=timezone.now() - timedelta(seconds=1))
 
         result = run_batch()
 

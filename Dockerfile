@@ -21,10 +21,22 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --no-audit --no-fund
 
-# styles.css scans templates/, apps/**/templates/ and frontend/builder/src/
-# through its @source directives, so Tailwind needs the whole tree to know
-# which classes to emit.
-COPY . .
+# Only what styles.css actually reads: its own source, and the trees its
+# @source directives scan. `COPY . .` here meant an edit to a setting, a test or
+# any other file invalidated the CSS build and every layer after it, for a
+# bundle that could not possibly have changed.
+#
+# These paths must track the @source directives in
+# theme/static_src/src/styles.css. TestTailwindSourceCoverage in
+# apps/common/tests/test_shell.py fails if a template appears somewhere this
+# stage does not copy, so the two cannot drift apart silently.
+#
+# frontend/builder/ is one of those globs — the island's class names live in
+# TSX — and it is also the input to the build:js below, so it arrives once and
+# serves both.
+COPY theme/static_src/ ./theme/static_src/
+COPY templates/ ./templates/
+COPY frontend/ ./frontend/
 RUN npm run build:css \
     && test -s theme/static/css/dist/styles.css
 
@@ -39,6 +51,7 @@ RUN npm run build:css \
 # tripwire for the asset filename drifting, and the single-file check for a
 # Rollup chunk appearing: collectstatic does not rewrite ES-module specifiers,
 # so a second chunk would lose its cache-busting silently.
+COPY static/flows/flow-schema.json ./static/flows/flow-schema.json
 RUN npm run build:js \
     && test -s apps/flows/static/flows/builder/builder.js \
     && test -s apps/flows/static/flows/builder/builder.css \

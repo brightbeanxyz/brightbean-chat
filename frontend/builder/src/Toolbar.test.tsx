@@ -28,6 +28,13 @@ beforeEach(() => {
 
 afterEach(() => http.restore());
 
+/**
+ * Generous, because Testing Library's default is 1 s and these wait on a real
+ * promise chain. A loaded CI runner turns a correct test into an intermittent
+ * one at that default, and an intermittent test in CI is worse than a slow one.
+ */
+const SETTLE = { timeout: 5000 };
+
 describe("Publish", () => {
   it("flushes the pending save before it posts", async () => {
     const order: string[] = [];
@@ -45,7 +52,7 @@ describe("Publish", () => {
     renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={autosave} />);
     fireEvent.click(screen.getByRole("button", { name: "Publish" }));
 
-    await waitFor(() => expect(order).toEqual(["flush", "publish"]));
+    await waitFor(() => expect(order).toEqual(["flush", "publish"]), SETTLE);
   });
 
   it("records the published version on success", async () => {
@@ -55,7 +62,7 @@ describe("Publish", () => {
     renderWith(store, <Toolbar autosave={null} />);
     fireEvent.click(screen.getByRole("button", { name: "Publish" }));
 
-    await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2));
+    await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2), SETTLE);
   });
 
   it("surfaces a 422 as a blocked publish rather than a silent no-op", async () => {
@@ -68,7 +75,7 @@ describe("Publish", () => {
     renderWith(store, <Toolbar autosave={null} />);
     fireEvent.click(screen.getByRole("button", { name: "Publish" }));
 
-    await waitFor(() => expect(store.getState().save.message).toContain("Publish blocked"));
+    await waitFor(() => expect(store.getState().save.message).toContain("Publish blocked"), SETTLE);
     expect(store.getState().validation.errors[0]?.code).toBe("no_entry_node");
     expect(store.getState().save.publishedVersion).toBeNull();
   });

@@ -30,7 +30,7 @@ from apps.flows.schema.handles import parse_handle
 from apps.flows.schema.issues import Issue
 from apps.flows.schema.nodes import NodeSpec, handles_for_node, node_spec
 
-__all__ = ["ValidationResult", "validate_graph"]
+__all__ = ["ValidationResult", "entry_node_id", "validate_graph"]
 
 
 @dataclass(frozen=True)
@@ -98,6 +98,7 @@ def validate_graph(graph: Any, *, platforms: Sequence[str] = (), known_size: int
     errors: list[Issue] = []
     errors.extend(_check_edges(edges, specs, configs))
     errors.extend(_check_entry_nodes(routable, entries))
+    errors.extend(_check_reply_ids(nodes))
 
     warnings: list[Issue] = []
     warnings.extend(_capability_warnings(nodes, platforms))
@@ -204,6 +205,86 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
         else:
             taken[(source, raw_handle)] = edge_id
 
+    return issues
+
+
+def entry_node_id(graph: Any) -> str | None:
+    """Where a run of ``graph`` starts, or ``None`` when that is not a question.
+
+    The engine (L3-B) needs the same answer the validator computes, and two
+    implementations of "the node with no incoming edge from another node" would
+    drift the moment one of the exclusions below was corrected in only one of
+    them — a graph that publishes cleanly and then starts at the wrong node is
+    about the worst shape that disagreement could take.
+
+    So this is a thin wrapper over :func:`_entry_nodes`, not a second reading of
+    SPEC §9.1. ``None`` means the graph has zero entries or several, which is a
+    graph error :func:`validate_graph` already reports; the caller is expected
+    to have published through that gate and to treat ``None`` as a broken graph
+    rather than as a normal state.
+    """
+    if not isinstance(graph, dict):
+        return None
+    nodes = graph.get("nodes")
+    edges = graph.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return None
+
+    specs: dict[str, NodeSpec] = {}
+    for node in nodes:
+        if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+            continue
+        spec = node_spec(node.get("type"))
+        if spec is not None:
+            specs[node["id"]] = spec
+
+    usable = [edge for edge in edges if isinstance(edge, dict) and "source" in edge and "target" in edge]
+    entries = _entry_nodes(specs, usable, _routable(specs))
+    return entries[0] if len(entries) == 1 else None
+
+
+def _check_reply_ids(nodes: list[dict[str, Any]]) -> list[Issue]:
+    """A button and a quick reply on one node may not share an id.
+
+    Both are legal handles — ``btn:<id>`` and ``qr:<id>`` are separate edges —
+    but a platform sends back only the id when either is used
+    (``EventPayload.button_id``), with nothing to say which control produced it.
+    So a node carrying both cannot be routed: the engine has to guess, and half
+    the time it guesses wrong and follows the other branch.
+
+    A graph error rather than a warning, because the consequence is a message
+    going to the wrong place rather than a cosmetic mismatch — and rather than a
+    document error, because a half-wired draft must still save (SPEC §16's
+    two-second autosave).
+    """
+    issues: list[Issue] = []
+    for node in nodes:
+        config = node.get("config")
+        if not isinstance(config, dict):
+            continue
+        button_ids = {
+            item["id"]
+            for item in config.get("buttons") or []
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        clashing = sorted(
+            item["id"]
+            for item in config.get("quick_replies") or []
+            if isinstance(item, dict) and item.get("id") in button_ids
+        )
+        issues.extend(
+            Issue(
+                code="duplicate_reply_id",
+                message=(
+                    f"{reply_id!r} is both a button id and a quick reply id on this node. An inbound "
+                    f"reply carries only the id, so the two cannot be told apart — give one of them a "
+                    f"different id."
+                ),
+                node_id=node.get("id"),
+                path="quick_replies",
+            )
+            for reply_id in clashing
+        )
     return issues
 
 

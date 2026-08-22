@@ -1,11 +1,36 @@
-@import "tailwindcss";
+/* `source(none)` turns OFF Tailwind 4's automatic source detection, so the two
+   @source directives below are the whole content list.
 
-/* Scan all template directories for Tailwind class usage */
+   Without it Tailwind also scans the rest of the repo, and every file that
+   merely contains a word matching a utility name emits a rule for it. That was
+   really happening: `blur` came from the DOM event name inside the minified
+   static/js/vendor/alpine.min.js, `w-auto` from the prose comments further down
+   *this file* explaining why w-auto is unusable, and `isolate` from a comment in
+   the Makefile. No template used any of the three. A stylesheet that changes
+   when someone edits a Makefile comment is not one we can call reproducible.
+
+   Nothing outside these two globs contributes classes: Django forms here set
+   only rows/cols, never a class attribute. Anything that starts generating
+   class names in Python needs its path added here. */
+@import "tailwindcss" source(none);
+
+/* The complete content list. Per-app template directories are deliberately
+   absent: APP_DIRS is on, so Django would load templates from there, but none
+   exist, and adding the glob "just in case" is not free. The frontend stage of
+   the Dockerfile has to copy every path this list names, and copying apps into
+   a Node stage drags 251 Python files along and invalidates the cached CSS
+   build on every code change. TestTailwindSourceCoverage in
+   apps/common/tests/test_shell.py fails if an app template ever appears, and
+   names both places to update.
+
+   Do not write a literal star-slash anywhere in this file: it closes the
+   comment early, and the parse error it causes surfaces further down as an
+   unterminated string, which is not a fun morning. */
 @source "../../../templates/**/*.html";
-@source "../../../apps/**/templates/**/*.html";
 /* The flow-builder island (issue #10). Its class names live in TSX, not in a
    template, so without this every utility the canvas uses is dropped from the
-   bundle — and the only symptom is an unstyled panel in a production build. */
+   bundle — and the only symptom is an unstyled panel in a production build.
+   Like the glob above, the frontend stage of the Dockerfile has to copy it. */
 @source "../../../frontend/builder/src/**/*.{ts,tsx}";
 
 /* ═══════════════════════════════════════════════════════════════

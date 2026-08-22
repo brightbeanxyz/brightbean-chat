@@ -17,7 +17,7 @@ from typing import Any
 
 from django.contrib import admin
 
-from apps.flows.models import Flow, FlowVersion
+from apps.flows.models import Flow, FlowExecution, FlowVersion
 
 
 @admin.register(Flow)
@@ -42,4 +42,38 @@ class FlowVersionAdmin(admin.ModelAdmin):
     list_select_related = ("flow", "created_by")
 
     def has_add_permission(self, request: Any, obj: Any = None) -> bool:
+        return False
+
+
+@admin.register(FlowExecution)
+class FlowExecutionAdmin(admin.ModelAdmin):
+    """Entirely read-only, and that is the point.
+
+    An execution is a state machine whose every transition is a write inside a
+    contact advisory lock (SPEC §9.6). An admin form editing ``status`` or
+    ``current_node_id`` would be a write with no lock at all, racing a worker
+    that is mid-step — and the visible symptom would be a contact getting two
+    messages, days later, with nothing in the logs to connect it to a form
+    somebody saved. Operators need to *read* these rows constantly ("where did
+    this contact stop, and why"); nobody needs to edit one.
+
+    ``last_error`` is already scrubbed and capped on write
+    (``apps.flows.engine.runner``), which matters because this page is where it
+    is read.
+    """
+
+    list_display = ("flow", "contact", "status", "current_node_id", "blocks_since_pause", "preview", "updated_at")
+    list_filter = ("status", "preview")
+    search_fields = ("current_node_id", "started_by")
+    date_hierarchy = "created_at"
+    # Every column, deliberately: see the class docstring.
+    readonly_fields = tuple(field.name for field in FlowExecution._meta.fields)
+    # The changelist renders four related objects per row.
+    list_select_related = ("flow", "contact", "flow_version", "channel_connection")
+    ordering = ("-updated_at",)
+
+    def has_add_permission(self, request: Any, obj: Any = None) -> bool:
+        return False
+
+    def has_change_permission(self, request: Any, obj: Any = None) -> bool:
         return False

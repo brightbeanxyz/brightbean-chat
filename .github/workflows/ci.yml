@@ -61,11 +61,21 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: "pip"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements-dev.txt
 
       - name: Install dependencies
         # --require-hashes: CI installs exactly the artefacts the lock records.
-        run: pip install --require-hashes -r requirements-dev.txt
+        # uv enforces the hashes exactly as pip does — verified against a lock
+        # with a deliberately corrupted hash, which it rejects with exit 1 — and
+        # resolves and installs the tree in a fraction of the time. uv's own
+        # cache replaces setup-python's pip cache, which only ever cached the
+        # downloads and still paid to reinstall every wheel.
+        run: uv pip install --system --require-hashes -r requirements-dev.txt
 
       - name: mypy
         # django-stubs loads config.settings.test, which supplies its own
@@ -102,13 +112,24 @@ jobs:
           POSTGRES_DB: brightbean_chat
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
+          # Test databases are disposable, so initdb need not fsync.
+          POSTGRES_INITDB_ARGS: "--no-sync"
         ports:
           - 5432:5432
+        # The 10s health interval meant the runner waited ~29s for a database
+        # that was ready far sooner; 2s cuts that to about a third. The retry
+        # count rises to keep the failure ceiling at 60s — the interval is what
+        # wins the latency, and 20 retries would have quietly cut the budget
+        # below the 50s (5 x 10s) this had before. The tmpfs
+        # data directory takes the four parallel test-database creations and
+        # the transaction=True truncations off disk entirely — durability is
+        # meaningless for a database thrown away at the end of the job.
         options: >-
           --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+          --mount type=tmpfs,destination=/var/lib/postgresql/data
     env:
       DJANGO_SETTINGS_MODULE: config.settings.test
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/brightbean_chat
@@ -122,11 +143,16 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: "pip"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements-dev.txt
 
       - name: Install dependencies
-        # --require-hashes: CI installs exactly the artefacts the lock records.
-        run: pip install --require-hashes -r requirements-dev.txt
+        # See the typecheck job for why this is uv rather than pip.
+        run: uv pip install --system --require-hashes -r requirements-dev.txt
 
       - name: Set up Node
         # .nvmrc is the single version CI runs on. It cannot be the only copy:
@@ -165,7 +191,17 @@ jobs:
         run: npm run test:js
 
       - name: pytest
-        run: pytest --cov=apps --cov-report=term-missing
+        # --dist loadfile comes from addopts in pyproject.toml (see the comment
+        # there for why the grouping is load*file*); -n is supplied here and in
+        # `make test` so that a bare single-file pytest stays single-process.
+        #
+        # COVERAGE_CORE=sysmon puts coverage on CPython 3.12's sys.monitoring
+        # instead of the trace callback. Measured on the full suite: coverage
+        # costs ~81% on the trace core and ~10% on sysmon, for identical
+        # output. Valid here because no branch coverage is configured.
+        env:
+          COVERAGE_CORE: sysmon
+        run: pytest -n auto --cov=apps --cov-report=term-missing
 
   audit:
     name: Dependency audit + frontend build
@@ -357,7 +393,12 @@ jobs:
     name: Docker build
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, typecheck, test]
+    # Deliberately ungated. This job used to wait on [lint, typecheck, test] to
+    # avoid spending build minutes on already-broken code, but this repo is
+    # public, so GitHub-hosted runners are free and those minutes cost nothing.
+    # A failing lint/typecheck/test check still blocks the PR on its own, so the
+    # gate bought no safety — only latency. Starting at t=0 alongside `test`
+    # takes CI wall clock from ~4m10s to ~2m20s.
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -375,7 +416,14 @@ jobs:
           load: true
           tags: brightbean-chat:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Only pushes to main write the layer cache. Every branch reads it, so
+          # PR builds keep the full speedup, but they no longer each export a
+          # mode=max cache of every intermediate layer. That export is the
+          # largest artefact this repo produces, and now that the job is ungated
+          # it would run on every push including failing ones — enough write
+          # churn to evict the uv and npm caches the other jobs depend on, since
+          # all of them share one 10GB per-repository quota with LRU eviction.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
 
       - name: Container runs as a non-root user
         # SECURITY-BASELINE / Layer-0 gate item 4. Studio's image runs as root;
@@ -410,22 +458,19 @@ jobs:
         # round-trip. IMAGE_TAG points compose at the image built above so it
         # does not rebuild the same layers.
         #
-        # `curl -fsS` follows no redirect and fails on any non-2xx, so this also
-        # asserts that / stays publicly reachable — the shell must not put the
-        # landing page behind a login.
+        # `-f docker-compose.yml` suppresses the automatic docker-compose.override.yml,
+        # which is a local-development file. Without it this step was not testing
+        # the image it had just built: the override bind-mounts `.:/app` over the
+        # image's contents and replaces the gunicorn CMD with `runserver`, so CI
+        # was exercising the dev server against the working tree. It also starts a
+        # `tailwind` container that runs a full `npm ci` the smoke test never needs.
         env:
           IMAGE_TAG: ci
         run: |
           test ! -f .env  # prove nothing was configured first
-          docker compose up -d
+          docker compose -f docker-compose.yml up -d
 
-          for attempt in $(seq 1 40); do
-            if curl -fsS http://localhost:8000/healthz > /tmp/healthz.json; then
-              break
-            fi
-            echo "waiting for the app (${attempt}/40)..."
-            sleep 3
-          done
+          scripts/wait-for-http.sh http://localhost:8000/healthz 2xx 120 /tmp/healthz.json
 
           echo "--- /healthz ---"
           cat /tmp/healthz.json
@@ -433,8 +478,11 @@ jobs:
           grep -q '"database": "ok"' /tmp/healthz.json
 
           # "/" is the authenticated router now (issue #31): anonymous
-          # visitors are redirected to the sign-in page, so follow it. This
+          # visitors are redirected to the sign-in page, so -L follows it. This
           # exercises allauth and the template chain rather than a static page.
+          # -f still fails the step on any non-2xx at the end of the redirect
+          # chain, which is what asserts / stays publicly reachable — the shell
+          # must not put the landing page behind a login.
           echo "--- / ---"
           curl -fsSL http://localhost:8000/ | grep -q "BrightBean Chat"
 
@@ -442,17 +490,17 @@ jobs:
         env:
           IMAGE_TAG: ci
         run: |
-          docker compose stop postgres
-          sleep 5
-          status="$(curl -s -o /tmp/healthz-down.json -w '%{http_code}' http://localhost:8000/healthz)"
-          echo "status=${status}"; cat /tmp/healthz-down.json
-          test "${status}" = "503"
+          docker compose -f docker-compose.yml stop postgres
+          scripts/wait-for-http.sh http://localhost:8000/healthz 503 30 /tmp/healthz-down.json
+          cat /tmp/healthz-down.json
 
       - name: Tear down
         if: always()
         env:
           IMAGE_TAG: ci
-        run: docker compose logs --no-color --tail=100 || true; docker compose down -v || true
+        run: |
+          docker compose -f docker-compose.yml logs --no-color --tail=100 || true
+          docker compose -f docker-compose.yml down -v || true
 
   secrets-scan:
     name: Secret scan (gitleaks)
