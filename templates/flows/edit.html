@@ -1,18 +1,32 @@
 {% extends "base.html" %}
+{% load flow_builder %}
 {% comment %}
-The builder's host page (SPEC §16): a mount div and a placeholder.
+The builder's host page (SPEC §16): a mount div, and the React island that
+replaces its contents.
 
-Issue #10 (L3-C) replaces the placeholder with the React island and adds the
-bundle's {% templatetag openblock %} static {% templatetag closeblock %} tag in
-extra_js. Everything it needs is already here as data attributes — the flow id
-and the four API URLs — so it reverses no URLs of its own and this template does
-not change shape when the island arrives.
+Everything the island needs is a data attribute, so it reverses no URLs of its
+own. The API URLs carry the workspace segment: SPEC §16 writes them without one,
+and apps/flows/api.py records why they have one here.
 
-The API URLs carry the workspace segment: SPEC §16 writes them without one, and
-apps/flows/api.py records why they have one here.
+The bundle is reached through {% templatetag openblock %} flow_builder_bundle
+{% templatetag closeblock %} rather than {% templatetag openblock %} static
+{% templatetag closeblock %}, so a tree that has not run `make frontend` renders
+the notice below instead of a 500 or a red test — see
+apps/flows/templatetags/flow_builder.py.
 {% endcomment %}
 
 {% block title %}{{ flow.name }} · Flows · BrightBean Chat{% endblock %}
+
+{% block extra_head %}
+{% flow_builder_bundle as builder %}
+{% if builder %}
+{% comment %}
+In the head, not beside the script: a stylesheet discovered in the body is a
+guaranteed flash of an unstyled canvas.
+{% endcomment %}
+<link rel="stylesheet" href="{{ builder.css }}">
+{% endif %}
+{% endblock %}
 
 {% block page_header %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -28,21 +42,54 @@ apps/flows/api.py records why they have one here.
 {% endblock %}
 
 {% block content %}
+{% flow_builder_bundle as builder %}
 <div id="flow-builder"
-     class="flex-1 min-h-0 rounded-xl border flex items-center justify-center p-8"
+     class="fb-mount flex-1 min-h-0 rounded-xl border overflow-hidden"
      style="border-color: var(--border); background: var(--surface-1);"
      data-flow-id="{{ flow.id }}"
      data-can-edit="{{ can_edit|yesno:"true,false" }}"
      data-detail-url="{{ api_detail_url }}"
      data-publish-url="{{ api_publish_url }}"
      data-stats-url="{{ api_stats_url }}"
-     data-schema-url="{{ api_schema_url }}">
-    <div class="text-center">
-        <p class="text-sm font-medium" style="color: var(--text-primary);">The flow builder lands with issue #10</p>
-        <p class="text-sm mt-1" style="color: var(--text-secondary);">
-            The graph, its validation and the pick-lists this canvas needs are already served by
-            the data API on this page.
-        </p>
+     data-schema-url="{{ api_schema_url }}"
+     data-media-picker-url="{{ media_picker_url }}">
+    {% if builder %}
+    {% comment %}
+    Replaced by createRoot().render() on mount. Kept until then so a slow parse
+    is not a blank rectangle.
+    {% endcomment %}
+    <div class="h-full flex items-center justify-center p-8">
+        <p class="text-sm" style="color: var(--text-secondary);">Loading the flow builder…</p>
     </div>
+    {% else %}
+    <div class="h-full flex items-center justify-center p-8">
+        <div class="alert-error max-w-lg text-left">
+            <p class="font-medium">The flow builder could not load.</p>
+            <p class="mt-1">
+                Its JavaScript bundle has not been built. Run <code>make frontend</code> and reload,
+                or rebuild the container image.
+            </p>
+        </div>
+    </div>
+    {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+{% flow_builder_bundle as builder %}
+{% if builder %}
+{% comment %}
+type="module" defers, so this runs after #flow-builder exists and the ordering
+base.html documents for htmx and Alpine is untouched — the island needs neither.
+
+The nonce is not strictly required (script-src carries 'self' and the shell's
+own vendor tags carry none), but it costs nothing and is what keeps this tag
+working if 'strict-dynamic' is ever added.
+
+There is deliberately no onerror= hook: inline handlers are banned by CSP and by
+apps/common/tests/test_shell.py, so the missing-bundle case is decided
+server-side above.
+{% endcomment %}
+<script type="module" src="{{ builder.js }}" nonce="{{ request.csp_nonce }}"></script>
+{% endif %}
 {% endblock %}

@@ -1,23 +1,42 @@
 {
   "name": "brightbean-chat",
   "private": true,
-  "description": "Frontend toolchain: the Tailwind 4 build for theme/static_src and the vendored runtime libraries in static/js.",
+  "description": "Frontend toolchain: the Tailwind 4 build for theme/static_src, the vendored runtime libraries in static/js, and the flow-builder React island in frontend/builder.",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "build:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --minify",
     "watch:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --watch",
+    "build:js": "vite build --config frontend/builder/vite.config.mts",
+    "watch:js": "vite build --config frontend/builder/vite.config.mts --watch",
+    "typecheck:js": "tsc --noEmit --project frontend/builder/tsconfig.json",
+    "test:js": "vitest run --config frontend/builder/vite.config.mts",
     "vendor": "node scripts/vendor-js.mjs",
-    "build": "npm run build:css && npm run vendor"
+    "build": "npm run build:css && npm run build:js && npm run vendor"
   },
   "dependencies": {
+    "@xyflow/react": "12.11.3",
     "alpinejs": "3.16.2",
     "chart.js": "4.5.1",
     "flatpickr": "4.6.13",
     "htmx.org": "2.0.10",
-    "sortablejs": "1.15.7"
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sortablejs": "1.15.7",
+    "zustand": "4.5.7"
   },
   "devDependencies": {
     "@tailwindcss/cli": "4.3.3",
-    "tailwindcss": "4.3.3"
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.6",
+    "@types/node": "20.19.43",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "ajv": "8.20.0",
+    "jsdom": "26.1.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "3.2.7"
   }
 }

@@ -1,10 +1,10 @@
 # Loaded automatically by `docker compose up`. Bind-mounts the working tree and
 # swaps gunicorn for runserver so edits reload without a rebuild.
 #
-# The bind-mount is why the Tailwind bundle needs handling here at all: `.:/app`
-# shadows the stylesheet the Dockerfile's node stage compiled into the image, so
-# without the `theme_css` volume below a clean checkout serves the whole app
-# unstyled until — and only if — a watcher gets around to building one.
+# The bind-mount is why the compiled bundles need handling here at all: `.:/app`
+# shadows what the Dockerfile's node stage built into the image, so without the
+# named volumes below a clean checkout serves the whole app unstyled — and the
+# flow builder not at all — until, and only if, something rebuilds them.
 
 services:
   migrate:
@@ -28,6 +28,16 @@ services:
       # watcher: if `npm ci` is slow, or the registry is unreachable, or the
       # watcher dies, the page stays styled instead of silently losing its CSS.
       - theme_css:/app/theme/static/css/dist
+      # The same hole, the same patch, for the flow-builder island (issue #10).
+      # It is gitignored too, so the bind-mount above replaces the copy the
+      # `frontend` stage compiled with nothing at all — and the builder page
+      # would show its "not built" notice while every other page looked fine,
+      # which reads as a bug in the builder rather than as a missing volume.
+      #
+      # No watcher service for it: rebuilding the island is a host-side
+      # `make js-watch` alongside `make server`. A second npm-ci container would
+      # be paid on every `docker compose up`, including the CI Docker job's.
+      - builder_dist:/app/apps/flows/static/flows/builder
 
   tailwind:
     image: node:20-slim
@@ -67,4 +77,5 @@ services:
 
 volumes:
   theme_css:
+  builder_dist:
   tailwind_node_modules:

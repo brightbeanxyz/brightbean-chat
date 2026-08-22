@@ -1,0 +1,97 @@
+/**
+ * Publishing.
+ *
+ * The ordering assertion is the point: apps/flows/api.py publishes whatever
+ * draft the server currently holds, so publishing without first flushing a
+ * pending autosave publishes the *previous* version while appearing to succeed.
+ */
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { Toolbar } from "./Toolbar";
+import { makeDetail, makeSampleGraph } from "./test/fixtures";
+import { installCsrfToken, stubHttp, type HttpStub } from "./test/http";
+import { makeStore, renderWith } from "./test/render";
+
+let http: HttpStub;
+
+const published = {
+  flow: { id: "flow-1", name: "Welcome", status: "active", folder: "", updated_at: "" },
+  version: { id: "v", version: 2, published: true, updated_at: "" },
+  validation: { errors: [], warnings: [] },
+};
+
+beforeEach(() => {
+  http = stubHttp();
+  installCsrfToken();
+});
+
+afterEach(() => http.restore());
+
+describe("Publish", () => {
+  it("flushes the pending save before it posts", async () => {
+    const order: string[] = [];
+    const autosave = {
+      flush: vi.fn(async () => {
+        order.push("flush");
+      }),
+      stop: vi.fn(),
+    };
+    http.route("/publish/", () => {
+      order.push("publish");
+      return { body: published };
+    });
+
+    renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={autosave} />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(order).toEqual(["flush", "publish"]));
+  });
+
+  it("records the published version on success", async () => {
+    http.route("/publish/", { body: published });
+    const store = makeStore(makeDetail(makeSampleGraph()));
+
+    renderWith(store, <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2));
+  });
+
+  it("surfaces a 422 as a blocked publish rather than a silent no-op", async () => {
+    http.route("/publish/", {
+      status: 422,
+      body: { validation: { errors: [{ code: "no_entry_node", message: "No entry node." }], warnings: [] } },
+    });
+    const store = makeStore(makeDetail(makeSampleGraph()));
+
+    renderWith(store, <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(store.getState().save.message).toContain("Publish blocked"));
+    expect(store.getState().validation.errors[0]?.code).toBe("no_entry_node");
+    expect(store.getState().save.publishedVersion).toBeNull();
+  });
+
+  it("shows saved state and outstanding problems side by side, never folded into one", async () => {
+    // A 200 from PUT means the draft was written; it can still carry errors.
+    // "Saved" and "valid" are different questions.
+    const store = makeStore(
+      makeDetail(makeSampleGraph(), {
+        validation: { errors: [{ code: "no_entry_node", message: "No entry node." }], warnings: [] },
+      }),
+    );
+
+    renderWith(store, <Toolbar autosave={null} />);
+
+    expect(screen.getByText("1 to fix")).toBeInTheDocument();
+    expect(screen.getByText(/No changes/)).toBeInTheDocument();
+  });
+
+  it("offers no Publish at all when the member cannot edit", () => {
+    renderWith(makeStore(makeDetail(makeSampleGraph()), { canEdit: false }), <Toolbar autosave={null} />);
+
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+});

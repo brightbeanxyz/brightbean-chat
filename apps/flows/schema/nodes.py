@@ -32,6 +32,7 @@ from apps.flows.schema.condition import CONDITION_SCHEMA
 
 __all__ = [
     "ACTION_VERBS",
+    "GROUPS",
     "NODE_TYPES",
     "SHARED_DEFS",
     "NodeSpec",
@@ -53,6 +54,14 @@ class NodeSpec:
     description: str
     config: dict[str, Any]
 
+    #: Which palette drawer the builder files this node under (issue #10). It is
+    #: a property of the node type, not of the canvas: whoever registers a type
+    #: is the person who knows where it belongs, and they are editing this file
+    #: anyway. Defaulted so registering one never has to think about it —
+    #: ``"other"`` is a usable answer and the builder renders that drawer only
+    #: when something lands in it.
+    group: str = "other"
+
     #: Handles with no id — ``default``, ``timeout``, ``error``, ``cond:true``…
     handles: tuple[str, ...] = ("default",)
 
@@ -73,6 +82,16 @@ class NodeSpec:
     #: Extra ``$defs`` this node contributes to the exported document.
     defs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+
+#: The palette drawers, in the order the builder shows them (issue #10). Both
+#: the order and the labels are exported, so the frontend reads one file rather
+#: than one file plus a hard-coded table.
+GROUPS: tuple[tuple[str, str], ...] = (
+    ("content", "Content"),
+    ("logic", "Logic"),
+    ("actions", "Actions"),
+    ("other", "Other"),
+)
 
 NODE_TYPES: dict[str, NodeSpec] = {}
 SHARED_DEFS: dict[str, dict[str, Any]] = {}
@@ -385,6 +404,7 @@ register_node_type(
         type="send_message",
         label="Send Message",
         description="SPEC §11.1. Waits when buttons or quick replies are present, otherwise continues.",
+        group="content",
         config=f.obj(
             {
                 "blocks": f.array(f.ref("message_block"), min_items=1, max_items=20),
@@ -405,6 +425,7 @@ register_node_type(
         type="action",
         label="Action",
         description="SPEC §11.2. Runs its verbs in order and always continues.",
+        group="actions",
         # The verb union is built at export time from ACTION_VERBS, so a verb a
         # later issue registers appears without this line changing.
         config=f.obj({"actions": f.array(f.ref("action_step"), min_items=1, max_items=20)}, required=["actions"]),
@@ -417,6 +438,7 @@ register_node_type(
         type="start_flow",
         label="Start Flow",
         description="SPEC §11.3. Terminal in-graph: it ends this execution and starts the target flow.",
+        group="logic",
         config=f.obj({"flow_id": f.string(min_length=1, max_length=64)}, required=["flow_id"]),
         handles=(),
         terminal=True,
@@ -428,6 +450,7 @@ register_node_type(
         type="condition",
         label="Condition",
         description="SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded, not re-declared.",
+        group="logic",
         config=f.ref("condition_filter"),
         handles=("cond:true", "cond:false"),
     )
@@ -438,6 +461,7 @@ register_node_type(
         type="smart_delay",
         label="Smart Delay",
         description="SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
+        group="logic",
         # Discriminated on `mode` rather than a flat object with everything
         # optional. With only `mode` required, {"mode": "duration"} published
         # cleanly and reached the engine with nothing to compute run_at from —
@@ -454,6 +478,7 @@ register_node_type(
         type="randomizer",
         label="Randomizer",
         description="SPEC §11.6. Splits by weight; sticky by default, remembered in variables.",
+        group="logic",
         config=f.obj(
             {
                 "paths": f.array(f.ref("randomizer_path"), min_items=2, max_items=10),
@@ -474,6 +499,7 @@ register_node_type(
             "SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard "
             "(SECURITY-BASELINE §6); nothing in this app fetches the URL."
         ),
+        group="actions",
         config=f.obj(
             {
                 "method": f.enum("GET", "POST", "PUT", "PATCH", "DELETE"),
@@ -496,6 +522,7 @@ register_node_type(
         type="data_collection",
         label="Data Collection",
         description="SPEC §11.8. Validated reply capture; email/phone answers also record consent.",
+        group="content",
         config=f.obj(
             {
                 "question": f.string(min_length=1, max_length=4096),
@@ -531,6 +558,7 @@ register_node_type(
         type="send_sms",
         label="Send SMS",
         description="SPEC §11.9. Runtime is L5-D. Needs an SMS connection and a phone identity.",
+        group="actions",
         config=f.obj(
             {
                 "text": f.string(min_length=1, max_length=1600),
@@ -547,6 +575,7 @@ register_node_type(
         type="send_email",
         label="Send Email",
         description="SPEC §11.10. Runtime is L5-E. Needs an email connection and an email identity.",
+        group="actions",
         config=f.obj(
             {
                 "subject": f.string(min_length=1, max_length=300),
@@ -564,6 +593,7 @@ register_node_type(
         type="note",
         label="Note",
         description="SPEC §11.11. Builder-only annotation, ignored at runtime and never connected.",
+        group="content",
         config=f.obj({"text": f.string(max_length=5000)}, required=["text"]),
         handles=(),
         annotation=True,

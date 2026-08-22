@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------------------
-# Frontend — compile the Tailwind bundle.
+# Frontend — compile the Tailwind bundle and the flow-builder island.
 # ---------------------------------------------------------------------------
-# The output has to exist before collectstatic runs in the runtime stage:
+# Both outputs have to exist before collectstatic runs in the runtime stage:
 # production uses CompressedManifestStaticFilesStorage, which hard-fails on a
-# {% static %} reference it cannot resolve. It is also gitignored, so it cannot
-# simply arrive with the source copy.
+# {% static %} reference it cannot resolve. Both are also gitignored, so they
+# cannot simply arrive with the source copy.
 #
 # The vendored JS in static/js/vendor/ is committed and needs no build step —
 # see scripts/vendor-js.mjs for why.
@@ -16,11 +16,28 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
-# styles.css scans templates/ and apps/**/templates/ through its @source
-# directives, so Tailwind needs the whole tree to know which classes to emit.
+# styles.css scans templates/, apps/**/templates/ and frontend/builder/src/
+# through its @source directives, so Tailwind needs the whole tree to know
+# which classes to emit.
 COPY . .
 RUN npm run build:css \
     && test -s theme/static/css/dist/styles.css
+
+# The flow-builder React island (issue #10). A separate layer from the CSS so a
+# stylesheet change does not rebuild the bundle and vice versa.
+#
+# It inlines static/flows/flow-schema.json, which is committed, so this needs no
+# Python. Both outputs are asserted because
+# apps/flows/templatetags/flow_builder.py deliberately renders a notice rather
+# than raising when one is missing — right for a running app, exactly wrong for
+# a release build, which should never get that far. `builder.css` is also the
+# tripwire for the asset filename drifting, and the single-file check for a
+# Rollup chunk appearing: collectstatic does not rewrite ES-module specifiers,
+# so a second chunk would lose its cache-busting silently.
+RUN npm run build:js \
+    && test -s apps/flows/static/flows/builder/builder.js \
+    && test -s apps/flows/static/flows/builder/builder.css \
+    && test "$(ls apps/flows/static/flows/builder/*.js | wc -l)" -eq 1
 
 # ---------------------------------------------------------------------------
 # Builder — resolve dependencies into a virtualenv we can copy wholesale.
@@ -70,6 +87,10 @@ COPY --chown=app:app . .
 # Must land before the collectstatic below, and be owned by the app user, which
 # is what runs it.
 COPY --from=frontend --chown=app:app /app/theme/static/css/dist /app/theme/static/css/dist
+
+# The flow-builder island, for the same two reasons: .gitignore keeps it out of
+# the build context, and the collectstatic below has to see it.
+COPY --from=frontend --chown=app:app /app/apps/flows/static/flows/builder /app/apps/flows/static/flows/builder
 
 # WORKDIR creates /app as root and COPY --chown only covers the files it
 # copies, so the app user could not create staticfiles/ at build time or write

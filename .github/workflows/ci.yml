@@ -72,6 +72,21 @@ jobs:
         # SECRET_KEY / ENCRYPTION_KEY_SALT defaults — no secrets needed here.
         run: mypy apps/ config/ theme/ tests/ --ignore-missing-imports
 
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install JavaScript dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: tsc (flow builder island)
+        # In the job named "Type check", beside mypy, because that is where a
+        # reader looks for a type gate. Vitest strips types with esbuild and
+        # would never fail on one, so this is the only thing checking them.
+        run: npm run typecheck:js
+
   test:
     name: Test (pytest)
     runs-on: ubuntu-latest
@@ -128,6 +143,20 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build:css
 
+      - name: Vitest (flow builder island)
+        # Here rather than in the audit job: this one already has Node, an npm
+        # cache and an `npm ci`, so it costs one command. Before pytest so a
+        # broken island reports as a JavaScript failure instead of hiding behind
+        # the Python suite.
+        #
+        # Note this job deliberately does NOT build the bundle. The builder page
+        # reaches it through {% flow_builder_bundle %} rather than a
+        # {% static %} literal, so the static-reference assertion never looks at
+        # it, and apps/flows/tests/test_builder_assets.py drives both the built
+        # and the un-built branch hermetically. Building it here would make
+        # those tests depend on ambient build state.
+        run: npm run test:js
+
       - name: pytest
         run: pytest --cov=apps --cov-report=term-missing
 
@@ -151,6 +180,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
+          cache: "npm"
 
       - name: Install pip-audit
         run: pip install "pip-audit==2.10.1"
@@ -229,6 +259,36 @@ jobs:
           test -s theme/static/css/dist/styles.css
           echo "Tailwind output is reproducible ($(wc -c < theme/static/css/dist/styles.css) bytes)."
 
+      - name: Flow-builder bundle is deterministic
+        # The same contract as the Tailwind step above, for the same reason: a
+        # rebuild that changes bytes churns the collectstatic manifest hash on
+        # every deploy for nothing.
+        #
+        # `diff -r` rather than `cmp` because the build emits a directory — and
+        # because a stray Rollup chunk then shows up here as an unexpected file
+        # rather than passing quietly.
+        run: |
+          npm run build:js
+          cp -r apps/flows/static/flows/builder /tmp/builder.first
+          rm -rf apps/flows/static/flows/builder
+          npm run build:js
+          diff -r /tmp/builder.first apps/flows/static/flows/builder
+          echo "Builder bundle is reproducible ($(du -sh apps/flows/static/flows/builder | cut -f1))."
+
+      - name: The bundle is one file per type, with no source map
+        # inlineDynamicImports + cssCodeSplit:false, asserted rather than
+        # assumed. Django does not rewrite ES-module specifiers in the .js it
+        # collects (HashedFilesMixin.support_js_module_import_aggregation is
+        # False), so a second chunk would be fetched by its un-hashed name and
+        # lose cache-busting; and a sourceMappingURL comment would publish
+        # first-party source under /static/ in every image.
+        run: |
+          test -s apps/flows/static/flows/builder/builder.js
+          test -s apps/flows/static/flows/builder/builder.css
+          test "$(ls apps/flows/static/flows/builder/*.js  | wc -l)" -eq 1
+          test "$(ls apps/flows/static/flows/builder/*.css | wc -l)" -eq 1
+          ! grep -q "sourceMappingURL" apps/flows/static/flows/builder/builder.js
+
       - name: Vendored JavaScript matches the lockfile
         # static/js/vendor/ is committed so a clone without Node still runs, but
         # a committed copy can drift from the version package-lock.json pins —
@@ -280,6 +340,25 @@ jobs:
           uid="$(docker run --rm brightbean-chat:ci id -u)"
           echo "container uid: ${uid}"
           test "${uid}" != "0"
+
+      - name: The flow-builder bundle was collected
+        # apps/flows/templatetags/flow_builder.py degrades instead of raising
+        # when the bundle is missing, which is right for a running app but
+        # removes the hard stop a missing {% static %} used to give the image
+        # build. This restores it here, without giving up the graceful
+        # degradation at runtime.
+        #
+        # staticfiles.json is ground truth: if it names the files, collectstatic
+        # saw them and the tag resolves them under manifest storage.
+        run: |
+          docker run --rm brightbean-chat:ci python -c "
+          import json, sys
+          paths = json.load(open('staticfiles/staticfiles.json'))['paths']
+          missing = [p for p in ('flows/builder/builder.js', 'flows/builder/builder.css') if p not in paths]
+          if missing:
+              sys.exit(f'not collected: {missing}; saw {sorted(k for k in paths if k.startswith(\"flows/\"))}')
+          print('flow-builder bundle collected:', [paths[p] for p in ('flows/builder/builder.js', 'flows/builder/builder.css')])
+          "
 
       - name: docker compose up serves the app shell
         # A clean checkout with no .env boots Postgres, migrates, and serves
