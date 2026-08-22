@@ -9,7 +9,7 @@ import threading
 import uuid
 
 import pytest
-from django.db import connection, connections, transaction
+from django.db import connections, transaction
 
 from apps.queueing.locks import (
     LockOutsideTransactionError,
@@ -17,6 +17,7 @@ from apps.queueing.locks import (
     contact_lock_key,
     try_contact_lock,
 )
+from apps.queueing.tests.support import contact_lock_is_held
 
 
 class TestLockKey:
@@ -69,28 +70,17 @@ class TestTransactionRequirement:
     def test_inside_a_transaction_it_works(self) -> None:
         contact_id = uuid.uuid4()
         with transaction.atomic(), contact_lock(contact_id):
-            assert _lock_is_held(contact_id)
+            assert contact_lock_is_held(contact_id)
 
     def test_the_lock_is_re_entrant_within_one_transaction(self) -> None:
         """The worker takes it, then an engine node takes it again (SPEC §9.6)."""
         contact_id = uuid.uuid4()
         with transaction.atomic(), contact_lock(contact_id), contact_lock(contact_id):
-            assert _lock_is_held(contact_id)
+            assert contact_lock_is_held(contact_id)
 
     def test_two_contacts_do_not_block_each_other(self) -> None:
         with transaction.atomic(), contact_lock(uuid.uuid4()), try_contact_lock(uuid.uuid4()) as acquired:
             assert acquired is True
-
-
-def _lock_is_held(contact_id: uuid.UUID) -> bool:
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
-            "AND objid = (SELECT hashtext(%s)::bigint & 4294967295) AND granted",
-            [contact_lock_key(contact_id)],
-        )
-        row = cursor.fetchone()
-    return bool(row and row[0])
 
 
 @pytest.mark.django_db(transaction=True)

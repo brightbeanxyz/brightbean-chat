@@ -10,10 +10,24 @@ from contextlib import contextmanager
 from datetime import timedelta
 from typing import Any
 
+from django.db import connection
 from django.utils import timezone
 
 from apps.queueing import housekeeping, registry
+from apps.queueing.locks import contact_lock_key
 from apps.queueing.models import ScheduledAction
+
+# pg_locks is a CLUSTER-wide view. Advisory locks are acquired per database —
+# the lock tag carries the database OID, so two databases cannot contend for the
+# same key — but every session can still *see* every other database's advisory
+# locks in pg_locks. Under `pytest -n auto` each xdist worker gets its own
+# database on one shared server, so an unqualified `count(*) FROM pg_locks`
+# counts the locks the other workers are holding right now.
+#
+# That is not hypothetical: it is exactly what an unfiltered count did to
+# test_a_row_with_no_contact_takes_no_lock, which asserts the count is 0 while
+# test_locks.py::TestContention deliberately holds a lock on another worker.
+# Every query below is therefore scoped to the current database.
 
 
 @contextmanager
@@ -65,3 +79,31 @@ def make_action(workspace: Any = None, **overrides: Any) -> ScheduledAction:
     }
     fields.update(overrides)
     return ScheduledAction.objects.create(**fields)
+
+
+def advisory_lock_count() -> int:
+    """How many advisory locks this database holds. See the note above."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+            "AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+        )
+        return int(cursor.fetchone()[0])
+
+
+def contact_lock_is_held(contact_id: Any) -> bool:
+    """Whether this database holds the contact lock, taken by any session.
+
+    Deliberately not scoped to the current backend: the contention tests prove
+    that a lock taken on one connection is visible from another.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+            "AND objid = (SELECT hashtext(%s)::bigint & 4294967295) "
+            "AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) "
+            "AND granted",
+            [contact_lock_key(contact_id)],
+        )
+        row = cursor.fetchone()
+    return bool(row and row[0])

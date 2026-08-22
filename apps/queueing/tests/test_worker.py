@@ -6,13 +6,16 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
-from django.db import connection
 from django.utils import timezone
 
 from apps.common.models import RateLimitCounter
-from apps.queueing.locks import contact_lock_key
 from apps.queueing.models import ActionStatus, ScheduledAction
-from apps.queueing.tests.support import make_action, temporary_handler
+from apps.queueing.tests.support import (
+    advisory_lock_count,
+    contact_lock_is_held,
+    make_action,
+    temporary_handler,
+)
 from apps.queueing.worker import (
     BACKOFF_SCHEDULE,
     BatchResult,
@@ -266,14 +269,7 @@ class TestProcessAction:
         observed: dict[str, bool] = {}
 
         def check_lock(payload: dict[str, Any], action: ScheduledAction) -> None:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
-                    "AND objid = (SELECT hashtext(%s)::bigint & 4294967295) AND granted",
-                    [contact_lock_key(contact_id)],
-                )
-                row = cursor.fetchone()
-            observed["held"] = bool(row and row[0])
+            observed["held"] = contact_lock_is_held(contact_id)
 
         make_action(tenancy.workspace, type=PROBE, contact_id=contact_id)
         with temporary_handler(PROBE, check_lock):
@@ -286,9 +282,10 @@ class TestProcessAction:
         observed: dict[str, int] = {}
 
         def count_locks(payload: dict[str, Any], action: ScheduledAction) -> None:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory'")
-                observed["locks"] = cursor.fetchone()[0]
+            # Scoped to this database by the helper. An unqualified count here
+            # read the whole cluster's advisory locks, so under `pytest -n auto`
+            # it saw the locks test_locks.py holds on another worker and failed.
+            observed["locks"] = advisory_lock_count()
 
         make_action(tenancy.workspace, type=PROBE)
         with temporary_handler(PROBE, count_locks):
