@@ -158,10 +158,40 @@ MAIN_NAV: list[NavGroup] = [
                 workspace_scoped=True,
             ),
             NavItem(key="contacts", label="Contacts", icon="contacts", url_name="contacts", workspace_scoped=True),
-            NavItem(key="flows", label="Flows", icon="flows", url_name="flows", workspace_scoped=True),
+            NavItem(
+                key="flows",
+                label="Flows",
+                icon="flows",
+                url_name="flows:list",
+                # The builder is the same section to a reader, so the row
+                # stays lit while it is open (issue #6).
+                url_names=frozenset({"flows:list", "flows:edit"}),
+                workspace_scoped=True,
+            ),
             NavItem(key="sequences", label="Sequences", icon="sequences", url_name="sequences", workspace_scoped=True),
             NavItem(
                 key="broadcasts", label="Broadcasts", icon="broadcasts", url_name="broadcasts", workspace_scoped=True
+            ),
+            # Issue #16. The detail page is the same section to a reader, so it
+            # lights the same row — that is what url_names is for.
+            NavItem(
+                key="media",
+                label="Media",
+                icon="image",
+                url_name="media:library",
+                url_names=frozenset({"media:library", "media:asset_detail"}),
+                workspace_scoped=True,
+            ),
+            # Deliberately NOT workspace_scoped (issue #7): a notification is
+            # addressed to a person, and the feed spans every workspace they
+            # belong to — an alert about the workspace you are not currently
+            # looking at is precisely the one you need to see.
+            NavItem(
+                key="notifications",
+                label="Notifications",
+                icon="bell",
+                url_name="notifications:list",
+                badge_key="unread_notifications",
             ),
         ),
     ),
@@ -273,6 +303,21 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     # TODO(L4-D): unread inbox count, once inbox.Conversation exists (issue #14).
     badges["unread_inbox"] = 0
 
+    # Issue #7. Guarded on authentication rather than assumed: this function is
+    # also called directly by apps.common.views.ui_demo, whose docstring
+    # promises /ui/ "reads no database and no session" and which serves
+    # anonymous visitors. An unguarded per-user count would break that promise
+    # and blow up on AnonymousUser.
+    badges["unread_notifications"] = 0
+    if getattr(request, "user", None) is not None and request.user.is_authenticated:
+        from apps.notifications.selectors import unread_count_for
+
+        badges["unread_notifications"] = unread_count_for(request.user)
+    # Also returned under its own name below: the nav row reads it out of
+    # `badges`, but the bell and the mobile bar sit outside the nav loop and
+    # need it directly, and the notification views re-supply the same key so one
+    # partial serves both the first render and every htmx swap.
+
     # RBACMiddleware (issue #31) resolves these before any view runs. getattr
     # rather than attribute access because /ui/ renders the chrome for requests
     # that never went through the middleware.
@@ -323,6 +368,7 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         "current_workspace": workspace,
         "can_create_workspace": can_create_workspace,
         "channel_connections": channel_connections,
+        "unread_notification_count": badges["unread_notifications"],
         # Named rather than indexed out of the nav in the template. Positional
         # lookup (`settings_nav_groups.0.items.0.url`) fails soft in Django, so
         # reordering SETTINGS_NAV would silently retarget the footer link — and

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% load common_extras %}
+{% comment %}
+The flow list. Everything below the toolbar is the _list_rows.html partial, so
+the table has exactly one renderer: the filters fetch it, and every mutation
+answers with a `flowsChanged` event that makes it re-fetch itself.
+
+No Tailwind utility here sets a property a design-system class already owns —
+see ground rule 9 in docs/agent-prompts/layer-2.md. Colours come from the theme
+tokens rather than from utility palettes, which is what keeps the white-label
+swap in styles.css meaningful.
+{% endcomment %}
+
+{% block title %}Flows · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Flows</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            Automations that run when a trigger fires. Publish one to make it live.
+        </p>
+    </div>
+    {% if can_edit %}
+    <form class="flex items-center gap-2"
+          hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}"
+          hx-swap="none"
+          x-data
+          @htmx:after-request="$el.reset()">
+        {% csrf_token %}
+        <input type="text" name="name" maxlength="200" required placeholder="New flow name"
+               class="form-input-styled" style="width: 14rem;" aria-label="New flow name">
+        <button type="submit" class="btn-brand btn-inline">Create</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div x-data="{
+        q: '{{ query|escapejs }}',
+        status: '{{ status|escapejs }}',
+        folder: '{{ folder|escapejs }}',
+        {% comment %}
+          $nextTick is load bearing. ui_select assigns to `status` and calls
+          reload() in the same click handler, but Alpine flushes the binding on
+          the hidden inputs below on the next tick — dispatching immediately
+          makes htmx serialise the form one keystroke behind, so the first pick
+          of a filter appears to do nothing.
+        {% endcomment %}
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+     }">
+
+    <form id="flow-filters" x-ref="filters"
+          class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3"
+          hx-get="{% url 'flows:list' workspace_id=request.workspace.id %}"
+          hx-target="#flow-rows"
+          hx-swap="innerHTML"
+          hx-trigger="input changed delay:300ms, filters-changed"
+          @submit.prevent>
+        <input type="search" name="q" x-model="q" placeholder="Search flows"
+               class="form-input-styled" style="width: 16rem;" aria-label="Search flows">
+        <input type="hidden" name="status" x-model="status">
+        <input type="hidden" name="folder" x-model="folder">
+        {% ui_select model="status" options=status_options placeholder="All statuses" icon="status" onchange="reload()" %}
+        {% ui_select model="folder" options=folder_options placeholder="All folders" icon="tag" onchange="reload()" %}
+    </form>
+
+    <div id="flow-rows"
+         hx-get="{% url 'flows:list' workspace_id=request.workspace.id %}"
+         hx-trigger="flowsChanged from:body"
+         hx-target="this"
+         hx-swap="innerHTML"
+         hx-include="#flow-filters">
+        {% include "flows/_list_rows.html" %}
+    </div>
+</div>
+{% endblock %}

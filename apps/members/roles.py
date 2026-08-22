@@ -69,6 +69,7 @@ PERMISSION_KEYS: list[str] = [
     "edit_contact_fields",
     "manage_crm",
     "edit_flows",
+    "manage_media",
     "send_broadcasts",
     "manage_channels",
     "manage_members",

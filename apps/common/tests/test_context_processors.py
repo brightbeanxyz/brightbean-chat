@@ -64,6 +64,7 @@ class TestActiveFlag:
             ("inbox/", "inbox"),
             ("sequences/", "sequences"),
             ("broadcasts/", "broadcasts"),
+            ("media/", "media"),
         ],
     )
     def test_exactly_one_main_nav_item_is_active_per_route(self, suffix, expected, tenancy):
@@ -236,7 +237,16 @@ class TestNavStructure:
     def test_the_product_nav_is_the_one_the_issue_specifies(self):
         keys = [i.key for g in MAIN_NAV for i in g.items]
 
-        assert set(keys) == {"dashboard", "contacts", "flows", "inbox", "sequences", "broadcasts"}
+        assert set(keys) == {
+            "dashboard",
+            "contacts",
+            "flows",
+            "inbox",
+            "sequences",
+            "broadcasts",
+            "media",
+            "notifications",
+        }
 
     def test_settings_groups_match_the_brief(self):
         assert [g.label for g in SETTINGS_NAV] == ["Account", "Organization", "Workspace"]
@@ -323,10 +333,17 @@ class TestTenancyIntegration:
     def test_workspace_scoped_rows_vanish_without_a_workspace(self, tenancy):
         """RBACMiddleware leaves request.workspace None when every workspace is
         archived. A row pointing into a workspace that is not there is worse
-        than no row."""
+        than no row.
+
+        Notifications survive, and should: issue #7's row is per-user rather
+        than workspace-scoped, so it still has somewhere real to point when the
+        person has no current workspace — which is exactly when a
+        `channel_needs_reauth` alert matters most.
+        """
         context = navigation_context(_request("/organization/settings/", user=tenancy.owner))
 
-        assert context["nav_groups"] == []
+        keys = [item["key"] for group in context["nav_groups"] for item in group["items"]]
+        assert keys == ["notifications"]
         assert context["workspace_settings_nav_groups"] == []
 
     def test_channel_connections_is_still_a_placeholder(self):

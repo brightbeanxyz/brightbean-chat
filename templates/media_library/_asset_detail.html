@@ -1,0 +1,71 @@
+{% comment %}
+The detail panel, swapped into #media-detail.
+
+Every mutation here returns a 204 with a `mediaChanged` event, so the grid
+refreshes itself and this panel does not have to know it exists.
+{% endcomment %}
+{% load media_library %}
+<div class="media-card p-4">
+  <h2 class="mb-2">{{ asset.title|default:asset.filename }}</h2>
+
+  {% if asset.is_image and asset.thumbnail %}
+    <img src="{% media_url asset thumbnail=True %}" alt="{{ asset.alt_text }}"
+         class="w-full rounded-lg mb-3" style="max-height: 14rem; object-fit: contain;">
+  {% endif %}
+
+  <dl class="text-xs space-y-1 mb-3">
+    <div><dt class="inline muted">Type</dt> <dd class="inline">{{ asset.get_kind_display }} · {{ asset.mime }}</dd></div>
+    <div><dt class="inline muted">Size</dt> <dd class="inline">{{ asset.size_display }}</dd></div>
+    {% if asset.width %}
+      <div><dt class="inline muted">Dimensions</dt> <dd class="inline">{{ asset.width }} × {{ asset.height }}</dd></div>
+    {% endif %}
+    <div><dt class="inline muted">Uploaded</dt>
+      <dd class="inline">{{ asset.created_at|date:"j M Y" }}{% if asset.uploaded_by %} by {{ asset.uploaded_by.display_name }}{% endif %}</dd></div>
+    <div><dt class="inline muted">Media id</dt> <dd class="inline"><code>{{ asset.id }}</code></dd></div>
+  </dl>
+
+  {% comment %}
+    The delivery URL is shown because it is the thing an operator debugging a
+    send needs, and it is safe to show: it is signed, unguessable, and revoked
+    by deleting the asset.
+  {% endcomment %}
+  <p class="text-xs muted break-all mb-3">{% media_url asset %}</p>
+
+  {% if can_manage %}
+    {% comment %}
+      hx-swap="none" on all three: they answer 204 and carry their result in
+      HX-Trigger. Without it htmx swaps the response into the form itself, so an
+      unexpected body — a session-expiry redirect to the login page, say — is
+      injected into the panel.
+    {% endcomment %}
+    <form hx-post="{% url 'media:asset_edit' workspace_id=request.workspace.id asset_id=asset.id %}"
+          hx-swap="none">
+      <label for="asset-title">Title</label>
+      <input type="text" id="asset-title" name="title" value="{{ asset.title }}" maxlength="255">
+
+      <label for="asset-alt" class="mt-2">Alt text</label>
+      <textarea id="asset-alt" name="alt_text" rows="2">{{ asset.alt_text }}</textarea>
+      <p class="text-xs muted mt-1">Described to people using a screen reader, and sent to platforms that support it.</p>
+
+      <button type="submit" class="mt-2">Save</button>
+    </form>
+
+    <form hx-post="{% url 'media:asset_move' workspace_id=request.workspace.id asset_id=asset.id %}"
+          hx-swap="none">
+      <label for="asset-folder">Folder</label>
+      <select id="asset-folder" name="folder">
+        <option value="">No folder</option>
+        {% for folder in folders %}
+          <option value="{{ folder.id }}" {% if asset.folder_id == folder.id %}selected{% endif %}>{{ folder.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="mt-2">Move</button>
+    </form>
+
+    <form hx-post="{% url 'media:asset_delete' workspace_id=request.workspace.id asset_id=asset.id %}"
+          hx-swap="none"
+          hx-confirm="Delete {{ asset.filename }}? Any flow or broadcast still referencing it will fail to send that block.">
+      <button type="submit" class="btn-danger-soft">Delete</button>
+    </form>
+  {% endif %}
+</div>

@@ -5,6 +5,7 @@ from django.conf import settings
 from django.core import mail
 
 from apps.accounts.middleware import AUTH_RATE_LIMIT, AUTH_RATE_WINDOW, RATE_LIMIT_NAMESPACE
+from apps.common import ratelimit
 from apps.common.ratelimit import window_key
 from tests.support import TEST_PASSWORD, create_user
 
@@ -13,15 +14,60 @@ SIGNUP = "/accounts/signup/"
 RESET = "/accounts/password/reset/"
 
 
-# The clock is frozen for the whole class, not just for the tests that count to
-# the limit today. Five of them do, and the next one somebody adds will too —
-# the flake this prevents is invisible until an unlucky run, so opting in per
-# test means opting out by accident. The tests here that never reach the limit,
-# and the ones that pass ``window_key`` an explicit ``now=``, are unaffected
-# either way — a stopped clock changes nothing for them.
-@pytest.mark.usefixtures("frozen_rate_limit_window")
+class _FrozenClock:
+    """Stands in for the ``time`` module inside :mod:`apps.common.ratelimit`.
+
+    Deliberately exposes ``time()`` and nothing else: if the limiter ever reads
+    the clock a second way, this raises ``AttributeError`` rather than quietly
+    letting the real clock — and the flake below — back in.
+    """
+
+    @staticmethod
+    def time() -> float:
+        # An exact window boundary, so the frozen instant is the start of a
+        # window rather than an arbitrary point inside one.
+        return float(AUTH_RATE_WINDOW * 16_666)
+
+
 @pytest.mark.django_db
 class TestAuthRateLimiting:
+    @pytest.fixture(autouse=True)
+    def _pin_the_window(self, monkeypatch):
+        """Hold the limiter's window still for the duration of each test.
+
+        Most tests here fire eleven POSTs and assert the eleventh is refused,
+        which only holds while all eleven land in the *same* window. The window
+        is fixed, not sliding — ``window_key`` buckets on
+        ``now // AUTH_RATE_WINDOW`` — so a minute boundary falling mid-test
+        resets the counter and the eleventh POST comes back 200. Rare, real, and
+        observed: eleven requests take a few hundred milliseconds, and a minute
+        boundary lands inside that window every so often.
+
+        Pinned at the clock rather than at ``window_key``'s ``now=`` argument,
+        because that is the one place the clock is read: the pin then survives
+        any change to how the middleware calls the limiter, and a caller that
+        passes ``now`` explicitly still overrides it.
+
+        Nothing here weakens what the class proves. The rotation itself has its
+        own test (``test_the_bucket_rotates_with_the_clock``), which passes
+        ``now`` explicitly and so is unaffected by this.
+        """
+        monkeypatch.setattr(ratelimit, "time", _FrozenClock)
+
+    def test_the_window_is_pinned_for_this_class(self):
+        """Guard for the fixture above.
+
+        The tests it protects fail *intermittently* when the pin stops working,
+        which is the hardest kind of regression to attribute. This one fails
+        every time instead.
+        """
+        pinned = window_key(RATE_LIMIT_NAMESPACE, "203.0.113.9", window_seconds=AUTH_RATE_WINDOW)
+        expected = window_key(
+            RATE_LIMIT_NAMESPACE, "203.0.113.9", window_seconds=AUTH_RATE_WINDOW, now=_FrozenClock.time()
+        )
+
+        assert pinned == expected
+
     def test_posts_are_capped(self, client):
         for _ in range(AUTH_RATE_LIMIT):
             assert client.post(LOGIN, {"login": "a@example.test", "password": "wrong"}).status_code != 429
@@ -52,9 +98,12 @@ class TestAuthRateLimiting:
     def test_the_whole_burst_counts_against_one_window(self, client):
         """The property whose absence made this class flaky, asserted directly.
 
-        A burst that crosses a window boundary writes a second counter row and
-        splits its hits across the two, so neither reaches the limit. One row
-        means one window, which is the precondition every test above relies on.
+        ``test_the_window_is_pinned_for_this_class`` proves the pin reaches the
+        limiter by comparing keys. This comes at it from the other end and
+        checks the consequence: a burst that crossed a boundary would write a
+        *second* counter row and split its hits across the two, so neither
+        reaches the limit. One row means one window, which is the precondition
+        every counting test in this class rests on.
         """
         from apps.common.models import RateLimitCounter
 
@@ -64,15 +113,6 @@ class TestAuthRateLimiting:
             client.post(LOGIN, {})
 
         assert RateLimitCounter.objects.count() == 1
-
-    def test_the_limiter_reads_the_frozen_clock(self, frozen_rate_limit_window):
-        """Proof the fixture reaches the code path the middleware uses."""
-        live = window_key(RATE_LIMIT_NAMESPACE, "203.0.113.1", window_seconds=AUTH_RATE_WINDOW)
-        pinned = window_key(
-            RATE_LIMIT_NAMESPACE, "203.0.113.1", window_seconds=AUTH_RATE_WINDOW, now=frozen_rate_limit_window
-        )
-
-        assert live == pinned
 
     def test_the_bucket_rotates_with_the_clock(self):
         """The window number is part of the key, so the window starts on the

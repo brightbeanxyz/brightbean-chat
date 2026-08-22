@@ -1,4 +1,4 @@
-.PHONY: help setup lock frontend css-watch server worker migrate migrations test test-cov lint format typecheck audit \
+.PHONY: help setup lock frontend schema css-watch server worker migrate migrations test test-cov lint format typecheck audit \
         docker-up docker-down docker-build docker-logs
 
 help: ## Show this help
@@ -26,10 +26,19 @@ lock: ## Recompile requirements*.txt from requirements*.in (run after editing ei
 # The vendored libraries in static/js/vendor/ are committed, so a clone with no
 # Node at all still serves working JavaScript. Only the Tailwind bundle needs
 # building: it is a gitignored artefact.
+#
+# static/flows/flow-schema.json is generated but committed, because the flow
+# builder's bundle imports it at build time and a clone should not need a Python
+# environment to produce it. `make schema` regenerates it and a test asserts the
+# committed copy matches the registry, so it cannot silently go stale.
 
-frontend: ## Install JS deps and build the Tailwind bundle + vendored JS
+frontend: ## Install JS deps and build the Tailwind bundle + vendored JS + flow schema
 	npm ci
 	npm run build
+	$(MAKE) schema
+
+schema: ## Regenerate static/flows/flow-schema.json from the node registry (issue #6)
+	python manage.py export_flow_schema
 
 css-watch: ## Rebuild the Tailwind bundle on save (leave running alongside `make server`)
 	npm run watch:css
@@ -39,7 +48,7 @@ css-watch: ## Rebuild the Tailwind bundle on save (leave running alongside `make
 server: ## Start Django dev server
 	python manage.py runserver
 
-worker: ## Start the background task worker (the command itself lands with issue #5)
+worker: ## Start the background task worker
 	python manage.py process_tasks
 
 # Database
