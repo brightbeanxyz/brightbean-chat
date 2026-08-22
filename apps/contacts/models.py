@@ -207,6 +207,12 @@ class ContactScopedModel(WorkspaceScopedModel):
     """
 
     #: Name of the foreign key whose workspace must agree with the contact's.
+    #: The peer may be nullable: issue #8's ``ContactChannelIdentity`` carries a
+    #: connection-less "pending" state (ROADMAP contract 1 — an address captured
+    #: before any connection of that platform exists, upgraded lazily at first
+    #: send). A null peer has no workspace to disagree with, so the check below
+    #: skips rather than raising; the derivation from ``contact`` still runs, and
+    #: it is the derivation that the tenancy of these rows actually rests on.
     peer_field: ClassVar[str] = ""
 
     if TYPE_CHECKING:
@@ -220,7 +226,7 @@ class ContactScopedModel(WorkspaceScopedModel):
     def save(self, *args: Any, **kwargs: Any) -> None:
         self.workspace_id = self.contact.workspace_id
         peer = getattr(self, self.peer_field)
-        if peer.workspace_id != self.contact.workspace_id:
+        if peer is not None and peer.workspace_id != self.contact.workspace_id:
             raise WorkspaceMismatchError(
                 f"That {peer._meta.verbose_name} belongs to a different workspace than the contact."
             )

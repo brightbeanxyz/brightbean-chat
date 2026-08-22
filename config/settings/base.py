@@ -152,6 +152,7 @@ LOCAL_APPS = [
     "apps.credentials",
     "apps.contacts",
     "apps.channels",
+    "apps.messaging",
     "apps.media_library",
     "apps.flows",
     "apps.notifications",
@@ -324,6 +325,28 @@ SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.SocialAccountAdapter"
 # argued in apps/queueing/views.py: the caller is a third-party pinger holding
 # one static URL forever, so there is no expiry to sign in.
 TICK_TOKEN = env("TICK_TOKEN", default="")
+
+# ---------------------------------------------------------------------------
+# Outbound send rate (SPEC §8, §20) — apps.messaging.buckets
+# ---------------------------------------------------------------------------
+# Per-platform token buckets default to PlatformPolicy.rate_default (telegram
+# 25/s, instagram 8, messenger 40, whatsapp 20, sms 1, email 10). This env var
+# overrides them per platform, which a self-hoster needs because the ceilings
+# are per app, per page or per number and Meta hands them out individually:
+#   DEFAULT_SEND_RATE_OVERRIDES={"telegram": 10, "sms": 0.5}
+# Unknown platform keys and non-positive values fail a Django system check
+# rather than being silently ignored — see apps/messaging/checks.py.
+DEFAULT_SEND_RATE_OVERRIDES: dict[str, float] = env.json("DEFAULT_SEND_RATE_OVERRIDES", default={})
+
+# How much burst a bucket holds, in seconds of its own rate. One second means a
+# connection idle for a while may send one second's worth at once, which is what
+# every platform's published limit already permits.
+SEND_BUCKET_BURST_SECONDS = env.float("SEND_BUCKET_BURST_SECONDS", default=1.0)
+
+# How long a worker will wait for a token before handing the wait to the queue.
+# Read apps/messaging/buckets.py before raising it: the wait happens with the
+# worker's transaction open.
+SEND_BUCKET_MAX_WAIT_SECONDS = env.float("SEND_BUCKET_MAX_WAIT_SECONDS", default=2.0)
 
 # ---------------------------------------------------------------------------
 # Reverse proxies (consumed by apps.common.net.get_client_ip)
