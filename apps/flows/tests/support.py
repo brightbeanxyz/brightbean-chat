@@ -22,15 +22,16 @@ from typing import Any
 
 from apps.contacts.models import Contact
 from apps.flows import messaging
-from apps.flows.models import Flow, FlowVersion
+from apps.flows.models import Flow
 from apps.flows.schema import empty_graph
 from apps.flows.services import create_flow, publish, save_draft
 
 __all__ = [
     "FakeFacade",
     "FakeMessage",
+    "connection_for",
     "contact_for",
-    "draft_version",
+    "inbound",
     "edge",
     "graph",
     "node",
@@ -81,11 +82,6 @@ def published_flow(workspace: Any, document: dict[str, Any], *, name: str = "Tes
     publish(flow)
     flow.refresh_from_db()
     return flow
-
-
-def draft_version(flow: Flow, document: dict[str, Any]) -> FlowVersion:
-    """Add an unpublished draft on top of ``flow``'s published version."""
-    return save_draft(flow, document)
 
 
 @dataclass
@@ -191,3 +187,40 @@ def node_runtime(
             # leaving the stub would tell the next test module this deployment
             # implements it.
             unregister_node(node_type)
+
+
+def connection_for(workspace: Any, *, platform: str = "telegram", external_id: str = "bot-1") -> Any:
+    """A channel connection to run an execution on.
+
+    Executions carry one because contract 1 needs it on every send and SPEC §9.3
+    routes replies by it, so most engine tests that send anything need one too.
+    """
+    from apps.channels.models import ChannelConnection
+
+    return ChannelConnection.objects.create(
+        workspace=workspace,
+        platform=platform,
+        display_name=f"{platform} test",
+        external_id=external_id,
+    )
+
+
+def inbound(connection: Any, *, text: str = "", button_id: str = "", event_id: str = "evt-1") -> Any:
+    """One inbound ``NormalizedEvent``, the shape L4-A will hand ``attempt_resume``.
+
+    Built from ``apps.channels.events`` rather than a stand-in: the matching
+    logic reads ``payload.button_id`` and ``payload.text``, and a duck-typed
+    double would keep passing if either name changed.
+    """
+    from django.utils import timezone
+
+    from apps.channels.events import EventPayload, EventType, NormalizedEvent
+
+    return NormalizedEvent(
+        type=EventType.POSTBACK if button_id else EventType.MESSAGE,
+        connection=connection,
+        platform_user_id="tg-1",
+        provider_event_id=event_id,
+        timestamp=timezone.now(),
+        payload=EventPayload(text=text, button_id=button_id),
+    )

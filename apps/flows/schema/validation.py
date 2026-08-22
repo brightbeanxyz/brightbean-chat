@@ -98,6 +98,7 @@ def validate_graph(graph: Any, *, platforms: Sequence[str] = (), known_size: int
     errors: list[Issue] = []
     errors.extend(_check_edges(edges, specs, configs))
     errors.extend(_check_entry_nodes(routable, entries))
+    errors.extend(_check_reply_ids(nodes))
 
     warnings: list[Issue] = []
     warnings.extend(_capability_warnings(nodes, platforms))
@@ -240,6 +241,51 @@ def entry_node_id(graph: Any) -> str | None:
     usable = [edge for edge in edges if isinstance(edge, dict) and "source" in edge and "target" in edge]
     entries = _entry_nodes(specs, usable, _routable(specs))
     return entries[0] if len(entries) == 1 else None
+
+
+def _check_reply_ids(nodes: list[dict[str, Any]]) -> list[Issue]:
+    """A button and a quick reply on one node may not share an id.
+
+    Both are legal handles — ``btn:<id>`` and ``qr:<id>`` are separate edges —
+    but a platform sends back only the id when either is used
+    (``EventPayload.button_id``), with nothing to say which control produced it.
+    So a node carrying both cannot be routed: the engine has to guess, and half
+    the time it guesses wrong and follows the other branch.
+
+    A graph error rather than a warning, because the consequence is a message
+    going to the wrong place rather than a cosmetic mismatch — and rather than a
+    document error, because a half-wired draft must still save (SPEC §16's
+    two-second autosave).
+    """
+    issues: list[Issue] = []
+    for node in nodes:
+        config = node.get("config")
+        if not isinstance(config, dict):
+            continue
+        button_ids = {
+            item["id"]
+            for item in config.get("buttons") or []
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        clashing = sorted(
+            item["id"]
+            for item in config.get("quick_replies") or []
+            if isinstance(item, dict) and item.get("id") in button_ids
+        )
+        issues.extend(
+            Issue(
+                code="duplicate_reply_id",
+                message=(
+                    f"{reply_id!r} is both a button id and a quick reply id on this node. An inbound "
+                    f"reply carries only the id, so the two cannot be told apart — give one of them a "
+                    f"different id."
+                ),
+                node_id=node.get("id"),
+                path="quick_replies",
+            )
+            for reply_id in clashing
+        )
+    return issues
 
 
 def _routable(specs: dict[str, NodeSpec]) -> list[str]:

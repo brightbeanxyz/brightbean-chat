@@ -17,6 +17,24 @@ counted per session, so the worker having already taken the same lock (it does �
 than a deadlock, which is what lets these functions be honest about their own
 requirements instead of trusting a caller to have done it.
 
+**That lock blocks, and the inline path must not.** SPEC §9.6: "Inline path:
+``pg_try_advisory_xact_lock``; if unavailable, enqueue instead of blocking the
+web request." Calling :func:`start_flow` or
+:func:`apps.flows.engine.waits.attempt_resume` straight from a webhook request
+would hold a gunicorn thread behind whatever the worker is doing to that
+contact. The counted-lock property above is what makes the fix two lines rather
+than a second set of entry points — take the non-blocking lock first, and the
+engine's own acquisition inside it is then free::
+
+    with transaction.atomic(), try_contact_lock(contact) as acquired:
+        if not acquired:
+            schedule(ActionType.RESUME_EXECUTION, timezone.now(), ..., contact=contact)
+            return
+        attempt_resume(execution, event)
+
+The worker needs none of this: it has no client on the other end of the socket
+and is expected to wait.
+
 **The runner owns every write to the execution row.** Nodes report through
 :mod:`apps.flows.engine.results` and never save. That is the reason status can be
 reasoned about at all: there is exactly one function per terminal state, each
@@ -61,6 +79,7 @@ __all__ = [
     "EngineError",
     "FlowNotRunnableError",
     "advance",
+    "locked_execution",
     "resume_execution",
     "start_flow",
 ]
@@ -141,6 +160,13 @@ def start_flow(
     """
     if contact.workspace_id != flow.workspace_id:
         raise WorkspaceMismatchError("That flow belongs to a different workspace than the contact.")
+    if connection is not None and connection.workspace_id != flow.workspace_id:
+        # `ContactScopedModel` checks the execution's contact against its
+        # `peer_field` (the flow) and nothing else, so the connection FK is not
+        # covered by any model-level guard. Storing a foreign one would hand
+        # this workspace's contact to another tenant's channel on the first
+        # send — the connection goes to `send_outbound` verbatim.
+        raise WorkspaceMismatchError("That channel connection belongs to a different workspace than the flow.")
 
     version = _resolve_version(flow, flow_version)
     graph = Graph(version.graph_json)
@@ -198,7 +224,7 @@ def resume_execution(
     expected, and the loser must be a no-op rather than a retry.
     """
     with transaction.atomic(), contact_lock(execution.contact_id):
-        current = _locked(execution)
+        current = locked_execution(execution)
         if current is None:
             logger.info("Resume skipped: execution %s no longer exists.", execution.pk)
             return execution
@@ -451,6 +477,15 @@ def _notify_failure(execution: FlowExecution, *, loop_cap: bool) -> None:
     consumer; the copy is registered data, so nothing here builds a sentence.
     Notification failures must not take the flow engine with them — a broken
     mail backend is not a reason to lose the record that the run failed.
+
+    **The savepoint is what makes that true.** ``notify()`` writes rows, and a
+    database error inside an ``atomic()`` block marks the whole transaction
+    rollback-only; catching it here would not clear that flag, so the caller's
+    ``atomic()`` would roll back on exit and take the ``failed`` status this
+    function was called to announce — plus every node write before it — with it.
+    Running the notification in a nested ``atomic()`` and catching *outside* it
+    releases to the savepoint instead, which is the one arrangement where
+    "non-fatal" is actually non-fatal.
     """
     from apps.notifications.engine import notify
 
@@ -461,12 +496,13 @@ def _notify_failure(execution: FlowExecution, *, loop_cap: bool) -> None:
         "error": execution.last_error,
     }
     try:
-        notify(
-            execution.workspace,
-            "flow_loop_cap_hit" if loop_cap else "flow_execution_failed",
-            roles=("admin",),
-            context=context,
-        )
+        with transaction.atomic():
+            notify(
+                execution.workspace,
+                "flow_loop_cap_hit" if loop_cap else "flow_execution_failed",
+                roles=("admin",),
+                context=context,
+            )
     except Exception:  # noqa: BLE001 - see the docstring
         logger.exception("Could not notify admins that execution %s failed", execution.pk)
 
@@ -568,19 +604,30 @@ def _target_flow(execution: FlowExecution, flow_id: str) -> Flow | None:
     return flow
 
 
-def _locked(execution: FlowExecution) -> FlowExecution | None:
-    """Re-read the execution inside the lock, with its version's graph.
+def locked_execution(execution: FlowExecution) -> FlowExecution | None:
+    """Re-read one execution inside the lock, with everything a step needs.
 
     Re-read rather than trusted: the caller's instance may have been loaded
     before the lock was taken, and between those two moments another worker may
-    have completed, expired or superseded it. ``select_for_update`` on top of
-    the advisory lock costs nothing here and keeps the row honest for anything
-    that queries it by other means.
+    have completed, expired or superseded it.
+
+    ``of=("self",)`` is load-bearing twice over. It keeps the row lock on the
+    execution instead of also locking the flow, the version, the contact and the
+    connection — rows other work legitimately touches, and a wider lock is a
+    wider deadlock surface. And ``channel_connection`` is nullable, so its
+    ``select_related`` is a LEFT OUTER JOIN: Postgres refuses ``FOR UPDATE`` on
+    the nullable side of one outright.
+
+    ``workspace__organization`` is in the list because ``NodeContext.workspace``
+    is read by four node paths (media resolution, tag creation, notify_members,
+    the smart-delay clock) and ``Workspace.effective_timezone`` reaches through
+    to the organization — so leaving them out cost two lazy queries on the
+    critical path of every resumed step.
     """
     return (
         FlowExecution.objects.for_workspace(execution.workspace_id)
-        .select_for_update()
-        .select_related("flow_version", "contact", "flow")
+        .select_for_update(of=("self",))
+        .select_related("flow_version", "contact", "flow", "channel_connection", "workspace", "workspace__organization")
         .filter(pk=execution.pk)
         .first()
     )

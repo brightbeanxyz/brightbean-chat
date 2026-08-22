@@ -63,6 +63,36 @@ class TestLoopCap:
         assert tenancy.owner.pk in recipients
         assert tenancy.user_for("viewer").pk not in recipients
 
+    def test_a_database_error_in_notify_does_not_undo_the_failure(self, tenancy, monkeypatch):
+        """The savepoint. Catching a database error inside ``atomic()`` is not enough.
+
+        A failed statement aborts the Postgres transaction — every later query
+        raises until it is rolled back — so swallowing one without a nested
+        ``atomic()`` would take the ``failed`` status this notification exists to
+        announce, and every node write before it, down with it.
+
+        The failure has to be a *real* query for the test to mean anything: a
+        mocked exception leaves the connection perfectly healthy, so this passes
+        with or without the fix if you raise ``IntegrityError`` by hand.
+        """
+        from django.db import connection
+
+        from apps.flows.engine import runner
+
+        def _explode(*args, **kwargs):
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM a_table_that_does_not_exist")
+
+        monkeypatch.setattr("apps.notifications.engine.notify", _explode)
+        flow = published_flow(tenancy.workspace, _ring(), name="Runaway")
+        contact = contact_for(tenancy.workspace)
+
+        execution = runner.start_flow(contact, flow, started_by=StartedBy.API)
+
+        execution.refresh_from_db()
+        assert execution.status == ExecutionStatus.FAILED
+        assert "loop cap" in execution.last_error
+
     def test_a_long_but_finite_flow_is_not_capped(self, tenancy):
         """29 blocks is fine; the cap is a loop detector, not a size limit."""
         size = LOOP_CAP - 1

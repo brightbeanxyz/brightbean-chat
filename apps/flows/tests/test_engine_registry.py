@@ -27,21 +27,18 @@ from apps.flows.tests.support import node_runtime
 
 #: Node types whose schema ships in L2-D and whose runtime is somebody else's.
 #:
-#: Pinned so a type joining or leaving the set is a line in a diff. After PR 2
-#: of issue #9 the wait nodes leave it; ``external_request`` is L4-E's and the
-#: two send nodes are L5-D/E's.
-EXPECTED_WITHOUT_RUNTIME = {
-    "data_collection",
-    "external_request",
-    "send_email",
-    "send_message",
-    "send_sms",
-    "smart_delay",
-}
+#: Pinned so a type joining or leaving the set is a line in a diff.
+#: ``external_request`` is L4-E's; the two send nodes are L5-D/E's.
+EXPECTED_WITHOUT_RUNTIME = {"external_request", "send_email", "send_sms"}
 
 #: SPEC §7.1's inline-safe set, verbatim: "send message, action, condition,
 #: randomizer, start flow". ``note`` joins it for free — it does nothing.
-EXPECTED_SYNCHRONOUS_SAFE = {"action", "condition", "randomizer", "start_flow", "note"}
+#:
+#: ``smart_delay`` and ``data_collection`` are deliberately *absent*: SPEC names
+#: the safe five and neither is one of them. Nothing is lost by enqueueing them
+#: — a delay is not the first reply a webhook is racing to produce, and a
+#: question sends and then parks.
+EXPECTED_SYNCHRONOUS_SAFE = {"action", "condition", "randomizer", "send_message", "start_flow", "note"}
 
 
 class TestRuntimeMatchesSchema:

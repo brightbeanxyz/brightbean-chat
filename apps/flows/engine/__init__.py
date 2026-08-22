@@ -44,9 +44,11 @@ from apps.flows.engine.runner import (
     resume_execution,
     start_flow,
 )
+from apps.flows.engine.waits import Consumed, NotConsumed, ResumeOutcome, attempt_resume
 
 __all__ = [
     "LOOP_CAP",
+    "Consumed",
     "Continue",
     "DuplicateNodeTypeError",
     "DuplicateVerbError",
@@ -56,12 +58,15 @@ __all__ = [
     "FlowNotRunnableError",
     "Graph",
     "NodeContext",
+    "NotConsumed",
     "Schedule",
     "StartNext",
+    "ResumeOutcome",
     "StepResult",
     "UnknownNodeTypeError",
     "Wait",
     "advance",
+    "attempt_resume",
     "node_class_for",
     "register_node",
     "register_verb",
