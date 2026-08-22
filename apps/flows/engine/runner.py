@@ -61,6 +61,7 @@ __all__ = [
     "EngineError",
     "FlowNotRunnableError",
     "advance",
+    "locked_execution",
     "resume_execution",
     "start_flow",
 ]
@@ -198,7 +199,7 @@ def resume_execution(
     expected, and the loser must be a no-op rather than a retry.
     """
     with transaction.atomic(), contact_lock(execution.contact_id):
-        current = _locked(execution)
+        current = locked_execution(execution)
         if current is None:
             logger.info("Resume skipped: execution %s no longer exists.", execution.pk)
             return execution
@@ -568,19 +569,24 @@ def _target_flow(execution: FlowExecution, flow_id: str) -> Flow | None:
     return flow
 
 
-def _locked(execution: FlowExecution) -> FlowExecution | None:
-    """Re-read the execution inside the lock, with its version's graph.
+def locked_execution(execution: FlowExecution) -> FlowExecution | None:
+    """Re-read one execution inside the lock, with everything a step needs.
 
     Re-read rather than trusted: the caller's instance may have been loaded
     before the lock was taken, and between those two moments another worker may
-    have completed, expired or superseded it. ``select_for_update`` on top of
-    the advisory lock costs nothing here and keeps the row honest for anything
-    that queries it by other means.
+    have completed, expired or superseded it.
+
+    ``of=("self",)`` is load-bearing twice over. It keeps the row lock on the
+    execution instead of also locking the flow, the version, the contact and the
+    connection — rows other work legitimately touches, and a wider lock is a
+    wider deadlock surface. And ``channel_connection`` is nullable, so its
+    ``select_related`` is a LEFT OUTER JOIN: Postgres refuses ``FOR UPDATE`` on
+    the nullable side of one outright.
     """
     return (
         FlowExecution.objects.for_workspace(execution.workspace_id)
-        .select_for_update()
-        .select_related("flow_version", "contact", "flow")
+        .select_for_update(of=("self",))
+        .select_related("flow_version", "contact", "flow", "channel_connection")
         .filter(pk=execution.pk)
         .first()
     )
