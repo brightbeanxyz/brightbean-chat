@@ -6,7 +6,7 @@
  * describes, because that is the property a node type added by a later layer
  * depends on. The hand-written widgets are polish on top of it.
  */
-import { fireEvent, screen, within } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { NODE_TYPES } from "../schema/artifact";
@@ -297,5 +297,55 @@ describe("the button list", () => {
     fireEvent.click(screen.getByRole("button", { name: "+ Buttons" }));
 
     expect(screen.getByText(/none are connected yet/i)).toBeInTheDocument();
+  });
+});
+
+describe("the JSON body editor", () => {
+  it("follows an undo instead of writing the stale text back", () => {
+    // With a bare defaultValue the textarea kept the old JSON while it stayed
+    // mounted, and the next blur parsed and saved it — reversing the undo.
+    const { store, id } = openMinimal("external_request");
+    fireEvent.click(screen.getByRole("button", { name: "+ Body" }));
+
+    const box = screen.getByLabelText("Body") as HTMLTextAreaElement;
+    fireEvent.blur(box, { target: { value: '{"one": 1}' } });
+    expect(store.getState().config[id]).toMatchObject({ body: { one: 1 } });
+
+    act(() => {
+      store.getState().undo();
+    });
+
+    expect((screen.getByLabelText("Body") as HTMLTextAreaElement).value).not.toContain('"one"');
+  });
+});
+
+describe("a member id the workspace no longer has", () => {
+  it("stays visible and removable rather than becoming a ghost recipient", () => {
+    // notify_members requires at least one id, so a freshly added action seeds
+    // a placeholder. With controls only for current members it could not be
+    // unticked, and the flow published notifying nobody.
+    const store = makeStore(
+      makeDetail({
+        schema: 1,
+        nodes: [
+          {
+            id: "n1",
+            type: "action",
+            position: { x: 0, y: 0 },
+            config: { actions: [{ verb: "notify_members", member_ids: ["who-is-this"], via: "in_app", text: "hi" }] },
+          },
+        ],
+        edges: [],
+      }),
+    );
+    store.getState().setSelection({ nodes: ["n1"], edges: [] });
+    renderWith(store, <Inspector />);
+
+    const ghost = screen.getByLabelText(/who-is-this/);
+    expect(ghost).toBeChecked();
+
+    fireEvent.click(ghost);
+    const actions = (store.getState().config["n1"] as { actions: { member_ids: string[] }[] }).actions;
+    expect(actions[0]?.member_ids).toEqual([]);
   });
 });

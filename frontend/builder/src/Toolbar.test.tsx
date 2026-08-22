@@ -41,6 +41,7 @@ describe("Publish", () => {
     const autosave = {
       flush: vi.fn(async () => {
         order.push("flush");
+        return true;
       }),
       stop: vi.fn(),
     };
@@ -100,5 +101,34 @@ describe("Publish", () => {
 
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+});
+
+describe("Publish and a flush that did not land", () => {
+  it("refuses to publish rather than posting the previous draft", async () => {
+    // flush() draining says nothing about the outcome. After a 422, a size
+    // preflight or a transport failure the server still holds the older draft,
+    // and publishing it while reporting success is the worst of both.
+    const autosave = { flush: vi.fn(async () => false), stop: vi.fn() };
+    http.route("/publish/", { body: published });
+    const store = makeStore(makeDetail(makeSampleGraph()));
+
+    renderWith(store, <Toolbar autosave={autosave} />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(store.getState().save.message).toContain("could not be saved"), SETTLE);
+    expect(http.requests.filter((request) => request.url.includes("/publish/"))).toHaveLength(0);
+    expect(store.getState().save.publishedVersion).toBeNull();
+  });
+
+  it("publishes when the flush confirms the server has the draft", async () => {
+    const autosave = { flush: vi.fn(async () => true), stop: vi.fn() };
+    http.route("/publish/", { body: published });
+    const store = makeStore(makeDetail(makeSampleGraph()));
+
+    renderWith(store, <Toolbar autosave={autosave} />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2), SETTLE);
   });
 });

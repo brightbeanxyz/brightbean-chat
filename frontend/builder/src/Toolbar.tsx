@@ -40,9 +40,15 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const publish = async () => {
     setPublishing(true);
     try {
-      // Flush first: publishing a draft the server has not seen yet would
-      // publish the previous version and look like the button did nothing.
-      await autosave?.flush();
+      // Flush first, and stop if it did not land. Publishing a draft the server
+      // has not seen publishes the *previous* version — and then reports
+      // success, which is worse than doing nothing.
+      if (autosave && !(await autosave.flush())) {
+        store.getState().setSave({
+          message: "Publish stopped: your latest changes could not be saved. Fix the problems below and try again.",
+        });
+        return;
+      }
       const result = await publishFlow(store.getState().env);
       store.getState().applyValidation(result.validation, store.getState().revision);
       store.getState().setSave({

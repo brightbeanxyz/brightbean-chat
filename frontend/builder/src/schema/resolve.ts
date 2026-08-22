@@ -101,10 +101,6 @@ export function branchLabels(schema: JsonSchema | undefined): string[] {
  * comparison", which differ only by `value`.
  */
 export function matchBranch(schema: JsonSchema | undefined, value: unknown): number {
-  if (typeof value !== "object" || value === null) {
-    return -1;
-  }
-  const record = value as Record<string, unknown>;
   const branches = schema?.oneOf ?? [];
 
   return branches.findIndex((candidate) => {
@@ -112,6 +108,20 @@ export function matchBranch(schema: JsonSchema | undefined, value: unknown): num
     if (!branch) {
       return false;
     }
+
+    // A branch can be a scalar. A condition comparison's `value` is
+    // string | number | boolean | {relative}, so requiring an object here left
+    // every scalar operand matching nothing — the chooser stayed on "Choose…"
+    // and rendered no input at all, making the operand uneditable.
+    if (!branch.properties && typesOf(branch).length > 0) {
+      return acceptsScalar(typesOf(branch), value);
+    }
+
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return false;
+    }
+    const record = value as Record<string, unknown>;
+
     for (const [key, pinned] of Object.entries(constProperties(branch))) {
       if (record[key] !== pinned) {
         return false;
@@ -123,6 +133,29 @@ export function matchBranch(schema: JsonSchema | undefined, value: unknown): num
     const declared = new Set(Object.keys(branch.properties ?? {}));
     return Object.keys(record).every((key) => declared.has(key));
   });
+}
+
+/** A value's JSON Schema type name. */
+export function jsonTypeOf(value: unknown): string {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? "integer" : "number";
+  }
+  return typeof value;
+}
+
+/** Whether a scalar branch's declared types accept this value. */
+export function acceptsScalar(types: readonly string[], value: unknown): boolean {
+  const actual = jsonTypeOf(value);
+  // Every integer is a number in JSON Schema, so a `number` branch has to
+  // accept 5 — otherwise a whole-number operand matches no branch and the
+  // field renders nothing.
+  return types.includes(actual) || (actual === "integer" && types.includes("number"));
 }
 
 /** The resolved branch a value belongs to, or `undefined`. */

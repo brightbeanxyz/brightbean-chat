@@ -98,6 +98,13 @@ export function MemberMultiSelect(props: FieldProps) {
       `members:${path.join(".")}`,
     );
 
+  // Ids with no row of their own: a member who left, or the placeholder the
+  // schema's `minItems: 1` forces onto a freshly added notify_members action.
+  // Without a control they cannot be unticked, so the panel can show nobody
+  // selected while the flow publishes and notifies a ghost.
+  const known = new Set(picklists.members.map((member) => member.id));
+  const orphaned = selected.filter((id) => !known.has(id));
+
   return (
     <FieldShell {...props}>
       {picklists.members.length === 0 ? <p className="fb-field-help">No workspace members to choose from.</p> : null}
@@ -111,6 +118,12 @@ export function MemberMultiSelect(props: FieldProps) {
             onChange={() => toggle(member.id)}
           />
           <span>{member.label}</span>
+        </label>
+      ))}
+      {orphaned.map((id) => (
+        <label key={id} className="flex items-center gap-2 text-xs mb-1">
+          <input type="checkbox" className="bb-checkbox" checked disabled={readOnly} onChange={() => toggle(id)} />
+          <span className="fb-empty">{id} (no longer a member)</span>
         </label>
       ))}
     </FieldShell>

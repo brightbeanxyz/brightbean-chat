@@ -92,10 +92,10 @@ export function Canvas() {
       }
 
       if (moves.length > 0) {
-        // The snapshot goes in on the first frame that actually moves
-        // something, not on drag start — a click-and-hold that never moves
-        // would otherwise leave a no-op step on the undo stack and discard the
-        // redo stack with it.
+        // On the first frame that actually moves something, not on drag start:
+        // a click-and-hold that never moves would otherwise leave a no-op step
+        // on the undo stack and discard the redo stack with it. `dragging` is
+        // reported on every frame, so beginDrag() is idempotent for a drag.
         if (dragging) {
           state.beginDrag();
         }
@@ -116,11 +116,25 @@ export function Canvas() {
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
-      const removed = changes.flatMap((change) => (change.type === "remove" ? [change.id] : []));
-      const selection = changes.flatMap((change) =>
-        change.type === "select" && change.selected ? [change.id] : [],
-      );
-      if (selection.length > 0) {
+      const removed: string[] = [];
+      // Accumulated from the current selection, exactly like nodes. Collecting
+      // only `selected: true` and skipping an empty result meant a deselection
+      // never reached the store, so an edge could not be unselected once
+      // clicked — and a later Delete would still take it.
+      let selection: string[] | null = null;
+
+      for (const change of changes) {
+        if (change.type === "remove") {
+          removed.push(change.id);
+        } else if (change.type === "select") {
+          selection ??= [...store.getState().selection.edges];
+          selection = change.selected
+            ? [...new Set([...selection, change.id])]
+            : selection.filter((id) => id !== change.id);
+        }
+      }
+
+      if (selection !== null) {
         store.getState().setSelection({ nodes: store.getState().selection.nodes, edges: selection });
       }
       if (removed.length > 0 && canEdit) {

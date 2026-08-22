@@ -141,3 +141,47 @@ describe("operator copy", () => {
     }
   });
 });
+
+describe("scalar branches of an untagged union", () => {
+  /** A condition comparison's `value`: string | number | boolean | {relative}. */
+  function valueSchema() {
+    const item = deref(deref(deref(SCHEMA.$defs["condition_filter"])?.properties?.["rules"])?.items);
+    const comparison = branchAt(item, branchLabels(item).indexOf("Custom field comparison"));
+    return deref(comparison?.properties?.["value"]);
+  }
+
+  it("matches a plain string, number or boolean operand", () => {
+    // Requiring an object here left every scalar operand matching nothing, so
+    // the chooser stayed on "Choose…" and rendered no input at all.
+    const schema = valueSchema();
+
+    expect(matchBranch(schema, "hello")).toBeGreaterThanOrEqual(0);
+    expect(matchBranch(schema, 42)).toBeGreaterThanOrEqual(0);
+    expect(matchBranch(schema, true)).toBeGreaterThanOrEqual(0);
+  });
+
+  it("routes a whole number to the number branch, not to nothing", () => {
+    // Every integer is a number in JSON Schema.
+    const schema = valueSchema();
+    const branch = branchAt(schema, matchBranch(schema, 42));
+
+    expect(typesOf(branch)).toContain("number");
+  });
+
+  it("still matches the object branch it shares the union with", () => {
+    const schema = valueSchema();
+    const index = matchBranch(schema, { relative: { unit: "days", offset: -7 } });
+
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(branchAt(schema, index)?.properties).toHaveProperty("relative");
+  });
+
+  it("gives each kind a distinct branch, so switching actually switches", () => {
+    const schema = valueSchema();
+    const forString = matchBranch(schema, "hello");
+    const forNumber = matchBranch(schema, 42);
+    const forBoolean = matchBranch(schema, true);
+
+    expect(new Set([forString, forNumber, forBoolean]).size).toBe(3);
+  });
+});

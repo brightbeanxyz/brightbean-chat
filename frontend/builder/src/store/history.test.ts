@@ -319,3 +319,67 @@ describe("coalescing measures from the last edit", () => {
     }
   });
 });
+
+describe("a drag reported frame by frame", () => {
+  it("records one history entry, not one per frame", () => {
+    // React Flow reports `dragging: true` on every frame, so a beginDrag() that
+    // was not idempotent pushed an entry each time — Undo then stepped back a
+    // single frame, and one drag could consume the whole 50-entry history.
+    const store = threeNodes();
+    const before = store.getState().past.length;
+
+    for (let frame = 0; frame < 40; frame += 1) {
+      store.getState().beginDrag();
+      store.getState().moveNodes([{ id: "a", position: { x: frame, y: frame } }]);
+    }
+    store.getState().endDrag();
+
+    expect(store.getState().past).toHaveLength(before + 1);
+  });
+
+  it("undoes the whole drag in one step", () => {
+    const store = threeNodes();
+    const origin = store.getState().position["a"];
+
+    for (let frame = 1; frame <= 40; frame += 1) {
+      store.getState().beginDrag();
+      store.getState().moveNodes([{ id: "a", position: { x: frame * 5, y: frame } }]);
+    }
+    store.getState().endDrag();
+
+    store.getState().undo();
+    expect(store.getState().position["a"]).toEqual(origin);
+  });
+
+  it("records a second entry for a second drag", () => {
+    const store = threeNodes();
+    const before = store.getState().past.length;
+
+    for (const drag of [1, 2]) {
+      store.getState().beginDrag();
+      store.getState().moveNodes([{ id: "a", position: { x: drag * 10, y: 0 } }]);
+      store.getState().endDrag();
+    }
+
+    expect(store.getState().past).toHaveLength(before + 2);
+  });
+});
+
+describe("pasting near the edge limit", () => {
+  it("refuses rather than pushing the graph past max_edges", () => {
+    // Overshooting makes the server reject every autosave until someone
+    // deletes edges by hand.
+    const store = makeStore(
+      makeDetail(makeSampleGraph(), {
+        limits: { schema_version: 1, max_graph_bytes: 524288, max_graph_depth: 20, max_nodes: 500, max_edges: 3 },
+      }),
+    );
+    const nodes = store.getState().nodeOrder.slice(0, 2);
+    const before = store.getState().edgeOrder.length;
+
+    store.getState().paste(clipboardFor(store.getState(), nodes));
+
+    expect(store.getState().edgeOrder).toHaveLength(before);
+    expect(store.getState().nodeOrder).toHaveLength(makeSampleGraph().nodes.length);
+  });
+});

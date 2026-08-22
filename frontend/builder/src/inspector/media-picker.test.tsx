@@ -174,3 +174,46 @@ describe("the picker", () => {
     expect(pickerRequests()[0]?.headers["x-csrftoken"]).toBeUndefined();
   });
 });
+
+describe("overlapping picker requests", () => {
+  it("ignores a stale response that lands after a newer one", async () => {
+    // Typing starts a request per burst and nothing orders the replies. An
+    // older one landing last used to overwrite the current results, so the
+    // dialog showed — and could attach — assets for a query no longer on
+    // screen.
+    const release: Array<() => void> = [];
+    http.route("/media/picker/", (request) => ({
+      body: {
+        results: [asset(request.url.includes("q=late") ? "late" : "early")],
+        folders: [],
+        next_cursor: null,
+      },
+    }));
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      const response = original(...args);
+      // Hold the first request open so it resolves after the second.
+      if (String(args[0]).includes("q=early")) {
+        await new Promise<void>((resolve) => release.push(resolve));
+      }
+      return response;
+    }) as typeof fetch;
+
+    openMessageWithImageBlock();
+    fireEvent.click(screen.getByRole("button", { name: /choose from the library/i }));
+
+    fireEvent.change(screen.getByLabelText("Search the library"), { target: { value: "early" } });
+    await waitFor(() => expect(release.length).toBeGreaterThan(0), SETTLE);
+    fireEvent.change(screen.getByLabelText("Search the library"), { target: { value: "late" } });
+    expect(await screen.findByRole("button", { name: /Asset late/ }, SETTLE)).toBeInTheDocument();
+
+    release.forEach((resolve) => resolve());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(screen.queryByRole("button", { name: /Asset early/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Asset late/ })).toBeInTheDocument();
+
+    globalThis.fetch = original;
+  });
+});

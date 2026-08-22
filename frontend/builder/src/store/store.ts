@@ -85,6 +85,8 @@ export interface BuilderState extends GraphState {
 
   past: HistoryEntry[];
   future: HistoryEntry[];
+  /** True between the first frame that moves something and the drop. */
+  dragging: boolean;
 
   picklists: Picklists;
   validation: ValidationSlice;
@@ -212,6 +214,7 @@ export function createBuilderStore(env: BuilderEnv) {
 
         past: [],
         future: [],
+        dragging: false,
 
         picklists: EMPTY_PICKLISTS,
         validation: { ...emptyValidationIndex(), revision: 0 },
@@ -297,9 +300,17 @@ export function createBuilderStore(env: BuilderEnv) {
           });
         },
 
+        // Idempotent, because React Flow reports `dragging: true` on every
+        // frame of a drag, not once at the start. Pushing an entry per frame
+        // makes Undo step back a single frame and lets one drag consume the
+        // whole 50-entry history.
         beginDrag: () => {
+          if (get().dragging) {
+            return;
+          }
           lastEditKey = null;
           set((state) => ({
+            dragging: true,
             past: [
               ...state.past,
               { graph: graphOf(state), selection: state.selection, key: `move:${Date.now()}`, at: Date.now() },
@@ -308,7 +319,8 @@ export function createBuilderStore(env: BuilderEnv) {
           }));
         },
 
-        endDrag: () => set((state) => ({ revision: state.revision + 1 })),
+        endDrag: () =>
+          set((state) => (state.dragging ? { dragging: false, revision: state.revision + 1 } : {})),
 
         deleteNodes: (ids) => {
           const doomed = new Set(ids);
@@ -393,8 +405,13 @@ export function createBuilderStore(env: BuilderEnv) {
           );
           const offset = at ? { x: at.x - origin.x, y: at.y - origin.y } : { x: 40, y: 40 };
 
-          const edges = payload.edges
-            .filter((edge) => idMap.has(edge.source) && idMap.has(edge.target))
+          const kept = payload.edges.filter((edge) => idMap.has(edge.source) && idMap.has(edge.target));
+          // The edge cap is as real as the node cap: overshooting it makes the
+          // server reject every autosave until someone deletes edges by hand.
+          if (state.edgeOrder.length + kept.length > state.limits.max_edges) {
+            return;
+          }
+          const edges = kept
             .map((edge) => ({
               id: newEdgeId(),
               source: idMap.get(edge.source) as string,

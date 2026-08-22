@@ -22,6 +22,17 @@ const CLIP_KIND = "brightbean/flow-clip";
  */
 let memoryClip: ClipboardPayload | null = null;
 
+/**
+ * When the `paste` listener last handled one of our payloads, and the window
+ * the keydown fallback waits before deciding the listener is not coming.
+ *
+ * Chromium and Firefox both fire `paste` after the Cmd+V keydown, so without
+ * this handshake every in-app paste inserted the nodes twice.
+ */
+let pastedAt = 0;
+let pendingPasteFallback: number | null = null;
+const PASTE_FALLBACK_MS = 50;
+
 /** Capture the selection, in memory always and on the system clipboard if allowed. */
 function copySelection(state: BuilderState): void {
   memoryClip = clipboardFor(state, state.selection.nodes);
@@ -83,9 +94,17 @@ export function useKeyboard(): void {
       }
 
       if (modified && event.key.toLowerCase() === "v") {
-        if (memoryClip) {
-          state.paste(memoryClip);
-        }
+        // Do NOT paste here when the browser is going to deliver a `paste`
+        // event as well — both paths call state.paste, so an ordinary Cmd+V
+        // would insert the nodes twice. The paste listener is the primary
+        // route; this is only the fallback for browsers that never fire it,
+        // and `pastedAt` is how the listener tells this branch to stand down.
+        pendingPasteFallback = window.setTimeout(() => {
+          pendingPasteFallback = null;
+          if (memoryClip && Date.now() - pastedAt > PASTE_FALLBACK_MS) {
+            store.getState().paste(memoryClip);
+          }
+        }, PASTE_FALLBACK_MS);
         return;
       }
 
@@ -109,7 +128,13 @@ export function useKeyboard(): void {
       }
     };
 
-    /** Cross-tab and cross-flow paste, when the browser allows it. */
+    /**
+     * The primary paste route: cross-tab, cross-flow, and the ordinary in-app
+     * Cmd+V, because the browser fires this after the keydown above.
+     *
+     * Stamping `pastedAt` is what stops the keydown fallback from adding a
+     * second copy.
+     */
     const onPaste = (event: ClipboardEvent) => {
       const state = store.getState();
       if (!state.env.canEdit || isTextEntry(event.target)) {
@@ -123,6 +148,11 @@ export function useKeyboard(): void {
         const payload = JSON.parse(text) as ClipboardPayload;
         if (payload?.kind === CLIP_KIND) {
           event.preventDefault();
+          pastedAt = Date.now();
+          if (pendingPasteFallback !== null) {
+            clearTimeout(pendingPasteFallback);
+            pendingPasteFallback = null;
+          }
           state.paste(payload);
         }
       } catch {
@@ -135,6 +165,10 @@ export function useKeyboard(): void {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("paste", onPaste);
+      if (pendingPasteFallback !== null) {
+        clearTimeout(pendingPasteFallback);
+        pendingPasteFallback = null;
+      }
     };
   }, [store]);
 }

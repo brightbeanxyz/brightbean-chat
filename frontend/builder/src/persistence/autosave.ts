@@ -18,7 +18,7 @@
  * **Read-only never installs this at all.** Not a no-op guard inside it — no
  * subscription and no timer, so there is nothing that could fire.
  */
-import type { BuilderStore } from "../store/store";
+import type { BuilderStore, SaveState } from "../store/store";
 import { toGraph } from "../store/serialize";
 import { graphByteLength } from "../store/serialize";
 import { saveGraph } from "../api/flows";
@@ -31,10 +31,20 @@ export const DEBOUNCE_MS = 2000;
 const BACKOFF_MS = [2000, 4000, 8000, 30000];
 
 export interface Autosave {
-  /** Save now, skipping the debounce. Used by Publish. */
-  flush: () => Promise<void>;
+  /**
+   * Save now, skipping the debounce, and report whether the server has the
+   * current graph.
+   *
+   * The boolean is the point: draining says nothing about the outcome, and
+   * publishing after a rejected save publishes the *previous* draft while the
+   * toolbar reports success.
+   */
+  flush: () => Promise<boolean>;
   stop: () => void;
 }
+
+/** Save states in which the server does NOT have what the editor is showing. */
+const UNSAVED: readonly SaveState[] = ["dirty", "saving", "rejected", "error"];
 
 export function installAutosave(store: BuilderStore): Autosave {
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -166,8 +176,11 @@ export function installAutosave(store: BuilderStore): Autosave {
   );
 
   const beforeUnload = (event: BeforeUnloadEvent) => {
-    const { state } = store.getState().save;
-    if (state === "dirty" || state === "saving") {
+    // Every state in which the server does not have the current graph, not
+    // just the optimistic two. After a failed PUT the state is `error` or
+    // `rejected` and the edits are still only in memory — precisely the ones
+    // that would be lost silently.
+    if (UNSAVED.includes(store.getState().save.state)) {
       event.preventDefault();
     }
   };
@@ -196,6 +209,8 @@ export function installAutosave(store: BuilderStore): Autosave {
           await inFlight;
         }
       }
+
+      return !UNSAVED.includes(store.getState().save.state);
     },
     stop: () => {
       stopped = true;

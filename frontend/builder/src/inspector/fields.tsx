@@ -243,6 +243,7 @@ export function ScalarField(props: FieldProps) {
 export function JsonField(props: FieldProps) {
   const { set, readOnly } = useField();
   const { path, value } = props;
+  const serialized = value === undefined ? "" : JSON.stringify(value, null, 2);
 
   return (
     <FieldShell {...props}>
@@ -251,7 +252,12 @@ export function JsonField(props: FieldProps) {
         className="form-input-styled font-mono text-xs"
         rows={6}
         disabled={readOnly}
-        defaultValue={value === undefined ? "" : JSON.stringify(value, null, 2)}
+        // Keyed on the serialised value, so an Undo or Redo that changes the
+        // body while this stays mounted remounts the textarea with the new
+        // text. With a bare defaultValue the box kept the old JSON and the
+        // next blur wrote it straight back, undoing the undo.
+        key={serialized}
+        defaultValue={serialized}
         onBlur={(event) => {
           const text = event.target.value.trim();
           if (text === "") {

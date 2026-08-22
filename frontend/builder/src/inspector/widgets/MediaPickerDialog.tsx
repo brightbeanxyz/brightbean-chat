@@ -12,7 +12,7 @@
  *
  * Paging is keyset: pass the previous `next_cursor` back and do not parse it.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchPicker } from "../../api/flows";
 import type { BuilderEnv } from "../../env";
@@ -41,17 +41,34 @@ export function MediaPickerDialog({ env, platform, kind: fixedKind, onPick, onCl
   const [cursor, setCursor] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
 
+  /**
+   * Which request is the current one.
+   *
+   * Typing a search term starts a request per keystroke-burst, and nothing
+   * guarantees they finish in order. Without this stamp an older response
+   * overwrites the newer one, and the dialog shows — and lets you pick from —
+   * results for a query that is no longer on screen.
+   */
+  const latest = useRef(0);
+
   const load = useCallback(
     async (append: boolean, at: string | null) => {
+      const ticket = (latest.current += 1);
       setStatus("loading");
       try {
         const query = { q: term, kind, folder, platform: platform ?? "", cursor: at ?? "" };
         const payload = await fetchPicker(env, query);
+        if (ticket !== latest.current) {
+          return;
+        }
         setAssets((current) => (append ? [...current, ...payload.results] : payload.results));
         setFolders(payload.folders);
         setCursor(payload.next_cursor);
         setStatus("idle");
       } catch {
+        if (ticket !== latest.current) {
+          return;
+        }
         // A folder id this workspace cannot see answers 404 — a stale id, so
         // start again at the top rather than showing an error the user cannot
         // act on.

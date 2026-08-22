@@ -48,7 +48,13 @@ services:
   builder:
     image: node:24-slim
     working_dir: /app
-    command: sh -c "npm ci --no-audit --no-fund && npm run watch:js"
+    # Only `tailwind` runs npm ci; this waits for the tree it produces. Both
+    # services mount the same node_modules volume, and `npm ci` deletes the
+    # existing tree before installing — two of them racing would each delete
+    # the other's files and crash one or both watchers intermittently.
+    command: >
+      sh -c "until [ -x node_modules/.bin/vite ]; do echo 'waiting for npm ci'; sleep 2; done
+      && npm run watch:js"
     # `vite build --watch` keeps running without a TTY, but stdin closing on
     # `up -d` is what silently killed the Tailwind watcher, so it gets the same
     # treatment rather than a different failure mode to debug later.
@@ -74,6 +80,9 @@ services:
     # truth and this way a dependency bump needs no rebuild. `watch:css` does an
     # initial build before it starts watching, so the seeded stylesheet is
     # replaced by a current one within seconds of `up`.
+    #
+    # This is also the only service that installs. `builder` shares the same
+    # node_modules volume and waits for the tree rather than racing it.
     command: sh -c "npm ci --no-audit --no-fund && npm run watch:css"
     # Without a TTY the Tailwind CLI's watcher sees stdin close the moment
     # `docker compose up -d` detaches and shuts itself down — it did its first

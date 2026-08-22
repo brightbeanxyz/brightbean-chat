@@ -346,3 +346,78 @@ describe("flush", () => {
     autosave.stop();
   });
 });
+
+describe("what flush reports", () => {
+  it("returns true once the server has the graph", async () => {
+    http.route("/api/flows/", { body: savedBody() });
+    const { edit, autosave } = armed();
+
+    edit("a");
+
+    await expect(autosave.flush()).resolves.toBe(true);
+    autosave.stop();
+  });
+
+  it("returns false when the save was rejected", async () => {
+    http.route("/api/flows/", {
+      status: 422,
+      body: { validation: { errors: [{ code: "unknown_node_key", message: "Unexpected key." }], warnings: [] } },
+    });
+    const { edit, autosave } = armed();
+
+    edit("a");
+
+    await expect(autosave.flush()).resolves.toBe(false);
+    autosave.stop();
+  });
+
+  it("returns false when the transport failed", async () => {
+    http.route("/api/flows/", { reject: true });
+    const { edit, autosave } = armed();
+
+    edit("a");
+
+    await expect(autosave.flush()).resolves.toBe(false);
+    autosave.stop();
+  });
+});
+
+describe("leaving the page", () => {
+  it.each([
+    ["a rejected save", { status: 422, body: { validation: { errors: [], warnings: [] } } }],
+    ["a failed transport", { reject: true }],
+  ])("warns after %s, not only while dirty or saving", async (_label, response) => {
+    // The graph still differs from the server in both states, and those are
+    // precisely the edits that would be lost without a word.
+    http.route("/api/flows/", response as never);
+    const { edit, store, autosave } = armed();
+
+    edit("a");
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(["rejected", "error"]).toContain(store.getState().save.state);
+
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+
+    autosave.stop();
+  });
+
+  it("stays quiet once everything is saved", async () => {
+    http.route("/api/flows/", { body: savedBody() });
+    const { edit, store, autosave } = armed();
+
+    edit("a");
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getState().save.state).toBe("saved");
+
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+
+    autosave.stop();
+  });
+});
