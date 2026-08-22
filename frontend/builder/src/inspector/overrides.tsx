@@ -20,15 +20,26 @@ import type { ComponentType } from "react";
 
 import type { ConfigPath } from "../store/paths";
 import type { FieldProps } from "./fields";
+import { ArrayField } from "./SchemaField";
 import { JsonField } from "./fields";
-import { ConditionRuleBuilder } from "./widgets/ConditionRuleBuilder";
+import { ChannelHint } from "./widgets/ChannelHint";
+import { ConditionKeySelect } from "./widgets/ConditionKeySelect";
 import { MediaBlockEditor } from "./widgets/MediaBlockEditor";
 import { PlaceholderInput } from "./widgets/PlaceholderInput";
 import { MemberMultiSelect, picklistSelect } from "./widgets/PicklistSelect";
 import { WeightEditor } from "./widgets/WeightEditor";
-import { idMintingList } from "./widgets/ButtonListEditor";
 
 type Widget = ComponentType<FieldProps>;
+
+/** `send_message`'s button and quick-reply lists: the generic list, annotated. */
+function ButtonList(props: FieldProps) {
+  return (
+    <>
+      <ArrayField {...props} />
+      <ChannelHint />
+    </>
+  );
+}
 
 const TagSelect = picklistSelect("tags", { creatable: true });
 const FieldSelect = picklistSelect("custom_fields", { creatable: true });
@@ -38,15 +49,23 @@ const MemberSelect = picklistSelect("members", { creatable: false });
 
 export const OVERRIDES: Record<string, Widget> = {
   // ── node-type specific ────────────────────────────────────────────────────
-  "send_message:buttons": idMintingList("button"),
-  "send_message:quick_replies": idMintingList("quick reply"),
+  // No id-minting wrapper: SchemaField.defaultFor mints an item's `id` itself,
+  // so the generic array field already produces a button whose `btn:<id>`
+  // handle appears the moment it is added. These only add the note about which
+  // channels the limits are checked against.
+  "send_message:buttons": ButtonList,
+  "send_message:quick_replies": ButtonList,
   "randomizer:paths": WeightEditor,
   "start_flow:flow_id": FlowSelect,
   "external_request:body": JsonField,
   "data_collection:target.key": FieldSelect,
 
   // ── shape specific ────────────────────────────────────────────────────────
-  $condition_filter: ConditionRuleBuilder,
+  // The rules themselves need no override: contract 8's schema is an untagged
+  // union whose branches already narrow the operators per source, so the
+  // generic renderer produces the right form. Only the key needs help, because
+  // it is a UUID whose meaning depends on the source beside it.
+  "condition:rules[].key": ConditionKeySelect,
   $block_media: MediaBlockEditor,
   "$block_text.text": PlaceholderInput,
   "$block_card.title": PlaceholderInput,

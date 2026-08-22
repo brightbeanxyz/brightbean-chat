@@ -176,14 +176,25 @@ export function installAutosave(store: BuilderStore): Autosave {
   return {
     flush: async () => {
       clear();
-      if (inFlight) {
+
+      // Drain, rather than await once. Completing a request runs the `.finally`
+      // that starts the queued follow-up, so a single await can return with a
+      // *newer* save still open — and Publish would then post the draft as of
+      // the previous one. The loop re-checks after every await and only exits
+      // when nothing is left in flight.
+      while (inFlight) {
         await inFlight;
       }
+
+      // Whatever is still unsent — the debounce cancelled above, or the last
+      // attempt failed — goes now, and is drained the same way.
       if (store.getState().save.state === "dirty" || store.getState().save.state === "error") {
         inFlight = send().finally(() => {
           inFlight = null;
         });
-        await inFlight;
+        while (inFlight) {
+          await inFlight;
+        }
       }
     },
     stop: () => {

@@ -28,6 +28,13 @@ export class SessionExpiredError extends ApiError {
   }
 }
 
+export class RequestTimeoutError extends ApiError {
+  constructor() {
+    super(0, "timeout", "The request took too long. Retrying\u2026");
+    this.name = "RequestTimeoutError";
+  }
+}
+
 export class MissingCsrfTokenError extends ApiError {
   constructor() {
     super(
@@ -86,10 +93,21 @@ function errorFrom(status: number, payload: unknown): ApiError {
   return new ApiError(status, "server_error", `The server answered ${status}.`, payload);
 }
 
+/**
+ * How long a request may hang before it is abandoned.
+ *
+ * Without this a proxy that neither answers nor closes leaves the promise
+ * pending forever, and because autosave is single-flight that one request
+ * stops every later save for the rest of the session — while the indicator
+ * still reads "Saving…". A rejection puts the retry ladder back in charge.
+ */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
 interface RequestOptions {
   method?: "GET" | "PUT" | "POST";
   body?: unknown;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export async function request<T>(url: string, options: RequestOptions = {}): Promise<T> {
@@ -105,11 +123,27 @@ export async function request<T>(url: string, options: RequestOptions = {}): Pro
   if (options.body !== undefined) {
     init.body = JSON.stringify(options.body);
   }
-  if (options.signal) {
-    init.signal = options.signal;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+  // A caller-supplied signal still wins; this only adds a ceiling.
+  options.signal?.addEventListener("abort", () => controller.abort(), { once: true });
+  init.signal = controller.signal;
+
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (error) {
+    // Distinguish "we gave up" from "the network refused", because only the
+    // first is worth telling the user we are still retrying.
+    if (controller.signal.aborted && !options.signal?.aborted) {
+      throw new RequestTimeoutError();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 
-  const response = await fetch(url, init);
   const payload = await readJson(response);
 
   if (!response.ok) {

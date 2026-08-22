@@ -6,7 +6,7 @@
  * rewrite the pasted edges to match — otherwise a `btn:` handle on a pasted
  * node routes by an id its own config no longer has.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { validateGraph } from "../test/ajv";
 import { makeDetail, makeSampleGraph } from "../test/fixtures";
@@ -66,7 +66,7 @@ describe("undo and redo", () => {
 
     store.getState().beginDrag();
     for (let frame = 1; frame <= 30; frame += 1) {
-      store.getState().moveNode(first, { x: frame * 3, y: frame });
+      store.getState().moveNodes([{ id: first, position: { x: frame * 3, y: frame } }]);
     }
     store.getState().endDrag();
 
@@ -242,18 +242,31 @@ describe("copy and paste", () => {
 });
 
 describe("adding a node where one already is", () => {
-  it("cascades rather than stacking, so a second click is visible", () => {
+  it("cascades when the caller had no particular spot in mind", () => {
+    // Every palette click targets the same pane centre, so without this the
+    // second click hides exactly under the first.
     const store = threeNodes();
-    const first = store.getState().addNode("action", { x: 100, y: 100 }) as string;
-    const second = store.getState().addNode("action", { x: 100, y: 100 }) as string;
+    const first = store.getState().addNode("action", { x: 100, y: 100 }, { cascade: true }) as string;
+    const second = store.getState().addNode("action", { x: 100, y: 100 }, { cascade: true }) as string;
 
     expect(store.getState().position[first]).toEqual({ x: 100, y: 100 });
     expect(store.getState().position[second]).not.toEqual({ x: 100, y: 100 });
   });
 
-  it("leaves a genuinely free spot alone", () => {
+  it("honours a drop's coordinates exactly, even on top of another node", () => {
+    // A drop's position is the reader's explicit choice; nudging it away from
+    // where they aimed is the bug, not the crowding.
     const store = threeNodes();
-    const id = store.getState().addNode("action", { x: -900, y: -900 }) as string;
+    const occupied = store.getState().position["a"] as { x: number; y: number };
+
+    const dropped = store.getState().addNode("action", occupied) as string;
+
+    expect(store.getState().position[dropped]).toEqual(occupied);
+  });
+
+  it("leaves a genuinely free spot alone even when cascading", () => {
+    const store = threeNodes();
+    const id = store.getState().addNode("action", { x: -900, y: -900 }, { cascade: true }) as string;
 
     expect(store.getState().position[id]).toEqual({ x: -900, y: -900 });
   });
@@ -266,5 +279,43 @@ describe("adding a node where one already is", () => {
     );
 
     expect(store.getState().addNode("action", { x: 0, y: 0 })).toBeNull();
+  });
+});
+
+describe("coalescing measures from the last edit", () => {
+  it("collapses a continuous burst into one step, however long it runs", () => {
+    // Measuring from the last pushed *entry* never slides the window, so a
+    // five-second burst still accumulated a step every 500 ms.
+    vi.useFakeTimers();
+    try {
+      const store = threeNodes();
+      const before = toGraph(store.getState());
+
+      for (let keystroke = 0; keystroke < 40; keystroke += 1) {
+        vi.advanceTimersByTime(100);
+        store.getState().updateConfig("a", ["blocks", 0, "text"], "x".repeat(keystroke + 1), "typing");
+      }
+
+      store.getState().undo();
+      expect(toGraph(store.getState())).toEqual(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("starts a new step after a real pause", () => {
+    vi.useFakeTimers();
+    try {
+      const store = threeNodes();
+      store.getState().updateConfig("a", ["blocks", 0, "text"], "first", "typing");
+      vi.advanceTimersByTime(2000);
+      store.getState().updateConfig("a", ["blocks", 0, "text"], "second", "typing");
+
+      store.getState().undo();
+      const blocks = (store.getState().config["a"] as { blocks: { text: string }[] }).blocks;
+      expect(blocks[0]?.text).toBe("first");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

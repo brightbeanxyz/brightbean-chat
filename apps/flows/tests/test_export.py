@@ -1,6 +1,7 @@
 """The generated artefact: deterministic, committed, and never quietly stale."""
 
 import json
+from typing import Any
 
 import pytest
 from django.core.management import CommandError, call_command
@@ -115,6 +116,36 @@ class TestTheConditionSwapPoint:
         else:
             assert CONDITION_SCHEMA_IS_VENDORED is False
             assert CONDITION_SCHEMA is CONTACTS_SCHEMA
+
+    def test_a_comparison_with_no_operand_cannot_be_published(self):
+        """The schema must refuse at save time what the engine refuses at run time.
+
+        While each source had a single branch with an optional ``value``,
+        ``{"source": "custom_field", "op": ">"}`` — a comparison with nothing to
+        compare against — validated here and was only refused later, by
+        ``apps.contacts.conditions.validate()``, when the node executed. A flow
+        that publishes cleanly and then fails in the runner is the worst place
+        for this to surface.
+        """
+        from apps.flows.fixtures import empty_graph, node_fixture
+        from apps.flows.schema.validation import validate_graph
+
+        def graph(rule: dict[str, Any]) -> dict[str, Any]:
+            document = empty_graph()
+            document["nodes"] = [node_fixture("condition", node_id="n1")]
+            document["nodes"][0]["config"]["rules"] = [rule]
+            return document
+
+        field = "0192f000-0000-7000-8000-0000000000a2"
+        tag = "0192f000-0000-7000-8000-0000000000a1"
+
+        assert validate_graph(graph({"source": "custom_field", "key": field, "op": ">"})).blocks_save is True
+        assert validate_graph(graph({"source": "custom_field", "key": field, "op": ">", "value": 10})).blocks_save is (
+            False
+        )
+        # And the mirror: an operator that takes no operand may not carry one.
+        assert validate_graph(graph({"source": "tag", "key": tag, "op": "has", "value": "x"})).blocks_save is True
+        assert validate_graph(graph({"source": "tag", "key": tag, "op": "has"})).blocks_save is False
 
     def test_the_vendored_form_carries_every_operator_spec_11_4_lists(self):
         if not CONDITION_SCHEMA_IS_VENDORED:  # pragma: no cover - once #3 has merged

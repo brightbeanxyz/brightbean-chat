@@ -27,6 +27,7 @@ import {
 import { useCallback, useMemo, useRef } from "react";
 
 import { groupOf, nodeSpec } from "../schema/artifact";
+import type { Position } from "../schema/types";
 import { useBuilder, useBuilderStore } from "../store/context";
 import { selectRfEdges, selectRfNodes, type CardData, type CardNode } from "../store/selectors";
 import { edgeTypes, nodeTypes } from "./types";
@@ -53,17 +54,21 @@ export function Canvas() {
     (changes: NodeChange<CardNode>[]) => {
       const state = store.getState();
       let selection: string[] | null = null;
+      const moves: { id: string; position: Position }[] = [];
       const removed: string[] = [];
       let dragEnded = false;
+      let dragging = false;
 
       for (const change of changes) {
         switch (change.type) {
           case "position": {
             if (change.position) {
-              state.moveNode(change.id, change.position);
+              moves.push({ id: change.id, position: change.position });
             }
             if (change.dragging === false) {
               dragEnded = true;
+            } else if (change.dragging) {
+              dragging = true;
             }
             break;
           }
@@ -86,6 +91,16 @@ export function Canvas() {
         }
       }
 
+      if (moves.length > 0) {
+        // The snapshot goes in on the first frame that actually moves
+        // something, not on drag start — a click-and-hold that never moves
+        // would otherwise leave a no-op step on the undo stack and discard the
+        // redo stack with it.
+        if (dragging) {
+          state.beginDrag();
+        }
+        state.moveNodes(moves);
+      }
       if (selection !== null) {
         store.getState().setSelection({ nodes: selection, edges: store.getState().selection.edges });
       }
@@ -181,7 +196,6 @@ export function Canvas() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         isValidConnection={isValidConnection}
-        onNodeDragStart={() => store.getState().beginDrag()}
         nodesDraggable={canEdit}
         nodesConnectable={canEdit}
         elementsSelectable

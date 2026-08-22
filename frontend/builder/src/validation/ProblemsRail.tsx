@@ -24,7 +24,7 @@ export function ProblemsRail() {
   }
 
   return (
-    <section className="fb-palette border-t" style={{ borderRight: "none", width: "100%", maxHeight: "12rem" }} aria-label="Problems">
+    <section className="fb-problems" aria-label="Problems">
       {message ? <p className="alert-error mb-2">{message}</p> : null}
       {stale && issues.length > 0 ? <p className="fb-empty mb-1">Re-checking…</p> : null}
 

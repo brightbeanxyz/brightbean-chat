@@ -30,6 +30,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const save = useBuilder((state) => state.save);
   const canEdit = useBuilder((state) => state.env.canEdit);
   const statsVisible = useBuilder((state) => state.statsVisible);
+  const statsFailed = useBuilder((state) => state.statsFailed);
   const canUndo = useBuilder((state) => state.past.length > 0);
   const canRedo = useBuilder((state) => state.future.length > 0);
   const errorCount = useBuilder((state) => state.validation.errors.length);
@@ -87,6 +88,8 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       >
         {statsVisible ? "Hide stats" : "Show stats"}
       </button>
+
+      {statsFailed ? <span className="fb-badge fb-badge-warning">Stats unavailable</span> : null}
 
       <span className="ml-auto flex items-center gap-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
         {errorCount > 0 ? <span className="fb-badge fb-badge-error">{errorCount} to fix</span> : null}

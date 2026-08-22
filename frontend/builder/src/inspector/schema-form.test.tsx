@@ -187,3 +187,115 @@ describe("what a newly added item contains", () => {
     expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
   });
 });
+
+describe("the condition panel, against contract 8's real schema", () => {
+  it("offers only the operators the chosen source supports", () => {
+    // apps/contacts/conditions.py encodes the source-to-operator mapping in the
+    // schema, so the panel gets it right without a copy of that table.
+    openMinimal("condition");
+    fireEvent.click(screen.getByRole("button", { name: "Add to Rules" }));
+
+    const rule = screen.getByLabelText("Rules") as HTMLSelectElement;
+    expect([...rule.options].map((option) => option.text)).toContain("Tag");
+
+    const ops = screen.getByLabelText("Operator") as HTMLSelectElement;
+    expect([...ops.options].map((option) => option.value).filter(Boolean)).toEqual(["has", "has_not"]);
+  });
+
+  it("switches the whole rule when the branch changes, leaving no stale key", () => {
+    const { store, id } = openMinimal("condition");
+    fireEvent.click(screen.getByRole("button", { name: "Add to Rules" }));
+
+    fireEvent.change(screen.getByLabelText("Rules"), { target: { value: "2" } });
+
+    const rules = (store.getState().config[id] as { rules: Record<string, unknown>[] }).rules;
+    expect(rules[0]?.["source"]).toBe("custom_field");
+    expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
+  });
+
+  it("picks a tag by name rather than asking for a UUID", () => {
+    const store = makeStore(
+      makeDetail(
+        {
+          schema: 1,
+          nodes: [{ id: "n1", type: "condition", position: { x: 0, y: 0 }, config: sampleConfig("condition") }],
+          edges: [],
+        },
+        {
+          picklists: {
+            tags: [{ id: "11111111-1111-1111-1111-111111111111", label: "VIP" }],
+            custom_fields: [],
+            sequences: [],
+            flows: [],
+            connections: [],
+            members: [],
+          },
+        },
+      ),
+    );
+    store.getState().setSelection({ nodes: ["n1"], edges: [] });
+    renderWith(store, <Inspector />);
+    fireEvent.click(screen.getByRole("button", { name: "Add to Rules" }));
+
+    const key = screen.getByLabelText("Key") as HTMLSelectElement;
+    expect([...key.options].map((option) => option.text)).toContain("VIP");
+
+    fireEvent.change(key, { target: { value: "11111111-1111-1111-1111-111111111111" } });
+    const rules = (store.getState().config["n1"] as { rules: Record<string, unknown>[] }).rules;
+    expect(rules[0]?.["key"]).toBe("11111111-1111-1111-1111-111111111111");
+    expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === "n1")).errors).toEqual([]);
+  });
+});
+
+describe("adding a list item never breaks the save", () => {
+  it("seeds a pattern-constrained string with something the pattern accepts", () => {
+    // A condition rule's key is a UUID with no minLength, so "" passes the
+    // length check and fails the pattern — and pattern failures are
+    // document-stage, which discards the whole save, not just this rule.
+    const { store, id } = openMinimal("condition");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to Rules" }));
+
+    expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
+  });
+
+  it.each(["send_message", "action", "condition", "external_request", "randomizer"])(
+    "%s stays valid after adding one of every list it offers",
+    (type) => {
+      withoutOverrides();
+      const { store, id } = openMinimal(type);
+
+      for (const button of screen.queryAllByRole("button", { name: /^Add to / })) {
+        fireEvent.click(button);
+      }
+
+      expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
+    },
+  );
+});
+
+describe("the button list", () => {
+  it("offers exactly one way to add a button", () => {
+    // There used to be two — the generic array's "Add" and an id-minting
+    // wrapper's "Add a button" — which looked different and did the same job.
+    const { store, id } = openMinimal("send_message");
+    fireEvent.click(screen.getByRole("button", { name: "+ Buttons" }));
+
+    const adders = screen
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label") ?? button.textContent?.trim() ?? "")
+      .filter((name) => /button/i.test(name) && /^add/i.test(name));
+
+    expect(adders).toEqual(["Add to Buttons"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to Buttons" }));
+    expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
+  });
+
+  it("still says which channels the limits are checked against", () => {
+    openMinimal("send_message");
+    fireEvent.click(screen.getByRole("button", { name: "+ Buttons" }));
+
+    expect(screen.getByText(/none are connected yet/i)).toBeInTheDocument();
+  });
+});

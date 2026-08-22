@@ -90,16 +90,18 @@ export interface BuilderState extends GraphState {
   validation: ValidationSlice;
   save: SaveSlice;
   stats: StatsPayload | null;
+  /** Separate from `stats` so a broken endpoint cannot read as "no data yet". */
+  statsFailed: boolean;
   statsVisible: boolean;
   loaded: boolean;
 
   // ── graph mutations ───────────────────────────────────────────────────────
   load: (detail: FlowDetail) => void;
-  addNode: (type: string, position: Position) => string | null;
+  addNode: (type: string, position: Position, options?: { cascade?: boolean }) => string | null;
   updateConfig: (nodeId: string, path: ConfigPath, value: unknown, historyKey?: string) => void;
   clearConfig: (nodeId: string, path: ConfigPath) => void;
   replaceConfig: (nodeId: string, config: unknown, historyKey?: string) => void;
-  moveNode: (nodeId: string, position: Position) => void;
+  moveNodes: (moves: readonly { id: string; position: Position }[]) => void;
   beginDrag: () => void;
   endDrag: () => void;
   deleteNodes: (ids: string[]) => void;
@@ -119,6 +121,7 @@ export interface BuilderState extends GraphState {
   applyValidation: (payload: ValidationPayload, revision: number) => void;
   setSave: (patch: Partial<SaveSlice>) => void;
   setStats: (stats: StatsPayload | null) => void;
+  setStatsFailed: (failed: boolean) => void;
 }
 
 export const EMPTY_PICKLISTS: Picklists = {
@@ -171,18 +174,23 @@ export function createBuilderStore(env: BuilderEnv) {
        *
        * `key` coalesces: typing a subject line is one undo step, not forty.
        */
+      // When the previous edit happened, which is not the same as when the
+      // previous history entry was pushed. Measuring from the entry never
+      // slides the window, so a continuous burst of typing still accumulates a
+      // step every COALESCE_MS instead of collapsing into one.
+      let lastEditAt = 0;
+      let lastEditKey: string | null = null;
+
       const withHistory = (key: string, mutate: (state: BuilderState) => Partial<BuilderState>) => {
         const before = get();
-        const entry: HistoryEntry = {
-          graph: graphOf(before),
-          selection: before.selection,
-          key,
-          at: Date.now(),
-        };
-        const top = before.past[before.past.length - 1];
-        const coalesce = top !== undefined && top.key === key && entry.at - top.at < COALESCE_MS;
-        const past = coalesce ? before.past : [...before.past, entry].slice(-HISTORY_LIMIT);
+        const now = Date.now();
+        const entry: HistoryEntry = { graph: graphOf(before), selection: before.selection, key, at: now };
 
+        const continues = lastEditKey === key && now - lastEditAt < COALESCE_MS && before.past.length > 0;
+        lastEditAt = now;
+        lastEditKey = key;
+
+        const past = continues ? before.past : [...before.past, entry].slice(-HISTORY_LIMIT);
         set({ ...mutate(before), past, future: [], revision: before.revision + 1 });
       };
 
@@ -209,6 +217,7 @@ export function createBuilderStore(env: BuilderEnv) {
         validation: { ...emptyValidationIndex(), revision: 0 },
         save: { state: "clean", version: null, publishedVersion: null, message: null, issues: [] },
         stats: null,
+        statsFailed: false,
         statsVisible: false,
         loaded: false,
 
@@ -231,13 +240,17 @@ export function createBuilderStore(env: BuilderEnv) {
             loaded: true,
           })),
 
-        addNode: (type, position) => {
+        addNode: (type, position, options) => {
           const state = get();
           if (state.nodeOrder.length >= state.limits.max_nodes) {
             return null;
           }
           const id = newNodeId();
-          const at = freePositionNear(position, Object.values(state.position));
+          // Cascade only when the caller had no particular spot in mind. Every
+          // click on a palette item targets the same pane centre, so without it
+          // the second click hides under the first — but a drop's coordinates
+          // are the reader's explicit choice and must be left alone.
+          const at = options?.cascade ? freePositionNear(position, Object.values(state.position)) : position;
           withHistory(`add:${id}`, (before) => ({
             nodeOrder: [...before.nodeOrder, id],
             nodeType: { ...before.nodeType, [id]: type },
@@ -263,19 +276,37 @@ export function createBuilderStore(env: BuilderEnv) {
             config: { ...before.config, [nodeId]: config },
           })),
 
-        // Per-frame during a drag: writes the position and nothing else. No
+        // Per-frame during a drag: writes positions and nothing else. No
         // history entry, no revision bump — endDrag() does both, once.
-        moveNode: (nodeId, position) =>
-          set((state) => ({ position: { ...state.position, [nodeId]: sanitizePosition(position) } })),
+        //
+        // Takes the whole batch rather than one node, because React Flow emits
+        // one change per selected node per frame. One `set` per node would mean
+        // one store notification per node, and every notification re-projects
+        // the entire graph — dragging a 50-node selection in a 100-node flow
+        // would cost 5000 projection steps a frame instead of 100.
+        moveNodes: (moves) => {
+          if (moves.length === 0) {
+            return;
+          }
+          set((state) => {
+            const position = { ...state.position };
+            for (const move of moves) {
+              position[move.id] = sanitizePosition(move.position);
+            }
+            return { position };
+          });
+        },
 
-        beginDrag: () =>
+        beginDrag: () => {
+          lastEditKey = null;
           set((state) => ({
             past: [
               ...state.past,
               { graph: graphOf(state), selection: state.selection, key: `move:${Date.now()}`, at: Date.now() },
             ].slice(-HISTORY_LIMIT),
             future: [],
-          })),
+          }));
+        },
 
         endDrag: () => set((state) => ({ revision: state.revision + 1 })),
 
@@ -392,6 +423,7 @@ export function createBuilderStore(env: BuilderEnv) {
         toggleStats: () => set((state) => ({ statsVisible: !state.statsVisible })),
 
         undo: () => {
+          lastEditKey = null;
           const state = get();
           const entry = state.past[state.past.length - 1];
           if (!entry) {
@@ -402,6 +434,7 @@ export function createBuilderStore(env: BuilderEnv) {
         },
 
         redo: () => {
+          lastEditKey = null;
           const state = get();
           const entry = state.future[state.future.length - 1];
           if (!entry) {
@@ -415,7 +448,9 @@ export function createBuilderStore(env: BuilderEnv) {
 
         setSave: (patch) => set((state) => ({ save: { ...state.save, ...patch } })),
 
-        setStats: (stats) => set({ stats }),
+        setStats: (stats) => set({ stats, statsFailed: false }),
+
+        setStatsFailed: (statsFailed) => set({ statsFailed }),
       };
     }),
   );

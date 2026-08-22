@@ -44,11 +44,16 @@ NODE_CONFIGS: dict[str, dict[str, Any]] = {
         ]
     },
     "start_flow": {"flow_id": "0192f000-0000-7000-8000-000000000001"},
+    # A condition rule's `key` is the referenced object's **id**, not its name:
+    # apps.contacts.conditions owns CONDITION_SCHEMA (contract 8) and specifies
+    # a UUID so that renaming a tag cannot break every flow and segment that
+    # points at it. The vendored fallback this app carried until issue #3 merged
+    # guessed a name; these fixtures moved with the real schema.
     "condition": {
         "match": "all",
         "rules": [
-            {"source": "tag", "key": "vip", "op": "has"},
-            {"source": "custom_field", "key": "score", "op": ">", "value": 10},
+            {"source": "tag", "key": "0192f000-0000-7000-8000-0000000000a1", "op": "has"},
+            {"source": "custom_field", "key": "0192f000-0000-7000-8000-0000000000a2", "op": ">", "value": 10},
         ],
     },
     "smart_delay": {

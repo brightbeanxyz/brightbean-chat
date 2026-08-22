@@ -3,6 +3,9 @@
   "private": true,
   "description": "Frontend toolchain: the Tailwind 4 build for theme/static_src, the vendored runtime libraries in static/js, and the flow-builder React island in frontend/builder.",
   "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --minify",
     "watch:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --watch",
@@ -29,11 +32,11 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.6",
-    "@types/node": "20.19.43",
+    "@types/node": "24.13.3",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "ajv": "8.20.0",
-    "jsdom": "26.1.0",
+    "jsdom": "30.0.1",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "7.3.6",

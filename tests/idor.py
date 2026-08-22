@@ -51,6 +51,8 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "target_id": lambda t: t.workspace.pk,
     "membership_id": lambda t: t.org_membership.pk,
     "invitation_id": lambda t: _victim_invitation(t).pk,
+    "tag_id": lambda t: _victim_tag(t).pk,
+    "field_id": lambda t: _victim_custom_field(t).pk,
     "connection_id": lambda t: _victim_connection(t).pk,
     "asset_id": lambda t: _victim_media_asset(t).pk,
     "folder_id": lambda t: _victim_media_folder(t).pk,
@@ -157,6 +159,22 @@ def _victim_invitation(tenancy: Tenancy) -> Any:
             expires_at=timezone.now() + timedelta(days=7),
         )
     return invitation
+
+
+def _victim_tag(tenancy: Tenancy) -> Any:
+    """A tag owned by the victim, created on demand."""
+    from apps.contacts.models import Tag
+
+    tag = Tag.objects.for_workspace(tenancy.workspace).first()
+    return tag or Tag.objects.create(workspace=tenancy.workspace, name="vip")
+
+
+def _victim_custom_field(tenancy: Tenancy) -> Any:
+    """A custom field owned by the victim, created on demand."""
+    from apps.contacts.models import CustomField, CustomFieldType
+
+    field = CustomField.objects.for_workspace(tenancy.workspace).first()
+    return field or CustomField.objects.create(workspace=tenancy.workspace, name="Plan", type=CustomFieldType.TEXT)
 
 
 def _victim_media_asset(tenancy: Tenancy) -> Any:

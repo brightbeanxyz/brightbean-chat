@@ -34,7 +34,15 @@ console, so the verification message appears in `docker compose logs`.
 
 ## Quickstart (local Python)
 
-Requires Python 3.12, Node 20+ and a PostgreSQL 16 server.
+Requires Python 3.12, Node 24+ and a PostgreSQL 16 server.
+
+The Node floor is enforced, not advisory: `package.json` sets
+`engines.node`, `.npmrc` sets `engine-strict=true`, and `npm ci` therefore
+fails outright with `EBADENGINE` on an older runtime rather than installing
+and breaking later. `.nvmrc` pins the version CI runs, so `nvm use` (or any
+tool that reads it) gets you the right one. Stay on an LTS line — the range is
+open-ended upward so newer LTS releases work without a repo change, but only
+the pinned major is actually built and tested.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -65,7 +73,7 @@ directory.
 ```bash
 make frontend     # npm ci, regenerate the schema, build both bundles + vendored copies
 make css-watch    # rebuild the stylesheet on save, alongside `make server`
-make js-watch     # rebuild the flow builder on save
+make js-watch     # rebuild the flow builder on save, alongside `make server`
 ```
 
 `make setup` runs `make frontend` for you. The vendored JavaScript is committed,
@@ -84,7 +92,13 @@ bundle has never seen.
 Under `docker compose up` neither bundle is ever missing: the image compiles
 both in a Node stage, and the app mounts each as a named volume that Docker
 seeds from the image, so the first request is styled — and the builder works —
-even before the `tailwind` watcher has finished `npm ci`. The watcher then rebuilds into that same volume as you edit,
+even before the `tailwind` and `builder` watchers have finished `npm ci`.
+
+Those watchers are not optional conveniences. Each named volume shadows the
+bind-mount at its path, so a host-side `make css-watch` or `make js-watch`
+writes somewhere the container cannot see; only a service writing from inside
+reaches it. Use `make css-watch` / `make js-watch` when running the app with
+`make server`, and let the compose watchers do it under `docker compose up`. The watcher then rebuilds into that same volume as you edit,
 which also keeps its output off the host — it runs as root, and a bind-mounted
 write would leave root-owned files in your checkout. `docker compose down -v`
 resets the volume if a stale bundle ever outlives an image rebuild.

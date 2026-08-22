@@ -8,7 +8,7 @@
  */
 import { useEffect } from "react";
 
-import { clipboardFor, type ClipboardPayload } from "../store/store";
+import { clipboardFor, type BuilderState, type ClipboardPayload } from "../store/store";
 import { useBuilderStore } from "../store/context";
 
 const CLIP_KIND = "brightbean/flow-clip";
@@ -21,6 +21,12 @@ const CLIP_KIND = "brightbean/flow-clip";
  * system clipboard is a best-effort bonus that buys cross-tab paste.
  */
 let memoryClip: ClipboardPayload | null = null;
+
+/** Capture the selection, in memory always and on the system clipboard if allowed. */
+function copySelection(state: BuilderState): void {
+  memoryClip = clipboardFor(state, state.selection.nodes);
+  void navigator.clipboard?.writeText(JSON.stringify(memoryClip)).catch(() => {});
+}
 
 function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -55,8 +61,12 @@ export function useKeyboard(): void {
       }
 
       if (modified && event.key.toLowerCase() === "c") {
-        memoryClip = clipboardFor(state, state.selection.nodes);
-        void navigator.clipboard?.writeText(JSON.stringify(memoryClip)).catch(() => {});
+        // An empty selection means the reader is copying something else on the
+        // page — a message from the problems rail, say. Writing an empty flow
+        // clip here would destroy whatever they actually had on the clipboard.
+        if (state.selection.nodes.length > 0) {
+          copySelection(state);
+        }
         return;
       }
 
@@ -65,9 +75,10 @@ export function useKeyboard(): void {
       }
 
       if (modified && event.key.toLowerCase() === "x") {
-        memoryClip = clipboardFor(state, state.selection.nodes);
-        void navigator.clipboard?.writeText(JSON.stringify(memoryClip)).catch(() => {});
-        state.deleteNodes(state.selection.nodes);
+        if (state.selection.nodes.length > 0) {
+          copySelection(state);
+          state.deleteNodes(state.selection.nodes);
+        }
         return;
       }
 
@@ -79,6 +90,9 @@ export function useKeyboard(): void {
       }
 
       if (modified && event.key.toLowerCase() === "d") {
+        if (state.selection.nodes.length === 0) {
+          return;
+        }
         event.preventDefault();
         state.paste(clipboardFor(state, state.selection.nodes));
         return;

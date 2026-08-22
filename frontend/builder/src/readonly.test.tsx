@@ -16,6 +16,7 @@ import { installAutosave } from "./persistence/autosave";
 import { makeDetail, makeSampleGraph } from "./test/fixtures";
 import { installCsrfToken, stubHttp, type HttpStub } from "./test/http";
 import { makeStore, renderWith } from "./test/render";
+import { selectRfEdges, selectRfNodes } from "./store/selectors";
 
 let http: HttpStub;
 
@@ -49,14 +50,32 @@ describe("a read-only canvas", () => {
     expect(container.querySelectorAll(".react-flow__node").length).toBeGreaterThan(0);
   });
 
-  it("marks every node undraggable and unconnectable", () => {
-    const store = viewer();
-    renderWith(store, <Canvas />);
-
+  it("marks every node undraggable, unconnectable and undeletable", () => {
     // The projection is where this is decided, so it cannot be bypassed by a
-    // component forgetting to check.
-    const nodes = store.getState().nodeOrder;
+    // component forgetting to check — which is also why the assertion is on
+    // the projection rather than on rendered markup.
+    const nodes = selectRfNodes(viewer().getState());
+
     expect(nodes.length).toBeGreaterThan(0);
+    for (const node of nodes) {
+      expect({ id: node.id, draggable: node.draggable, connectable: node.connectable, deletable: node.deletable }).toEqual(
+        { id: node.id, draggable: false, connectable: false, deletable: false },
+      );
+    }
+  });
+
+  it("marks them all draggable again for a member who can edit", () => {
+    // The negative above would pass against a projection that hard-coded false.
+    const nodes = selectRfNodes(makeStore(makeDetail(makeSampleGraph())).getState());
+
+    expect(nodes.every((node) => node.draggable)).toBe(true);
+  });
+
+  it("leaves every edge undeletable too", () => {
+    const edges = selectRfEdges(viewer().getState());
+
+    expect(edges.length).toBeGreaterThan(0);
+    expect(edges.every((edge) => edge.deletable === false)).toBe(true);
   });
 
   it("shows the config but disables every control", () => {

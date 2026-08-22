@@ -76,31 +76,25 @@ function SendMessagePreview({ config }: PreviewProps) {
   );
 }
 
-/** SPEC §11.4's operators, rendered the way a person would read them. */
-const OPERATOR_COPY: Record<string, string> = {
-  is: "is",
-  is_not: "is not",
-  contains: "contains",
-  has_value: "has a value",
-  no_value: "is empty",
-  "=": "=",
-  "!=": "≠",
-  ">": ">",
-  "<": "<",
-  ">=": "≥",
-  "<=": "≤",
-  before: "before",
-  after: "after",
-  on: "on",
-  days_ago: "days ago",
-  days_from_now: "days from now",
-  has: "has",
-  has_not: "does not have",
-  subscribed: "is subscribed to",
-  not_subscribed: "is not subscribed to",
-  inside: "inside",
-  outside: "outside",
+/**
+ * How to word one operator on a card.
+ *
+ * Only the symbols, which do not read as words. Everything else is derived from
+ * the operator itself — `has_not` reads "has not", `not_in` reads "not in" —
+ * so an operator apps/contacts/conditions.py adds later renders sensibly
+ * without an entry here. The schema decides which operators exist; this only
+ * decides how one looks.
+ */
+const OPERATOR_SYMBOLS: Record<string, string> = {
+  "!=": "\u2260",
+  ">=": "\u2265",
+  "<=": "\u2264",
 };
+
+export function operatorCopy(op: unknown): string {
+  const key = String(op ?? "");
+  return OPERATOR_SYMBOLS[key] ?? key.replace(/_/g, " ");
+}
 
 function ConditionPreview({ config }: PreviewProps) {
   const rules = list(isRecord(config) ? config["rules"] : undefined);
@@ -114,7 +108,7 @@ function ConditionPreview({ config }: PreviewProps) {
       <ul>
         {rules.slice(0, 2).map((rule, index) => (
           <li key={index}>
-            {String(rule["key"] || rule["source"] || "?")} {OPERATOR_COPY[String(rule["op"])] ?? String(rule["op"])}{" "}
+            {String(rule["key"] || rule["source"] || "?")} {operatorCopy(rule["op"])}{" "}
             {rule["value"] === undefined ? "" : String(rule["value"])}
           </li>
         ))}

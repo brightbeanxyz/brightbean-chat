@@ -50,6 +50,93 @@ export function isTaggedUnion(schema: JsonSchema | undefined): boolean {
 }
 
 /**
+ * A `oneOf` with no discriminator.
+ *
+ * Contract 8's condition filter is built this way: eight rule shapes, one per
+ * source, each pinning `source` as a `const` and constraining `op` to the
+ * operators that source actually supports. Two sources contribute two branches
+ * each — presence versus comparison — so `source` alone does not name a branch
+ * and there is no single property that could be a discriminator.
+ *
+ * That is a better encoding than a tagged union would be, because it means the
+ * source-to-operator mapping lives in the schema rather than in a table this
+ * bundle would have to keep in step with apps/contacts/conditions.py.
+ */
+export function isUntaggedUnion(schema: JsonSchema | undefined): boolean {
+  return Boolean(schema?.oneOf && !schema.discriminator);
+}
+
+/** The properties a branch pins to a literal, which is what identifies it. */
+export function constProperties(branch: JsonSchema | undefined): Record<string, unknown> {
+  const pinned: Record<string, unknown> = {};
+  for (const [key, property] of Object.entries(branch?.properties ?? {})) {
+    const value = constValue(deref(property));
+    if (value !== undefined) {
+      pinned[key] = value;
+    }
+  }
+  return pinned;
+}
+
+/** Human labels for an untagged union's branches, in schema order. */
+export function branchLabels(schema: JsonSchema | undefined): string[] {
+  return (schema?.oneOf ?? []).map((branch, index) => {
+    const resolved = deref(branch);
+    if (resolved?.title) {
+      return resolved.title;
+    }
+    const pinned = Object.values(constProperties(resolved));
+    return pinned.length > 0 ? String(pinned[0]) : `Option ${index + 1}`;
+  });
+}
+
+/**
+ * Which branch a value belongs to, by index, or -1.
+ *
+ * Matched on three things, because no one of them is enough: every pinned
+ * literal has to agree (that rules out the wrong source), every required key
+ * has to be present, and the value may carry no key the branch does not
+ * declare — every object here is closed, so an extra key means a different
+ * branch. That last clause is what separates "Custom field" from "Custom field
+ * comparison", which differ only by `value`.
+ */
+export function matchBranch(schema: JsonSchema | undefined, value: unknown): number {
+  if (typeof value !== "object" || value === null) {
+    return -1;
+  }
+  const record = value as Record<string, unknown>;
+  const branches = schema?.oneOf ?? [];
+
+  return branches.findIndex((candidate) => {
+    const branch = deref(candidate);
+    if (!branch) {
+      return false;
+    }
+    for (const [key, pinned] of Object.entries(constProperties(branch))) {
+      if (record[key] !== pinned) {
+        return false;
+      }
+    }
+    if ((branch.required ?? []).some((key) => record[key] === undefined)) {
+      return false;
+    }
+    const declared = new Set(Object.keys(branch.properties ?? {}));
+    return Object.keys(record).every((key) => declared.has(key));
+  });
+}
+
+/** The resolved branch a value belongs to, or `undefined`. */
+export function branchFor(schema: JsonSchema | undefined, value: unknown): JsonSchema | undefined {
+  const index = matchBranch(schema, value);
+  return index === -1 ? undefined : deref(schema?.oneOf?.[index]);
+}
+
+/** One branch by index, resolved. */
+export function branchAt(schema: JsonSchema | undefined, index: number): JsonSchema | undefined {
+  return deref(schema?.oneOf?.[index]);
+}
+
+/**
  * Tags a person is more likely to want first.
  *
  * `export.py` serialises with `sort_keys=True`, so `discriminator.mapping`

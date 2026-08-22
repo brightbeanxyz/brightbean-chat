@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
 
+import { operatorCopy } from "../canvas/previews";
 import { SCHEMA, configSchema } from "./artifact";
-import { anyOfRequirements, deref, isTaggedUnion, typesOf, variantChoices, variantFor, variantSchema } from "./resolve";
+import {
+  anyOfRequirements,
+  branchAt,
+  branchLabels,
+  constProperties,
+  deref,
+  isTaggedUnion,
+  isUntaggedUnion,
+  matchBranch,
+  typesOf,
+  variantChoices,
+  variantFor,
+  variantSchema,
+} from "./resolve";
 
 describe("deref", () => {
   it("follows a local $defs reference", () => {
@@ -59,5 +73,71 @@ describe("typesOf", () => {
     expect(typesOf({ type: "string" })).toEqual(["string"]);
     expect(typesOf({ type: ["string", "number", "boolean", "null"] })).toHaveLength(4);
     expect(typesOf({})).toEqual([]);
+  });
+});
+
+describe("untagged unions", () => {
+  it("recognises contract 8's condition rules, which have no discriminator", () => {
+    const rules = deref(deref(SCHEMA.$defs["condition_filter"])?.properties?.["rules"]);
+    const item = deref(rules?.items);
+
+    expect(isUntaggedUnion(item)).toBe(true);
+    expect(isTaggedUnion(item)).toBe(false);
+    // Eight branches over six sources: two sources contribute a presence form
+    // and a comparison form, so `source` alone could not be a discriminator.
+    expect(item?.oneOf).toHaveLength(8);
+    expect(branchLabels(item)).toContain("Tag");
+    expect(branchLabels(item)).toContain("Custom field comparison");
+  });
+
+  it("narrows the operators per source, so the bundle needs no operator table", () => {
+    const item = deref(deref(deref(SCHEMA.$defs["condition_filter"])?.properties?.["rules"])?.items);
+    const tag = branchAt(item, branchLabels(item).indexOf("Tag"));
+
+    expect(deref(tag?.properties?.["op"])?.enum).toEqual(["has", "has_not"]);
+    expect(constProperties(tag)).toEqual({ source: "tag" });
+  });
+
+  it("matches a value to its branch on pinned literals, required keys and closedness", () => {
+    const item = deref(deref(deref(SCHEMA.$defs["condition_filter"])?.properties?.["rules"])?.items);
+    const labels = branchLabels(item);
+    const key = "00000000-0000-0000-0000-000000000000";
+
+    // Presence and comparison differ only by `value`; every object is closed,
+    // so the extra key is what tells them apart.
+    const presence = matchBranch(item, { source: "custom_field", key, op: "has_value" });
+    const comparison = matchBranch(item, { source: "custom_field", key, op: "is", value: "x" });
+
+    expect(labels[presence]).toBe("Custom field");
+    expect(labels[comparison]).toBe("Custom field comparison");
+    expect(presence).not.toBe(comparison);
+  });
+
+  it("returns -1 for a value that belongs to no branch", () => {
+    const item = deref(deref(deref(SCHEMA.$defs["condition_filter"])?.properties?.["rules"])?.items);
+
+    expect(matchBranch(item, { source: "invented_later", op: "is" })).toBe(-1);
+    expect(matchBranch(item, null)).toBe(-1);
+  });
+});
+
+describe("operator copy", () => {
+  it("covers every operator the schema allows, without listing them", () => {
+    // The words are derived, so an operator apps/contacts/conditions.py adds
+    // later renders sensibly with no edit here.
+    const item = deref(deref(deref(SCHEMA.$defs["condition_filter"])?.properties?.["rules"])?.items);
+    const ops = new Set<string>();
+    for (const branch of item?.oneOf ?? []) {
+      for (const op of deref(deref(branch)?.properties?.["op"])?.enum ?? []) {
+        ops.add(String(op));
+      }
+    }
+
+    expect(ops.size).toBeGreaterThan(20);
+    for (const op of ops) {
+      const rendered = operatorCopy(op);
+      expect(rendered).toBeTruthy();
+      expect(rendered).not.toContain("_");
+    }
   });
 });

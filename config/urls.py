@@ -24,12 +24,9 @@ _WS_SETTINGS_LAYOUT = "workspace_settings"
 # endpoint: SECURITY-BASELINE §1 requires it to 404 for a member of another
 # workspace, and tests/idor.py walks it automatically.
 _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = [
-    ("contacts/", "contacts", "Contacts", "#3 (L2-A) and #13 (L4-C)", _APP_LAYOUT, "manage_crm"),
     ("inbox/", "inbox", "Inbox", "#14 (L4-D)", _APP_LAYOUT, "use_inbox"),
     ("sequences/", "sequences", "Sequences", "#22 (L6-A)", _APP_LAYOUT, "edit_flows"),
     ("broadcasts/", "broadcasts", "Broadcasts", "#23 (L6-B)", _APP_LAYOUT, "send_broadcasts"),
-    ("settings/fields/", "settings_ws_fields", "Custom Fields", "#3 (L2-A)", _WS_SETTINGS_LAYOUT, "manage_crm"),
-    ("settings/tags/", "settings_ws_tags", "Tags", "#3 (L2-A)", _WS_SETTINGS_LAYOUT, "manage_crm"),
 ]
 
 # Not workspace-scoped, so login is the whole gate.
@@ -88,6 +85,12 @@ urlpatterns = [
     path("w/<uuid:workspace_id>/settings/credentials/", include("apps.credentials.urls")),
     path("w/<uuid:workspace_id>/settings/channels/", include("apps.channels.urls")),
     path("w/<uuid:workspace_id>/media/", include("apps.media_library.urls")),
+    # apps.contacts owns two disjoint stretches of the workspace URL space —
+    # contacts/ and the two settings pages — so it mounts once at the root of
+    # the prefix and spells the sub-paths itself (issue #3). It goes last of the
+    # workspace includes: a bare-prefix mount can only be shadowed, never
+    # shadow, and the ones above claim deeper prefixes.
+    path("w/<uuid:workspace_id>/", include("apps.contacts.urls")),
     # Flows own two prefixes under the workspace — the pages at flows/ and
     # SPEC §16's builder data API at api/flows/ — so they mount at the
     # workspace root together under one namespace. See apps/flows/urls.py.

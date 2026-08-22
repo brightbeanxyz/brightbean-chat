@@ -72,7 +72,7 @@ describe("dragging one node in a hundred", () => {
     act(() => {
       store.getState().beginDrag();
       for (let frame = 0; frame < 60; frame += 1) {
-        store.getState().moveNode("n0", { x: frame * 4, y: frame });
+        store.getState().moveNodes([{ id: "n0", position: { x: frame * 4, y: frame } }]);
       }
       store.getState().endDrag();
     });
@@ -96,7 +96,7 @@ describe("dragging one node in a hundred", () => {
     const before = selectRfNodes(store.getState());
 
     store.getState().beginDrag();
-    store.getState().moveNode("n0", { x: 999, y: 999 });
+    store.getState().moveNodes([{ id: "n0", position: { x: 999, y: 999 } }]);
     store.getState().endDrag();
 
     const after = selectRfNodes(store.getState());
@@ -142,7 +142,7 @@ describe("serialisation cost", () => {
 
     store.getState().beginDrag();
     for (let frame = 0; frame < 60; frame += 1) {
-      store.getState().moveNode("n0", { x: frame, y: frame });
+      store.getState().moveNodes([{ id: "n0", position: { x: frame, y: frame } }]);
     }
     store.getState().endDrag();
 
@@ -151,5 +151,42 @@ describe("serialisation cost", () => {
     const graph = toGraph(store.getState());
     expect(graph.nodes).toHaveLength(100);
     expect(graph.nodes[0]?.position).toEqual({ x: 59, y: 59 });
+  });
+});
+
+describe("dragging a multi-node selection", () => {
+  it("writes one store update per frame, not one per node", () => {
+    // React Flow emits a change per selected node per frame. One `set` each
+    // would mean one notification each, and every notification re-projects the
+    // whole graph — 50 selected nodes in a 100-node flow would cost 5000
+    // projection steps a frame instead of 100.
+    const store = makeStore(makeDetail(hundredNodes()));
+    const selected = Array.from({ length: 50 }, (_unused, index) => `n${index}`);
+
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => (notifications += 1));
+
+    store.getState().moveNodes(selected.map((id, index) => ({ id, position: { x: index, y: index } })));
+
+    expect(notifications).toBe(1);
+    unsubscribe();
+    expect(store.getState().position["n49"]).toEqual({ x: 49, y: 49 });
+  });
+});
+
+describe("a drag that moves nothing", () => {
+  it("leaves the undo stack alone", () => {
+    // beginDrag used to fire on drag start, so click-and-hold pushed a no-op
+    // step and cleared the redo stack with it.
+    const store = makeStore(makeDetail(hundredNodes()));
+    store.getState().updateConfig("n0", ["blocks", 0, "text"], "edited");
+    store.getState().undo();
+    const redoDepth = store.getState().future.length;
+    const undoDepth = store.getState().past.length;
+
+    store.getState().endDrag();
+
+    expect(store.getState().past).toHaveLength(undoDepth);
+    expect(store.getState().future).toHaveLength(redoDepth);
   });
 });

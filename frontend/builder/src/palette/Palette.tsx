@@ -29,7 +29,7 @@ export function Palette() {
     const at = pane
       ? screenToFlowPosition({ x: pane.left + pane.width / 2, y: pane.top + pane.height / 2 })
       : { x: getViewport().x, y: getViewport().y };
-    store.getState().addNode(type, at);
+    store.getState().addNode(type, at, { cascade: true });
   };
 
   if (!canEdit) {

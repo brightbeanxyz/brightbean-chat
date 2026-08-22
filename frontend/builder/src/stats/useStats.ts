@@ -23,6 +23,7 @@ export function useStats(): void {
   useEffect(() => {
     if (!visible) {
       store.getState().setStats(null);
+      store.getState().setStatsFailed(false);
       return;
     }
 
@@ -40,7 +41,13 @@ export function useStats(): void {
           store.getState().setStats(payload);
         }
       } catch {
-        // A failing overlay must never take the canvas with it.
+        // A failing overlay must never take the canvas with it — but it must
+        // not pass for an empty one either. The API answers `available: false`
+        // until L7-A, and rendering a fetch failure the same way would make a
+        // broken endpoint indistinguishable from "analytics has not shipped".
+        if (!cancelled) {
+          store.getState().setStatsFailed(true);
+        }
       }
       if (!cancelled) {
         timer = setTimeout(() => void poll(), POLL_MS);

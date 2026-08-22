@@ -72,7 +72,7 @@ describe("after the store has actually been driven", () => {
     const [first, second] = state().nodeOrder as [string, string];
     state().updateConfig(first, ["blocks", 0, "text"], "Edited");
     state().beginDrag();
-    state().moveNode(first, { x: 12.3456, y: -8.9 });
+    state().moveNodes([{ id: first, position: { x: 12.3456, y: -8.9 } }]);
     state().endDrag();
     state().setSelection({ nodes: [first, second], edges: [] });
     const added = state().addNode("action", { x: 40, y: 40 });

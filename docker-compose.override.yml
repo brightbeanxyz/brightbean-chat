@@ -34,13 +34,41 @@ services:
       # would show its "not built" notice while every other page looked fine,
       # which reads as a bug in the builder rather than as a missing volume.
       #
-      # No watcher service for it: rebuilding the island is a host-side
-      # `make js-watch` alongside `make server`. A second npm-ci container would
-      # be paid on every `docker compose up`, including the CI Docker job's.
+      # Because this volume shadows the bind-mount at that path, a host-side
+      # rebuild cannot reach the container: whatever `npm run build:js` writes
+      # into the checkout is hidden behind the volume's copy. The `builder`
+      # service below is what writes into it, exactly as `tailwind` does for
+      # the stylesheet.
       - builder_dist:/app/apps/flows/static/flows/builder
 
+  # The island's watcher. It exists for the same reason the volume above does:
+  # the named volume shadows the bind-mount, so a host-side `npm run watch:js`
+  # writes somewhere the container cannot see. Only something writing from
+  # inside reaches it.
+  builder:
+    image: node:24-slim
+    working_dir: /app
+    command: sh -c "npm ci --no-audit --no-fund && npm run watch:js"
+    # `vite build --watch` keeps running without a TTY, but stdin closing on
+    # `up -d` is what silently killed the Tailwind watcher, so it gets the same
+    # treatment rather than a different failure mode to debug later.
+    tty: true
+    volumes:
+      - .:/app
+      # The volume the app reads, so a rebuild reaches it — and so the output
+      # does not go through the host bind-mount. This container is root, and on
+      # native Linux a bind-mounted write would leave root-owned files in the
+      # checkout that a later host-side build cannot touch without sudo.
+      - builder_dist:/app/apps/flows/static/flows/builder
+      # Shared with `tailwind`: the container's linux binaries (esbuild,
+      # rollup, lightningcss) must never clobber a macOS or Windows host
+      # install, and one install serves both watchers.
+      - tailwind_node_modules:/app/node_modules
+    # Deliberately no depends_on, no healthcheck and no restart policy, for the
+    # reasons spelled out on the tailwind service below.
+
   tailwind:
-    image: node:20-slim
+    image: node:24-slim
     working_dir: /app
     # `npm ci` on start rather than a baked image: the lockfile is the source of
     # truth and this way a dependency bump needs no rebuild. `watch:css` does an
@@ -56,7 +84,7 @@ services:
       - .:/app
       # The same volume the app reads, so a rebuild reaches it — and, just as
       # importantly, so the output does NOT go through the host bind-mount.
-      # This container is root (node:20-slim has no non-root default), and on
+      # This container is root (node:24-slim has no non-root default), and on
       # native Linux a bind-mounted write would leave root-owned files in the
       # developer's checkout that a later host-side `npm run build:css` or a
       # plain `rm -rf` then cannot touch without sudo.

@@ -1,0 +1,20 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Tags · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Tags</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Tags label contacts. Flows add and remove them, and segments filter on them.
+    Deleting a tag removes it from every contact that carries it.
+  </p>
+
+  <form hx-post="{% url 'contacts:tag_create' workspace_id=request.workspace.id %}">
+    <label for="new-tag-name">New tag</label>
+    <input id="new-tag-name" type="text" name="name" maxlength="100" required placeholder="VIP" />
+    <button type="submit">Add tag</button>
+  </form>
+
+  <hr />
+
+  {% include "contacts/_tag_rows.html" %}
+{% endblock %}

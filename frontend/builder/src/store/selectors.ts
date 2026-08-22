@@ -11,7 +11,7 @@
  */
 import type { Edge, Node } from "@xyflow/react";
 
-import type { DomainEdge, DomainNode } from "../schema/types";
+import type { DomainEdge } from "../schema/types";
 
 import { nodeSpec } from "../schema/artifact";
 import { entryNodeIds } from "../schema/entry";
@@ -100,28 +100,56 @@ export function selectRfEdges(state: BuilderState): Edge[] {
  * edges) per render, and would also hand `useSyncExternalStore` a fresh Set
  * every time and loop forever.
  */
-let entryCache: { nodeOrder: unknown; edgeOrder: unknown; edge: unknown; ids: Set<string> } | null = null;
+/**
+ * The entry nodes, memoised per store on the maps that can change the answer.
+ *
+ * Derived rather than stored so no mutation has to remember to maintain it, and
+ * memoised because every card asks — an un-memoised answer would be O(nodes x
+ * edges) per render, and would also hand `useSyncExternalStore` a fresh Set
+ * every time and loop forever.
+ *
+ * Keyed by the store's own `nodeType` map rather than a module-level variable:
+ * a single shared slot means two stores alive at once — every test that builds
+ * more than one — evict each other on alternating reads.
+ */
+interface EntryCacheEntry {
+  nodeOrder: unknown;
+  edgeOrder: unknown;
+  edge: unknown;
+  ids: Set<string>;
+}
+
+const entryCache = new WeakMap<object, EntryCacheEntry>();
 
 export function selectEntryIds(state: BuilderState): Set<string> {
+  const cached = entryCache.get(state.nodeType);
   if (
-    entryCache &&
-    entryCache.nodeOrder === state.nodeOrder &&
-    entryCache.edgeOrder === state.edgeOrder &&
-    entryCache.edge === state.edge
+    cached &&
+    cached.nodeOrder === state.nodeOrder &&
+    cached.edgeOrder === state.edgeOrder &&
+    cached.edge === state.edge
   ) {
-    return entryCache.ids;
+    return cached.ids;
   }
-  const nodes: DomainNode[] = state.nodeOrder.map((id) => ({
+
+  // entryNodeIds reads only `id` and `type`; position and config would be
+  // hundreds of object copies for nothing.
+  const nodes = state.nodeOrder.map((id) => ({
     id,
     type: state.nodeType[id] ?? "",
-    position: state.position[id] ?? { x: 0, y: 0 },
-    config: state.config[id],
+    position: ORIGIN,
+    config: undefined,
   }));
   const edges: DomainEdge[] = state.edgeOrder.flatMap((id) => {
     const edge = state.edge[id];
     return edge ? [edge] : [];
   });
   const ids = entryNodeIds(nodes, edges);
-  entryCache = { nodeOrder: state.nodeOrder, edgeOrder: state.edgeOrder, edge: state.edge, ids };
+
+  entryCache.set(state.nodeType, { nodeOrder: state.nodeOrder, edgeOrder: state.edgeOrder, edge: state.edge, ids });
   return ids;
 }
+
+/** Shared, because entryNodeIds never reads a position. */
+const ORIGIN = Object.freeze({ x: 0, y: 0 });
+

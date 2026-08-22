@@ -21,6 +21,14 @@ export interface FieldProps {
   value: unknown;
   propertyName: string;
   required: boolean;
+  /**
+   * The object this field is a property of.
+   *
+   * Needed by the few widgets whose behaviour depends on a sibling — a
+   * condition rule's `key` means a tag id or a field id depending on the
+   * `source` beside it, and only the parent can answer that.
+   */
+  parent?: unknown;
 }
 
 /**

@@ -12,9 +12,23 @@
  * the generated form. That is the seam that lets a node type registered by a
  * later layer be configurable with zero code, and lets this one be pleasant.
  */
-import { anyOfRequirements, constValue, deref, defsName, isTaggedUnion, typesOf, variantChoices, variantFor } from "../schema/resolve";
+import {
+  anyOfRequirements,
+  branchAt,
+  branchLabels,
+  constValue,
+  deref,
+  defsName,
+  isTaggedUnion,
+  isUntaggedUnion,
+  matchBranch,
+  typesOf,
+  variantChoices,
+  variantFor,
+} from "../schema/resolve";
 import { placeholderFor, preferredBranch } from "../schema/sample";
 import { newItemId } from "../schema/ids";
+import { ID_PATTERN } from "../schema/handles";
 import type { JsonSchema } from "../schema/types";
 import { formatPath, type ConfigPath } from "../store/paths";
 import { useField } from "./FieldContext";
@@ -29,6 +43,8 @@ export interface SchemaFieldProps {
   value: unknown;
   propertyName: string;
   required?: boolean;
+  /** The object this field is a property of; see FieldProps.parent. */
+  parent?: unknown;
   /**
    * The `$defs` name of the object this field is a property of.
    *
@@ -54,6 +70,7 @@ export function SchemaField({
   propertyName,
   required = false,
   parentDefs,
+  parent,
   hideLabel = false,
 }: SchemaFieldProps) {
   const field = useField();
@@ -69,7 +86,7 @@ export function SchemaField({
     return null;
   }
 
-  const props: FieldProps = { schema: resolved, path, value, propertyName, required };
+  const props: FieldProps = { schema: resolved, path, value, propertyName, required, parent };
   const selfDefs = defsName(schema);
 
   const Override = lookupOverride({ nodeType: field.nodeType, path, selfDefs, parentDefs, propertyName });
@@ -79,6 +96,9 @@ export function SchemaField({
 
   if (isTaggedUnion(resolved)) {
     return <VariantField {...props} rawSchema={resolved} hideLabel={hideLabel} />;
+  }
+  if (isUntaggedUnion(resolved)) {
+    return <UnionField {...props} rawSchema={resolved} hideLabel={hideLabel} />;
   }
   if (resolved.enum && resolved.enum.length > 0) {
     return <SelectField {...props} />;
@@ -162,6 +182,7 @@ export function ObjectField({
           propertyName={key}
           required={!optional}
           parentDefs={selfDefs}
+          parent={record}
         />
         {optional && !readOnly ? (
           <button type="button" className="btn-link text-xs -mt-2 mb-2 block" onClick={() => clear(childPath)}>
@@ -374,6 +395,91 @@ export function VariantField({
   );
 }
 
+/**
+ * A `oneOf` with no discriminator: the reader picks a branch by name.
+ *
+ * Contract 8's condition rules are this shape. Each branch pins `source` to a
+ * literal and narrows `op` to the operators that source supports, so choosing
+ * "Tag" here leaves only `has` / `has_not` in the operator list — without this
+ * bundle carrying a copy of that mapping. Two sources contribute two branches
+ * each, which is why the chooser is labelled by the branch `title` rather than
+ * by the source.
+ *
+ * Switching replaces the value, for the same reason a tagged union does: every
+ * object is closed, so a leftover key from the previous branch is
+ * `unknown_config_key`.
+ */
+export function UnionField({
+  schema,
+  path,
+  value,
+  propertyName,
+  required,
+  rawSchema,
+  hideLabel = false,
+}: FieldProps & { rawSchema: JsonSchema; hideLabel?: boolean }) {
+  const { set, readOnly } = useField();
+  const labels = branchLabels(rawSchema);
+  const current = matchBranch(rawSchema, value);
+  const branch = current === -1 ? undefined : branchAt(rawSchema, current);
+
+  // A union of scalars — a rule's `value` is string | number | boolean |
+  // {relative}. The chooser names the kinds; the branch renders the input.
+  const scalarBranch = branch && !branch.properties && typesOf(branch).length > 0;
+
+  return (
+    <div className="fb-field">
+      {hideLabel ? null : (
+        <>
+          <label className="fb-field-label" htmlFor={fieldId(path)}>
+            {labelFor(propertyName, schema.title)}
+          </label>
+          {required ? null : <span className="fb-empty"> optional</span>}
+        </>
+      )}
+      <select
+        id={fieldId(path)}
+        aria-label={labelFor(propertyName, schema.title)}
+        className="bb-select"
+        value={current === -1 ? "" : String(current)}
+        disabled={readOnly}
+        onChange={(event) =>
+          set(path, defaultFor(branchAt(rawSchema, Number(event.target.value))), `union:${formatPath(path)}`)
+        }
+      >
+        {current === -1 ? <option value="">Choose…</option> : null}
+        {labels.map((label, index) => (
+          <option key={index} value={index}>
+            {label}
+          </option>
+        ))}
+      </select>
+      {branch ? (
+        <div className="fb-subgroup">
+          {scalarBranch ? (
+            <SchemaField schema={branch} path={path} value={value} propertyName={propertyName} required hideLabel />
+          ) : (
+            <ObjectField
+              schema={branch}
+              path={path}
+              value={value}
+              propertyName={propertyName}
+              required={required}
+              hideLabel
+            />
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Whether a random item id would satisfy this property's own grammar. */
+function mintableId(property: JsonSchema | undefined): boolean {
+  const pattern = deref(property)?.pattern;
+  return pattern === undefined || pattern === ID_PATTERN.source;
+}
+
 /** A fresh value for one union branch — the tag plus its required fields. */
 function seedVariant(schema: JsonSchema, tag: string): unknown {
   const property = schema.discriminator?.propertyName ?? "type";
@@ -405,6 +511,9 @@ export function defaultFor(schema: JsonSchema | undefined, propertyName = ""): u
     const first = variantChoices(resolved)[0];
     return first === undefined ? {} : seedVariant(resolved, first);
   }
+  if (isUntaggedUnion(resolved)) {
+    return defaultFor(branchAt(resolved, 0), propertyName);
+  }
   if (resolved.enum && resolved.enum.length > 0) {
     return resolved.enum[0];
   }
@@ -424,8 +533,11 @@ export function defaultFor(schema: JsonSchema | undefined, propertyName = ""): u
     for (const [key, property] of Object.entries(resolved.properties ?? {})) {
       if (required.has(key) || constValue(deref(property)) !== undefined) {
         // An `id` backs a dynamic handle, so it has to be unique per item —
-        // a shared placeholder would collide two `btn:` handles.
-        const seeded = key === "id" ? newItemId() : defaultFor(property, key);
+        // a shared placeholder would collide two `btn:` handles. Only mint one
+        // where the schema's own grammar allows it: a node type added later
+        // with a UUID-shaped `id` needs a UUID, and a token that fails its
+        // pattern is a document-stage error that discards the whole save.
+        const seeded = key === "id" && mintableId(property) ? newItemId() : defaultFor(property, key);
         if (seeded !== undefined) {
           out[key] = seeded;
         }
@@ -439,7 +551,14 @@ export function defaultFor(schema: JsonSchema | undefined, propertyName = ""): u
   if (types.includes("integer") || types.includes("number")) {
     return resolved.minimum ?? 0;
   }
-  // Never "" for a string that forbids it — and readable copy rather than an
-  // ellipsis, so a button added in the panel says "Button".
-  return (resolved.minLength ?? 0) > 0 ? placeholderFor(propertyName, resolved) : "";
+  // Never "" for a string the schema would reject — and readable copy rather
+  // than an ellipsis, so a button added in the panel says "Button".
+  //
+  // `pattern` counts as much as `minLength` here: a condition rule's `key` is a
+  // UUID with no minimum length, so an empty seed passes the length check and
+  // fails the pattern — a document-stage error, which discards the *entire*
+  // save rather than just the rule the reader has not filled in yet.
+  return (resolved.minLength ?? 0) > 0 || resolved.pattern
+    ? placeholderFor(propertyName, resolved)
+    : "";
 }

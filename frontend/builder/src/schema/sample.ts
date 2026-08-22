@@ -20,7 +20,17 @@
  */
 import { configSchema } from "./artifact";
 import { newItemId } from "./ids";
-import { anyOfRequirements, constValue, deref, isTaggedUnion, typesOf, variantChoices, variantSchema } from "./resolve";
+import {
+  anyOfRequirements,
+  branchAt,
+  constValue,
+  deref,
+  isTaggedUnion,
+  isUntaggedUnion,
+  typesOf,
+  variantChoices,
+  variantSchema,
+} from "./resolve";
 import type { JsonSchema } from "./types";
 
 export interface SampleOptions {
@@ -46,6 +56,11 @@ function stringForPattern(pattern: string, hint: string): string {
       return "09:00";
     case "^[A-Za-z0-9_-]{1,64}$":
       return hint.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 64) || "id";
+    case "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$":
+      // Contract 8 addresses tags, fields, segments and sequences by their
+      // real primary keys. A placed condition therefore starts pointing at
+      // nothing, and the panel's pick-lists are how it gets filled in.
+      return "00000000-0000-0000-0000-000000000000";
     case "^(?:default|timeout|error|cond:(?:true|false)|(?:btn|qr|rand):[A-Za-z0-9_-]{1,64})$":
       return "default";
     default:
@@ -130,6 +145,17 @@ function sampleValue(schema: JsonSchema | undefined, key: string, options: Requi
   const pinned = constValue(resolved);
   if (pinned !== undefined) {
     return pinned;
+  }
+
+  if (isUntaggedUnion(resolved)) {
+    const branches = resolved.oneOf ?? [];
+    if (branches.length === 0) {
+      return {};
+    }
+    // Recurse rather than assuming the branch is an object: a condition rule's
+    // `value` is itself an untagged union whose branches are a string, a
+    // number, a boolean and a relative-date object.
+    return sampleValue(branchAt(resolved, options.variant % branches.length), key, options);
   }
 
   if (isTaggedUnion(resolved)) {

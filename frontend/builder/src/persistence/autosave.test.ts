@@ -272,7 +272,7 @@ describe("what does not trigger a save", () => {
 
     store.getState().beginDrag();
     for (let frame = 0; frame < 60; frame += 1) {
-      store.getState().moveNode(first, { x: frame, y: frame });
+      store.getState().moveNodes([{ id: first, position: { x: frame, y: frame } }]);
     }
     await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
     expect(puts()).toHaveLength(0);
@@ -291,5 +291,58 @@ describe("read-only", () => {
     const store = makeStore(makeDetail(makeSampleGraph()), { canEdit: false });
 
     expect(store.getState().env.canEdit).toBe(false);
+  });
+});
+
+describe("flush", () => {
+  it("waits for the follow-up its own completion starts", async () => {
+    // Awaiting one request runs the .finally that launches the queued save, so
+    // a single await returns with a newer PUT still open — and Publish would
+    // post the draft as of the older one.
+    let released = 0;
+    const gates: Array<() => void> = [];
+    http.route("/api/flows/", { body: savedBody() });
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      const response = original(...args);
+      await new Promise<void>((resolve) => gates.push(resolve));
+      released += 1;
+      return response;
+    }) as typeof fetch;
+
+    const { edit, autosave } = armed();
+    edit("a");
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+    edit("b");
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
+
+    let settled = false;
+    const flushed = autosave.flush().then(() => (settled = true));
+
+    gates[0]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+
+    gates[1]?.();
+    await vi.advanceTimersByTimeAsync(0);
+    await flushed;
+
+    expect(settled).toBe(true);
+    expect(released).toBe(2);
+    expect(puts()).toHaveLength(2);
+
+    globalThis.fetch = original;
+    autosave.stop();
+  });
+
+  it("sends a still-dirty graph that never reached the debounce", async () => {
+    http.route("/api/flows/", { body: savedBody() });
+    const { edit, autosave } = armed();
+
+    edit("a");
+    await autosave.flush();
+
+    expect(puts()).toHaveLength(1);
+    autosave.stop();
   });
 });
