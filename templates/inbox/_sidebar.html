@@ -1,0 +1,115 @@
+{% comment %}
+The contact panel: who this is, whether we may write to them, what automation
+is doing, and the tags an agent can apply without leaving the thread.
+
+Attacker-controlled here too (SECURITY-BASELINE §2): the contact's name, email
+and phone came from a platform profile, and `platform_user_id` is a raw chat id
+or PSID. All of it renders escaped; none of it becomes a URL.
+{% endcomment %}
+{% load common_extras %}
+
+<div class="flex items-start justify-between gap-2">
+  <div class="min-w-0">
+    <div class="text-sm font-semibold" style="color: var(--text-primary); overflow-wrap: anywhere;">{{ contact.display_name }}</div>
+    {% if contact.email %}<div class="ib-side-value">{{ contact.email }}</div>{% endif %}
+    {% if contact.phone %}<div class="ib-side-value">{{ contact.phone }}</div>{% endif %}
+  </div>
+  <a class="btn-link btn-inline" href="{{ contact_url }}">Open</a>
+</div>
+
+<div class="ib-side-label">Channels</div>
+{% for identity in identities %}
+  <div class="mt-1">
+    <div class="flex items-center gap-2">
+      <span class="{{ identity.platform|platform_ink_class }}" aria-hidden="true">
+        {% include "partials/_platform_icon.html" with platform=identity.platform size="sm" %}
+      </span>
+      <span class="ib-side-value flex-1 min-w-0 truncate">{{ identity.platform_user_id }}</span>
+    </div>
+    <div class="text-xs" style="color: var(--text-tertiary);">
+      {% if identity.opted_out_at %}
+        Opted out {{ identity.opted_out_at|date:"j M Y" }}
+      {% elif identity.opt_in %}
+        Opted in{% if identity.opt_in_source %} via {{ identity.get_opt_in_source_display }}{% endif %}
+      {% else %}
+        No opt-in recorded
+      {% endif %}
+      {% if identity.window_expires_at %}
+        · window closes {{ identity.window_expires_at|date:"j M H:i" }}
+      {% endif %}
+      {% if identity.is_pending %} · not yet linked to a connection{% endif %}
+    </div>
+  </div>
+{% empty %}
+  <p class="text-xs" style="color: var(--text-tertiary);">No channel addresses recorded.</p>
+{% endfor %}
+
+<div class="ib-side-label">Automation</div>
+{% if execution %}
+  <div class="flex items-center gap-2 mt-1">
+    <span class="ib-chip">{{ execution.get_status_display }}</span>
+    <span class="ib-side-value flex-1 min-w-0 truncate">{{ execution.flow.name }}</span>
+  </div>
+  {% if can_reply %}
+    <form class="mt-1" hx-post="{% url 'inbox:stop' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+      {% csrf_token %}
+      <button type="submit" class="btn-outline btn-inline">Stop automation</button>
+    </form>
+  {% endif %}
+{% else %}
+  <p class="text-xs" style="color: var(--text-tertiary);">Nothing running for this contact.</p>
+{% endif %}
+{% if can_reply %}
+  <form class="mt-1" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="{% if is_paused %}resume{% else %}pause{% endif %}">
+    <button type="submit" class="btn-outline btn-inline">{% if is_paused %}Resume automation{% else %}Pause automation{% endif %}</button>
+  </form>
+{% endif %}
+
+<div class="ib-side-label">Tags</div>
+<div class="flex flex-wrap gap-1 mt-1">
+  {% for tag in contact_tags %}
+    {% if can_edit_contact %}
+      <form hx-post="{% url 'inbox:tags' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+        {% csrf_token %}
+        <input type="hidden" name="tag" value="{{ tag.id }}">
+        <input type="hidden" name="action" value="remove">
+        <button type="submit" class="ib-chip" title="Remove tag">{{ tag.name }} ×</button>
+      </form>
+    {% else %}
+      <span class="ib-chip">{{ tag.name }}</span>
+    {% endif %}
+  {% empty %}
+    <span class="text-xs" style="color: var(--text-tertiary);">None yet.</span>
+  {% endfor %}
+</div>
+{% if can_edit_contact and available_tags %}
+  {% comment %}
+    Only tags this workspace already has. Creating one is `manage_crm` and lives
+    on the contacts settings page — the split SPEC §4.2 already draws between
+    the tag vocabulary and one contact's values, which is what lets an agent use
+    this control at all.
+  {% endcomment %}
+  <form class="mt-2 flex items-center gap-1"
+        hx-post="{% url 'inbox:tags' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+        hx-swap="none"
+        hx-trigger="change">
+    {% csrf_token %}
+    <label class="sr-only" for="add-tag-{{ conversation.id }}">Add a tag</label>
+    <select class="bb-select" id="add-tag-{{ conversation.id }}" name="tag">
+      <option value="">Add a tag…</option>
+      {% for tag in available_tags %}<option value="{{ tag.id }}">{{ tag.name }}</option>{% endfor %}
+    </select>
+  </form>
+{% endif %}
+
+{% if custom_fields %}
+  <div class="ib-side-label">Fields</div>
+  {% for field in custom_fields %}
+    <div class="mt-1">
+      <div class="text-xs" style="color: var(--text-tertiary);">{{ field.name }}</div>
+      <div class="ib-side-value">{{ field.value }}</div>
+    </div>
+  {% endfor %}
+{% endif %}

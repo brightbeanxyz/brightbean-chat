@@ -153,7 +153,10 @@ MAIN_NAV: list[NavGroup] = [
                 key="inbox",
                 label="Inbox",
                 icon="inbox",
-                url_name="inbox",
+                url_name="inbox:list",
+                # An open thread is the same section to a reader, so the row
+                # stays lit on a deep link into one (issue #14).
+                url_names=frozenset({"inbox:list", "inbox:thread"}),
                 badge_key="unread_inbox",
                 workspace_scoped=True,
             ),
@@ -311,9 +314,6 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
 
     badges: dict[str, int] = {}
 
-    # TODO(L4-D): unread inbox count, once inbox.Conversation exists (issue #14).
-    badges["unread_inbox"] = 0
-
     # Issue #7. Guarded on authentication rather than assumed: this function is
     # also called directly by apps.common.views.ui_demo, whose docstring
     # promises /ui/ "reads no database and no session" and which serves
@@ -360,6 +360,19 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         OrgRole.OWNER,
         OrgRole.ADMIN,
     }
+
+    # Issue #14: open conversations carrying an inbound message this member has
+    # not read. Guarded on a resolved workspace as well as on authentication —
+    # apps.common.views.ui_demo calls this function for anonymous visitors and
+    # its docstring promises /ui/ "reads no database and no session" — and on
+    # the permission, because a member without use_inbox never sees the row the
+    # badge sits on and counting for them would be a query nobody reads.
+    badges["unread_inbox"] = 0
+    membership = getattr(request, "workspace_membership", None)
+    if workspace is not None and membership is not None and membership.effective_permissions.get("use_inbox", False):
+        from apps.inbox.selectors import unread_count_for as inbox_unread_count
+
+        badges["unread_inbox"] = inbox_unread_count(workspace, request.user)
 
     # TODO(L2-B): connected channels for the sidebar's channel list, once
     # channels.ChannelConnection exists (issue #4). The credential store from

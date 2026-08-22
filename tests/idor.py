@@ -57,6 +57,8 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "asset_id": lambda t: _victim_media_asset(t).pk,
     "folder_id": lambda t: _victim_media_folder(t).pk,
     "flow_id": lambda t: _victim_flow(t).pk,
+    "conversation_id": lambda t: _victim_conversation(t).pk,
+    "message_id": lambda t: _victim_message(t).pk,
     # Notifications (issue #7) are keyed by user, not by workspace, so "the
     # victim" here is a person rather than a tenant. Registering it is an
     # opt-in: iter_tenant_routes() skips a route carrying no *registered*
@@ -140,6 +142,51 @@ def _victim_flow(tenancy: Tenancy) -> Any:
     if flow is None:
         flow = create_flow(workspace=tenancy.workspace, name="Victim onboarding")
     return flow
+
+
+def _victim_conversation(tenancy: Tenancy) -> Any:
+    """A conversation owned by the victim, created on demand (issue #14).
+
+    Through ``messaging.services.open_conversation`` rather than
+    ``Conversation.objects.create``: it is the facade's own get-or-create, and a
+    fixture that writes the row directly is a fixture that can drift from what
+    the product produces.
+    """
+    from apps.contacts.models import Contact
+    from apps.messaging.models import Conversation
+    from apps.messaging.services import open_conversation
+
+    conversation = Conversation.objects.for_workspace(tenancy.workspace).first()
+    if conversation is not None:
+        return conversation
+    contact = Contact.objects.for_workspace(tenancy.workspace).first() or Contact.objects.create(
+        workspace=tenancy.workspace, first_name="Ada", last_name=tenancy.slug
+    )
+    return open_conversation(workspace=tenancy.workspace, contact=contact, connection=_victim_connection(tenancy))
+
+
+def _victim_message(tenancy: Tenancy) -> Any:
+    """A failed outbound message in the victim's thread, created on demand.
+
+    Failed on purpose: the only route taking a ``message_id`` is the inbox's
+    retry, which 404s anything that is not a failed outbound send. A queued row
+    would make the sweep pass for the wrong reason.
+    """
+    from apps.messaging.models import Message, MessageDirection, MessageSource, MessageStatus
+
+    conversation = _victim_conversation(tenancy)
+    message = Message.objects.for_workspace(tenancy.workspace).filter(conversation=conversation).first()
+    if message is not None:
+        return message
+    return Message.objects.create(
+        conversation=conversation,
+        direction=MessageDirection.OUT,
+        source=MessageSource.AGENT,
+        status=MessageStatus.FAILED,
+        error="opted_out",
+        idempotency_key=f"idor:{tenancy.slug}",
+        body={"blocks": [{"type": "text", "text": "hello"}]},
+    )
 
 
 def _victim_invitation(tenancy: Tenancy) -> Any:

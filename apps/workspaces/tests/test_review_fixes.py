@@ -110,9 +110,10 @@ class TestCredentialPageQueryCount:
         # fixed base plus one query per platform, and a regression here would
         # scale with the platform count. The base moved 10 -> 11 when issue #7
         # added the unread-notification count to the shell's context processor,
-        # which is one indexed count() on every authenticated page and does not
-        # vary with platforms.
-        assert queries < 11 + len(CONFIGURABLE_PLATFORMS), queries
+        # and 11 -> 12 when issue #14 added the unread-inbox count beside it.
+        # Both are one indexed count() on every authenticated page and neither
+        # varies with platforms.
+        assert queries < 12 + len(CONFIGURABLE_PLATFORMS), queries
 
 
 @pytest.mark.django_db

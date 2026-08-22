@@ -82,6 +82,7 @@ __all__ = [
     "locked_execution",
     "resume_execution",
     "start_flow",
+    "stop_executions",
 ]
 
 logger = logging.getLogger(__name__)
@@ -559,6 +560,27 @@ def _supersede(contact: Any) -> int:
         type__in=(ActionType.RESUME_EXECUTION, ActionType.FOLLOWUP_TIMER),
     ).update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
     return expired
+
+
+def stop_executions(contact: Any) -> int:
+    """Expire every live execution this contact has. Returns how many.
+
+    The manual half of :func:`_supersede`: an operator taking a conversation
+    over from automation, from the inbox's stop button (#14) or a contact page's
+    "stop automation" (#13). Same effect a new ``start_flow`` would have had,
+    without starting anything.
+
+    Public because there is otherwise no way to do this that is not "write
+    ``status`` yourself", and the reason the runner owns every write to an
+    execution row is that a second write site is how the status stops being
+    something anyone can reason about.
+
+    It takes the contact lock itself, unlike ``_supersede``, whose only caller
+    is already holding it. Advisory locks are counted per session, so a caller
+    that happens to hold it too pays nothing for this one.
+    """
+    with transaction.atomic(), contact_lock(contact):
+        return _supersede(contact)
 
 
 def _hand_off(execution: FlowExecution, start_next: StartNext) -> FlowExecution:

@@ -1,0 +1,49 @@
+{% comment %}
+The conversation list's rows. Swapped into #inbox-list every three seconds when
+— and only when — something changed; see inbox/list.html for the 304 machinery.
+
+Every value in here arrived from a stranger (SECURITY-BASELINE §2): the
+contact's name, the message preview, the channel's display name. All of it
+renders under Django's default autoescaping and none of it is marked safe.
+{% endcomment %}
+{% load common_extras %}
+{% if not conversations %}
+  <p class="p-4 text-xs" style="color: var(--text-tertiary);">No conversations match these filters.</p>
+{% else %}
+  {% for row in conversations %}
+    {% comment %}
+      A real link, not a button with hx-get, and both halves of that matter.
+
+      *Link*, so the thread is deep-linkable, opens in a new tab on a middle
+      click, and works with no JavaScript at all — the view already answers the
+      whole page to a non-HTMX request.
+
+      *No hx-get*, because the row is not a stable element: this list re-renders
+      on every change, and htmx drops the swap when the element that issued the
+      request has left the DOM by the time the response lands. A click landing
+      in that window opened nothing. The delegated handler in inbox/list.html
+      issues the same request from the document instead, so the poll can replace
+      these rows underneath it without losing the navigation.
+    {% endcomment %}
+    <a href="{% url 'inbox:thread' workspace_id=request.workspace.id conversation_id=row.conversation.id %}"
+       data-conversation="{{ row.conversation.id }}"
+       class="ib-row{% if row.unread %} is-unread{% endif %}{% if open_conversation_id == row.conversation.id|stringformat:'s' %} is-current{% endif %}"
+       aria-current="{% if open_conversation_id == row.conversation.id|stringformat:'s' %}true{% else %}false{% endif %}">
+      <span class="flex items-center gap-2">
+        <span class="pi-chip {{ row.conversation.channel_connection.platform|platform_class }}" aria-hidden="true">
+          {% include "partials/_platform_icon.html" with platform=row.conversation.channel_connection.platform size="sm" %}
+        </span>
+        <span class="ib-row-name flex-1 min-w-0 truncate">{{ row.conversation.contact.display_name }}</span>
+        {% if row.unread %}<span class="ib-dot" role="img" aria-label="Unread"></span>{% endif %}
+      </span>
+      <span class="ib-row-preview mt-0.5 block">
+        {% if row.last_internal %}<span class="ib-chip">Note</span> {% endif %}{{ row.preview }}
+      </span>
+      <span class="ib-row-meta mt-0.5 flex items-center gap-2">
+        {% if row.conversation.last_message_at %}<span>{{ row.conversation.last_message_at|timesince }} ago</span>{% endif %}
+        {% if row.conversation.state == "done" %}<span class="ib-chip">Done</span>{% endif %}
+        {% if row.conversation.assignee %}<span class="ib-chip">{{ row.conversation.assignee.display_name }}</span>{% endif %}
+      </span>
+    </a>
+  {% endfor %}
+{% endif %}

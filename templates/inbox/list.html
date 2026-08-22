@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% comment %}
+The inbox (issue #14): conversation list, thread, contact panel.
+
+SPEC §14 mandates HTMX polling rather than SSE, "every 3 s on list and open
+thread (ETag/304 to keep payloads near-zero when unchanged)". Two things in the
+inline script at the bottom of this file make that work, and both are
+non-obvious enough to be worth reading before editing:
+
+  1. htmx does not send If-None-Match. Without it the server has nothing to
+     compare against and every poll is a full render.
+  2. htmx 2's default responseHandling swaps on 304 — its rule for 2xx is the
+     regex [23].. , which "304" matches — so an unchanged poll would swap an
+     empty body over the pane and blank it.
+
+Everything platform-specific about what may be sent is decided server-side by
+apps/messaging/compliance.py and arrives here as a sentence. There is no
+per-platform branching anywhere in these templates, on purpose.
+
+No inline event handlers: the CSP allows 'unsafe-eval' for Alpine's x-*
+expressions but NOT 'unsafe-inline', so an onclick= attribute is silently
+inert.
+{% endcomment %}
+{% load common_extras %}
+
+{% block title %}Inbox · {{ request.workspace.name }}{% endblock %}
+
+{% block page_header %}
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <h1>Inbox</h1>
+      <p class="muted">Every conversation across your connected channels.</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block content %}
+{% comment %}
+  $nextTick in reload() is load bearing, same as on the flow list: ui_select
+  assigns to the model and calls reload() in one click handler, but Alpine
+  flushes the hidden inputs on the next tick — dispatching immediately
+  serialises the form one pick behind.
+
+  The shortcut handler ignores events from a field, so typing "j" into a reply
+  does not jump to the next conversation.
+{% endcomment %}
+<div class="flex flex-col flex-1 min-h-0"
+     x-data="{
+        state: '{{ state|escapejs }}',
+        connection: '{{ connection|escapejs }}',
+        assignee: '{{ assignee|escapejs }}',
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        move(step) {
+          const rows = Array.from(document.querySelectorAll('#inbox-list [data-conversation]'));
+          if (!rows.length) return;
+          const at = rows.findIndex(r => r.getAttribute('aria-current') === 'true');
+          const next = rows[Math.min(Math.max(at + step, 0), rows.length - 1)];
+          if (next) { next.click(); next.scrollIntoView({ block: 'nearest' }); }
+        },
+        shortcut(e) {
+          const tag = (e.target.tagName || '').toLowerCase();
+          if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          if (e.key === 'j') { e.preventDefault(); this.move(1); }
+          else if (e.key === 'k') { e.preventDefault(); this.move(-1); }
+          else if (e.key === 'e') { e.preventDefault(); document.querySelector('[data-shortcut=done]')?.click(); }
+          else if (e.key === 'r') { e.preventDefault(); document.querySelector('[data-shortcut=reply]')?.focus(); }
+        }
+     }"
+     @keydown.window="shortcut($event)">
+
+  <form id="inbox-filters" x-ref="filters"
+        class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3"
+        hx-get="{% url 'inbox:rows' workspace_id=request.workspace.id %}"
+        hx-target="#inbox-list"
+        hx-swap="innerHTML"
+        hx-trigger="filters-changed"
+        @submit.prevent>
+    <input type="hidden" name="state" x-model="state">
+    <input type="hidden" name="connection" x-model="connection">
+    <input type="hidden" name="assignee" x-model="assignee">
+    <input type="hidden" name="open" value="{{ open_conversation_id }}">
+    {% ui_select model="state" options=state_options placeholder="All states" icon="status" onchange="reload()" %}
+    {% ui_select model="connection" options=connections placeholder="All channels" icon="channel" value_field="id" label_field="display_name" icon_field="platform" onchange="reload()" %}
+    {% ui_select model="assignee" options=assignee_options placeholder="Anyone" icon="tag" onchange="reload()" %}
+  </form>
+
+  <div class="ib-shell">
+    {# ── Conversation list ───────────────────────────────────────── #}
+    {% comment %}
+      The poller is the list itself rather than a sibling element: unlike the
+      notification bell, there is only one target here, so a second element
+      would just be a second request. data-poll is what the If-None-Match
+      listener keys on, which is how a mutation's request never carries a tag.
+    {% endcomment %}
+    <section class="ib-rail" aria-label="Conversations">
+      <div id="inbox-list" class="ib-rail-scroll"
+           data-poll
+           hx-get="{% url 'inbox:rows' workspace_id=request.workspace.id %}"
+           hx-trigger="every 3s, inboxListChanged from:body"
+           hx-target="this"
+           hx-swap="innerHTML"
+           hx-include="#inbox-filters">
+        {% include "inbox/_conversation_rows.html" %}
+      </div>
+    </section>
+
+    {# ── Thread and contact panel ────────────────────────────────── #}
+    {% comment %}
+      One swap target for both, because they are one conversation: a reply that
+      changes the thread can also change the contact's window status, and two
+      targets would mean the row that opens a thread has to fill both.
+    {% endcomment %}
+    <section id="inbox-thread" class="flex flex-1 min-w-0 min-h-0 gap-4" aria-label="Conversation" aria-live="polite">
+      {% if conversation %}
+        {% include "inbox/_thread.html" %}
+      {% else %}
+        <div class="ib-thread"><div class="ib-empty">Pick a conversation to read it.</div></div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block alpine_components %}
+<script nonce="{{ request.csp_nonce }}">
+  (function () {
+    // SPEC §14's 304s, client half. See the comment at the top of this file.
+    //
+    // Prepended, not appended: responseHandling is first-match-wins and the
+    // stock 2xx rule already matches "304", so a rule added after it would
+    // never be reached.
+    htmx.config.responseHandling.unshift({ code: '304', swap: false });
+
+    // Keyed on the polled element rather than on the URL. Two renders of the
+    // same element under different filters produce different ETags, so a
+    // carried-over tag simply misses and the server answers 200 — whereas
+    // keying on the path would need the query string reassembled here to avoid
+    // exactly that, for no benefit.
+    var tags = new Map();
+    var polled = function (elt) { return elt && elt.hasAttribute && elt.hasAttribute('data-poll') && elt.id; };
+
+    document.body.addEventListener('htmx:configRequest', function (evt) {
+      // Only the polled regions revalidate. A mutation must never carry a tag:
+      // it would invite a 304 on a request whose whole purpose is to change
+      // something.
+      var elt = evt.detail.elt;
+      if (!polled(elt)) return;
+      var tag = tags.get(elt.id);
+      if (tag) evt.detail.headers['If-None-Match'] = tag;
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function (evt) {
+      var elt = evt.detail.elt;
+      if (!polled(elt) || !evt.detail.xhr) return;
+      // A 304 carries no ETag of its own and the stored one is still current,
+      // so only a real response replaces it.
+      var tag = evt.detail.xhr.getResponseHeader('ETag');
+      if (tag) tags.set(elt.id, tag);
+    });
+
+    // Which conversation is open is part of the list's markup — it is the row
+    // that draws as current — so the poll has to be told, or the highlight
+    // would stay on whatever was open when the page loaded and the j/k cursor
+    // would count from there. The hidden field travels with every poll through
+    // hx-include; the class is moved here as well so the highlight lands on
+    // the click rather than up to three seconds later.
+    document.body.addEventListener('click', function (evt) {
+      var row = evt.target.closest && evt.target.closest('#inbox-list [data-conversation]');
+      if (!row) return;
+      // Leave the modified clicks alone: ctrl/cmd/middle-click means "new tab",
+      // and the row is a real link precisely so that works.
+      if (evt.defaultPrevented || evt.metaKey || evt.ctrlKey || evt.shiftKey || evt.button !== 0) return;
+      evt.preventDefault();
+
+      var field = document.querySelector('#inbox-filters [name="open"]');
+      if (field) field.value = row.getAttribute('data-conversation') || '';
+      document.querySelectorAll('#inbox-list [data-conversation]').forEach(function (other) {
+        other.classList.toggle('is-current', other === row);
+        other.setAttribute('aria-current', other === row ? 'true' : 'false');
+      });
+
+      // Issued from here rather than from the row, so a poll replacing the
+      // list mid-flight cannot cost the navigation — see the comment in
+      // inbox/_conversation_rows.html.
+      htmx.ajax('GET', row.getAttribute('href'), { target: '#inbox-thread', swap: 'innerHTML' });
+    });
+
+    // A thread opens at its newest message, and a poll that brings one in
+    // follows it down — but only if the reader was already at the bottom, or
+    // every three seconds would yank them out of the history they scrolled up
+    // to read. Capture-phase, because `scroll` does not bubble.
+    var atBottom = true;
+    var toBottom = function () {
+      var el = document.getElementById('inbox-thread-scroll');
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+      atBottom = true;
+    };
+
+    document.body.addEventListener('scroll', function (evt) {
+      var el = evt.target;
+      if (!el || el.id !== 'inbox-thread-scroll') return;
+      atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    }, true);
+
+    document.body.addEventListener('htmx:afterSwap', function (evt) {
+      var id = evt.target && evt.target.id;
+      // A different conversation: always start at the newest message, whatever
+      // the reader had scrolled to in the last one.
+      if (id === 'inbox-thread') return toBottom();
+      if (id === 'inbox-thread-body' && atBottom) toBottom();
+    });
+
+    // And the first render, which no swap covers — a deep link to a thread
+    // would otherwise open on the oldest message in its history.
+    toBottom();
+  })();
+</script>
+{% endblock %}
