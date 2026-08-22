@@ -128,6 +128,27 @@ class TestRefusals:
         with pytest.raises(WorkspaceMismatchError):
             start_flow(stranger, flow, started_by=StartedBy.API)
 
+    def test_a_connection_from_another_workspace_is_refused(self, tenancy, other_tenancy):
+        """No model-level guard covers this FK, so the entry point has to.
+
+        ``ContactScopedModel`` checks the contact against ``peer_field`` (the
+        flow) and nothing else. A foreign connection stored here would be handed
+        straight to ``send_outbound`` on the first send, putting this
+        workspace's contact on another tenant's channel.
+        """
+        from apps.channels.models import ChannelConnection
+
+        theirs = ChannelConnection.objects.create(
+            workspace=other_tenancy.workspace, platform="telegram", display_name="Theirs", external_id="tg-theirs"
+        )
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
+        contact = contact_for(tenancy.workspace)
+
+        with pytest.raises(WorkspaceMismatchError, match="channel connection"):
+            start_flow(contact, flow, started_by=StartedBy.API, connection=theirs)
+
+        assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
+
     def test_a_version_of_another_flow_is_a_programming_error(self, tenancy):
         flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
         other = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]), name="Other")

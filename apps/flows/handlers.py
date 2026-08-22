@@ -59,7 +59,9 @@ def handle_start_flow(payload: dict[str, Any], action: ScheduledAction) -> None:
         logger.warning("start_flow action %s names a contact or flow that is gone; dropping it.", action.pk)
         return
 
-    version = _scoped(FlowVersion, workspace_id, payload.get("flow_version_id"))
+    version = _requested_version(payload, flow, action)
+    if version is _UNRESOLVED:
+        return
     connection = _connection(workspace_id, payload.get("connection_id"))
     variables = payload.get("variables")
 
@@ -72,13 +74,47 @@ def handle_start_flow(payload: dict[str, Any], action: ScheduledAction) -> None:
             flow_version=version,
             connection=connection,
         )
-    except (FlowNotRunnableError, ValueError) as exc:
-        # ValueError covers the two permanent argument faults start_flow can
-        # raise — a flow_version belonging to another flow, and the contact and
-        # flow being in different workspaces (WorkspaceMismatchError is a
-        # ValueError). Neither can come true on a retry, so letting them
-        # propagate would spend the whole backoff ladder before failing the row.
+    except FlowNotRunnableError as exc:
+        # Narrow on purpose. The two permanent argument faults start_flow can
+        # raise are both ValueErrors, but so is anything a node, the messaging
+        # facade or a signal receiver might raise mid-run — and swallowing one
+        # of those would mark the row done and lose the work the queue promised
+        # to retry. Both faults are checked above instead, where they can be
+        # told apart from a genuine runtime failure.
         logger.warning("start_flow action %s cannot run: %s", action.pk, exc)
+
+
+#: Returned by :func:`_requested_version` when the payload asked for a version
+#: that cannot be resolved. Distinct from ``None``, which means "no version was
+#: asked for, use the published one" — conflating the two is what would let a
+#: stale preview action send production content.
+_UNRESOLVED = object()
+
+
+def _requested_version(payload: dict[str, Any], flow: Flow, action: ScheduledAction) -> Any:
+    """The explicit version this payload names, ``None`` for "the published one".
+
+    A ``flow_version_id`` that is malformed, deleted, or a version of some other
+    flow must **drop the action**, not fall back. The caller that supplies one is
+    #12's draft preview, and quietly running the published graph instead would
+    send a contact the live content while somebody was testing an unpublished
+    draft at them.
+    """
+    raw = payload.get("flow_version_id")
+    if not raw:
+        return None
+
+    version = _scoped(FlowVersion, flow.workspace_id, raw)
+    if version is None or version.flow_id != flow.pk:
+        logger.warning(
+            "start_flow action %s names flow version %r, which is not a version of flow %s in this "
+            "workspace; dropping it rather than running the published graph instead.",
+            action.pk,
+            raw,
+            flow.pk,
+        )
+        return _UNRESOLVED
+    return version
 
 
 @register_handler(ActionType.RESUME_EXECUTION)

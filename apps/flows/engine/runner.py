@@ -160,6 +160,13 @@ def start_flow(
     """
     if contact.workspace_id != flow.workspace_id:
         raise WorkspaceMismatchError("That flow belongs to a different workspace than the contact.")
+    if connection is not None and connection.workspace_id != flow.workspace_id:
+        # `ContactScopedModel` checks the execution's contact against its
+        # `peer_field` (the flow) and nothing else, so the connection FK is not
+        # covered by any model-level guard. Storing a foreign one would hand
+        # this workspace's contact to another tenant's channel on the first
+        # send — the connection goes to `send_outbound` verbatim.
+        raise WorkspaceMismatchError("That channel connection belongs to a different workspace than the flow.")
 
     version = _resolve_version(flow, flow_version)
     graph = Graph(version.graph_json)
@@ -470,6 +477,15 @@ def _notify_failure(execution: FlowExecution, *, loop_cap: bool) -> None:
     consumer; the copy is registered data, so nothing here builds a sentence.
     Notification failures must not take the flow engine with them — a broken
     mail backend is not a reason to lose the record that the run failed.
+
+    **The savepoint is what makes that true.** ``notify()`` writes rows, and a
+    database error inside an ``atomic()`` block marks the whole transaction
+    rollback-only; catching it here would not clear that flag, so the caller's
+    ``atomic()`` would roll back on exit and take the ``failed`` status this
+    function was called to announce — plus every node write before it — with it.
+    Running the notification in a nested ``atomic()`` and catching *outside* it
+    releases to the savepoint instead, which is the one arrangement where
+    "non-fatal" is actually non-fatal.
     """
     from apps.notifications.engine import notify
 
@@ -480,12 +496,13 @@ def _notify_failure(execution: FlowExecution, *, loop_cap: bool) -> None:
         "error": execution.last_error,
     }
     try:
-        notify(
-            execution.workspace,
-            "flow_loop_cap_hit" if loop_cap else "flow_execution_failed",
-            roles=("admin",),
-            context=context,
-        )
+        with transaction.atomic():
+            notify(
+                execution.workspace,
+                "flow_loop_cap_hit" if loop_cap else "flow_execution_failed",
+                roles=("admin",),
+                context=context,
+            )
     except Exception:  # noqa: BLE001 - see the docstring
         logger.exception("Could not notify admins that execution %s failed", execution.pk)
 

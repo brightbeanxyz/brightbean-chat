@@ -176,14 +176,35 @@ def buttons_wait(
     a label carrying a ``{{placeholder}}`` matches what the contact was shown.
     """
     handles: dict[str, str] = {}
+
+    def _claim(reply_id: str, handle: str) -> None:
+        # First claim wins, loudly. A button and a quick reply may legally carry
+        # the same id today, and an inbound event gives back only that id with
+        # nothing to say which control produced it — so the pair is genuinely
+        # ambiguous and the graph is what is wrong. Publishing now rejects it
+        # (``validation._check_reply_ids``); a *draft* preview still reaches
+        # here, and silently letting the second registration overwrite the first
+        # would route a button press down the quick reply's branch.
+        if reply_id in handles:
+            logger.warning(
+                "Node %s has a button and a quick reply both with id %r; an inbound event cannot "
+                "distinguish them, so %s stays mapped to %s.",
+                node_id,
+                reply_id,
+                reply_id,
+                handles[reply_id],
+            )
+            return
+        handles[reply_id] = handle
+
     for button in buttons or []:
         # A URL button opens a link; it never comes back as an event, so it gets
         # no entry here even though the graph exposes a `btn:<id>` handle for it.
         if isinstance(button, dict) and isinstance(button.get("id"), str) and button.get("action") != "url":
-            handles[button["id"]] = f"btn:{button['id']}"
+            _claim(button["id"], f"btn:{button['id']}")
     for reply in quick_replies or []:
         if isinstance(reply, dict) and isinstance(reply.get("id"), str):
-            handles[reply["id"]] = f"qr:{reply['id']}"
+            _claim(reply["id"], f"qr:{reply['id']}")
 
     config: dict[str, Any] = {
         "type": WAIT_BUTTONS,

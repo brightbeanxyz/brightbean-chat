@@ -453,3 +453,54 @@ class TestWarnings:
         assert result.errors == []
         assert set(warning_codes(graph)) == {"unreachable_node"}
         assert {issue.node_id for issue in result.warnings} == {"island", "island_tail"}
+
+
+class TestDuplicateReplyIds:
+    """A button and a quick reply on one node may not share an id.
+
+    Both are legal handles, but an inbound reply carries only the id — so the
+    two cannot be told apart and the node cannot be routed.
+    """
+
+    def _node(self, buttons, quick_replies):
+        return {
+            "id": "ask",
+            "type": "send_message",
+            "position": {"x": 0, "y": 0},
+            "config": {
+                "blocks": [{"type": "text", "text": "Pick:"}],
+                "buttons": buttons,
+                "quick_replies": quick_replies,
+            },
+        }
+
+    def _validate(self, buttons, quick_replies):
+        graph = empty_graph()
+        graph["nodes"] = [self._node(buttons, quick_replies)]
+        return validate_graph(graph)
+
+    def test_a_shared_id_is_a_graph_error(self):
+        result = self._validate(
+            [{"id": "yes", "label": "Yes", "action": "postback"}],
+            [{"id": "yes", "label": "Yes please"}],
+        )
+
+        assert not result.is_publishable
+        assert [issue.code for issue in result.errors] == ["duplicate_reply_id"]
+
+    def test_distinct_ids_are_fine(self):
+        result = self._validate(
+            [{"id": "yes", "label": "Yes", "action": "postback"}],
+            [{"id": "later", "label": "Later"}],
+        )
+
+        assert result.is_publishable
+
+    def test_it_is_a_graph_error_so_the_draft_still_saves(self):
+        """SPEC §16 autosaves every two seconds; a half-wired draft must persist."""
+        result = self._validate(
+            [{"id": "yes", "label": "Yes", "action": "postback"}],
+            [{"id": "yes", "label": "Yes please"}],
+        )
+
+        assert result.document_errors == []
