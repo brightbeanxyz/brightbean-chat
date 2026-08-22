@@ -161,6 +161,11 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             # its four siblings rather than assembled from location.pathname in
             # the bundle, which would break under FORCE_SCRIPT_NAME.
             "media_picker_url": reverse("media:picker", kwargs={"workspace_id": workspace_id}),
+            # SPEC §16's "test on Telegram". The endpoint lives in the channels
+            # app — it reads a connection and mints a channel-specific deep link
+            # — and is reversed here for the same reason the picker is: the
+            # island assembles no URLs of its own.
+            "preview_url": reverse("channels:telegram_preview", kwargs=keys),
             "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
         },
     )

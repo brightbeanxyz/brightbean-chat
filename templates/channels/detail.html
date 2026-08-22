@@ -17,6 +17,15 @@
     <dt>Status</dt>
     <dd><span class="status-pill status-pill-{{ connection.status }}">{{ connection.get_status_display }}</span></dd>
     <dt>Webhook URL</dt><dd><code>{{ webhook_url }}</code></dd>
+    <dt>Last event received</dt>
+    <dd>
+      {% if last_event_at %}
+        <span title="{{ last_event_at|date:"c" }}">{{ last_event_at|timesince }} ago</span>
+      {% else %}
+        <span class="muted">Nothing yet. If you have messaged this channel, the webhook is
+        not configured correctly.</span>
+      {% endif %}
+    </dd>
   </dl>
 
   {% comment %}

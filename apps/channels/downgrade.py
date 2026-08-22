@@ -42,7 +42,7 @@ from apps.channels.events import (
     TextBlock,
 )
 
-__all__ = ["DowngradeResult", "downgrade"]
+__all__ = ["DowngradeResult", "downgrade", "split_text"]
 
 #: How a numbered option reads. SPEC §6.1 fixes the wording.
 NUMBERED_OPTION = "Reply {number} for {label}"
@@ -107,7 +107,7 @@ def downgrade(outbound: OutboundMessage, capabilities: Capabilities) -> Downgrad
 
     # 3. Text: numbering appended, then the length cap — in that order, because
     #    the numbering is text too.
-    return state.finish(tag=outbound.tag, template_ref=outbound.template_ref)
+    return state.finish(tag=outbound.tag, template_ref=outbound.template_ref, node_id=outbound.node_id)
 
 
 class _State:
@@ -244,8 +244,17 @@ class _State:
 
     # -- assembly -----------------------------------------------------------
 
-    def finish(self, *, tag: str | None, template_ref: str | None) -> DowngradeResult:
-        """Append trailers, apply the length cap, and freeze into messages."""
+    def finish(self, *, tag: str | None, template_ref: str | None, node_id: str = "") -> DowngradeResult:
+        """Append trailers, apply the length cap, and freeze into messages.
+
+        Every field of the input that is not itself a downgrade decision has to
+        be copied onto each output message, because this rebuilds the dataclass
+        rather than mutating it — a field added to ``OutboundMessage`` and not
+        listed here is silently dropped on the send path, and only for platforms
+        that downgrade something. ``node_id`` is one such field: without it a
+        gallery's buttons would lose the node they came from and Telegram's
+        ``callback_data`` would fall back to the bare button id.
+        """
         messages: list[OutboundMessage] = []
         for pending in self.pending:
             self.append_trailer(pending)
@@ -257,6 +266,7 @@ class _State:
                     quick_replies=tuple(pending.quick_replies),
                     tag=tag,
                     template_ref=template_ref,
+                    node_id=node_id,
                 )
             )
 
@@ -298,15 +308,21 @@ class _State:
             if not isinstance(block, TextBlock) or len(block.text) <= limit:
                 out.append(block)
                 continue
-            parts = _split_text(block.text, limit)
+            parts = split_text(block.text, limit)
             if parts:
                 self.notes.append(f"text: {len(block.text)} characters split into {len(parts)} parts")
             out.extend(TextBlock(text=part) for part in parts)
         return out
 
 
-def _split_text(text: str, limit: int) -> list[str]:
+def split_text(text: str, limit: int) -> list[str]:
     """Break ``text`` into ``limit``-sized pieces, preferring word boundaries.
+
+    Public because adapters need it for the text this renderer does not see. A
+    media caption is capped by the platform separately from message text —
+    Telegram allows 1024 against 4096 — and an adapter that spills an over-long
+    caption into a following message has to split that message the same way
+    everything else is split, not invent a second rule (issue #12).
 
     A single word longer than the limit is cut mid-word: the alternative is
     emitting a piece the platform rejects outright, and a URL long enough to hit

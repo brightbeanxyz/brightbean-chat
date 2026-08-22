@@ -223,13 +223,35 @@ class OutboundMessage:
     quick_replies: tuple[QuickReply, ...] = ()
     tag: str | None = None
     template_ref: str | None = None
+    #: The flow node this message came from, where one did (issue #12).
+    #:
+    #: SPEC §6.2 requires Telegram's ``callback_data`` to carry
+    #: ``node_id:button_id``, and Meta's postback payloads take the same shape,
+    #: so the id has to reach the adapter — and :class:`Button` cannot carry it,
+    #: because ``Button.id`` is matched verbatim against the waiting node's
+    #: handles (``apps.flows.engine.waits``). Set by
+    #: ``apps.flows.engine.sending.deliver``; empty for an agent reply, an API
+    #: send, or anything else with no node behind it, and an adapter must treat
+    #: empty as "no node" rather than as a node named "".
+    #:
+    #: Carried in :meth:`to_body` so a retry reproduces the same wire payload.
+    #: The retry path rebuilds this object from the stored row hours later
+    #: (``apps.messaging.rendering.outbound_from_body``), and a lost node id
+    #: there would mean the second attempt's buttons carried different
+    #: ``callback_data`` from the first — with both keyboards live in the same
+    #: chat. Additive to the SPEC §7.2 shape: readers that do not know the key
+    #: ignore it, and an older row without it reads back as "".
+    node_id: str = ""
 
     def to_body(self) -> dict[str, Any]:
         """The SPEC §7.2 ``message.body`` json.
 
         L3-A stores this on the message row, so the shape is a persisted
-        contract: blocks carry their own ``type`` discriminator and the four
-        top-level keys are always present, even when empty.
+        contract: blocks carry their own ``type`` discriminator and every
+        top-level key is always present, even when empty. Keys are added
+        additively (``node_id`` arrived with issue #12) and never removed or
+        renamed — rows written by an older release stay readable, which is what
+        ``apps.messaging.rendering`` depends on to retry them.
         """
         return {
             "blocks": [_block_json(block) for block in self.blocks],
@@ -237,6 +259,7 @@ class OutboundMessage:
             "quick_replies": [{"id": qr.id, "label": qr.label} for qr in self.quick_replies],
             "tag": self.tag,
             "template_ref": self.template_ref,
+            "node_id": self.node_id,
         }
 
 

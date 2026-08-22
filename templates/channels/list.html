@@ -13,7 +13,7 @@
   {% if rows %}
     <table>
       <thead>
-        <tr><th></th><th>Name</th><th>Account</th><th>Status</th><th>Webhook URL</th><th></th></tr>
+        <tr><th></th><th>Name</th><th>Account</th><th>Status</th><th>Last event</th><th>Webhook URL</th><th></th></tr>
       </thead>
       <tbody>
         {% for row in rows %}
@@ -36,6 +36,19 @@
               </span>
               {% if not row.adapter_ready %}
                 <br /><span class="muted">Adapter ships with {{ row.connect_flow_issue }}</span>
+              {% endif %}
+            </td>
+            {% comment %}
+            Webhook health. "Nothing yet" and "nothing since Tuesday" are the two
+            ways a misconfigured webhook shows itself, and neither is visible
+            from the row's own status — a bot pointed at the wrong URL looks
+            exactly like a bot nobody has messaged.
+            {% endcomment %}
+            <td>
+              {% if row.last_event_at %}
+                <span title="{{ row.last_event_at|date:"c" }}">{{ row.last_event_at|timesince }} ago</span>
+              {% else %}
+                <span class="muted">Nothing received yet</span>
               {% endif %}
             </td>
             <td><code>{{ row.webhook_url }}</code></td>
@@ -81,7 +94,10 @@
           {% include "partials/_platform_icon.html" with platform=platform.value size="sm" %}
         </span>
         {{ platform.label }} —
-        {% if platform.adapter_ready %}
+        {% if platform.connect_url %}
+          <a href="{{ platform.connect_url }}">set it up</a> — paste a BotFather token and
+          we do the rest.
+        {% elif platform.adapter_ready %}
           adapter installed.
         {% else %}
           guided setup arrives with {{ platform.issue }}. A connection added now holds its

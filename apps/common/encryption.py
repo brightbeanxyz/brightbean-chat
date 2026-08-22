@@ -174,6 +174,14 @@ class EncryptedJSONField(models.TextField):
     silently match nothing. See the module docstring.
     """
 
+    # django-stubs types a field's attribute from the class it subclasses, so
+    # without these every `connection.credentials = {...}` is a type error
+    # against ``str`` even though the column holds JSON and ``get_prep_value``
+    # is what serialises it. These are the hooks django-stubs reads to describe
+    # a custom field's Python-side types; they have no runtime effect.
+    _pyi_private_set_type: Any
+    _pyi_private_get_type: Any
+
     def get_prep_value(self, value: Any) -> str | None:
         if value is None:
             return None

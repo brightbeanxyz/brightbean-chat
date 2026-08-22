@@ -18,6 +18,7 @@ const COMPLETE = {
   "stats-url": "/w/ws/api/flows/flow-1/stats/",
   "schema-url": "/w/ws/api/flows/schema/",
   "media-picker-url": "/w/ws/media/picker/",
+  "preview-url": "/w/ws/settings/channels/telegram/preview/flow-1/",
 };
 
 describe("reading the mount div", () => {
@@ -30,6 +31,7 @@ describe("reading the mount div", () => {
       statsUrl: "/w/ws/api/flows/flow-1/stats/",
       schemaUrl: "/w/ws/api/flows/schema/",
       mediaPickerUrl: "/w/ws/media/picker/",
+      previewUrl: "/w/ws/settings/channels/telegram/preview/flow-1/",
     });
   });
 

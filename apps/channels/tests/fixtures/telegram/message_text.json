@@ -1,0 +1,10 @@
+{
+  "update_id": 900001,
+  "message": {
+    "message_id": 41,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada", "last_name": "Lovelace", "username": "ada", "language_code": "en"},
+    "chat": {"id": 5150, "first_name": "Ada", "username": "ada", "type": "private"},
+    "date": 1735689600,
+    "text": "Do you deliver to Berlin?"
+  }
+}

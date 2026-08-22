@@ -133,18 +133,50 @@ def _host(url: str) -> str:
 
 
 def _retry_after(response: httpx.Response) -> float | None:
-    """``Retry-After`` in seconds, if the platform sent a usable one.
+    """How long to wait, from the header or the body — whichever the platform used.
 
-    Only the delta-seconds form is honoured. The HTTP-date form is legal and
-    nobody's messaging API uses it; parsing dates from an attacker-adjacent
-    header to derive a sleep duration is not worth the surface.
+    Only the delta-seconds form of ``Retry-After`` is honoured. The HTTP-date
+    form is legal and nobody's messaging API uses it; parsing dates from an
+    attacker-adjacent header to derive a sleep duration is not worth the
+    surface.
+
+    The body is consulted when the header is absent because Telegram documents
+    its answer as ``parameters.retry_after`` in the JSON and does not always
+    send the header (SPEC §6.2: "on HTTP 429 honor ``retry_after``"). Without
+    this the adapter would get ``retry_after=None`` and the send pipeline would
+    fall back to generic backoff, which is exactly the guess the platform just
+    told us not to make. Reading the body on a 429 costs nothing —
+    :func:`_error_code` already does it one line later.
+
+    A value is only believed if it is a non-negative, finite number. Anything
+    else is the platform's problem and the caller's own backoff is better than a
+    sleep derived from garbage.
     """
-    raw = response.headers.get("Retry-After", "").strip()
+    header = _seconds(response.headers.get("Retry-After", "").strip())
+    if header is not None:
+        return header
     try:
-        value = float(raw)
+        body = response.json()
     except ValueError:
         return None
-    return value if value >= 0 else None
+    if not isinstance(body, dict):
+        return None
+    parameters = body.get("parameters")
+    source = parameters if isinstance(parameters, dict) else body
+    return _seconds(source.get("retry_after"))
+
+
+def _seconds(raw: Any) -> float | None:
+    """``raw`` as a non-negative, finite number of seconds, or None."""
+    if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    # NaN fails every comparison, so `>= 0` already rejects it; infinity does
+    # not, and would become a retry scheduled at the end of time.
+    return value if 0 <= value < float("inf") else None
 
 
 def _error_code(response: httpx.Response) -> str:
@@ -251,3 +283,20 @@ class Adapter(ABC):
 
     def mark_seen(self, connection: "ChannelConnection", identity: Any) -> None:  # noqa: B027
         """Mark the conversation read. No-op where the platform has none."""
+
+    # -- lifecycle ----------------------------------------------------------
+
+    def on_disconnect(self, connection: "ChannelConnection") -> None:  # noqa: B027
+        """Tell the platform to stop sending, just before the row is deleted.
+
+        Not part of SPEC §6.1's list, and here because every platform has some
+        version of it — Telegram's ``deleteWebhook``, Meta's unsubscribe, a
+        Twilio callback URL cleared — and the alternative is six special cases
+        in ``apps.channels.views.connection_delete``. Empty by default, like
+        the two indicators above: a platform with nothing to tell says nothing.
+
+        Called on a **best-effort** basis. The connection is going away whether
+        or not the platform agrees, so an implementation may raise and the
+        caller will log and carry on; what it must not do is leave the operator
+        unable to disconnect because a remote API is down.
+        """

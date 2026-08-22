@@ -1,4 +1,4 @@
-"""Retention for the raw webhook event log (SPEC §5).
+"""Retention for the raw webhook event log and expired preview links (SPEC §5).
 
     Prune rows older than 30 days via housekeeping job.
 
@@ -88,3 +88,19 @@ def _prune_webhook_event_log_job() -> str | None:
     """
     deleted = prune_webhook_event_log()
     return f"pruned {deleted} webhook event log rows" if deleted else None
+
+
+@register_housekeeping_job("prune_flow_preview_links")
+def _prune_flow_preview_links_job() -> str | None:
+    """Clear out spent "test on Telegram" links (issue #12).
+
+    A separate job rather than a second statement inside the one above, because
+    the two have unrelated retention rules and an operator reading the hourly
+    log should see which one did the work. Imported late: the preview module
+    reaches into the flow engine, and this module is imported from
+    ``ChannelsConfig.ready``.
+    """
+    from apps.channels.preview import prune_expired_links
+
+    deleted = prune_expired_links()
+    return f"pruned {deleted} expired flow preview links" if deleted else None

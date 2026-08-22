@@ -22,6 +22,7 @@ worth giving up for that; the double-submit it protects against would just mint
 another secret.
 """
 
+import logging
 from typing import Any
 
 from django.contrib import messages
@@ -34,13 +35,16 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.channels.capabilities import capabilities_for
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR, ChannelConnectionForm
-from apps.channels.models import ChannelConnection, ConnectionStatus
+from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEventLog
 from apps.channels.policy import policy_for
-from apps.channels.registry import has_adapter
+from apps.channels.providers.exceptions import AdapterError
+from apps.channels.registry import AdapterNotRegisteredError, adapter_for, has_adapter
 from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
+
+logger = logging.getLogger(__name__)
 
 PLATFORM_LABELS = dict(Platform.choices)
 
@@ -48,7 +52,8 @@ PLATFORM_LABELS = dict(Platform.choices)
 #: placeholder panels so an operator looking at an empty page knows whether they
 #: have misconfigured something or are simply early.
 CONNECT_FLOW_ISSUES: dict[str, str] = {
-    Platform.TELEGRAM: "#12 (L4-B)",
+    # Telegram is absent: #12 shipped its guided flow, and the list template
+    # links to it instead of naming an issue.
     Platform.INSTAGRAM: "#17 (L5-A)",
     Platform.MESSENGER: "#18 (L5-B)",
     Platform.WHATSAPP: "#19 (L5-C)",
@@ -123,7 +128,36 @@ def _connection_context(request: WorkspaceRequest, connection: ChannelConnection
         "policy": policy_for(connection.platform),
         "adapter_ready": has_adapter(connection.platform),
         "connect_flow_issue": CONNECT_FLOW_ISSUES.get(connection.platform, ""),
+        "last_event_at": _last_event_at(connection),
     }
+
+
+#: Platforms with a guided connect flow, and the route that serves it.
+CONNECT_ROUTES: dict[str, str] = {Platform.TELEGRAM: "channels:telegram_connect"}
+
+
+def _connect_url(request: WorkspaceRequest, platform: str, workspace_id: str) -> str:
+    """The guided connect route for ``platform``, or "" if it has none yet."""
+    route = CONNECT_ROUTES.get(platform)
+    return reverse(route, kwargs={"workspace_id": workspace_id}) if route else ""
+
+
+def _last_event_at(connection: ChannelConnection) -> Any:
+    """When this connection last received anything, or None.
+
+    Webhook health, as the settings card shows it (issue #12). "Nothing has
+    arrived yet" and "nothing has arrived since Tuesday" are the two ways a
+    misconfigured webhook presents, and neither is visible from the connection
+    row itself — a bot with a wrong ``setWebhook`` URL looks exactly like a bot
+    nobody has messaged.
+
+    ``WebhookEventLog`` carries no workspace column by design (see its model
+    docstring), so this filters by the connection, which is already scoped by
+    the caller. ``values()`` because the row itself is a raw attacker-supplied
+    payload we have no reason to load.
+    """
+    row = WebhookEventLog.objects.filter(connection=connection).order_by("-received_at").values("received_at").first()
+    return row["received_at"] if row else None
 
 
 @login_required
@@ -143,6 +177,10 @@ def connection_list(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
                     "label": label,
                     "adapter_ready": has_adapter(value),
                     "issue": CONNECT_FLOW_ISSUES.get(value, ""),
+                    # A guided connect flow where one exists. Telegram's is the
+                    # only one today (#12); each Layer-5 adapter adds its own
+                    # here rather than the template growing a per-platform if.
+                    "connect_url": _connect_url(request, value, workspace_id),
                 }
                 for value, label in Platform.choices
             ],
@@ -238,12 +276,34 @@ def connection_rotate_secret(request: WorkspaceRequest, workspace_id: str, conne
 @require_permission("manage_channels")
 @require_POST
 def connection_delete(request: WorkspaceRequest, workspace_id: str, connection_id: str) -> HttpResponse:
-    """Remove a connection and, by cascade, its webhook event log."""
+    """Remove a connection and, by cascade, its webhook event log.
+
+    The platform is told first, so a bot we are about to forget stops delivering
+    to a URL that will answer 403 forever after (Telegram's ``deleteWebhook``,
+    and whatever each Layer-5 platform's equivalent turns out to be). Best
+    effort by contract — see ``Adapter.on_disconnect`` — because the operator
+    asked to disconnect and a platform being down is not a reason to refuse.
+    """
     connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
     name = connection.display_name
+    _notify_disconnect(connection)
     connection.delete()
     messages.success(request, f"Disconnected {name}.")
     return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
+
+
+def _notify_disconnect(connection: ChannelConnection) -> None:
+    """Tell the platform to stop, and never let that stop the disconnect."""
+    try:
+        adapter_for(connection.platform).on_disconnect(connection)
+    except AdapterNotRegisteredError:
+        # Nothing to tell: the platform has no adapter yet, which is the state
+        # five of the six are in.
+        return
+    except (AdapterError, OSError):
+        logger.warning("Could not tell %s to stop delivering for connection %s.", connection.platform, connection.pk)
+    except Exception:
+        logger.exception("Unexpected failure disconnecting connection %s.", connection.pk)
 
 
 def _render_secret(
