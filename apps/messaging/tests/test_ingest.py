@@ -19,6 +19,7 @@ from apps.messaging.ingest import (
 from apps.messaging.models import (
     ContactChannelIdentity,
     Conversation,
+    ConversationState,
     Message,
     MessageDirection,
     MessageSource,
@@ -125,6 +126,52 @@ class TestIdempotency:
         persist_events(connection, [make_event(connection, event_id="e1")])
         persist_events(other, [make_event(other, user="+15550101234", event_id="e1")])
         assert messages(tenancy.workspace).count() == 2
+
+
+class TestInboundKeyBounds:
+    def test_two_long_ids_sharing_a_prefix_are_two_messages(self, tenancy: Any, connection: Any) -> None:
+        """Slicing the key to fit the column meant two genuinely different
+        messages produced one key, and the second was discarded as a duplicate
+        of the first. The id is hashed instead."""
+        prefix = "e" * 300
+        persist_events(connection, [make_event(connection, event_id=prefix + "a", text="first")])
+        persist_events(connection, [make_event(connection, event_id=prefix + "b", text="second")])
+        assert messages(tenancy.workspace).count() == 2
+
+    def test_a_long_id_still_deduplicates_itself(self, tenancy: Any, connection: Any) -> None:
+        event = make_event(connection, event_id="e" * 400)
+        persist_events(connection, [event])
+        persist_events(connection, [event])
+        assert messages(tenancy.workspace).count() == 1
+
+    def test_a_nul_in_the_event_id_does_not_break_persistence(self, tenancy: Any, connection: Any) -> None:
+        """Postgres cannot store NUL in a text column, so an unscrubbed id made
+        the insert fail and the message vanish."""
+        persist_events(connection, [make_event(connection, event_id="e\x001", text="kept")])
+        assert messages(tenancy.workspace).get().body["blocks"][0]["text"] == "kept"
+
+    def test_the_key_fits_the_column(self, tenancy: Any, connection: Any) -> None:
+        persist_events(connection, [make_event(connection, event_id="e" * 5000)])
+        assert len(messages(tenancy.workspace).get().idempotency_key) <= 255
+
+
+class TestReopeningDoneThreads:
+    def test_an_inbound_message_reopens_a_finished_thread(self, tenancy: Any, connection: Any) -> None:
+        """The inbox list filters on state (SPEC §14), so leaving it done files
+        a message the contact just sent somewhere no agent is looking."""
+        persist_events(connection, [make_event(connection, event_id="e1")])
+        conversation = Conversation.objects.for_workspace(tenancy.workspace).get()
+        Conversation.all_objects.filter(pk=conversation.pk).update(state=ConversationState.DONE)
+
+        persist_events(connection, [make_event(connection, event_id="e2")])
+
+        conversation.refresh_from_db()
+        assert conversation.state == ConversationState.OPEN
+
+    def test_an_open_thread_is_left_alone(self, tenancy: Any, connection: Any) -> None:
+        persist_events(connection, [make_event(connection, event_id="e1")])
+        conversation = Conversation.objects.for_workspace(tenancy.workspace).get()
+        assert conversation.state == ConversationState.OPEN
 
 
 class TestWindowBookkeeping:
@@ -295,6 +342,26 @@ class TestBodyShape:
         assert messages(tenancy.workspace).get().body["ref"] == "promo-42"
 
 
+class TestMalformedPayloadFields:
+    @pytest.mark.parametrize("value", [42, None, {"a": 1}, object()])
+    def test_a_wrongly_typed_attachments_field_keeps_the_message(
+        self, tenancy: Any, connection: Any, value: Any
+    ) -> None:
+        """EventPayload's contract is that a wrongly typed key leaves the field
+        at its default. Slicing this one used to raise TypeError, which
+        persist_events swallows — so one bad field cost the whole message rather
+        than just its attachments."""
+        payload = EventPayload(text="still readable", attachments=value)  # type: ignore[arg-type]
+        persist_events(connection, [make_event(connection, payload=payload)])
+        body = messages(tenancy.workspace).get().body
+        assert body["blocks"] == [{"type": "text", "text": "still readable"}]
+
+    def test_a_string_attachments_field_is_not_iterated_as_characters(self, tenancy: Any, connection: Any) -> None:
+        payload = EventPayload(text="", attachments="https://x.test/a.png")  # type: ignore[arg-type]
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert messages(tenancy.workspace).get().body["blocks"] == []
+
+
 class TestDeliveryStatus:
     @pytest.fixture
     def sent(self, tenancy: Any, connection: Any) -> Message:
@@ -363,6 +430,18 @@ class TestDeliveryStatus:
         sent.refresh_from_db()
         assert sent.status == MessageStatus.SENT
 
+    def test_a_queued_receipt_cannot_walk_a_failed_message_backwards(
+        self, tenancy: Any, connection: Any, sent: Message
+    ) -> None:
+        """It used to: 'queued' passed the vocabulary check, and the
+        beats-a-failure rule then wrote it over the failure and cleared the
+        error — leaving a row in a state nothing would ever move again."""
+        Message.all_objects.filter(pk=sent.pk).update(status=MessageStatus.FAILED, error="timeout")
+        persist_events(connection, [self.receipt(connection, provider_message_id="pm-1", status="queued")])
+        sent.refresh_from_db()
+        assert sent.status == MessageStatus.FAILED
+        assert sent.error == "timeout"
+
     def test_a_receipt_never_touches_the_window(self, tenancy: Any, connection: Any, sent: Message) -> None:
         """Our own delivery receipt is not the contact interacting with us."""
         identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get()
@@ -379,6 +458,10 @@ class TestDeliveryStatus:
             {"status": "delivered"},
             {"provider_message_id": "pm-1", "status": "not-a-status"},
             {"provider_message_id": "", "status": "read"},
+            # "queued" is a real MessageStatus but not a receipt: it is a state
+            # *we* put a message into before calling anyone, never something a
+            # platform reports back.
+            {"provider_message_id": "pm-1", "status": "queued"},
         ],
     )
     def test_an_unusable_payload_is_ignored_rather_than_raised_on(

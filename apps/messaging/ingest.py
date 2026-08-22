@@ -99,11 +99,12 @@ from apps.channels import ingest as channels_ingest
 from apps.channels.events import EventType, NormalizedEvent
 from apps.channels.policy import policy_for
 from apps.messaging.events import EVENT_MESSAGE_RECEIVED, emit
-from apps.messaging.identities import bounded_address, record_consent, resolve_identity
+from apps.messaging.identities import bounded_address, bounded_key, record_consent, resolve_identity
 from apps.messaging.models import (
     DELIVERY_PROGRESS,
     ContactChannelIdentity,
     Conversation,
+    ConversationState,
     Message,
     MessageDirection,
     MessageStatus,
@@ -137,6 +138,16 @@ CONTACT_ONLY_EVENTS = frozenset({EventType.FOLLOW})
 #: Every type that resolves an identity at all. A type outside this set either
 #: updates an existing row (``delivery_status``) or is ignored (``comment``).
 IDENTITY_EVENTS = THREAD_EVENTS | ACTIVITY_EVENTS | CONTACT_ONLY_EVENTS | {EventType.OPT_OUT}
+
+#: What a ``delivery_status`` receipt may say. Narrower than
+#: ``MessageStatus.values`` on purpose: ``queued`` is a state *we* put a message
+#: into before calling anyone, never something a platform reports back, and
+#: accepting it let a receipt walk a failed message backwards to queued and
+#: clear its error — a row nothing would ever move again.
+RECEIPT_STATUSES = frozenset({MessageStatus.SENT, MessageStatus.DELIVERED, MessageStatus.READ, MessageStatus.FAILED})
+
+#: Room for the ``in:`` prefix inside ``Message.idempotency_key``'s 255.
+MAX_EVENT_ID_CHARS = 200
 
 #: Cap on stored inbound text (SECURITY-BASELINE §7). Generous — the widest
 #: platform ceiling is email's 100k — and the point is that it is bounded at all,
@@ -259,7 +270,16 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
     if event.type in THREAD_EVENTS and message is None:
         # Already persisted. Returning before the bookkeeping is what stops a
         # redelivery re-extending the messaging window past first-receipt plus
-        # window_hours — which would be a policy violation, not a cosmetic one.
+        # window_hours.
+        #
+        # This guard covers thread events only, because the message row is what
+        # it is built on. An activity event carries no row and so has no
+        # second-line dedup: redelivery of one is caught upstream by
+        # ``webhook_event_log``'s unique (connection, provider_event_id), and a
+        # deliberate re-dispatch of the same batch re-extends its window by the
+        # gap between the two calls. That is bounded by how long a caller takes
+        # to retry rather than by anything a platform controls, which is why it
+        # is documented here rather than defended against with a second table.
         return
 
     _record_activity(identity, contact, conversation, now, message_at=now if message else None)
@@ -277,13 +297,23 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
 
 
 def _conversation_for(contact: Any, connection: Any) -> Conversation:
-    """The thread for this contact on this connection, creating it if new."""
+    """The thread for this contact on this connection, creating it if new.
+
+    A thread marked ``done`` reopens. The inbox list filters on ``state`` (SPEC
+    §14), so leaving it closed would file a message the contact just sent
+    somewhere no agent is looking — and ``services.open_conversation`` already
+    reopens on the outbound side, which made the closed half of the pair the
+    odd one out rather than a deliberate choice.
+    """
     conversation = (
         Conversation.objects.for_workspace(contact.workspace_id)
         .filter(contact=contact, channel_connection=connection)
         .first()
     )
     if conversation is not None:
+        if conversation.state == ConversationState.DONE:
+            conversation.state = ConversationState.OPEN
+            conversation.save(update_fields=["state", "updated_at"])
         return conversation
     conversation = Conversation(contact=contact, channel_connection=connection)
     try:
@@ -307,8 +337,15 @@ def inbound_idempotency_key(event: NormalizedEvent) -> str:
     seam is driven directly: a replayed batch, a retried processor, L4-A's
     ordered stages re-running after a partial failure. The uniqueness is the
     database's, not a prior read's, so two concurrent attempts cannot both win.
+
+    The id is bounded by hashing rather than by slicing. Slicing to fit the
+    column meant two ids agreeing on a long prefix produced one key, and the
+    second — a genuinely different message — was discarded as a duplicate; a NUL
+    in the id meanwhile made the insert fail outright. ``_dedup_id`` in the
+    webhook view already scrubs and hashes for the log's own constraint, and
+    this layer needs the same treatment for its own.
     """
-    return f"in:{event.provider_event_id}"[:255]
+    return f"in:{bounded_key(event.provider_event_id, limit=MAX_EVENT_ID_CHARS)}"
 
 
 def _insert_inbound(conversation: Conversation, event: NormalizedEvent) -> Message | None:
@@ -342,7 +379,13 @@ def _inbound_body(event: NormalizedEvent) -> dict[str, Any]:
     text = _clean(payload.text, MAX_TEXT_CHARS)
     if text:
         blocks.append({"type": "text", "text": text})
-    for url in payload.attachments[:MAX_ATTACHMENTS]:
+    # Type-checked before slicing, not assumed. EventPayload's contract is that
+    # an adapter meeting a wrongly typed key leaves the field at its default, and
+    # ``text`` is guarded by _clean for exactly that reason — but an int here
+    # used to raise TypeError, which persist_events swallows, so one bad field
+    # cost the whole message rather than just its attachments.
+    attachments = payload.attachments if isinstance(payload.attachments, list | tuple) else ()
+    for url in attachments[:MAX_ATTACHMENTS]:
         cleaned = _clean(url, MAX_ATTACHMENT_URL_CHARS)
         if cleaned:
             # Recorded, never fetched: SECURITY-BASELINE §6 forbids a
@@ -418,7 +461,7 @@ def _apply_delivery_status(connection: Any, event: NormalizedEvent) -> None:
     extra = event.payload.extra if isinstance(event.payload.extra, dict) else {}
     provider_id = _clean(extra.get("provider_message_id"), 200)
     status = extra.get("status")
-    if not provider_id or status not in MessageStatus.values:
+    if not provider_id or status not in RECEIPT_STATUSES:
         logger.debug("Unusable delivery_status payload on connection %s; ignored.", connection.pk)
         return
 

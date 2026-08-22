@@ -8,7 +8,7 @@ process, the convention every app here follows (see ``apps/channels/apps.py``):
   L4-A replaces in place;
 * the **condition source** ``window``, declared with no implementation by
   ``apps.contacts.conditions`` and owned by this issue;
-* the **queue handler** ``send_retry`` (added in PR 2).
+* the **queue handler** ``send_retry``, and this app's settings checks.
 
 Imports live inside the method rather than at module scope so model imports stay
 out of app loading.
@@ -23,6 +23,10 @@ class MessagingConfig(AppConfig):
     verbose_name = "Messaging"
 
     def ready(self) -> None:
+        from apps.messaging import (
+            checks,  # noqa: F401  (registration side effect)
+            handlers,  # noqa: F401  (registers send_retry)
+        )
         from apps.messaging.conditions import register_window_source
         from apps.messaging.ingest import register_processors
 

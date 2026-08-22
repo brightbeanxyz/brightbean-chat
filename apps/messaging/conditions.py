@@ -63,12 +63,14 @@ def _window_q(ctx: _CompilationContext, rule: Rule) -> Q:
 
     1. **An identity exists** for this platform. A contact whose address we do
        not hold is not "inside" anything.
-    2. **It is not opted out.** The only real use of this source is targeting a
-       send, and a filter that looks safe while quietly including people who
-       said stop is worse than no filter at all (SPEC §19). Opt-out is enforced
-       in the compliance engine so it cannot be bypassed; a targeting source
-       that disagreed with it would hand an operator a count that the send then
-       silently shrinks.
+    2. **There is consent and no opt-out.** The only real use of this source is
+       targeting a send, and a filter that looks safe while quietly including
+       people the send then refuses is worse than no filter at all (SPEC §19).
+       Both halves matter: an opted-out identity is obvious, but an identity
+       with no recorded consent at all — captured by import or API — is refused
+       by ``can_send`` with ``no_opt_in`` just as firmly, and on a windowless
+       platform there is no date predicate left to exclude it. Leaving it in
+       handed an operator a count the send then silently shrank.
     3. **The window is open — if the platform has one.** Telegram, SMS and email
        have ``window_hours=None``, so their identities never carry a
        ``window_expires_at`` and a bare date comparison would put *nobody*
@@ -95,6 +97,7 @@ def _window_q(ctx: _CompilationContext, rule: Rule) -> Q:
     rows = ContactChannelIdentity.objects.for_workspace(ctx.workspace).filter(
         contact=OuterRef("pk"),
         platform=rule.key,
+        opt_in=True,
         opted_out_at__isnull=True,
     )
     if policy_for(rule.key).has_window():

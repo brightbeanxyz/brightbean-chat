@@ -49,6 +49,7 @@ from typing import Any, ClassVar
 from django.conf import settings
 from django.db import models
 
+from apps.common.models import BaseModel
 from apps.common.platforms import Platform
 from apps.common.scoping import WorkspaceScopedModel
 from apps.contacts.models import Contact, ContactScopedModel
@@ -63,6 +64,7 @@ __all__ = [
     "MessageSource",
     "MessageStatus",
     "OptInSource",
+    "SendBucket",
 ]
 
 
@@ -330,6 +332,17 @@ class Message(WorkspaceScopedModel):
     idempotency_key = models.CharField(max_length=255, blank=True, default="")
     #: An inbox note (SPEC §14): stored as a message, never sent.
     internal = models.BooleanField(default=False)
+    #: How many times the provider has been called for this message. The retry
+    #: budget lives here rather than on the ``send_retry`` action, because the
+    #: *first* send is inline with no action row at all — an action-based budget
+    #: would be off by one from birth.
+    send_attempts = models.PositiveSmallIntegerField(default=0)
+    #: When the provider call was last started. Together with an empty
+    #: ``provider_message_id`` this is SPEC §9.4's **unknown outcome**: the call
+    #: went out and we never learned what happened to it. Null means the call
+    #: definitely has not happened, which is the only state a retry can re-send
+    #: from with no duplicate risk at all.
+    dispatched_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "messaging_message"
@@ -384,3 +397,51 @@ class Message(WorkspaceScopedModel):
             widened = set(update_fields)
             kwargs["update_fields"] = widened | {"workspace", "channel_connection"} if widened else widened
         super().save(*args, **kwargs)
+
+
+class SendBucket(BaseModel):
+    """A token bucket per channel connection (SPEC §8's rate throttling).
+
+    ``BaseModel``, not ``WorkspaceScopedModel``, and the choice is deliberate
+    enough to write down because SECURITY-BASELINE §1 invites the opposite
+    reading. This row holds a token count and a timestamp. It is never listed in
+    a UI, never filtered by workspace, and always fetched by connection primary
+    key — the same shape as ``apps.common.models.RateLimitCounter`` and
+    ``apps.channels.models.WebhookEventLog``, neither of which carries a
+    workspace column either. Scoping it would put a ``for_workspace()`` on the
+    hot path of every send and risk an ``UnscopedQueryError`` inside a worker,
+    for no isolation benefit: the connection it hangs off is the tenant
+    boundary, and reaching this row means already holding that connection.
+
+    Why a bucket and not ``apps.common.ratelimit``: that module is a **fixed
+    window**, which permits a full window's worth of sends in an instant at each
+    boundary. A platform that throttles at 25/second does not care that the
+    second ticked over. The house pattern it documents — a row, one
+    transaction, ``select_for_update`` — is what is borrowed; the arithmetic is
+    not.
+    """
+
+    connection = models.OneToOneField(
+        "channels.ChannelConnection",
+        on_delete=models.CASCADE,
+        related_name="send_bucket",
+    )
+    tokens = models.FloatField(default=0.0)
+    capacity = models.FloatField()
+    #: Tokens per second, from ``PlatformPolicy.rate_default`` unless
+    #: ``settings.DEFAULT_SEND_RATE_OVERRIDES`` names the platform.
+    refill_rate = models.FloatField()
+    #: Explicit rather than ``auto_now``: the refill arithmetic *reads* it, and
+    #: a column that updates itself on every save would refill the bucket by
+    #: zero seconds every time.
+    refilled_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "messaging_send_bucket"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(refill_rate__gt=0), name="bucket_rate_positive"),
+            models.CheckConstraint(condition=models.Q(tokens__gte=0), name="bucket_tokens_nonneg"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.refill_rate}/s bucket for connection {self.connection_id}"

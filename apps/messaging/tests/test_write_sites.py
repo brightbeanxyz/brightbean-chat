@@ -31,9 +31,12 @@ WRITE_SITES: dict[str, set[str]] = {
     "window_expires_at": {"messaging/ingest.py"},
     # Set by an inbound opt_out event; PR 2's facade adds no second site.
     "opted_out_at": {"messaging/ingest.py"},
-    # PR 2 turns this into {"messaging/services.py"}. Empty is the assertion
-    # that PR 1 leaves the column alone, and the line PR 2 deliberately flips.
-    "automation_paused_until": set(),
+    # SPEC §14's agent takeover, and L4-D's manual pause/resume toggle. Both go
+    # through services.pause_automation() — the agent-send pause in particular
+    # lives inside send_outbound() rather than at its caller, because contract 1
+    # says so and because a caller that forgot it would leave automation
+    # replying over an agent mid-conversation.
+    "automation_paused_until": {"messaging/services.py"},
 }
 
 
@@ -71,8 +74,12 @@ def test_a_routing_field_is_written_in_one_place_only(field: str) -> None:
     allowed = WRITE_SITES[field]
     writers = set()
     for path in python_sources():
-        # The model file declares the column; a declaration is not a write.
-        if path.name == "models.py":
+        # The module that declares the columns; a field declaration is not a
+        # write. Matched on its full path, not the bare filename: skipping every
+        # models.py in the project would let a save() override or a signal
+        # receiver in *another* app assign one of these columns unseen, which is
+        # exactly the invisible second write site this test exists to catch.
+        if path.relative_to(APPS) == Path("messaging/models.py"):
             continue
         if field not in path.read_text():
             continue

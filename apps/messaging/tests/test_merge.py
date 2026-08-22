@@ -14,9 +14,11 @@ import pytest
 from apps.common.platforms import Platform
 from apps.contacts.models import ContactStatus
 from apps.contacts.services import create_contact, merge_contacts
+from apps.messaging.handlers import schedule_send_retry
 from apps.messaging.ingest import persist_events
-from apps.messaging.models import ContactChannelIdentity, Conversation, Message
+from apps.messaging.models import ContactChannelIdentity, Conversation, Message, MessageStatus
 from apps.messaging.tests.conftest import make_connection, make_event
+from apps.queueing.models import ActionStatus, ScheduledAction
 
 pytestmark = pytest.mark.django_db
 
@@ -111,6 +113,87 @@ class TestConversations:
         merge_contacts(primary=first, duplicate=second)
 
         assert threads(tenancy.workspace, first).count() == 2
+
+
+class TestQueuedSendsFollowTheSurvivor:
+    def test_a_pending_send_retry_is_retargeted(self, tenancy: Any, connection: Any) -> None:
+        """ScheduledAction.contact_id is a plain UUID, not a foreign key, so
+        nothing cascades it. Left naming the tombstone, the worker would take
+        the *deleted* contact's advisory lock while the handler sent a message
+        that now belongs to the survivor — so the send could interleave with
+        flow work holding the survivor's lock, which is the one thing SPEC §9.6
+        exists to prevent."""
+        persist_events(connection, [make_event(connection, user="u1")])
+        duplicate = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get().contact
+        conversation = threads(tenancy.workspace, duplicate).get()
+        message = Message.objects.create(
+            conversation=conversation,
+            direction="out",
+            source="automation",
+            status=MessageStatus.QUEUED,
+            idempotency_key="pending",
+            send_attempts=1,
+        )
+        action = schedule_send_retry(message)
+        assert action is not None
+        assert action.contact_id == duplicate.pk
+
+        primary = create_contact(tenancy.workspace, first_name="Survivor")
+        merge_contacts(primary=primary, duplicate=duplicate)
+
+        action.refresh_from_db()
+        assert action.contact_id == primary.pk
+
+    def test_a_finished_retry_is_left_alone(self, tenancy: Any, connection: Any) -> None:
+        """Only pending work needs its lock moved; a completed action is history."""
+        persist_events(connection, [make_event(connection, user="u1")])
+        duplicate = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get().contact
+        conversation = threads(tenancy.workspace, duplicate).get()
+        message = Message.objects.create(
+            conversation=conversation,
+            direction="out",
+            source="automation",
+            status=MessageStatus.SENT,
+            idempotency_key="done",
+            send_attempts=1,
+        )
+        action = schedule_send_retry(message)
+        assert action is not None
+        ScheduledAction.objects.unscoped().filter(pk=action.pk).update(status=ActionStatus.DONE)
+
+        primary = create_contact(tenancy.workspace, first_name="Survivor")
+        merge_contacts(primary=primary, duplicate=duplicate)
+
+        action.refresh_from_db()
+        assert action.contact_id == duplicate.pk
+
+
+class TestCollidingIdempotencyKeys:
+    def test_two_threads_holding_one_key_still_merge(self, tenancy: Any, connection: Any) -> None:
+        """(conversation, idempotency_key) is unique, so folding two threads that
+        each hold a message with the same key used to raise out of the bulk
+        update and take the whole merge down. History is never dropped; the key
+        is cleared instead, because it guards a *future* insert and a thread
+        being merged away has none."""
+        persist_events(connection, [make_event(connection, user="u1", event_id="e1", text="from A")])
+        first = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get().contact
+        persist_events(connection, [make_event(connection, user="u2", event_id="e2", text="from B")])
+        second = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).exclude(contact=first).get().contact
+        # The same key in both threads — two sends that reused one across
+        # contacts, or one provider event persisted to both people.
+        for conversation in Conversation.objects.for_workspace(tenancy.workspace):
+            Message.objects.for_workspace(tenancy.workspace).filter(conversation=conversation).update(
+                idempotency_key="shared"
+            )
+
+        merge_contacts(primary=first, duplicate=second)
+
+        surviving = threads(tenancy.workspace, first).get()
+        moved = Message.objects.for_workspace(tenancy.workspace).filter(conversation=surviving)
+        assert moved.count() == 2
+        assert {m.body["blocks"][0]["text"] for m in moved} == {"from A", "from B"}
+        # Exactly one kept the key; the other had it cleared to make room.
+        assert sorted(m.idempotency_key for m in moved) == ["", "shared"]
 
 
 class TestTheTombstoneIsClean:
