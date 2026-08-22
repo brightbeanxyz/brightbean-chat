@@ -1066,6 +1066,29 @@ span.flatpickr-weekday {
 /* Unknown platform key — the partial's fallback glyph on a neutral chip. */
 .pi-unknown   { background: var(--neutral-400); }
 
+/* ═══════════════════════════════════════════════════════════════
+   STATUS PILLS
+   One connection's status, in the channel settings list (issue #4). Written
+   here rather than as Tailwind utilities at the call site because everything
+   in this file is unlayered and therefore beats @layer utilities — a
+   `bg-success-50` next to a component class would lose silently. Named for the
+   ChannelConnection.status values so a template writes
+   `status-pill-{{ connection.status }}` and a value with no rule falls back to
+   the neutral base rather than rendering unstyled.
+   ═══════════════════════════════════════════════════════════════ */
+.status-pill {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--neutral-100);
+  color: var(--text-secondary);
+}
+.status-pill-active       { background: var(--success-50); color: var(--success-700); }
+.status-pill-needs_reauth { background: var(--warning-50); color: var(--warning-700); }
+.status-pill-disabled     { background: var(--neutral-100); color: var(--text-secondary); }
+
 /* Tint the glyph itself rather than the chip behind it. */
 .pi-ink-telegram  { color: var(--platform-telegram); }
 .pi-ink-instagram { color: var(--platform-instagram); }

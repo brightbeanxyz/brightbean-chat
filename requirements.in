@@ -29,6 +29,13 @@ gunicorn==26.1.0
 django-csp==4.0            # 4.x dict-form config; see config/settings/base.py
 cryptography==50.0.0       # AES-256-GCM + HKDF for apps/common/encryption.py
 
+# Platform HTTP (channel adapters — apps/channels/providers/base.py)
+# Direct dependency of the adapter base: timeouts, 429 handling and error
+# mapping are shared by every Layer-4/5 adapter, which is what makes contract 4's
+# "one module and one registry line" per platform true. Its MockTransport is
+# also what lets that policy be tested without a network.
+httpx==0.28.1
+
 # Static files
 whitenoise==6.12.0
 

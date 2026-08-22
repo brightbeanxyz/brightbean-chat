@@ -150,6 +150,7 @@ LOCAL_APPS = [
     "apps.workspaces",
     "apps.members",
     "apps.credentials",
+    "apps.channels",
     "apps.media_library",
     "apps.flows",
     "apps.notifications",
@@ -337,6 +338,38 @@ TICK_TOKEN = env("TICK_TOKEN", default="")
 # disables a security control rather than breaking a redirect. Behind a tunnel,
 # set TRUSTED_PROXIES=127.0.0.1 to get per-caller buckets back.
 TRUSTED_PROXIES = env.list("TRUSTED_PROXIES", default=[])
+
+# ---------------------------------------------------------------------------
+# Webhook ingestion (issue #4; SPEC §7.1, SECURITY-BASELINE §§2, 4, 7)
+# ---------------------------------------------------------------------------
+# /webhooks/ is the only unauthenticated write path in the product, so its
+# limits are settings rather than constants: a deployment behind a platform
+# that batches unusually large deliveries can raise the cap without a fork,
+# and one under attack can tighten the throttle without a deploy.
+#
+# The body cap is checked from Content-Length *before* the body is read, and
+# is deliberately far below DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB): real webhook
+# deliveries are single-digit kilobytes.
+WEBHOOK_MAX_BODY_BYTES = env.int("WEBHOOK_MAX_BODY_BYTES", default=256 * 1024)
+
+# Nesting cap, applied to the raw bytes before json.loads ever sees them —
+# Python's JSON parser recurses, so a nesting bomb is a stack overflow rather
+# than a catchable exception.
+WEBHOOK_MAX_JSON_DEPTH = env.int("WEBHOOK_MAX_JSON_DEPTH", default=20)
+
+# Signature-failure throttle. A correctly configured platform never fails a
+# signature check, so any failure is a misconfiguration (fixed once) or someone
+# guessing a secret. Counted per client address and per connection; crossing
+# the limit bans the source for WEBHOOK_SIGNATURE_BAN_SECONDS.
+WEBHOOK_SIGNATURE_FAILURE_LIMIT = env.int("WEBHOOK_SIGNATURE_FAILURE_LIMIT", default=10)
+WEBHOOK_SIGNATURE_FAILURE_WINDOW_SECONDS = env.int("WEBHOOK_SIGNATURE_FAILURE_WINDOW_SECONDS", default=300)
+WEBHOOK_SIGNATURE_BAN_SECONDS = env.int("WEBHOOK_SIGNATURE_BAN_SECONDS", default=900)
+
+# How long raw webhook events are kept (SPEC §5). This is also the replay
+# protection window: dedup is the unique constraint on the event log, so an
+# event whose row has been pruned can be replayed with its original signature.
+# See apps.channels.models.WebhookEventLog.
+WEBHOOK_EVENT_LOG_RETENTION_DAYS = env.int("WEBHOOK_EVENT_LOG_RETENTION_DAYS", default=30)
 
 # ---------------------------------------------------------------------------
 # Deployment-level platform credentials — the bottom of the SPEC §4 chain

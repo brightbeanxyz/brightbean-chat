@@ -1,0 +1,93 @@
+{% extends "layouts/workspace_settings.html" %}
+{% load common_extras %}
+{% block title %}Channels · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Channels</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    A channel connects one bot, page, number or sending domain to this workspace.
+    Inbound events arrive at the channel's webhook URL and are verified against
+    its secret before anything else happens.
+  </p>
+
+  {% if rows %}
+    <table>
+      <thead>
+        <tr><th></th><th>Name</th><th>Account</th><th>Status</th><th>Webhook URL</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>
+              <span class="pi-chip {{ row.connection.platform|platform_class }} w-8 h-8">
+                {% include "partials/_platform_icon.html" with platform=row.connection.platform size="md" %}
+              </span>
+            </td>
+            <td>
+              <a href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}">
+                {{ row.connection.display_name }}
+              </a><br />
+              <span class="muted">{{ row.label }}</span>
+            </td>
+            <td><code>{{ row.connection.external_id }}</code></td>
+            <td>
+              <span class="status-pill status-pill-{{ row.connection.status }}">
+                {{ row.connection.get_status_display }}
+              </span>
+              {% if not row.adapter_ready %}
+                <br /><span class="muted">Adapter ships with {{ row.connect_flow_issue }}</span>
+              {% endif %}
+            </td>
+            <td><code>{{ row.webhook_url }}</code></td>
+            <td>
+              <form method="post"
+                    action="{% url 'channels:set_status' workspace_id=request.workspace.id connection_id=row.connection.id %}">
+                {% csrf_token %}
+                {% if row.connection.status == "disabled" %}
+                  <input type="hidden" name="status" value="active" />
+                  <button type="submit">Enable</button>
+                {% else %}
+                  <input type="hidden" name="status" value="disabled" />
+                  <button type="submit">Disable</button>
+                {% endif %}
+              </form>
+              <form method="post"
+                    action="{% url 'channels:delete' workspace_id=request.workspace.id connection_id=row.connection.id %}">
+                {% csrf_token %}
+                <button type="submit">Disconnect</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No channels connected yet.</p>
+  {% endif %}
+
+  <p><a href="{% url 'channels:create' workspace_id=request.workspace.id %}">Add a channel</a></p>
+
+  {% comment %}
+  The placeholder connect panels the issue asks for. Each platform's real flow —
+  a BotFather token, a Meta OAuth round trip, Twilio credentials — belongs to
+  that platform's own issue, so what this says is which issue, rather than
+  pretending six different flows are one form.
+  {% endcomment %}
+  <h2>Platforms</h2>
+  <ul>
+    {% for platform in platforms %}
+      <li>
+        <span class="pi-chip {{ platform.value|platform_class }} w-6 h-6">
+          {% include "partials/_platform_icon.html" with platform=platform.value size="sm" %}
+        </span>
+        {{ platform.label }} —
+        {% if platform.adapter_ready %}
+          adapter installed.
+        {% else %}
+          guided setup arrives with {{ platform.issue }}. A connection added now holds its
+          webhook URL and secret, and starts working when the adapter ships.
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endblock %}
