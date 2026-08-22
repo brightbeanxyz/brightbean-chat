@@ -28,7 +28,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { groupOf, nodeSpec } from "../schema/artifact";
 import { useBuilder, useBuilderStore } from "../store/context";
-import { selectRfEdges, selectRfNodes, type CardData } from "../store/selectors";
+import { selectRfEdges, selectRfNodes, type CardData, type CardNode } from "../store/selectors";
 import { edgeTypes, nodeTypes } from "./types";
 import { useKeyboard } from "./useKeyboard";
 
@@ -50,7 +50,7 @@ export function Canvas() {
   useKeyboard();
 
   const onNodesChange = useCallback(
-    (changes: NodeChange<never>[]) => {
+    (changes: NodeChange<CardNode>[]) => {
       const state = store.getState();
       let selection: string[] | null = null;
       const removed: string[] = [];
@@ -163,7 +163,7 @@ export function Canvas() {
   );
 
   const minimapColor = useMemo(
-    () => (node: { type?: string }) => {
+    () => (node: CardNode) => {
       const spec = node.type ? nodeSpec(node.type) : undefined;
       return GROUP_COLOR[spec ? groupOf(spec) : "other"] ?? GROUP_COLOR["other"] ?? "var(--border-hover)";
     },
@@ -172,11 +172,11 @@ export function Canvas() {
 
   return (
     <div ref={wrapper} className="flex-1 min-h-0" onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
-      <ReactFlow<never>
-        nodes={nodes as never[]}
+      <ReactFlow<CardNode>
+        nodes={nodes}
         edges={edges}
-        nodeTypes={nodeTypes as never}
-        edgeTypes={edgeTypes as never}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -196,7 +196,7 @@ export function Canvas() {
       >
         <Background />
         <Controls showInteractive={false} />
-        <MiniMap pannable zoomable nodeColor={minimapColor as never} />
+        <MiniMap<CardNode> pannable zoomable nodeColor={minimapColor} />
       </ReactFlow>
     </div>
   );

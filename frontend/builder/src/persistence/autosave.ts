@@ -23,6 +23,7 @@ import { toGraph } from "../store/serialize";
 import { graphByteLength } from "../store/serialize";
 import { saveGraph } from "../api/flows";
 import { ApiError } from "../api/client";
+import type { ValidationPayload } from "../schema/types";
 
 export const DEBOUNCE_MS = 2000;
 
@@ -93,14 +94,14 @@ export function installAutosave(store: BuilderStore): Autosave {
     if (error.status === 422) {
       // Document-stage errors: nothing was written. Surface them and stop —
       // resending the same bytes would only fail the same way.
-      const payload = error.payload as { validation?: { errors?: unknown[]; warnings?: unknown[] } } | null;
+      const payload = error.payload as { validation?: ValidationPayload } | null;
       if (payload?.validation) {
-        store.getState().applyValidation(payload.validation as never, revision);
+        store.getState().applyValidation(payload.validation, revision);
       }
       store.getState().setSave({
         state: "rejected",
         message: "This change cannot be saved. Fix the problems below and it will save automatically.",
-        issues: (payload?.validation?.errors ?? []) as never,
+        issues: payload?.validation?.errors ?? [],
       });
       attempt = 0;
       return;

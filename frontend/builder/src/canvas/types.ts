@@ -9,12 +9,14 @@
  * Built from the artefact, so a node type registered by a later layer is
  * renderable with no edit here.
  */
+import type { EdgeTypes, NodeTypes } from "@xyflow/react";
+
 import { NODE_TYPES } from "../schema/artifact";
 import { FlowNodeCard } from "./FlowNodeCard";
 import { HandleLabelEdge } from "./HandleLabelEdge";
 
-export const nodeTypes = Object.freeze(
+export const nodeTypes: NodeTypes = Object.freeze(
   Object.fromEntries(NODE_TYPES.map((spec) => [spec.type, FlowNodeCard])),
-) as Record<string, typeof FlowNodeCard>;
+);
 
-export const edgeTypes = Object.freeze({ handleLabel: HandleLabelEdge });
+export const edgeTypes: EdgeTypes = Object.freeze({ handleLabel: HandleLabelEdge });

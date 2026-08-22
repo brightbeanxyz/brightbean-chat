@@ -186,12 +186,12 @@ export function createBuilderStore(env: BuilderEnv) {
         set({ ...mutate(before), past, future: [], revision: before.revision + 1 });
       };
 
-      const restore = (entry: HistoryEntry, counterpart: HistoryEntry[], into: "past" | "future") =>
+      const restore = (entry: HistoryEntry, counterpart: HistoryEntry[], stack: "past" | "future") =>
         set((state) => ({
           ...entry.graph,
           selection: entry.selection,
           revision: state.revision + 1,
-          [into === "past" ? "past" : "future"]: counterpart,
+          [stack]: counterpart,
         }));
 
       return {

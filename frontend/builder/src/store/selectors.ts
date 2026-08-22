@@ -11,6 +11,8 @@
  */
 import type { Edge, Node } from "@xyflow/react";
 
+import type { DomainEdge, DomainNode } from "../schema/types";
+
 import { nodeSpec } from "../schema/artifact";
 import { entryNodeIds } from "../schema/entry";
 import type { BuilderState } from "./store";
@@ -19,9 +21,12 @@ export interface CardData extends Record<string, unknown> {
   nodeId: string;
 }
 
+/** The one node shape the canvas deals in. */
+export type CardNode = Node<CardData>;
+
 interface CacheEntry {
   key: string;
-  node: Node<CardData>;
+  node: CardNode;
 }
 
 const nodeCache = new WeakMap<object, Map<string, CacheEntry>>();
@@ -35,7 +40,7 @@ function cacheFor(state: BuilderState): Map<string, CacheEntry> {
   return cache;
 }
 
-export function selectRfNodes(state: BuilderState): Node<CardData>[] {
+export function selectRfNodes(state: BuilderState): CardNode[] {
   const cache = cacheFor(state);
   const selected = new Set(state.selection.nodes);
   const draggable = state.env.canEdit;
@@ -51,7 +56,7 @@ export function selectRfNodes(state: BuilderState): Node<CardData>[] {
       return hit.node;
     }
 
-    const node: Node<CardData> = {
+    const node: CardNode = {
       id,
       type,
       position,
@@ -106,15 +111,17 @@ export function selectEntryIds(state: BuilderState): Set<string> {
   ) {
     return entryCache.ids;
   }
-  const ids = entryNodeIds(
-    state.nodeOrder.map((id) => ({
-      id,
-      type: state.nodeType[id] as string,
-      position: state.position[id] ?? { x: 0, y: 0 },
-      config: state.config[id],
-    })),
-    state.edgeOrder.flatMap((id) => (state.edge[id] ? [state.edge[id]] : [])) as never,
-  );
+  const nodes: DomainNode[] = state.nodeOrder.map((id) => ({
+    id,
+    type: state.nodeType[id] ?? "",
+    position: state.position[id] ?? { x: 0, y: 0 },
+    config: state.config[id],
+  }));
+  const edges: DomainEdge[] = state.edgeOrder.flatMap((id) => {
+    const edge = state.edge[id];
+    return edge ? [edge] : [];
+  });
+  const ids = entryNodeIds(nodes, edges);
   entryCache = { nodeOrder: state.nodeOrder, edgeOrder: state.edgeOrder, edge: state.edge, ids };
   return ids;
 }

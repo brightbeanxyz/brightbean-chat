@@ -11,6 +11,7 @@
 import { useState } from "react";
 
 import { ApiError } from "./api/client";
+import type { ValidationPayload } from "./schema/types";
 import { publishFlow } from "./api/flows";
 import type { Autosave } from "./persistence/autosave";
 import { useBuilder, useBuilderStore } from "./store/context";
@@ -52,7 +53,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 422) {
-        const payload = error.payload as { validation?: never } | null;
+        const payload = error.payload as { validation?: ValidationPayload } | null;
         if (payload?.validation) {
           store.getState().applyValidation(payload.validation, store.getState().revision);
         }
