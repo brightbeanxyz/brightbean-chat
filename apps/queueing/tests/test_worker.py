@@ -407,8 +407,12 @@ class TestBatches:
         def explode(*args: Any, **kwargs: Any) -> str:
             raise RuntimeError("connection dropped while recording the failure")
 
+        from apps.queueing import worker as worker_module
+
         with temporary_handler(PROBE, _boom):
-            monkeypatch.setattr("apps.queueing.worker._record_failure", explode)
+            # Patch the module object rather than a dotted path: the string form
+            # re-resolves through sys.modules, which other apps' tests stub.
+            monkeypatch.setattr(worker_module, "_record_failure", explode)
             result = run_batch()
 
         assert (result.claimed, result.stranded, result.failed) == (1, 1, 0)

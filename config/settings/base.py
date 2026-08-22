@@ -151,6 +151,7 @@ LOCAL_APPS = [
     "apps.members",
     "apps.credentials",
     "apps.flows",
+    "apps.notifications",
     "apps.queueing",
     "theme",
 ]

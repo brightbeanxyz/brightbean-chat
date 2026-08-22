@@ -75,6 +75,9 @@ urlpatterns = [
     path("organization/members/", include("apps.members.urls")),
     # Invite acceptance is unauthenticated — the recipient has no org yet.
     path("", include("apps.members.urls_public")),
+    # Per-user, so no workspace prefix: the bell shows every workspace at once
+    # (issue #7).
+    path("notifications/", include("apps.notifications.urls")),
     # Workspace-scoped routes (SPEC §16). The kwarg name `workspace_id` is
     # RBACMiddleware's resolution contract; do not rename it.
     path("w/<uuid:workspace_id>/", include("apps.workspaces.urls")),

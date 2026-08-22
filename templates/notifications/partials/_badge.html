@@ -1,0 +1,34 @@
+{% comment %}
+The unread signal as an htmx **response** fragment. Never included in a page's
+first render — see _bell.html, which renders the dot inline instead. Including
+this one at page load would put a second `id="nav-badge-notifications"` in the
+document beside the nav row's own, and an out-of-band swap resolves its target
+by id.
+
+`hx-swap-oob` lets this ride along inside any other notification response and
+update the count wherever it is rendered, without the responding view knowing
+where that is. That is why this is HTML and Studio's equivalent is JSON: htmx
+swaps markup, and Studio needed a JS callback to turn its number into some.
+
+Three targets, because the count appears three times — the footer bell's dot,
+the sidebar nav row's badge, and the mobile bar's dot, which is the only one a
+phone reader can see. Leaving any of them stale after "mark all read" shows an
+indicator contradicting the others.
+
+The nav badge is *deleted* at zero rather than emptied, because the shell's
+contract is that a zero badge renders nothing at all (see
+apps/common/tests/test_shell.py::test_a_zero_badge_renders_nothing_rather_than_a_zero),
+so there is no element to update when it is absent. That asymmetry is fine: the
+only in-page action that changes this count is marking things read, so the
+downward direction is the one that has to be live. An arrival comes from the
+server, lights the bell dot on the next poll, and brings the number with it on
+the next navigation — which is how every other badge in this shell works.
+{% endcomment %}{% spaceless %}
+<span id="notification-badge" hx-swap-oob="true">{% include "notifications/partials/_dot.html" %}</span>
+<span id="notification-badge-mobile" hx-swap-oob="true">{% include "notifications/partials/_dot.html" %}</span>
+{% if unread_notification_count %}
+<span class="sidebar-badge" id="nav-badge-notifications" hx-swap-oob="true">{{ unread_notification_count }}</span>
+{% else %}
+<span id="nav-badge-notifications" hx-swap-oob="delete"></span>
+{% endif %}
+{% endspaceless %}
