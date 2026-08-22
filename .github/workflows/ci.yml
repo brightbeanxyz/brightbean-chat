@@ -113,9 +113,15 @@ jobs:
         run: pip install --require-hashes -r requirements-dev.txt
 
       - name: Set up Node
+        # .nvmrc is the single version CI runs on. It cannot be the only copy:
+        # the Dockerfile's and the compose watcher's image tags are literals so
+        # Dependabot can see them, and package.json's `engines` is a semver
+        # range npm enforces — none of the three can read a dotfile. The "Node
+        # pins agree" step in the audit job asserts all four match, so a bump
+        # that misses one fails rather than silently splitting the runtime.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
           cache: "npm"
 
       - name: Build the Tailwind bundle
@@ -148,9 +154,12 @@ jobs:
           cache: "pip"
 
       - name: Set up Node
+        # Version from .nvmrc; the rationale is on the test job's copy above.
+        # `cache: npm` matters here too — this job runs npm ci as well.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
+          cache: "npm"
 
       - name: Install pip-audit
         run: pip install "pip-audit==2.10.1"
@@ -209,6 +218,41 @@ jobs:
             exit 1
           fi
           echo "pip-audit correctly rejected the vulnerable fixture."
+
+      - name: Node pins agree
+        # The Node version is written in five places and no two of them can
+        # share a source: .nvmrc is a dotfile only setup-node reads, the
+        # Dockerfile and compose carry literal image tags (kept literal so
+        # Dependabot's docker ecosystem can see and bump them), engines is a
+        # semver range npm enforces, and the README is prose. Dependabot bumps
+        # exactly one of those at a time, so without this step a PR moving the
+        # base image alone would go green while CI still tested the old major.
+        #
+        # Only the compose comment at docker-compose.override.yml:49 is left
+        # unchecked — it names the image in prose, not as a pin.
+        run: |
+          nvmrc="$(tr -d '[:space:]' < .nvmrc)"
+          dockerfile="$(sed -n 's/^FROM node:\([0-9][0-9]*\)-slim.*/\1/p' Dockerfile | head -1)"
+          compose="$(sed -n 's/^[[:space:]]*image:[[:space:]]*node:\([0-9][0-9]*\)-slim.*/\1/p' docker-compose.override.yml | head -1)"
+          engines="$(node -p "((require('./package.json').engines||{}).node||'').match(/[0-9]+/)?.[0] || ''")"
+          readme="$(sed -n 's/.*Node \([0-9][0-9]*\)+ and.*/\1/p' README.md | head -1)"
+
+          # An empty capture means the pattern stopped matching — a silently
+          # skipped comparison would be worse than no check at all.
+          for pair in "nvmrc:${nvmrc}" "Dockerfile:${dockerfile}" "compose:${compose}" "engines:${engines}" "README:${readme}"; do
+            if [ -z "${pair##*:}" ]; then
+              echo "::error::Could not read the Node version out of ${pair%%:*} — this check's pattern needs updating."
+              exit 1
+            fi
+          done
+
+          echo ".nvmrc=${nvmrc} Dockerfile=${dockerfile} compose=${compose} engines=${engines} README=${readme}"
+          if [ "${nvmrc}" != "${dockerfile}" ] || [ "${nvmrc}" != "${compose}" ] \
+             || [ "${nvmrc}" != "${engines}" ] || [ "${nvmrc}" != "${readme}" ]; then
+            echo "::error::Node version pins disagree. All five must name the same major; .nvmrc is the one CI runs on."
+            exit 1
+          fi
+          echo "All five Node pins agree on ${nvmrc}."
 
       - name: Install JavaScript dependencies
         run: npm ci --no-audit --no-fund

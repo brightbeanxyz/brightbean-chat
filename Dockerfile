@@ -8,12 +8,17 @@
 #
 # The vendored JS in static/js/vendor/ is committed and needs no build step —
 # see scripts/vendor-js.mjs for why.
-FROM node:20-slim AS frontend
+FROM node:24-slim AS frontend
 
 WORKDIR /app
 
 # Lockfile first, so a source-only change reuses the install layer.
-COPY package.json package-lock.json ./
+#
+# .npmrc comes along because it carries engine-strict=true, which is what turns
+# a Node version this project does not support into a failed install rather
+# than an EBADENGINE warning. It has to arrive here and not with the `COPY . .`
+# below, which runs after npm ci and so would leave the build unguarded.
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci --no-audit --no-fund
 
 # styles.css scans templates/ and apps/**/templates/ through its @source
