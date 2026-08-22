@@ -133,8 +133,8 @@ THIRD_PARTY_APPS = [
     "allauth.socialaccount.providers.google",
 ]
 
-# Domain apps arrive from Layer 2 onwards; these five are the tenancy, auth and
-# credential substrate (issue #31).
+# The first six are the tenancy, auth and credential substrate (issue #31);
+# the Layer-2 domain apps follow it.
 #
 # ``theme`` holds the compiled Tailwind bundle. It has to be an installed app
 # rather than a STATICFILES_DIRS entry, because that is what puts
@@ -151,6 +151,9 @@ LOCAL_APPS = [
     "apps.members",
     "apps.credentials",
     "apps.media_library",
+    "apps.flows",
+    "apps.notifications",
+    "apps.queueing",
     "theme",
 ]
 
@@ -305,6 +308,20 @@ SOCIALACCOUNT_ADAPTER = "apps.accounts.adapters.SocialAccountAdapter"
 # register locally as victim@example.com, wait for the victim's first Google
 # login, inherit their session. Unlinked Google logins go through allauth's
 # ordinary signup/connect flow instead.
+
+# ---------------------------------------------------------------------------
+# Background task queue (SPEC §15)
+# ---------------------------------------------------------------------------
+# The shared secret for /internal/tick, the HTTP wrapper around one worker
+# cycle. It exists for hosts with no always-on process: a cron service or an
+# uptime pinger calls the URL every minute and that is the whole scheduler.
+#
+# Blank — the default — means the route 404s, which is the right posture for the
+# deployments that run `manage.py process_tasks` instead and have no use for it.
+# Being a plain shared secret rather than a signed token is deliberate and
+# argued in apps/queueing/views.py: the caller is a third-party pinger holding
+# one static URL forever, so there is no expiry to sign in.
+TICK_TOKEN = env("TICK_TOKEN", default="")
 
 # ---------------------------------------------------------------------------
 # Reverse proxies (consumed by apps.common.net.get_client_ip)

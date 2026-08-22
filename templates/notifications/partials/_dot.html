@@ -1,0 +1,7 @@
+{% comment %}
+The unread dot itself, with no id and no swap attributes, so both the initial
+render and the out-of-band response fragment can use it without either owning
+the other's markup.
+{% endcomment %}{% spaceless %}
+{% if unread_notification_count %}<span class="notif-dot" aria-hidden="true"></span>{% endif %}
+{% endspaceless %}

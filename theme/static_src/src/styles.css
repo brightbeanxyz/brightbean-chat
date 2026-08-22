@@ -1163,6 +1163,64 @@ span.flatpickr-weekday {
 }
 .anim-collapse { animation: bb-collapse-in var(--dur-base) ease; }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   NOTIFICATIONS (issue #7)
+   ═══════════════════════════════════════════════════════════════
+   Unlayered, like everything else in this file, which is what makes these
+   beat Tailwind's utilities. That is deliberate here: .notif-icon sets its own
+   background and colour, so per ground rule 9 a caller cannot override either
+   from the outside — if a later issue needs a variant, it adds a modifier
+   class beside these rather than a utility at the call site.
+
+   Studio hard-codes bg-green-50 / text-green-600 / bg-orange-50 for these,
+   which is a second palette living outside the design system. Same shapes,
+   token values. */
+
+/* The unread dot on the bell. Absolutely positioned, so it survives the 60px
+   collapsed rail where .sidebar-badge — which is `margin-left: auto` and is
+   display:none when collapsed — could not. */
+.notif-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  /* Punches the dot out of whatever it overlaps, so it reads at 8px. */
+  box-shadow: 0 0 0 2px var(--surface-0);
+}
+
+/* One row in the bell panel or the history list. */
+.notif-item {
+  transition: background var(--dur-fast) ease;
+}
+
+.notif-item.is-unread {
+  background: var(--primary-soft);
+}
+
+/* The per-event glyph tile. Tone comes from the event registry. */
+.notif-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+}
+
+.notif-icon svg { width: 16px; height: 16px; }
+
+.notif-icon-info    { background: var(--surface-2);   color: var(--text-secondary); }
+.notif-icon-success { background: var(--success-50);  color: var(--success-700); }
+.notif-icon-warn    { background: var(--warning-50);  color: var(--warning-700); }
+.notif-icon-error   { background: var(--error-50);    color: var(--error-700); }
+
+
 /* ═══════════════════════════════════════════════════════════════
    MEDIA LIBRARY (issue #16)
    Studio keeps these as a per-page <style> block inside
