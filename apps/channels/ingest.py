@@ -85,8 +85,10 @@ def process_events(connection: "ChannelConnection", events: Sequence["Normalized
     which is the correct behaviour for a framework whose consumers have not
     merged yet.
 
-    Each processor is isolated: one that raises does not stop the next, because
-    "persistence failed" should not also mean "the STOP keyword was ignored".
+    Each processor is isolated in two senses: one that raises does not stop the
+    next, because "persistence failed" should not also mean "the STOP keyword
+    was ignored"; and each receives an immutable snapshot of the batch, so no
+    stage can rewrite the input of the stages after it.
     """
     if not events:
         return True
@@ -99,10 +101,24 @@ def process_events(connection: "ChannelConnection", events: Sequence["Normalized
         )
         return True
 
+    # A tuple, built once and handed to every processor. They previously all
+    # received the same list object, so one stage appending, filtering or
+    # reordering in place changed what every later stage saw — and the result
+    # depended on registration order, which is exactly the coupling a seam is
+    # supposed to remove.
+    #
+    # This makes the *sequence* immutable. NormalizedEvent is frozen, but
+    # `raw` and `EventPayload.extra` are ordinary dicts and stay mutable; the
+    # contract, stated here and on NormalizedEvent, is that processors treat a
+    # dispatched event as read-only. Deep-copying per processor would enforce it
+    # outright, and is deliberately not paid for on a path SPEC §7.1 budgets at
+    # 1.5 s of wall clock including the outbound call.
+    snapshot = tuple(events)
+
     ok = True
     for name, processor in list(_PROCESSORS.items()):
         try:
-            processor(connection, events)
+            processor(connection, snapshot)
         except Exception:
             # Broad on purpose: a processor is third-party-ish code from the
             # endpoint's point of view, and the endpoint's contract with the

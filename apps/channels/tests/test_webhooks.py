@@ -717,6 +717,127 @@ class TestMultiConnectionDelivery:
         assert collected == []
 
 
+class TestPreAuthExposure:
+    """What an unauthenticated caller can reach before its signature is checked.
+
+    On a shared platform URL the connection, and so the secret, can only be
+    found by reading ids out of the payload — resolve_connection necessarily
+    parses before verification is possible (SPEC §7.1). The framework's job is
+    to make sure the parser it reaches is a bounded one.
+    """
+
+    @override_settings(WEBHOOK_MAX_JSON_DEPTH=5)
+    def test_a_nesting_bomb_never_reaches_the_adapter(
+        self, client: Client, secret: str, fake_adapter: Any, monkeypatch: Any
+    ) -> None:
+        reached: list[str] = []
+
+        def spy(self: Any, request: Any, raw_body: bytes) -> Any:
+            reached.append("resolve_connection")
+            return None
+
+        monkeypatch.setattr(fake_adapter, "resolve_connection", spy)
+        body = b'{"events":' + b"[" * 500 + b"]" * 500 + b"}"
+
+        assert post(client, TELEGRAM_URL, body, secret=secret).status_code == 400
+        assert reached == [], "the depth cap must precede resolve_connection"
+
+    @override_settings(WEBHOOK_MAX_BODY_BYTES=64)
+    def test_an_oversized_body_never_reaches_the_adapter(
+        self, client: Client, secret: str, fake_adapter: Any, monkeypatch: Any
+    ) -> None:
+        reached: list[str] = []
+        monkeypatch.setattr(
+            fake_adapter,
+            "resolve_connection",
+            lambda self, request, raw_body: reached.append("resolve_connection"),
+        )
+        body = json.dumps({"events": [{"id": "e1", "user": "u1", "text": "x" * 500}]}).encode()
+
+        assert post(client, TELEGRAM_URL, body, secret=secret).status_code == 413
+        assert reached == []
+
+
+class TestSecondaryEventGates:
+    """A batch is authenticated once; everything else in it has to be justified.
+
+    Only the delivery-level connection was verified, so an event naming a
+    different one has to clear the same gates and be covered by the same
+    credential authority.
+    """
+
+    @staticmethod
+    def _sibling(workspace: Any, **overrides: Any) -> ChannelConnection:
+        fields = {
+            "platform": Platform.TELEGRAM,
+            "display_name": "Sibling",
+            "external_id": f"sibling-{overrides.get('external_id', 'a')}",
+            **overrides,
+        }
+        sibling = ChannelConnection(workspace=workspace, **fields)
+        sibling.rotate_webhook_secret()
+        sibling.save()
+        return sibling
+
+    @staticmethod
+    def _deliver_naming(client: Client, secret: str, adapter: Any, owner: ChannelConnection) -> Any:
+        from datetime import UTC, datetime
+
+        from apps.channels.events import EventType, NormalizedEvent
+
+        def parse(self: Any, request: Any, conn: Any) -> list[NormalizedEvent]:
+            return [
+                NormalizedEvent(
+                    type=EventType.MESSAGE,
+                    connection=owner,
+                    platform_user_id="u1",
+                    provider_event_id="smuggled",
+                    timestamp=datetime.now(UTC),
+                )
+            ]
+
+        original = adapter.parse_events
+        adapter.parse_events = parse
+        try:
+            return post(client, TELEGRAM_URL, body_for("ignored"), secret=secret)
+        finally:
+            adapter.parse_events = original
+
+    def test_a_sibling_in_the_same_workspace_is_accepted(
+        self, client: Client, connection: ChannelConnection, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        """The legitimate case: one Meta delivery spanning that app's pages."""
+        sibling = self._sibling(connection.workspace, external_id="same-ws")
+        assert self._deliver_naming(client, secret, fake_adapter, sibling).status_code == 200
+        assert WebhookEventLog.objects.get().connection_id == sibling.pk
+        assert len(collected) == 1
+
+    def test_another_workspaces_connection_is_dropped(
+        self,
+        client: Client,
+        connection: ChannelConnection,
+        secret: str,
+        fake_adapter: Any,
+        other_tenancy: Any,
+        collected: list[Any],
+    ) -> None:
+        """A workspace holding its own Meta app secret could otherwise sign a
+        delivery for its own connection and staple on another tenant's page."""
+        victim = self._sibling(other_tenancy.workspace, external_id="other-ws")
+        assert self._deliver_naming(client, secret, fake_adapter, victim).status_code == 200
+        assert WebhookEventLog.objects.count() == 0
+        assert collected == []
+
+    def test_a_disabled_connection_is_dropped(
+        self, client: Client, connection: ChannelConnection, secret: str, fake_adapter: Any, collected: list[Any]
+    ) -> None:
+        """Disabling a channel stops ingestion — on secondary events too."""
+        disabled = self._sibling(connection.workspace, external_id="off", status="disabled")
+        assert self._deliver_naming(client, secret, fake_adapter, disabled).status_code == 200
+        assert WebhookEventLog.objects.count() == 0
+        assert collected == []
+
+
 class TestDispatchSeam:
     def test_no_processor_registered_is_a_no_op(self, client: Client, secret: str, fake_adapter: Any) -> None:
         """The state this issue ships in: logged, dropped, 200."""
@@ -741,6 +862,25 @@ class TestDispatchSeam:
         ingest.register_processor(lambda c, e: order.append("second"), name="second")
         post(client, TELEGRAM_URL, body_for("e1"), secret=secret)
         assert order == ["first", "second"]
+
+    def test_a_processor_cannot_alter_what_the_next_one_sees(
+        self, client: Client, secret: str, fake_adapter: Any
+    ) -> None:
+        """Otherwise behaviour depends on registration order."""
+        import contextlib
+
+        shapes: list[Any] = []
+
+        def mutator(conn: Any, events: Any) -> None:
+            shapes.append(type(events))
+            with contextlib.suppress(AttributeError):
+                events.append("extra")
+
+        ingest.register_processor(mutator, name="mutator")
+        ingest.register_processor(lambda c, e: shapes.append(len(e)), name="observer")
+        post(client, TELEGRAM_URL, body_for("e1"), secret=secret)
+
+        assert shapes == [tuple, 1]
 
     def test_one_failing_processor_does_not_stop_the_next(self, client: Client, secret: str, fake_adapter: Any) -> None:
         reached: list[str] = []

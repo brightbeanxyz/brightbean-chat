@@ -235,6 +235,22 @@ def _ingest(
     if len(raw_body) > security.max_body_bytes():
         return HttpResponse("Payload too large", status=413)
 
+    # The nesting cap comes BEFORE resolve_connection, and that ordering is the
+    # point. On a shared platform URL the connection — and therefore the secret
+    # to verify against — can only be found by reading ids out of the payload,
+    # so resolve_connection parses before verification is even possible. That is
+    # inherent to SPEC §7.1 giving Meta one URL per platform, not a choice this
+    # code makes; what the framework can do is guarantee that the parser an
+    # unauthenticated caller reaches is a bounded one. This check is a byte scan
+    # that parses nothing itself, so it is safe to run first and it is the guard
+    # that keeps a nesting bomb away from json.loads.
+    #
+    # It is skipped for form-encoded deliveries (Twilio), which have no brackets
+    # to nest: running it would be a pass over WEBHOOK_MAX_BODY_BYTES to learn
+    # nothing.
+    if adapter.webhook_content == "json" and security.max_json_depth(raw_body) > security.json_depth_limit():
+        return HttpResponse("Bad request", status=400)
+
     if connection is None:
         connection = adapter.resolve_connection(request, raw_body)
     if connection is not None and not _usable(connection, platform):
@@ -243,21 +259,13 @@ def _ingest(
         security.record_signature_failure(request, connection.pk if connection else None)
         return _forbidden()
 
-    if adapter.webhook_content == "json":
-        # Both checks are JSON-specific, and both are a full pass over the body.
-        # A form-encoded delivery (Twilio) has no brackets to nest and no JSON to
-        # fail on, so running them would be a scan of up to WEBHOOK_MAX_BODY_BYTES
-        # to learn nothing.
-        if security.max_json_depth(raw_body) > security.json_depth_limit():
-            return HttpResponse("Bad request", status=400)
-        if security.json_payload(request) is None:
-            # Sanctioned by SPEC §7.1 — "malformed payloads per platform
-            # requirements" — and correct here: a body that is not the JSON the
-            # platform promised is not something a retry will fix, but a 400 is
-            # what every platform's own documentation says to send. The parse is
-            # cached on the request, so the adapter reads it rather than
-            # repeating it.
-            return HttpResponse("Bad request", status=400)
+    if adapter.webhook_content == "json" and security.json_payload(request) is None:
+        # Sanctioned by SPEC §7.1 — "malformed payloads per platform
+        # requirements" — and correct here: a body that is not the JSON the
+        # platform promised is not something a retry will fix, but a 400 is what
+        # every platform's own documentation says to send. The parse is cached on
+        # the request, so the adapter reads it rather than repeating it.
+        return HttpResponse("Bad request", status=400)
 
     events = _parse_events(adapter, request, connection)
     _record(connection, events)
@@ -403,20 +411,51 @@ def _record(connection: ChannelConnection, events: list[NormalizedEvent]) -> Non
 
 
 def _event_connection(event: NormalizedEvent, verified: ChannelConnection) -> ChannelConnection | None:
-    """Which connection an event belongs to, or None to drop it."""
+    """Which connection an event belongs to, or None to drop it.
+
+    Only the delivery-level connection was actually authenticated. Everything a
+    secondary event claims has to be justified by that one, so a secondary owner
+    has to clear every gate the verified connection cleared **and** be covered by
+    the same credential authority:
+
+    ``_usable``
+        Same platform, and not disabled. Without the status check, a batch
+        resolved to an active connection could carry events for a disabled one
+        and ingest them — and "disabled" is documented as stopping ingestion.
+
+    same workspace
+        The signature proves whoever sent this holds the secret for
+        ``verified``. Where a workspace supplies its own Meta app credentials
+        (the top of SPEC §4's resolution chain), that secret is *its* secret —
+        so a tenant could sign a delivery for its own connection and staple on
+        an event naming another tenant's page. Requiring the same workspace is
+        what stops the batch from crossing a tenant boundary
+        (SECURITY-BASELINE §1).
+
+    The conservative direction costs something worth naming: a deployment whose
+    Meta app is configured at the environment level, serving pages that several
+    workspaces connected, would have one delivery legitimately spanning
+    workspaces, and the other workspaces' events are dropped here. Making that
+    case work needs per-entry verification against the resolved app credentials,
+    which belongs to the adapter that knows how those entries are shaped (#17,
+    #18) — not to a framework that would have to guess. Until then this fails
+    closed and says so in the log.
+    """
     owner = getattr(event, "connection", None)
-    if owner is None:
+    if owner is None or owner.pk == verified.pk:
         return verified
-    if owner.pk == verified.pk:
-        return verified
-    if owner.platform != verified.platform:
-        # The signature was checked against `verified`'s platform adapter; an
-        # event claiming a connection on some other platform was not covered by
-        # that check.
+    if not _usable(owner, verified.platform):
         logger.warning(
-            "Dropped an event naming a %s connection on a %s delivery",
-            owner.platform,
+            "Dropped an event naming connection %s: not usable on a %s delivery",
+            owner.pk,
             verified.platform,
+        )
+        return None
+    if owner.workspace_id != verified.workspace_id:
+        logger.warning(
+            "Dropped an event naming connection %s: another workspace than the verified connection %s",
+            owner.pk,
+            verified.pk,
         )
         return None
     return owner

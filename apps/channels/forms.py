@@ -14,6 +14,12 @@ from django import forms
 from apps.channels.models import ChannelConnection
 from apps.common.platforms import Platform
 
+#: Shown both by the pre-check below and by the view when it loses the insert
+#: race to another workspace. One wording, so the two paths are indistinguishable
+#: to the operator — and so neither can drift into naming the workspace that
+#: holds the account (SECURITY-BASELINE §1).
+DUPLICATE_ACCOUNT_ERROR = "That account is already connected to this deployment. Disconnect it there first."
+
 
 class ChannelConnectionForm(forms.ModelForm):
     """Create a connection: which platform, what to call it, which account.
@@ -76,8 +82,5 @@ class ChannelConnectionForm(forms.ModelForm):
         if self.instance.pk:
             clash = clash.exclude(pk=self.instance.pk)
         if clash.exists():
-            self.add_error(
-                "external_id",
-                "That account is already connected to this deployment. Disconnect it there first.",
-            )
+            self.add_error("external_id", DUPLICATE_ACCOUNT_ERROR)
         return cleaned

@@ -103,6 +103,13 @@ class EventPayload:
 class NormalizedEvent:
     """One inbound event, platform-shaped detail already stripped.
 
+    **A dispatched event is read-only.** The dataclass is frozen, but ``raw`` and
+    ``payload.extra`` are ordinary dicts: a processor on the contract-6 seam
+    that mutates one in place changes what every later processor sees.
+    :func:`apps.channels.ingest.process_events` hands out an immutable sequence
+    to make the structural half of that impossible; the nested half is a
+    convention, and this is where it is written down.
+
     ``provider_event_id`` is the deduplication key (SPEC §7.1 step 2). An
     adapter whose platform does not supply a stable id per event must synthesise
     a deterministic one — :func:`apps.channels.ingest.synthetic_event_id` does

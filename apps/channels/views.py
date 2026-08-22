@@ -26,13 +26,14 @@ from typing import Any
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import IntegrityError, transaction
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.channels.capabilities import capabilities_for
-from apps.channels.forms import ChannelConnectionForm
+from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR, ChannelConnectionForm
 from apps.channels.models import ChannelConnection, ConnectionStatus
 from apps.channels.policy import policy_for
 from apps.channels.registry import has_adapter
@@ -159,8 +160,21 @@ def connection_create(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
             connection = form.save(commit=False)
             connection.workspace = request.workspace
             secret = connection.rotate_webhook_secret()
-            connection.save()
-            return _render_secret(request, connection, secret, created=True)
+            try:
+                with transaction.atomic():
+                    connection.save()
+            except IntegrityError:
+                # The form's duplicate check is a read, so it is check-then-
+                # insert: two workspaces submitting the same (platform,
+                # external_id) can both validate before either commits, and the
+                # loser used to raise straight out of the view as a 500. The
+                # constraint is the real arbiter; this turns losing the race
+                # into the same field error the pre-check would have produced.
+                # The savepoint is what keeps the failed insert from poisoning
+                # the rest of the request.
+                form.add_error("external_id", DUPLICATE_ACCOUNT_ERROR)
+            else:
+                return _render_secret(request, connection, secret, created=True)
     else:
         form = ChannelConnectionForm()
 

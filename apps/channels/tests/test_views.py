@@ -122,6 +122,69 @@ class TestCreate:
         assert "Rival bot" not in body
         assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
 
+    def test_losing_the_insert_race_is_a_form_error_not_a_500(
+        self, tenancy: Any, other_tenancy: Any, client_for: Any, monkeypatch: Any
+    ) -> None:
+        """The form's duplicate check is a read, so it is check-then-insert.
+
+        Two workspaces submitting the same (platform, external_id) can both
+        validate before either commits. All three of the form's read-based gates
+        are stubbed to reproduce that window: our own clean() pre-check,
+        ModelForm.validate_unique, and Model.validate_constraints, which is what
+        actually checks a Meta.constraints UniqueConstraint since Django 4.1.
+        Every one of them is a SELECT and races the same way. The database
+        constraint is the only real arbiter, and losing to it used to raise
+        IntegrityError straight out of the view as a 500.
+        """
+        from apps.channels.forms import ChannelConnectionForm
+
+        ChannelConnection.objects.create(
+            workspace=other_tenancy.workspace,
+            platform=Platform.TELEGRAM,
+            display_name="Winner",
+            external_id="contested",
+        )
+        monkeypatch.setattr(ChannelConnectionForm, "clean", lambda self: self.cleaned_data)
+        monkeypatch.setattr(ChannelConnectionForm, "validate_unique", lambda self: None)
+        monkeypatch.setattr(ChannelConnection, "validate_constraints", lambda self, **kw: None)
+
+        response = client_for(tenancy.owner).post(
+            url_for("create", tenancy),
+            {"platform": Platform.TELEGRAM, "display_name": "Loser", "external_id": "contested"},
+        )
+        body = response.content.decode()
+
+        assert response.status_code == 200
+        assert "already connected to this deployment" in body
+        # Same wording as the pre-check, and still naming no workspace.
+        assert other_tenancy.workspace.name not in body
+        assert "Winner" not in body
+        assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_the_request_survives_the_failed_insert(
+        self, tenancy: Any, other_tenancy: Any, client_for: Any, monkeypatch: Any
+    ) -> None:
+        """The savepoint keeps the poisoned transaction from taking the page down."""
+        from apps.channels.forms import ChannelConnectionForm
+
+        ChannelConnection.objects.create(
+            workspace=other_tenancy.workspace,
+            platform=Platform.TELEGRAM,
+            display_name="Winner",
+            external_id="contested",
+        )
+        monkeypatch.setattr(ChannelConnectionForm, "clean", lambda self: self.cleaned_data)
+        monkeypatch.setattr(ChannelConnectionForm, "validate_unique", lambda self: None)
+        monkeypatch.setattr(ChannelConnection, "validate_constraints", lambda self, **kw: None)
+        client = client_for(tenancy.owner)
+        client.post(
+            url_for("create", tenancy),
+            {"platform": Platform.TELEGRAM, "display_name": "Loser", "external_id": "contested"},
+        )
+
+        # A query in the same request cycle would fail on a poisoned transaction.
+        assert client.get(url_for("list", tenancy)).status_code == 200
+
     def test_the_new_connection_belongs_to_the_current_workspace(
         self, tenancy: Any, other_tenancy: Any, client_for: Any
     ) -> None:
