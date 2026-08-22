@@ -372,11 +372,13 @@
       "type": "object"
     },
     "condition_filter": {
+      "$id": "https://brightbean.chat/schemas/condition-filter.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "description": "SPEC §11.4. Vendored form, in force only until apps.contacts.conditions (issue #3) is importable; see apps/flows/schema/condition.py.",
+      "description": "SPEC §11.4. Dates are day-granular and resolve in the workspace's timezone, never the contact's — §11.5's use_contact_timezone flag is deliberately absent here.",
       "properties": {
         "match": {
-          "description": "Whether every rule must hold, or any one of them.",
+          "default": "all",
           "enum": [
             "all",
             "any"
@@ -385,69 +387,358 @@
         },
         "rules": {
           "items": {
-            "additionalProperties": false,
-            "properties": {
-              "key": {
-                "description": "What the rule is about: a tag name, a custom-field name, a system field, a segment id. Omitted for sources that need no key, such as window.",
-                "maxLength": 200,
-                "type": "string"
-              },
-              "op": {
-                "description": "Operators by value type — text: is, is_not, contains, has_value, no_value; number: =, !=, >, <, >=, <=; date/datetime: before, after, on, days_ago, days_from_now; boolean: is; tag: has, has_not; sequence: subscribed, not_subscribed; window: inside, outside.",
-                "enum": [
-                  "is",
-                  "is_not",
-                  "contains",
-                  "has_value",
-                  "no_value",
-                  "=",
-                  "!=",
-                  ">",
-                  "<",
-                  ">=",
-                  "<=",
-                  "before",
-                  "after",
-                  "on",
-                  "days_ago",
-                  "days_from_now",
-                  "has",
-                  "has_not",
-                  "subscribed",
-                  "not_subscribed",
-                  "inside",
-                  "outside"
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "has",
+                      "has_not"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "tag"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op"
                 ],
-                "type": "string"
+                "title": "Tag",
+                "type": "object"
               },
-              "source": {
-                "enum": [
-                  "tag",
-                  "custom_field",
-                  "system_field",
-                  "segment",
-                  "sequence",
-                  "window"
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "has_value",
+                      "no_value"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "custom_field"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op"
                 ],
-                "type": "string"
+                "title": "Custom field",
+                "type": "object"
               },
-              "value": {
-                "description": "Absent for the operators that take no operand (has_value, no_value, has).",
-                "type": [
-                  "string",
-                  "number",
-                  "boolean",
-                  "null"
-                ]
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "!=",
+                      "<",
+                      "<=",
+                      "=",
+                      ">",
+                      ">=",
+                      "after",
+                      "before",
+                      "contains",
+                      "is",
+                      "is_not",
+                      "on"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "custom_field"
+                  },
+                  "value": {
+                    "oneOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "maximum": 1000000000000000.0,
+                        "minimum": -1000000000000000.0,
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "relative": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "offset": {
+                                "maximum": 3650,
+                                "minimum": -3650,
+                                "type": "integer"
+                              },
+                              "unit": {
+                                "enum": [
+                                  "days"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "unit",
+                              "offset"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "relative"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op",
+                  "value"
+                ],
+                "title": "Custom field comparison",
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "enum": [
+                      "created_at",
+                      "email",
+                      "first_name",
+                      "last_interaction_at",
+                      "last_name",
+                      "locale",
+                      "phone",
+                      "timezone"
+                    ],
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "has_value",
+                      "no_value"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "system_field"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op"
+                ],
+                "title": "Contact field",
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "enum": [
+                      "created_at",
+                      "email",
+                      "first_name",
+                      "last_interaction_at",
+                      "last_name",
+                      "locale",
+                      "phone",
+                      "timezone"
+                    ],
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "!=",
+                      "<",
+                      "<=",
+                      "=",
+                      ">",
+                      ">=",
+                      "after",
+                      "before",
+                      "contains",
+                      "is",
+                      "is_not",
+                      "on"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "system_field"
+                  },
+                  "value": {
+                    "oneOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "maximum": 1000000000000000.0,
+                        "minimum": -1000000000000000.0,
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "relative": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "offset": {
+                                "maximum": 3650,
+                                "minimum": -3650,
+                                "type": "integer"
+                              },
+                              "unit": {
+                                "enum": [
+                                  "days"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "unit",
+                              "offset"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "relative"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op",
+                  "value"
+                ],
+                "title": "Contact field comparison",
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "in",
+                      "not_in"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "segment"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op"
+                ],
+                "title": "Segment",
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "not",
+                      "subscribed"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "sequence"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op"
+                ],
+                "title": "Sequence",
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "enum": [
+                      "email",
+                      "instagram",
+                      "messenger",
+                      "sms",
+                      "telegram",
+                      "whatsapp"
+                    ],
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "inside",
+                      "outside"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "window"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op"
+                ],
+                "title": "Messaging window",
+                "type": "object"
               }
-            },
-            "required": [
-              "source",
-              "op"
-            ],
-            "type": "object"
+            ]
           },
           "maxItems": 50,
+          "minItems": 0,
           "type": "array"
         }
       },
@@ -456,7 +747,171 @@
         "rules"
       ],
       "title": "Condition filter",
-      "type": "object"
+      "type": "object",
+      "x-brightbean": {
+        "limits": {
+          "maxRelativeOffset": 3650,
+          "maxRules": 50,
+          "maxSegmentDepth": 3,
+          "maxTotalRules": 200,
+          "maxValueChars": 500
+        },
+        "negationPairs": [
+          [
+            "is",
+            "is_not"
+          ],
+          [
+            "=",
+            "!="
+          ],
+          [
+            "has_value",
+            "no_value"
+          ],
+          [
+            "has",
+            "has_not"
+          ],
+          [
+            "in",
+            "not_in"
+          ],
+          [
+            "subscribed",
+            "not"
+          ],
+          [
+            "inside",
+            "outside"
+          ]
+        ],
+        "opLabels": {
+          "!=": "≠",
+          "<": "<",
+          "<=": "≤",
+          "=": "=",
+          ">": ">",
+          ">=": "≥",
+          "after": "after",
+          "before": "before",
+          "contains": "contains",
+          "has": "has tag",
+          "has_not": "does not have tag",
+          "has_value": "is set",
+          "in": "in segment",
+          "inside": "inside the messaging window",
+          "is": "is",
+          "is_not": "is not",
+          "no_value": "is not set",
+          "not": "not subscribed to",
+          "not_in": "not in segment",
+          "on": "on",
+          "outside": "outside the messaging window",
+          "subscribed": "subscribed to"
+        },
+        "opsBySource": {
+          "segment": [
+            "in",
+            "not_in"
+          ],
+          "sequence": [
+            "subscribed",
+            "not"
+          ],
+          "tag": [
+            "has",
+            "has_not"
+          ],
+          "window": [
+            "inside",
+            "outside"
+          ]
+        },
+        "opsByType": {
+          "boolean": [
+            "is"
+          ],
+          "date": [
+            "before",
+            "after",
+            "on"
+          ],
+          "datetime": [
+            "before",
+            "after",
+            "on"
+          ],
+          "number": [
+            "=",
+            "!=",
+            ">",
+            "<",
+            ">=",
+            "<="
+          ],
+          "text": [
+            "is",
+            "is_not",
+            "contains",
+            "has_value",
+            "no_value"
+          ]
+        },
+        "relativeUnits": [
+          "days"
+        ],
+        "systemFields": {
+          "created_at": {
+            "label": "Created",
+            "type": "datetime"
+          },
+          "email": {
+            "label": "Email",
+            "type": "text"
+          },
+          "first_name": {
+            "label": "First name",
+            "type": "text"
+          },
+          "last_interaction_at": {
+            "label": "Last interaction",
+            "type": "datetime"
+          },
+          "last_name": {
+            "label": "Last name",
+            "type": "text"
+          },
+          "locale": {
+            "label": "Locale",
+            "type": "text"
+          },
+          "phone": {
+            "label": "Phone",
+            "type": "text"
+          },
+          "timezone": {
+            "label": "Timezone",
+            "type": "text"
+          }
+        },
+        "unimplementedSources": [
+          "sequence",
+          "window"
+        ],
+        "valuelessOps": [
+          "has",
+          "has_not",
+          "has_value",
+          "in",
+          "inside",
+          "no_value",
+          "not",
+          "not_in",
+          "outside",
+          "subscribed"
+        ]
+      }
     },
     "continue_window": {
       "additionalProperties": false,

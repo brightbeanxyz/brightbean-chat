@@ -153,8 +153,8 @@ class TestActiveFlag:
             key="contacts",
             label="Contacts",
             icon="contacts",
-            url_name="contacts",
-            url_names=frozenset({"contacts", "settings_ws_fields"}),
+            url_name="contacts:list",
+            url_names=frozenset({"contacts:list", "contacts:field_list"}),
             workspace_scoped=True,
         )
         request = _request(f"/w/{tenancy.workspace.id}/settings/fields/", workspace=tenancy.workspace)

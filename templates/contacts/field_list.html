@@ -1,0 +1,25 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Custom fields · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Custom fields</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Custom fields store typed values on a contact. Flows write them, segments
+    filter on them, and the type decides which operators a filter may use.
+    A field's type is fixed once it is created.
+  </p>
+
+  <form hx-post="{% url 'contacts:field_create' workspace_id=request.workspace.id %}">
+    <label for="new-field-name">New field</label>
+    <input id="new-field-name" type="text" name="name" maxlength="100" required placeholder="Plan" />
+    <label for="new-field-type">Type</label>
+    <select id="new-field-type" name="field_type" required>
+      {% for value, label in field_types %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Add field</button>
+  </form>
+
+  <hr />
+
+  {% include "contacts/_field_rows.html" %}
+{% endblock %}
