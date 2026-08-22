@@ -175,19 +175,16 @@ def move_asset(asset: MediaAsset, folder: MediaFolder | None) -> MediaAsset:
 
 
 def delete_asset(asset: MediaAsset) -> None:
-    """Delete the row first, then the bytes.
+    """Delete the row. The bytes follow.
 
-    Order matters. The row is what ``resolve`` reads, so removing it is what
-    actually invalidates every delivery URL already handed to a platform; a
-    storage delete that fails afterwards costs money, while a row that survives
-    a successful storage delete would keep resolving to bytes that are gone.
+    Storage cleanup lives on ``post_delete`` (apps/media_library/models.py)
+    rather than here, because here only covers the one path that calls it —
+    cascades from a deleted organization or workspace, the admin and any
+    queryset ``.delete()`` all bypass it. Deleting the row first is still what
+    matters: it is what ``resolve`` reads, so it is what invalidates every
+    delivery URL already handed to a platform.
     """
-    names = [asset.file.name, asset.thumbnail.name]  # the same objects _write tracked
     asset.delete()
-    for name in names:
-        if name:
-            with contextlib.suppress(Exception):
-                default_storage.delete(name)
 
 
 def create_folder(*, workspace: Any, name: str, parent: MediaFolder | None = None) -> MediaFolder:
@@ -225,7 +222,28 @@ def delete_folder(folder: MediaFolder) -> None:
     ``on_delete=CASCADE`` on the self-referential parent would take the whole
     subtree with it, and assets are the expensive thing in it. Studio reparents
     for the same reason.
+
+    Raises ``ValidationError`` when lifting the children would collide. Two
+    folders may legitimately share a name while they sit under different
+    parents, so a folder ``A`` containing ``X`` alongside a sibling ``X`` is a
+    perfectly ordinary library — until deleting ``A`` tries to put both ``X``
+    folders under the same parent, where the uniqueness constraint rejects the
+    UPDATE and the request 500s.
     """
+    scoped = MediaFolder.objects.for_workspace(folder.workspace_id)
+    moving = set(scoped.filter(parent=folder).values_list("name", flat=True))
+    # parent=None reads as "IS NULL", which is the correct sibling set for a
+    # folder at the root.
+    already_there = set(scoped.filter(parent=folder.parent).exclude(pk=folder.pk).values_list("name", flat=True))
+
+    clashes = sorted(moving & already_there)
+    if clashes:
+        names = ", ".join(f"“{name}”" for name in clashes)
+        raise ValidationError(
+            f"“{folder.name}” contains {names}, and a folder of that name already exists "
+            f"where its contents would move. Rename one of them first."
+        )
+
     with transaction.atomic():
         MediaFolder.objects.for_workspace(folder.workspace_id).filter(parent=folder).update(parent=folder.parent)
         MediaAsset.objects.for_workspace(folder.workspace_id).filter(folder=folder).update(folder=folder.parent)

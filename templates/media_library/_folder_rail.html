@@ -35,6 +35,8 @@ folder name was permanent outside the Django admin.
           <form hx-post="{% url 'media:folder_delete' workspace_id=request.workspace.id folder_id=row.id %}"
                 hx-swap="none"
                 hx-confirm="Delete the folder “{{ row.name }}”? Anything inside it moves up one level; nothing is deleted.">
+            {# Lets the view notice it is deleting the folder currently being browsed. #}
+            <input type="hidden" name="current_folder" value="{{ current_folder }}">
             <button type="submit" class="media-folder-action" aria-label="Delete {{ row.name }}">Delete</button>
           </form>
         </div>

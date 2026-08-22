@@ -21,6 +21,7 @@ from django.core.exceptions import ValidationError
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.http.response import HttpResponseBase
 from django.shortcuts import render
+from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
@@ -338,7 +339,25 @@ def folder_rename(request: WorkspaceRequest, workspace_id: str, folder_id: str) 
 @require_POST
 def folder_delete(request: WorkspaceRequest, workspace_id: str, folder_id: str) -> HttpResponse:
     folder = get_scoped_object_or_404(MediaFolder, request.workspace, pk=folder_id)
-    services.delete_folder(folder)
+    parent_id = folder.parent_id
+    try:
+        services.delete_folder(folder)
+    except ValidationError as exc:
+        return _rejected(_first_message(exc))
+
+    # Deleting the folder you are looking at leaves a filter pointing at an id
+    # that no longer resolves: the grid refetches with it and gets the 404 that
+    # every unknown folder id gets, and the upload and new-folder forms keep
+    # posting it because they sit outside the region the refresh replaces.
+    # Redirect instead — the contents moved to the parent, so that is where the
+    # user should land, and a full navigation clears every copy of the stale id
+    # at once.
+    if request.POST.get("current_folder") == str(folder_id):
+        destination = reverse("media:library", kwargs={"workspace_id": workspace_id})
+        if parent_id:
+            destination = f"{destination}?folder={parent_id}"
+        return HttpResponse(status=204, headers={"HX-Redirect": destination})
+
     return toast_response(
         tone="success",
         title="Folder deleted",

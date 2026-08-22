@@ -118,6 +118,117 @@ class TestStorageIsNeverLeftOrphaned:
         assert self._stored_files(settings) == []
 
 
+class TestBytesGoWhenTheRowGoes:
+    """Storage cleanup hangs off post_delete, not off the service function.
+
+    ``FileField`` has not deleted its own file since Django 1.3, and
+    ``delete_asset`` only ever covered the one path that called it. Rows also
+    vanish through cascades — ``Organization.hard_delete()`` reaches these
+    through workspaces — and through the admin and any queryset ``.delete()``.
+
+    The cleanup runs on ``transaction.on_commit``, so these tests go through
+    ``django_capture_on_commit_callbacks``: pytest-django wraps each test in an
+    atomic block it rolls back, and a callback registered there would otherwise
+    never fire — the tests would pass while proving nothing.
+    """
+
+    def _files(self, settings):
+        from pathlib import Path
+
+        root = Path(settings.MEDIA_ROOT)
+        return sorted(p.name for p in root.rglob("*") if p.is_file()) if root.exists() else []
+
+    def test_the_service_path(self, workspace, settings, django_capture_on_commit_callbacks):
+        from apps.media_library.services import delete_asset
+
+        asset = _create(workspace, f.real_png(), name="logo.png")
+        assert len(self._files(settings)) == 2  # original + thumbnail
+
+        with django_capture_on_commit_callbacks(execute=True):
+            delete_asset(asset)
+
+        assert self._files(settings) == []
+
+    def test_a_bare_row_delete(self, workspace, settings, django_capture_on_commit_callbacks):
+        asset = _create(workspace, f.real_png(), name="logo.png")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            asset.delete()
+
+        assert self._files(settings) == []
+
+    def test_a_queryset_delete(self, workspace, settings, django_capture_on_commit_callbacks):
+        _create(workspace, f.real_png(), name="logo.png")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            MediaAsset.objects.for_workspace(workspace).delete()
+
+        assert self._files(settings) == []
+
+    def test_a_cascade_from_the_workspace(self, tenancy, settings, django_capture_on_commit_callbacks):
+        _create(tenancy.workspace, f.real_png(), name="logo.png")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            tenancy.workspace.delete()
+
+        assert self._files(settings) == []
+
+    def test_a_cascade_from_the_organization(self, tenancy, settings, django_capture_on_commit_callbacks):
+        """Organization.hard_delete reaches assets through its workspaces.
+
+        On that path a leaked object is not a storage bill, it is user data
+        surviving a deletion the product reported as done.
+        """
+        _create(tenancy.workspace, f.real_png(), name="logo.png")
+
+        with django_capture_on_commit_callbacks(execute=True):
+            tenancy.organization.delete()
+
+        assert self._files(settings) == []
+
+    def test_the_cleanup_is_deferred_to_commit(self, workspace, settings, django_capture_on_commit_callbacks):
+        """Not merely "it deletes" — it must not delete before the row's removal
+        is durable, or a rollback leaves a live row pointing at nothing."""
+        asset = _create(workspace, f.real_png(), name="logo.png")
+
+        with django_capture_on_commit_callbacks(execute=False) as callbacks:
+            asset.delete()
+
+            assert len(self._files(settings)) == 2, "bytes must survive until commit"
+
+        assert len(callbacks) == 1, "the cleanup registered on_commit rather than running inline"
+
+    def test_an_asset_with_no_stored_file_registers_nothing(self, workspace, django_capture_on_commit_callbacks):
+        with django_capture_on_commit_callbacks(execute=False) as callbacks:
+            MediaAsset.objects.create(workspace=workspace, filename="x", kind="image", mime="image/png").delete()
+
+        assert callbacks == []
+
+    def test_a_storage_failure_does_not_break_the_delete(
+        self, workspace, monkeypatch, caplog, django_capture_on_commit_callbacks
+    ):
+        """The row is already gone, which is what revokes the delivery URLs."""
+        import logging
+
+        from apps.media_library import models as models_module
+
+        asset = _create(workspace, f.real_png(), name="logo.png")
+
+        def explode(name):
+            raise OSError("bucket unreachable")
+
+        monkeypatch.setattr(models_module.default_storage, "delete", explode)
+
+        with (
+            caplog.at_level(logging.WARNING, logger="apps.media_library.models"),
+            django_capture_on_commit_callbacks(execute=True),
+        ):
+            asset.delete()
+
+        assert MediaAsset.objects.for_workspace(workspace).count() == 0
+        assert "Could not delete stored media object" in caplog.text
+
+
 class TestTheQuotaCountsEverythingStored:
     def test_a_thumbnail_is_charged_to_the_workspace(self, workspace):
         from apps.media_library.quotas import used_bytes

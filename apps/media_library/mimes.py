@@ -66,10 +66,20 @@ ALLOWED_MIMES: dict[str, tuple[str, str]] = {
     "application/pdf": (MediaKind.FILE, "pdf"),
 }
 
-#: Types the delivery view may serve ``inline``. Everything else — every
-#: ``file``-kind asset — is served ``attachment``, which is what makes a
-#: document harmless even in a browser that ignores ``nosniff``.
-INLINE_SAFE_MIMES = frozenset(mime for mime, (kind, _) in ALLOWED_MIMES.items() if kind != MediaKind.FILE)
+#: Types the delivery view may serve ``inline``. Images only.
+#:
+#: SECURITY-BASELINE §9 draws the line there and not at "anything that is not a
+#: document": "only safe image types render inline". Audio and video used to be
+#: in this set on the reasoning that neither is script-executable, which is true
+#: and is not the point — the baseline is the rule this deployment is audited
+#: against, the container formats are the ones with the longest history of
+#: parser bugs, and ``attachment`` costs nothing on the paths that matter. A
+#: platform fetching a video reads the bytes and the ``Content-Type``; it never
+#: consults ``Content-Disposition``.
+#:
+#: Thumbnails are inline regardless of their asset's kind — they are JPEGs this
+#: application generated from bytes it had already sniffed.
+INLINE_SAFE_MIMES = frozenset(mime for mime, (kind, _) in ALLOWED_MIMES.items() if kind == MediaKind.IMAGE)
 
 
 class UnsupportedMediaError(Exception):

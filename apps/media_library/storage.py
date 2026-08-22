@@ -61,9 +61,23 @@ def is_s3_backend() -> bool:
 
     Detected by module path rather than ``isinstance`` so this module never
     imports the S3 backend — and transitively boto3 — on a local-disk
-    deployment. Studio's check, kept verbatim in spirit.
+    deployment.
+
+    ``__class__``, **not** ``type()``. ``default_storage`` is Django's
+    ``DefaultStorage``, a ``LazyObject`` that wraps the configured backend and
+    proxies ``__class__`` to whatever it wrapped. ``type()`` sees straight
+    through that proxying to the wrapper itself, so it answers
+    ``django.core.files.storage`` on every deployment, S3 included — and this
+    function then reports False on exactly the configuration it exists to
+    detect, silently disabling the presigned-redirect path and streaming every
+    video through the application instead.
+
+    Studio's version has the same bug. It is invisible to a test that swaps
+    ``default_storage`` for a real ``S3Storage`` instance, because then the
+    wrapper is gone and the two spellings agree — which is why the tests here
+    now assert against the proxy as configured (test_storage_seam.py).
     """
-    return type(default_storage).__module__.startswith("storages.backends.s3")
+    return default_storage.__class__.__module__.startswith("storages.backends.s3")
 
 
 def can_presign() -> bool:

@@ -28,9 +28,11 @@ Three properties worth stating explicitly, because a reviewer will look for each
 
 The response itself follows SECURITY-BASELINE §9: the ``Content-Type`` is the
 mime this deployment sniffed from the bytes, never a client's header or a
-filename guess, and only the image/audio/video kinds are served ``inline``.
-Everything else is ``attachment``, which is what makes a document harmless in a
-browser even before ``nosniff`` is considered.
+filename guess, and only images are served ``inline`` — the baseline's words are
+"only safe image types render inline". Audio, video and documents are all
+``attachment``, which is what makes them harmless in a browser even before
+``nosniff`` is considered, and costs nothing on the send path: a platform
+fetching media reads the bytes and the ``Content-Type``, never the disposition.
 
 **One known asymmetry between the two storage backends.** On local disk the
 response carries ``X-Content-Type-Options: nosniff``. On S3 it cannot: a

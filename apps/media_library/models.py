@@ -15,13 +15,20 @@ crop/rotate/trim editor, starring, Unsplash attribution and the per-platform
 stable id, the real content type, and enough metadata to render a picker.
 """
 
+import logging
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.core.files.storage import default_storage
+from django.db import models, transaction
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 
 from apps.common.scoping import WorkspaceScopedModel
 from apps.media_library.mimes import MediaKind
 from apps.media_library.storage import asset_upload_to, thumbnail_upload_to
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["MAX_FOLDER_DEPTH", "MediaAsset", "MediaFolder"]
 
@@ -153,3 +160,39 @@ class MediaAsset(WorkspaceScopedModel):
                 return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} TB"
+
+
+@receiver(post_delete, sender=MediaAsset)
+def _delete_stored_objects(sender: type[MediaAsset], instance: MediaAsset, **kwargs: object) -> None:
+    """Remove an asset's bytes whenever its row goes, by whatever route.
+
+    ``FileField`` has not deleted its own file since Django 1.3, and the service
+    layer's ``delete_asset`` only covers the one path that calls it. Rows also
+    disappear through cascades — ``Organization.hard_delete()`` reaches these
+    through workspaces — and through the admin and any queryset ``.delete()``.
+    Every one of those left originals and thumbnails in the bucket forever, with
+    no row to find them by and no orphan sweep in this app to go looking. On the
+    org-deletion path that is not a storage bill, it is user data surviving a
+    deletion the product told someone had happened.
+
+    ``on_commit`` because the bytes must not go before the row's removal is
+    durable: a transaction that rolls back after this fires would otherwise
+    leave a live row pointing at nothing. Outside a transaction Django runs the
+    callback immediately, so the plain path is unchanged.
+
+    Best-effort by design. A storage backend that is down must not turn a delete
+    into a 500 — the row is already gone, which is what invalidates the delivery
+    URLs, and a leaked object is the lesser failure.
+    """
+    names = [name for name in (instance.file.name, instance.thumbnail.name) if name]
+    if not names:
+        return
+
+    def remove() -> None:
+        for name in names:
+            try:
+                default_storage.delete(name)
+            except Exception:
+                logger.warning("Could not delete stored media object %s", name, exc_info=True)
+
+    transaction.on_commit(remove)

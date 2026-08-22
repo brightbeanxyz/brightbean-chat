@@ -111,6 +111,102 @@ class TestDeletion:
         assert MediaAsset.objects.for_workspace(workspace).count() == 1
 
 
+class TestDeletingAFolderWhoseChildrenWouldCollide:
+    """Two folders may share a name under different parents.
+
+    So ``P > {A, X}`` with ``A > {X}`` is an ordinary library — until deleting
+    ``A`` lifts its ``X`` into ``P`` beside the existing one and the uniqueness
+    constraint rejects the UPDATE. That used to surface as an IntegrityError and
+    a 500.
+    """
+
+    def _build_collision(self, workspace):
+        parent = create_folder(workspace=workspace, name="P")
+        inner = create_folder(workspace=workspace, name="A", parent=parent)
+        create_folder(workspace=workspace, name="X", parent=parent)
+        create_folder(workspace=workspace, name="X", parent=inner)
+        return inner
+
+    def test_it_is_a_validation_error_not_an_integrity_error(self, workspace):
+        folder = self._build_collision(workspace)
+
+        with pytest.raises(ValidationError) as exc:
+            delete_folder(folder)
+
+        message = str(exc.value)
+        assert "X" in message and "Rename" in message
+
+    def test_nothing_is_deleted_or_moved(self, workspace):
+        folder = self._build_collision(workspace)
+        before = MediaFolder.objects.for_workspace(workspace).count()
+
+        with pytest.raises(ValidationError):
+            delete_folder(folder)
+
+        assert MediaFolder.objects.for_workspace(workspace).count() == before
+
+    def test_the_endpoint_answers_400_rather_than_500(self, editor_client, workspace):
+        folder = self._build_collision(workspace)
+        url = reverse("media:folder_delete", kwargs={"workspace_id": workspace.pk, "folder_id": folder.pk})
+
+        response = editor_client.post(url)
+
+        assert response.status_code == 400
+        assert "Rename" in response.content.decode()
+
+    def test_the_same_name_under_a_different_parent_is_still_fine(self, workspace):
+        """The collision check must not refuse an ordinary delete."""
+        parent = create_folder(workspace=workspace, name="P")
+        inner = create_folder(workspace=workspace, name="A", parent=parent)
+        create_folder(workspace=workspace, name="X", parent=inner)
+
+        delete_folder(inner)
+
+        assert MediaFolder.objects.for_workspace(workspace).filter(name="X").get().parent_id == parent.pk
+
+    def test_root_level_collisions_are_caught_too(self, workspace):
+        """parent=None reads as IS NULL, which is the right sibling set."""
+        folder = create_folder(workspace=workspace, name="A")
+        create_folder(workspace=workspace, name="X")
+        create_folder(workspace=workspace, name="X", parent=folder)
+
+        with pytest.raises(ValidationError):
+            delete_folder(folder)
+
+
+class TestDeletingTheFolderYouAreBrowsing:
+    def test_it_redirects_instead_of_leaving_a_stale_filter(self, editor_client, workspace):
+        """The grid would refetch with an id that no longer resolves, and the
+        upload and new-folder forms would keep posting it."""
+        parent = create_folder(workspace=workspace, name="P")
+        folder = create_folder(workspace=workspace, name="A", parent=parent)
+        url = reverse("media:folder_delete", kwargs={"workspace_id": workspace.pk, "folder_id": folder.pk})
+
+        response = editor_client.post(url, {"current_folder": str(folder.pk)})
+
+        assert response.status_code == 204
+        # The contents moved to the parent, so that is where the user lands.
+        assert response["HX-Redirect"].endswith(f"?folder={parent.pk}")
+
+    def test_a_root_folder_redirects_to_the_whole_library(self, editor_client, workspace):
+        folder = create_folder(workspace=workspace, name="A")
+        url = reverse("media:folder_delete", kwargs={"workspace_id": workspace.pk, "folder_id": folder.pk})
+
+        response = editor_client.post(url, {"current_folder": str(folder.pk)})
+
+        assert response["HX-Redirect"] == reverse("media:library", kwargs={"workspace_id": workspace.pk})
+
+    def test_deleting_some_other_folder_just_refreshes(self, editor_client, workspace):
+        viewing = create_folder(workspace=workspace, name="Viewing")
+        other = create_folder(workspace=workspace, name="Other")
+        url = reverse("media:folder_delete", kwargs={"workspace_id": workspace.pk, "folder_id": other.pk})
+
+        response = editor_client.post(url, {"current_folder": str(viewing.pk)})
+
+        assert "HX-Redirect" not in response
+        assert "mediaChanged" in response["HX-Trigger"]
+
+
 class TestMovingAssets:
     def test_an_asset_moves_between_folders_and_back_to_the_root(self, workspace):
         folder = create_folder(workspace=workspace, name="Brand")

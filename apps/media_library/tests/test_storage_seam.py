@@ -95,6 +95,60 @@ class TestNormalizeAgainstTheRealBackend:
         assert bucket == "test-bucket"
 
 
+class TestDetectionThroughDjangosLazyProxy:
+    """The case the other S3 tests cannot see.
+
+    They monkeypatch ``default_storage`` with a real ``S3Storage``, which is the
+    only way to exercise the delivery path without a bucket — and it removes the
+    ``LazyObject`` wrapper that production always has. ``type(default_storage)``
+    answered ``DefaultStorage`` on every real deployment, so ``is_s3_backend()``
+    reported False with S3 fully configured and the presigned redirect never
+    ran. These configure the setting and inspect the proxy as it actually is.
+    """
+
+    @pytest.fixture
+    def s3_configured(self, settings):
+        """STORAGE_BACKEND=s3, through the real lazy proxy.
+
+        ``STORAGES`` is what Django's storage handler reads; changing it emits
+        setting_changed, which clears the cached backend, so ``default_storage``
+        resolves afresh to S3Storage on next use.
+        """
+        settings.AWS_STORAGE_BUCKET_NAME = "test-bucket"
+        settings.STORAGES = {
+            **settings.STORAGES,
+            "default": {"BACKEND": "storages.backends.s3.S3Storage"},
+        }
+
+    def test_the_proxy_is_still_a_lazy_object(self, s3_configured):
+        """If Django ever stops wrapping it, this test is why the check changed."""
+        from django.core.files.storage import default_storage
+        from django.utils.functional import LazyObject
+
+        assert isinstance(default_storage, LazyObject)
+
+    def test_type_would_not_see_through_the_proxy(self, s3_configured):
+        """The exact mistake, pinned: type() reports the wrapper, not the backend."""
+        from django.core.files.storage import default_storage
+
+        assert type(default_storage).__module__ == "django.core.files.storage"
+        assert default_storage.__class__.__module__ == "storages.backends.s3"
+
+    def test_s3_is_detected_when_configured(self, s3_configured):
+        assert storage.is_s3_backend() is True
+
+    def test_presigning_is_available_when_configured(self, s3_configured):
+        assert storage.can_presign() is True
+
+    def test_a_custom_domain_without_a_signer_still_disables_presigning(self, s3_configured, settings):
+        settings.AWS_S3_CUSTOM_DOMAIN = "cdn.example.test"
+        settings.AWS_CLOUDFRONT_KEY_ID = ""
+        settings.AWS_CLOUDFRONT_KEY = ""
+
+        assert storage.is_s3_backend() is True
+        assert storage.can_presign() is False
+
+
 class TestLocalBackendIsNotMistakenForS3:
     def test_is_s3_backend_is_false_on_local_disk(self):
         assert storage.is_s3_backend() is False

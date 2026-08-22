@@ -51,6 +51,20 @@ class TestLocalDiskResponses:
         response = client.get(_url(pdf_asset))
         assert response["Content-Disposition"].startswith("attachment")
 
+    @pytest.mark.parametrize(
+        ("payload", "name"), [(f.MP4, "clip.mp4"), (f.WEBM, "clip.webm"), (f.MP3, "song.mp3"), (f.OGG, "song.ogg")]
+    )
+    def test_audio_and_video_are_attachments_too(self, client, workspace, payload, name):
+        """SECURITY-BASELINE §9 permits only images inline, not "anything that
+        is not a document"."""
+        asset = create_asset(workspace=workspace, uploaded_file=f.upload(payload, name=name), uploaded_by=None)
+
+        assert client.get(_url(asset))["Content-Disposition"].startswith("attachment")
+
+    def test_a_thumbnail_is_still_inline(self, client, asset):
+        """A JPEG this app generated from bytes it had already sniffed."""
+        assert client.get(_url(asset, thumbnail=True))["Content-Disposition"].startswith("inline")
+
     def test_nosniff_is_always_present(self, client, asset, pdf_asset):
         for target in (asset, pdf_asset):
             assert client.get(_url(target))["X-Content-Type-Options"] == "nosniff"

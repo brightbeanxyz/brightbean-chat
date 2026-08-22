@@ -112,10 +112,14 @@ class TestRejectsHostileUploads:
 
 
 class TestInlineSafety:
-    def test_only_non_file_kinds_render_inline(self):
-        assert "application/pdf" not in INLINE_SAFE_MIMES
-        assert "image/png" in INLINE_SAFE_MIMES
-        assert "video/mp4" in INLINE_SAFE_MIMES
+    def test_only_images_render_inline(self):
+        """SECURITY-BASELINE §9: "only safe image types render inline"."""
+        assert {"image/jpeg", "image/png", "image/gif", "image/webp"} == INLINE_SAFE_MIMES
+
+    @pytest.mark.parametrize("mime", ["application/pdf", "video/mp4", "video/webm", "audio/mpeg", "audio/mp4"])
+    def test_everything_else_is_an_attachment(self, mime):
+        assert mime in ALLOWED_MIMES, "the point is that it is accepted but not rendered"
+        assert mime not in INLINE_SAFE_MIMES
 
     def test_every_inline_type_is_an_allowed_type(self):
         assert set(ALLOWED_MIMES) >= INLINE_SAFE_MIMES
