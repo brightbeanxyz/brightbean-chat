@@ -43,6 +43,17 @@ class TestCrossTenantIsolation:
             "organizations:set_workspace_archived",
         } <= names
 
+    def test_the_sweep_covers_the_notification_route(self):
+        """Issue #7's route is per-user rather than workspace-scoped, so
+        iter_tenant_routes() would skip it silently — it `continue`s on a route
+        carrying no *registered* tenant kwarg before it ever reaches the
+        unknown-kwarg check. Registering `notification_id` opts it in, and this
+        assertion is what stops a later edit from quietly opting it back out.
+        """
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert "notifications:mark_read" in names
+
     def test_the_sweep_covers_the_shell_placeholders(self):
         """Issue #32's sidebar destinations are real endpoints under
         /w/<uuid>/, so baseline §1 binds them like any other: a member of

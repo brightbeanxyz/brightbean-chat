@@ -54,6 +54,13 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "tag_id": lambda t: _victim_tag(t).pk,
     "field_id": lambda t: _victim_custom_field(t).pk,
     "flow_id": lambda t: _victim_flow(t).pk,
+    # Notifications (issue #7) are keyed by user, not by workspace, so "the
+    # victim" here is a person rather than a tenant. Registering it is an
+    # opt-in: iter_tenant_routes() skips a route carrying no *registered*
+    # kwarg before it ever reaches the unknown-kwarg check, so this route
+    # would otherwise be neither swept nor reported. The per-user boundary is
+    # also covered directly in apps/notifications/tests/test_views.py.
+    "notification_id": lambda t: _victim_notification(t).pk,
 }
 
 #: Kwargs that need *a* value but do not identify a tenant. A route made only of
@@ -123,6 +130,21 @@ def _victim_custom_field(tenancy: Tenancy) -> Any:
 
     field = CustomField.objects.for_workspace(tenancy.workspace).first()
     return field or CustomField.objects.create(workspace=tenancy.workspace, name="Plan", type=CustomFieldType.TEXT)
+
+
+def _victim_notification(tenancy: Tenancy) -> Any:
+    """A notification belonging to the victim's owner, created on demand."""
+    from apps.notifications.models import Notification
+
+    notification = Notification.objects.filter(user=tenancy.owner).first()
+    if notification is None:
+        notification = Notification.objects.create(
+            user=tenancy.owner,
+            event_type="flow_loop_cap_hit",
+            title="Victim notification",
+            payload={"workspace_id": str(tenancy.workspace.pk)},
+        )
+    return notification
 
 
 # ---------------------------------------------------------------------------
