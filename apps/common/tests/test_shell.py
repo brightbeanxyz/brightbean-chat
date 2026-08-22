@@ -641,6 +641,85 @@ class TestStaticReferences:
         assert "theme/static" in found.replace("\\", "/")
 
 
+class TestTailwindSourceCoverage:
+    """styles.css imports Tailwind with `source(none)`, which turns off Tailwind
+    4's automatic content detection and makes the @source directives the entire
+    content list.
+
+    That was done deliberately — auto-detection scanned the whole repo and emitted
+    a rule for any file that merely contained a word matching a utility name, so
+    `blur` arrived from the DOM event in the minified alpine bundle and `isolate`
+    from a Makefile comment. A stylesheet that changes when someone edits a
+    Makefile is not reproducible.
+
+    The cost of that choice is this class. With auto-detection on, a template in a
+    new location still got its classes; with it off, the template renders unstyled
+    and nothing fails — not the suite, which only checks that {% static %} paths
+    resolve, and not the audit job's determinism check, which compares two builds
+    of the same input and so is blind to an under-inclusive source list by
+    construction. The failure only shows up in a browser. Hence a test.
+    """
+
+    CSS = Path(__file__).parents[3] / "theme" / "static_src" / "src" / "styles.css"
+
+    def _globs(self):
+        text = self.CSS.read_text()
+        assert "source(none)" in text, (
+            "styles.css no longer imports Tailwind with source(none). If automatic "
+            "source detection is back on, this class is obsolete — but so is the "
+            "reproducibility it was protecting; see the class docstring."
+        )
+        patterns = re.findall(r'@source\s+"([^"]+)"', text)
+        assert patterns, "styles.css declares no @source globs, so it can emit nothing"
+        return patterns
+
+    def test_every_template_lives_under_an_at_source_glob(self):
+        """A template Tailwind never reads still renders — just with no styles."""
+        root = Path(__file__).parents[3]
+
+        covered = set()
+        for pattern in self._globs():
+            covered |= {p.resolve() for p in self.CSS.parent.glob(pattern)}
+
+        # Anything Django's loaders would find: the DIRS entry plus, because
+        # APP_DIRS is on, every apps/*/templates tree.
+        present = {p.resolve() for p in (root / "templates").rglob("*.html")}
+        present |= {p.resolve() for p in root.glob("apps/*/templates/**/*.html")}
+
+        assert present, "no templates found at all — did the shell move?"
+        unscanned = sorted(str(p.relative_to(root)) for p in present - covered)
+        assert not unscanned, (
+            "these templates are outside every @source glob in styles.css, so "
+            f"their classes are missing from the bundle: {unscanned}. Add an "
+            "@source directive covering them, and if the new path is outside "
+            "templates/ also add it to the frontend stage's COPY in the Dockerfile."
+        )
+
+    def test_no_python_file_emits_a_class_attribute(self):
+        """The @source globs cover templates only. A form widget or a
+        MESSAGE_TAGS mapping that starts naming CSS classes in Python would be a
+        content source nothing scans."""
+        root = Path(__file__).parents[3]
+        pattern = re.compile(r"""["']class["']\s*:|\bclass=["']""")
+
+        offenders = []
+        for directory in ("apps", "config", "theme"):
+            for path in (root / directory).rglob("*.py"):
+                if "/tests/" in path.as_posix() or "/migrations/" in path.as_posix():
+                    continue
+                for line in path.read_text().splitlines():
+                    # config's LOGGING maps "class" to dotted handler paths, which
+                    # are not CSS and are not rendered into any page.
+                    if pattern.search(line) and "logging." not in line:
+                        offenders.append(f"{path.relative_to(root)}: {line.strip()}")
+
+        assert not offenders, (
+            "CSS classes generated in Python are invisible to Tailwind's @source "
+            f"globs and will not be emitted: {offenders}. Move them into a "
+            "template, or add the file to the @source list in styles.css."
+        )
+
+
 @pytest.mark.django_db
 class TestErrorPages:
     def test_404_keeps_its_literal_heading(self, client):

@@ -21,9 +21,17 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --no-audit --no-fund
 
-# styles.css scans templates/ and apps/**/templates/ through its @source
-# directives, so Tailwind needs the whole tree to know which classes to emit.
-COPY . .
+# Only what styles.css actually reads: its own source, and the one tree its
+# @source directive scans. `COPY . .` here meant an edit to a setting, a test or
+# any other file invalidated the CSS build and every layer after it, for a
+# bundle that could not possibly have changed.
+#
+# These paths must track the @source directives in
+# theme/static_src/src/styles.css. TestTailwindSourceCoverage in
+# apps/common/tests/test_shell.py fails if a template appears somewhere this
+# stage does not copy, so the two cannot drift apart silently.
+COPY theme/static_src/ ./theme/static_src/
+COPY templates/ ./templates/
 RUN npm run build:css \
     && test -s theme/static/css/dist/styles.css
 
