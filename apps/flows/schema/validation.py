@@ -30,7 +30,7 @@ from apps.flows.schema.handles import parse_handle
 from apps.flows.schema.issues import Issue
 from apps.flows.schema.nodes import NodeSpec, handles_for_node, node_spec
 
-__all__ = ["ValidationResult", "validate_graph"]
+__all__ = ["ValidationResult", "entry_node_id", "validate_graph"]
 
 
 @dataclass(frozen=True)
@@ -205,6 +205,41 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
             taken[(source, raw_handle)] = edge_id
 
     return issues
+
+
+def entry_node_id(graph: Any) -> str | None:
+    """Where a run of ``graph`` starts, or ``None`` when that is not a question.
+
+    The engine (L3-B) needs the same answer the validator computes, and two
+    implementations of "the node with no incoming edge from another node" would
+    drift the moment one of the exclusions below was corrected in only one of
+    them — a graph that publishes cleanly and then starts at the wrong node is
+    about the worst shape that disagreement could take.
+
+    So this is a thin wrapper over :func:`_entry_nodes`, not a second reading of
+    SPEC §9.1. ``None`` means the graph has zero entries or several, which is a
+    graph error :func:`validate_graph` already reports; the caller is expected
+    to have published through that gate and to treat ``None`` as a broken graph
+    rather than as a normal state.
+    """
+    if not isinstance(graph, dict):
+        return None
+    nodes = graph.get("nodes")
+    edges = graph.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        return None
+
+    specs: dict[str, NodeSpec] = {}
+    for node in nodes:
+        if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+            continue
+        spec = node_spec(node.get("type"))
+        if spec is not None:
+            specs[node["id"]] = spec
+
+    usable = [edge for edge in edges if isinstance(edge, dict) and "source" in edge and "target" in edge]
+    entries = _entry_nodes(specs, usable, _routable(specs))
+    return entries[0] if len(entries) == 1 else None
 
 
 def _routable(specs: dict[str, NodeSpec]) -> list[str]:
