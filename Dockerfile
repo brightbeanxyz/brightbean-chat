@@ -64,7 +64,7 @@ RUN npm run build:js \
 # and a compiler toolchain into production. Here the runtime stage gets the
 # virtualenv and nothing else. Only the runtime lock is installed: pytest,
 # ruff and mypy live in requirements-dev.* and never reach the image.
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
@@ -85,7 +85,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 # ---------------------------------------------------------------------------
 # Runtime
 # ---------------------------------------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
