@@ -8,6 +8,7 @@ here, and the gap is named in the PR.
 
 import json
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from django.utils import timezone
@@ -219,8 +220,14 @@ class TestTheContactList:
         services.create_contact(tenancy.workspace, first_name="Someone")
         segment = Segment.objects.create(
             workspace=tenancy.workspace,
-            name="Windowed",
-            filter_json={"match": "all", "rules": [{"source": "window", "key": "telegram", "op": "inside"}]},
+            name="Unimplemented source",
+            # `sequence` is the remaining unimplemented slot (issue #22). This
+            # used to be `window`, which issue #8 filled — the assertion is
+            # about a source with no implementation, not about that source.
+            filter_json={
+                "match": "all",
+                "rules": [{"source": "sequence", "key": str(uuid4()), "op": "subscribed"}],
+            },
         )
 
         response = client_for(tenancy.owner).get(url(tenancy, f"contacts/?segment={segment.pk}"))
@@ -319,8 +326,14 @@ class TestASegmentThatCannotBeEvaluatedFailsClosed:
         services.create_contact(tenancy.workspace, first_name="Zebediah")
         segment = Segment.objects.create(
             workspace=tenancy.workspace,
-            name="Windowed",
-            filter_json={"match": "all", "rules": [{"source": "window", "key": "telegram", "op": "inside"}]},
+            name="Unimplemented source",
+            # `sequence` is the remaining unimplemented slot (issue #22). This
+            # used to be `window`, which issue #8 filled — the assertion is
+            # about a source with no implementation, not about that source.
+            filter_json={
+                "match": "all",
+                "rules": [{"source": "sequence", "key": str(uuid4()), "op": "subscribed"}],
+            },
         )
 
         body = client_for(tenancy.owner).get(url(tenancy, f"contacts/?segment={segment.pk}")).content.decode()

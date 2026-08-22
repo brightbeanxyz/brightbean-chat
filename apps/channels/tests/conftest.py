@@ -39,16 +39,35 @@ def fake_adapter() -> Iterator[type[FakeAdapter]]:
 
 @pytest.fixture(autouse=True)
 def _clean_processors() -> Iterator[None]:
-    """Leave the contract-6 seam as empty as it was found.
+    """Run every test in this app against an EMPTY contract-6 seam.
 
-    The processor registry is module-global. A test that registers one and does
-    not remove it would silently change every later test's dispatch behaviour —
-    including the ones asserting the default no-op.
+    The processor registry is module-global, and two different leaks have to be
+    prevented here.
+
+    A test that registers a processor and does not remove it would silently
+    change every later test's dispatch behaviour — including the ones asserting
+    the default no-op. That is the outward half.
+
+    The inward half arrived with issue #8: ``MessagingConfig.ready()`` registers
+    persistence and a routing stage for real, in every process, so by the time
+    these tests run the seam is no longer empty. Snapshot-and-restore alone
+    would leave them asserting on whatever apps happen to be installed, and
+    running each dispatch through the messaging spine — which is L3-A's own
+    tests' job, not this app's. So the registry is cleared for the duration and
+    put back exactly as it was, and these tests go on testing the seam itself.
     """
     from apps.channels import ingest
 
-    before = tuple(ingest.registered_processors())
-    yield
-    for name in ingest.registered_processors():
-        if name not in before:
+    # Reaching for the private registry is deliberate and stays inside this
+    # app's own test suite: restoring requires the callables, and the public
+    # surface deliberately exposes only names.
+    before = {name: ingest._PROCESSORS[name] for name in ingest.registered_processors()}
+    for name in before:
+        ingest.unregister_processor(name)
+    try:
+        yield
+    finally:
+        for name in ingest.registered_processors():
             ingest.unregister_processor(name)
+        for name, processor in before.items():
+            ingest.register_processor(processor, name=name)

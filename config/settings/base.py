@@ -152,6 +152,7 @@ LOCAL_APPS = [
     "apps.credentials",
     "apps.contacts",
     "apps.channels",
+    "apps.messaging",
     "apps.media_library",
     "apps.flows",
     "apps.notifications",
