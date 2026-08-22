@@ -48,7 +48,7 @@ css-watch: ## Rebuild the Tailwind bundle on save (leave running alongside `make
 server: ## Start Django dev server
 	python manage.py runserver
 
-worker: ## Start the background task worker (the command itself lands with issue #5)
+worker: ## Start the background task worker
 	python manage.py process_tasks
 
 # Database

@@ -47,14 +47,24 @@ def fake_queueing():
         "apps.queueing.services": services,
         "apps.queueing.handlers": handlers,
     }
+    # Save whatever is there first. Since #5 landed, "apps.queueing" is a REAL
+    # module, and popping it at teardown left the interpreter with a live
+    # apps.queueing.worker whose parent package was gone — which broke an
+    # unrelated queueing test that resolved a monkeypatch target by dotted
+    # path. A stand-in has to be removed by restoring the original, not by
+    # deleting the name.
+    displaced = {name: sys.modules.get(name) for name in added}
     sys.modules.update(added)
     # The seam memoises what it bound, so a stand-in installed for one test
     # would otherwise still be bound in the next.
     queue.reset_bindings()
     with patch("apps.notifications.queue.django_apps.is_installed", return_value=True):
         yield types.SimpleNamespace(calls=calls, registered=registered)
-    for name in added:
-        sys.modules.pop(name, None)
+    for name, previous in displaced.items():
+        if previous is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = previous
     queue.reset_bindings()
 
 
