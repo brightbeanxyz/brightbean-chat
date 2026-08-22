@@ -151,6 +151,8 @@ LOCAL_APPS = [
     "apps.members",
     "apps.credentials",
     "apps.contacts",
+    "apps.channels",
+    "apps.media_library",
     "apps.flows",
     "apps.notifications",
     "apps.queueing",
@@ -339,6 +341,38 @@ TICK_TOKEN = env("TICK_TOKEN", default="")
 TRUSTED_PROXIES = env.list("TRUSTED_PROXIES", default=[])
 
 # ---------------------------------------------------------------------------
+# Webhook ingestion (issue #4; SPEC §7.1, SECURITY-BASELINE §§2, 4, 7)
+# ---------------------------------------------------------------------------
+# /webhooks/ is the only unauthenticated write path in the product, so its
+# limits are settings rather than constants: a deployment behind a platform
+# that batches unusually large deliveries can raise the cap without a fork,
+# and one under attack can tighten the throttle without a deploy.
+#
+# The body cap is checked from Content-Length *before* the body is read, and
+# is deliberately far below DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB): real webhook
+# deliveries are single-digit kilobytes.
+WEBHOOK_MAX_BODY_BYTES = env.int("WEBHOOK_MAX_BODY_BYTES", default=256 * 1024)
+
+# Nesting cap, applied to the raw bytes before json.loads ever sees them —
+# Python's JSON parser recurses, so a nesting bomb is a stack overflow rather
+# than a catchable exception.
+WEBHOOK_MAX_JSON_DEPTH = env.int("WEBHOOK_MAX_JSON_DEPTH", default=20)
+
+# Signature-failure throttle. A correctly configured platform never fails a
+# signature check, so any failure is a misconfiguration (fixed once) or someone
+# guessing a secret. Counted per client address and per connection; crossing
+# the limit bans the source for WEBHOOK_SIGNATURE_BAN_SECONDS.
+WEBHOOK_SIGNATURE_FAILURE_LIMIT = env.int("WEBHOOK_SIGNATURE_FAILURE_LIMIT", default=10)
+WEBHOOK_SIGNATURE_FAILURE_WINDOW_SECONDS = env.int("WEBHOOK_SIGNATURE_FAILURE_WINDOW_SECONDS", default=300)
+WEBHOOK_SIGNATURE_BAN_SECONDS = env.int("WEBHOOK_SIGNATURE_BAN_SECONDS", default=900)
+
+# How long raw webhook events are kept (SPEC §5). This is also the replay
+# protection window: dedup is the unique constraint on the event log, so an
+# event whose row has been pruned can be replayed with its original signature.
+# See apps.channels.models.WebhookEventLog.
+WEBHOOK_EVENT_LOG_RETENTION_DAYS = env.int("WEBHOOK_EVENT_LOG_RETENTION_DAYS", default=30)
+
+# ---------------------------------------------------------------------------
 # Deployment-level platform credentials — the bottom of the SPEC §4 chain
 # ---------------------------------------------------------------------------
 # PLATFORM_<PLATFORM>_<KEY> in the environment, e.g.
@@ -427,6 +461,42 @@ else:
     STORAGES["default"] = {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
     }
+
+# ---------------------------------------------------------------------------
+# Media library limits (SECURITY-BASELINE §9, issue #16)
+# ---------------------------------------------------------------------------
+# Studio resolves its storage cap through subscription tiers and an override
+# row. This is a self-hostable product, so the limits are environment variables
+# with defaults that fit a small box, and the boundary they are counted against
+# is the workspace — the same tenant boundary everything else is scoped to.
+#
+# Two independent limits because they stop different things: the per-file cap
+# bounds what one request can cost, the per-workspace cap bounds what a member
+# can accumulate over a thousand of them.
+_MB = 1024 * 1024
+MEDIA_MAX_UPLOAD_BYTES_IMAGE = env.int("MEDIA_MAX_UPLOAD_BYTES_IMAGE", default=20 * _MB)
+MEDIA_MAX_UPLOAD_BYTES_AUDIO = env.int("MEDIA_MAX_UPLOAD_BYTES_AUDIO", default=50 * _MB)
+MEDIA_MAX_UPLOAD_BYTES_VIDEO = env.int("MEDIA_MAX_UPLOAD_BYTES_VIDEO", default=200 * _MB)
+MEDIA_MAX_UPLOAD_BYTES_FILE = env.int("MEDIA_MAX_UPLOAD_BYTES_FILE", default=25 * _MB)
+MEDIA_WORKSPACE_QUOTA_BYTES = env.int("MEDIA_WORKSPACE_QUOTA_BYTES", default=5 * 1024 * _MB)
+MEDIA_MAX_FILES_PER_UPLOAD = env.int("MEDIA_MAX_FILES_PER_UPLOAD", default=20)
+# Folders nest at most three deep but nothing bounded how WIDE a library could
+# get, and three separate surfaces render the whole set unpaginated — the picker
+# payload, the move dropdown and the sidebar rail. Capping creation bounds all
+# three at once, which is the level the limit belongs at.
+MEDIA_MAX_FOLDERS_PER_WORKSPACE = env.int("MEDIA_MAX_FOLDERS_PER_WORKSPACE", default=500)
+MEDIA_THUMBNAIL_SIZE = (400, 400)
+# Pillow decompression-bomb guard. A 10 KB PNG can declare 60000x60000 and cost
+# gigabytes to expand; apps.media_library.thumbnails checks the declared size
+# against this before any pixel data is decoded.
+MEDIA_MAX_IMAGE_PIXELS = env.int("MEDIA_MAX_IMAGE_PIXELS", default=50_000_000)
+
+# Django's own DATA_UPLOAD_MAX_NUMBER_FILES is deliberately left at its default
+# of 100. Pinning it to MEDIA_MAX_FILES_PER_UPLOAD would impose one app's batch
+# size on every multipart endpoint in the project, so a later bulk importer
+# would be refused by the framework with an error naming neither itself nor the
+# media library. The media cap is enforced where it means something — the upload
+# view — and Django's default still bounds the absurd case.
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

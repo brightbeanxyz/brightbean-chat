@@ -253,7 +253,6 @@ def _dispatch_emails(workspace: Any, notifications: list[Notification]) -> None:
         ).values_list("user_id", flat=True)
     )
 
-    workspace_id = getattr(workspace, "pk", workspace)
     for notification in notifications:
         if notification.user_id in opted_out or not notification.user.email:
             continue
@@ -262,7 +261,7 @@ def _dispatch_emails(workspace: Any, notifications: list[Notification]) -> None:
             channel=Channel.EMAIL,
             status=DeliveryStatus.PENDING,
         )
-        if queue.enqueue_email(delivery, workspace_id=workspace_id):
+        if queue.enqueue_email(delivery, workspace=workspace):
             NotificationDelivery.objects.filter(pk=delivery.pk).update(status=DeliveryStatus.QUEUED)
             continue
         # No queue (issue #5 has not merged, or it is not installed). Send after

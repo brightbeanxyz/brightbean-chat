@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% comment %}
+The media library browser (issue #16).
+
+A folder rail, a filter bar, a drop zone and the asset grid. Filters are plain
+links so the state lives in the querystring and a view is bookmarkable; search,
+uploads and mutations swap `#media-grid` through htmx and nothing else.
+
+No inline event handlers anywhere. The CSP (config/settings/base.py) allows
+'unsafe-eval' for Alpine's x-* expressions but NOT 'unsafe-inline', so an
+`onclick=` attribute silently does nothing — the failure mode is a button that
+looks fine and is inert.
+
+Studio keeps this page's `.ml-*` rules in a per-page <style> block. They are
+design-system classes, so they live in theme/static_src/src/styles.css as
+`.media-*` where the picker surfaces Layer 3 and Layer 6 mount can reach them.
+{% endcomment %}
+{% load media_library %}
+
+{% block title %}Media · {{ request.workspace.name }}{% endblock %}
+
+{% block page_header %}
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <h1>Media</h1>
+      <p class="muted">Upload once, then reference the asset from any flow, broadcast or email.</p>
+    </div>
+    <div class="w-48 flex-shrink-0">
+      <div class="media-quota-bar" role="img"
+           aria-label="{{ used_bytes|filesizeformat }} of {{ quota_bytes|filesizeformat }} used">
+        <div class="media-quota-fill" style="width: {% widthratio used_bytes quota_bytes 100 %}%"></div>
+      </div>
+      <p class="mt-1 text-xs muted">{{ used_bytes|filesizeformat }} of {{ quota_bytes|filesizeformat }}</p>
+    </div>
+  </div>
+{% endblock %}
+
+{% block content %}
+<div class="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+
+  {# ── Folder rail ─────────────────────────────────────────────── #}
+  <aside class="lg:w-56 flex-shrink-0">
+    <h2>Folders</h2>
+    {% include "media_library/_folder_rail.html" %}
+
+    {% if can_manage %}
+      {% comment %}
+        Clear the field only on success, so a rejected name (a duplicate, say)
+        stays in the box for the user to correct rather than vanishing along
+        with the error toast.
+      {% endcomment %}
+      <form class="mt-3"
+            hx-post="{% url 'media:folder_create' workspace_id=request.workspace.id %}"
+            hx-swap="none"
+            hx-on::after-request="if (event.detail.successful) this.reset()">
+        <label for="new-folder" class="sr-only">New folder name</label>
+        <input type="text" id="new-folder" name="name" placeholder="New folder" maxlength="255" required>
+        {% if current_folder and current_folder != 'root' %}
+          <input type="hidden" name="parent" value="{{ current_folder }}">
+        {% endif %}
+        <button type="submit" class="mt-1.5">Create folder</button>
+      </form>
+    {% endif %}
+  </aside>
+
+  {# ── Main column ─────────────────────────────────────────────── #}
+  <div class="flex-1 min-w-0 flex flex-col">
+
+    <div class="mb-3 flex flex-wrap items-center gap-2">
+      <form class="flex-1 min-w-48"
+            hx-get="{% url 'media:library' workspace_id=request.workspace.id %}"
+            hx-target="#media-grid"
+            hx-swap="outerHTML"
+            hx-trigger="input changed delay:300ms, submit">
+        <label for="media-search" class="sr-only">Search media</label>
+        <input type="search" id="media-search" name="q" value="{{ query }}"
+               placeholder="Search filenames, titles and alt text">
+        <input type="hidden" name="folder" value="{{ current_folder }}">
+        <input type="hidden" name="kind" value="{{ current_kind }}">
+      </form>
+
+      <a class="media-pill {% if not current_kind %}is-active{% endif %}"
+         href="?{% if current_folder %}folder={{ current_folder|urlencode }}&{% endif %}q={{ query|urlencode }}">All</a>
+      {% for value, label in kinds %}
+        <a class="media-pill {% if current_kind == value %}is-active{% endif %}"
+           href="?kind={{ value }}{% if current_folder %}&folder={{ current_folder|urlencode }}{% endif %}&q={{ query|urlencode }}">{{ label }}</a>
+      {% endfor %}
+    </div>
+
+    {% if can_manage %}
+      {% comment %}
+        The drop zone and the file input are one form: a drop writes the files
+        onto the hidden input and fires `change`, so the drag path and the click
+        path submit through exactly the same request.
+      {% endcomment %}
+      <form class="media-dropzone p-6 mb-4 text-center"
+            x-data="mediaDropzone()"
+            x-on:dragover.prevent="dragging = true"
+            x-on:dragleave.prevent="dragging = false"
+            x-on:drop.prevent="accept($event.dataTransfer.files)"
+            x-bind:class="dragging && 'is-dragging'"
+            hx-post="{% url 'media:upload' workspace_id=request.workspace.id %}"
+            hx-encoding="multipart/form-data"
+            hx-target="#media-grid"
+            hx-swap="outerHTML"
+            hx-trigger="change from:find input[type=file]">
+        {% comment %}
+          The active filters ride along in the POST body. The response re-renders
+          the grid, and it reads these rather than request.GET — which is empty on
+          a POST, so without them an upload made from inside a folder came back
+          showing the whole unfiltered library.
+        {% endcomment %}
+        <input type="hidden" name="folder" value="{{ current_folder }}">
+        <input type="hidden" name="kind" value="{{ current_kind }}">
+        <input type="hidden" name="q" value="{{ query }}">
+        <input type="file" name="files" id="media-files" multiple
+               accept="{{ accepted_types }}" class="sr-only" x-ref="input">
+        <p class="text-sm">
+          Drop files here, or
+          <label for="media-files" class="btn-link" style="display:inline; cursor:pointer;">choose them</label>.
+        </p>
+        <p class="text-xs muted mt-1">
+          Images, audio, video and PDF. The file's real content is checked; its name and declared type are not trusted.
+        </p>
+      </form>
+    {% endif %}
+
+    {% include "media_library/_asset_grid.html" %}
+  </div>
+
+  {# ── Detail panel, filled by htmx when a card is clicked ─────── #}
+  <aside id="media-detail" class="lg:w-80 flex-shrink-0" aria-live="polite"></aside>
+</div>
+{% endblock %}
+
+{% block alpine_components %}
+<script nonce="{{ request.csp_nonce }}">
+  function mediaDropzone() {
+    return {
+      dragging: false,
+      accept(files) {
+        this.dragging = false;
+        if (!files || !files.length) { return; }
+        this.$refs.input.files = files;
+        this.$refs.input.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+    };
+  }
+</script>
+{% endblock %}

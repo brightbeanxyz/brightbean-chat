@@ -22,6 +22,10 @@ EXPECTED_TRUE = {
         "edit_contact_fields",
         "manage_crm",
         "edit_flows",
+        # Issue #16: media is content, so Editor holds it alongside flows and
+        # broadcasts. Agent and Viewer read the library through membership
+        # alone; this key gates writing to it.
+        "manage_media",
         "send_broadcasts",
         "view_analytics",
     },

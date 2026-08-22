@@ -53,6 +53,9 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "invitation_id": lambda t: _victim_invitation(t).pk,
     "tag_id": lambda t: _victim_tag(t).pk,
     "field_id": lambda t: _victim_custom_field(t).pk,
+    "connection_id": lambda t: _victim_connection(t).pk,
+    "asset_id": lambda t: _victim_media_asset(t).pk,
+    "folder_id": lambda t: _victim_media_folder(t).pk,
     "flow_id": lambda t: _victim_flow(t).pk,
     # Notifications (issue #7) are keyed by user, not by workspace, so "the
     # victim" here is a person rather than a tenant. Registering it is an
@@ -67,17 +70,59 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
 #: these is not fuzzed.
 NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     "platform": "instagram",
+    # The email webhook's provider segment (resend / ses / smtp). It selects a
+    # payload shape, not a tenant's object, and is not used for lookup.
+    "provider": "resend",
 }
+
+#: Why the inbound webhook routes cannot answer 404 and are therefore not
+#: sweepable. Shared by both, because the reasoning is identical.
+_WEBHOOK_WAIVER = (
+    "Unauthenticated public endpoint (SPEC §7.1). There is no session tenant to "
+    "compare the connection against — the caller is a messaging platform, not a "
+    "user — so 'belongs to another workspace' is not a question it can ask, and "
+    "404 is not an answer it can give without breaking ingestion. What stands in "
+    "for the sweep is that the route answers the SAME status to every connection "
+    "id, real or not: 403 for both an unknown connection and a bad signature once "
+    "the platform has an adapter, and 503 for every id while it has none — which "
+    "is why apps/channels/views_webhooks.py resolves the adapter before it looks "
+    "a connection up. Both halves are asserted by "
+    "apps/channels/tests/test_webhooks.py::TestIdIndistinguishability; if that "
+    "class is ever deleted, this waiver must be too."
+)
 
 #: Routes exempt from the sweep, each with the reason. A waiver is a reviewed
 #: line in this dict; there is no silent skip.
 WAIVED_ROUTES: dict[str, str] = {
+    "webhook_sms": _WEBHOOK_WAIVER,
+    "webhook_email": _WEBHOOK_WAIVER,
     "accept_invite": (
         "Public by design: the invitation token IS the credential, and the page "
         "renders the same 404 body for unknown, expired and accepted tokens. "
         "Covered by apps/members/tests/test_invitations.py."
     ),
 }
+
+
+def _victim_connection(tenancy: Tenancy) -> Any:
+    """A channel connection owned by the victim, created on demand.
+
+    ``external_id`` is namespaced by slug because SPEC §5's unique constraint on
+    ``(platform, external_id)`` is deployment-wide: a fixed literal here would
+    make the victim's and the attacker's tenancies collide.
+    """
+    from apps.channels.models import ChannelConnection
+    from apps.common.platforms import Platform
+
+    connection = ChannelConnection.objects.for_workspace(tenancy.workspace).first()
+    if connection is None:
+        connection = ChannelConnection.objects.create(
+            workspace=tenancy.workspace,
+            platform=Platform.TELEGRAM,
+            display_name=f"{tenancy.slug} bot",
+            external_id=f"bot-{tenancy.slug}",
+        )
+    return connection
 
 
 def _victim_flow(tenancy: Tenancy) -> Any:
@@ -130,6 +175,38 @@ def _victim_custom_field(tenancy: Tenancy) -> Any:
 
     field = CustomField.objects.for_workspace(tenancy.workspace).first()
     return field or CustomField.objects.create(workspace=tenancy.workspace, name="Plan", type=CustomFieldType.TEXT)
+
+
+def _victim_media_asset(tenancy: Tenancy) -> Any:
+    """A media asset owned by the victim, created on demand.
+
+    Built through the model rather than the upload view: the sweep is about
+    tenancy, not about validation, and going through ``create_asset`` would make
+    every IDOR run write a file to storage and sniff it.
+    """
+    from apps.media_library.models import MediaAsset
+
+    asset = MediaAsset.objects.for_workspace(tenancy.workspace).first()
+    if asset is None:
+        asset = MediaAsset.objects.create(
+            workspace=tenancy.workspace,
+            filename="victim.png",
+            kind="image",
+            mime="image/png",
+            size=1,
+            file="media/victim.png",
+        )
+    return asset
+
+
+def _victim_media_folder(tenancy: Tenancy) -> Any:
+    """A media folder owned by the victim, created on demand."""
+    from apps.media_library.models import MediaFolder
+
+    folder = MediaFolder.objects.for_workspace(tenancy.workspace).first()
+    if folder is None:
+        folder = MediaFolder.objects.create(workspace=tenancy.workspace, name="Victim folder")
+    return folder
 
 
 def _victim_notification(tenancy: Tenancy) -> Any:
