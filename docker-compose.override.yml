@@ -30,7 +30,7 @@ services:
       - theme_css:/app/theme/static/css/dist
 
   tailwind:
-    image: node:20-slim
+    image: node:24-slim
     working_dir: /app
     # `npm ci` on start rather than a baked image: the lockfile is the source of
     # truth and this way a dependency bump needs no rebuild. `watch:css` does an
@@ -46,7 +46,7 @@ services:
       - .:/app
       # The same volume the app reads, so a rebuild reaches it — and, just as
       # importantly, so the output does NOT go through the host bind-mount.
-      # This container is root (node:20-slim has no non-root default), and on
+      # This container is root (node:24-slim has no non-root default), and on
       # native Linux a bind-mounted write would leave root-owned files in the
       # developer's checkout that a later host-side `npm run build:css` or a
       # plain `rm -rf` then cannot touch without sudo.

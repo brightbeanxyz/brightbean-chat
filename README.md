@@ -34,7 +34,15 @@ console, so the verification message appears in `docker compose logs`.
 
 ## Quickstart (local Python)
 
-Requires Python 3.12, Node 20+ and a PostgreSQL 16 server.
+Requires Python 3.12, Node 24+ and a PostgreSQL 16 server.
+
+The Node floor is enforced, not advisory: `package.json` sets
+`engines.node`, `.npmrc` sets `engine-strict=true`, and `npm ci` therefore
+fails outright with `EBADENGINE` on an older runtime rather than installing
+and breaking later. `.nvmrc` pins the version CI runs, so `nvm use` (or any
+tool that reads it) gets you the right one. Stay on an LTS line — the range is
+open-ended upward so newer LTS releases work without a repo change, but only
+the pinned major is actually built and tested.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

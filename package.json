@@ -3,6 +3,9 @@
   "private": true,
   "description": "Frontend toolchain: the Tailwind 4 build for theme/static_src and the vendored runtime libraries in static/js.",
   "license": "AGPL-3.0-or-later",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --minify",
     "watch:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --watch",

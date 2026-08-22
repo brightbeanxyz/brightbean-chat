@@ -47,3 +47,20 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+
+  # The Dockerfile's base images. Without this the Node stage silently ages out
+  # — which is exactly how it sat on the end-of-life node:20 line.
+  #
+  # Dependabot only rewrites the Dockerfile: it does not read image tags out of
+  # compose files, and it knows nothing about .nvmrc, package.json's `engines`
+  # or the README. On its own that would be worse than no bump at all, because
+  # CI takes its Node from .nvmrc — a PR moving just the base image would go
+  # green while testing the major it was meant to replace. The `Node pins
+  # agree` step in the audit job is what makes that safe: a Dependabot PR here
+  # fails until the other four sites are moved to match, which is the intended
+  # workflow — Dependabot proposes the bump, the check makes it complete.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
