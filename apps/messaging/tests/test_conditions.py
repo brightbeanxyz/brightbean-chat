@@ -92,6 +92,61 @@ class TestWindowlessPlatforms:
         assert matching(tenancy.workspace, Platform.TELEGRAM, "inside") == {identity.contact_id}
 
 
+class TestConsentIsPartOfReachability:
+    """A targeting filter must not include people the send then refuses."""
+
+    def test_an_identity_with_no_consent_is_outside_on_a_windowless_platform(
+        self, tenancy: Any, connection: Any
+    ) -> None:
+        """Telegram has no window, so once the date predicate is skipped there
+        was nothing left to exclude an address captured by import or API with no
+        recorded consent — which can_send() refuses with no_opt_in."""
+        contact = create_contact(tenancy.workspace, first_name="Imported")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=connection,
+            platform=connection.platform,
+            platform_user_id="u-import",
+            opt_in=False,
+        )
+        assert matching(tenancy.workspace, Platform.TELEGRAM, "inside") == set()
+        assert contact.pk in matching(tenancy.workspace, Platform.TELEGRAM, "outside")
+
+    def test_an_identity_with_no_consent_is_outside_on_a_windowed_platform(self, tenancy: Any) -> None:
+        connection = make_connection(tenancy.workspace, platform=Platform.INSTAGRAM, suffix="ig-consent")
+        contact = create_contact(tenancy.workspace, first_name="Imported")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=connection,
+            platform=connection.platform,
+            platform_user_id="u-import",
+            opt_in=False,
+            window_expires_at=timezone.now() + timedelta(hours=1),
+        )
+        assert matching(tenancy.workspace, Platform.INSTAGRAM, "inside") == set()
+
+    def test_the_source_agrees_with_the_compliance_engine(self, tenancy: Any, connection: Any) -> None:
+        """Stated directly: everyone the filter calls reachable is someone the
+        chokepoint would actually let a message through to."""
+        from apps.channels.events import OutboundMessage
+        from apps.messaging.compliance import Allowed, can_send
+
+        persist_events(connection, [make_event(connection, user="consenting")])
+        contact = create_contact(tenancy.workspace, first_name="Imported")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=connection,
+            platform=connection.platform,
+            platform_user_id="u-import",
+            opt_in=False,
+        )
+
+        inside = matching(tenancy.workspace, Platform.TELEGRAM, "inside")
+        for identity in ContactChannelIdentity.objects.for_workspace(tenancy.workspace):
+            allowed = isinstance(can_send(identity, "automation", OutboundMessage()), Allowed)
+            assert (identity.contact_id in inside) == allowed
+
+
 class TestAbsenceRule:
     def test_outside_matches_a_contact_with_no_identity_at_all(self, tenancy: Any, connection: Any) -> None:
         """NOT EXISTS, so a contact we have never heard from on this platform is

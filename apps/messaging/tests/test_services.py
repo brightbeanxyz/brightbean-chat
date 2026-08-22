@@ -17,6 +17,7 @@ from apps.common.platforms import Platform
 from apps.contacts.services import create_contact
 from apps.messaging import services
 from apps.messaging.codes import Denial, Failure
+from apps.messaging.handlers import MAX_SEND_ATTEMPTS
 from apps.messaging.models import (
     ContactChannelIdentity,
     Conversation,
@@ -27,7 +28,7 @@ from apps.messaging.models import (
     SendBucket,
 )
 from apps.messaging.tests.conftest import make_connection
-from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionType, ScheduledAction
+from apps.queueing.models import ActionType, ScheduledAction
 
 pytestmark = pytest.mark.django_db
 
@@ -437,8 +438,8 @@ class TestExhaustedBudget:
             source="automation",
             status=MessageStatus.QUEUED,
             idempotency_key="spent",
-            # One short of the cap: the claim inside _dispatch takes it to five.
-            send_attempts=DEFAULT_MAX_ATTEMPTS - 1,
+            # One short of the cap: the claim inside _dispatch takes it there.
+            send_attempts=MAX_SEND_ATTEMPTS - 1,
         )
 
     def _last_attempt(self, tenancy: Any, contact: Any, connection: Any, behaviour: Any) -> Message:
@@ -729,6 +730,90 @@ class TestUpsertContactIdentity:
         pending.refresh_from_db()
         assert pending.channel_connection_id == sms.pk
         assert message.status == MessageStatus.SENT
+
+    def test_it_creates_a_row_for_every_active_connection(self, tenancy: Any, contact: Any) -> None:
+        """Contract 1 says one identity row per active connection of that
+        platform. A workspace can legitimately run two Telegram bots, and
+        attaching a captured address to only the oldest meant a send through the
+        other failed with no_identity for a contact whose address we held."""
+        first = make_connection(tenancy.workspace, suffix="bot-one")
+        second = make_connection(tenancy.workspace, suffix="bot-two")
+
+        services.upsert_contact_identity(contact, Platform.TELEGRAM, "u1", source=OptInSource.API, opt_in=True)
+
+        rows = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).filter(contact=contact)
+        assert {row.channel_connection_id for row in rows} == {first.pk, second.pk}
+        assert all(row.opt_in and row.opt_in_at is not None for row in rows)
+
+    def test_a_send_through_the_second_connection_works(self, tenancy: Any, contact: Any) -> None:
+        """The failure the missing rows caused, asserted end to end."""
+        make_connection(tenancy.workspace, suffix="bot-one")
+        second = make_connection(tenancy.workspace, suffix="bot-two")
+        services.upsert_contact_identity(contact, Platform.TELEGRAM, "u1", source=OptInSource.API, opt_in=True)
+
+        with registered(Platform.TELEGRAM) as adapter:
+            message = services.send_outbound(
+                workspace=tenancy.workspace,
+                contact=contact,
+                connection=second,
+                outbound=TEXT,
+                source="automation",
+                idempotency_key="second",
+            )
+            assert len(adapter.sends) == 1
+        assert message.status == MessageStatus.SENT
+
+    def test_an_explicit_connection_narrows_it_to_that_one(self, tenancy: Any, contact: Any) -> None:
+        make_connection(tenancy.workspace, suffix="bot-one")
+        second = make_connection(tenancy.workspace, suffix="bot-two")
+
+        identity = services.upsert_contact_identity(
+            contact, Platform.TELEGRAM, "u1", source=OptInSource.API, opt_in=True, connection=second
+        )
+
+        assert identity.channel_connection_id == second.pk
+        assert ContactChannelIdentity.objects.for_workspace(tenancy.workspace).count() == 1
+
+    def test_a_disabled_connection_gets_no_row(self, tenancy: Any, contact: Any) -> None:
+        """Only *active* connections, per the contract's wording."""
+        from apps.channels.models import ChannelConnection, ConnectionStatus
+
+        active = make_connection(tenancy.workspace, suffix="bot-live")
+        disabled = make_connection(tenancy.workspace, suffix="bot-dead")
+        ChannelConnection.objects.for_workspace(tenancy.workspace).filter(pk=disabled.pk).update(
+            status=ConnectionStatus.DISABLED
+        )
+
+        services.upsert_contact_identity(contact, Platform.TELEGRAM, "u1", source=OptInSource.API, opt_in=True)
+
+        rows = ContactChannelIdentity.objects.for_workspace(tenancy.workspace)
+        assert [row.channel_connection_id for row in rows] == [active.pk]
+
+    def test_the_pending_row_is_adopted_by_one_connection_not_duplicated(self, tenancy: Any, contact: Any) -> None:
+        """A pending row becomes one real row; the rest are created outright."""
+        pending = services.upsert_contact_identity(
+            contact, Platform.TELEGRAM, "u1", source=OptInSource.DATA_COLLECTION, opt_in=True
+        )
+        assert pending.is_pending
+
+        make_connection(tenancy.workspace, suffix="bot-one")
+        make_connection(tenancy.workspace, suffix="bot-two")
+        services.upsert_contact_identity(contact, Platform.TELEGRAM, "u1", source=OptInSource.API, opt_in=True)
+
+        rows = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).filter(contact=contact)
+        assert rows.count() == 2
+        assert not rows.filter(channel_connection__isnull=True).exists()
+        # The original row survived as one of them, keeping its consent audit.
+        pending.refresh_from_db()
+        assert pending.channel_connection_id is not None
+        assert pending.opt_in_source == OptInSource.DATA_COLLECTION
+
+    def test_calling_it_twice_does_not_duplicate_rows(self, tenancy: Any, contact: Any) -> None:
+        make_connection(tenancy.workspace, suffix="bot-one")
+        make_connection(tenancy.workspace, suffix="bot-two")
+        for _ in range(3):
+            services.upsert_contact_identity(contact, Platform.TELEGRAM, "u1", source=OptInSource.API, opt_in=True)
+        assert ContactChannelIdentity.objects.for_workspace(tenancy.workspace).count() == 2
 
     def test_it_never_re_grants_consent_after_an_opt_out(self, tenancy: Any, contact: Any, connection: Any) -> None:
         """Withdrawing consent is a deliberate act (SPEC §19); re-granting it

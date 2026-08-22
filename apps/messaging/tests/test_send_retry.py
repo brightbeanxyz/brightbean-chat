@@ -13,8 +13,9 @@ from apps.common.platforms import Platform
 from apps.contacts.services import create_contact
 from apps.messaging import handlers, services
 from apps.messaging.codes import Denial, Failure
+from apps.messaging.handlers import MAX_SEND_ATTEMPTS
 from apps.messaging.models import ContactChannelIdentity, Message, MessageStatus, OptInSource
-from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionType, ScheduledAction
+from apps.queueing.models import ActionType, ScheduledAction
 from apps.queueing.registry import get_handler
 from apps.queueing.worker import BACKOFF_SCHEDULE
 
@@ -112,6 +113,35 @@ class TestScheduling:
         assert action.run_at >= before + timedelta(seconds=BACKOFF_SCHEDULE[0] - 5)
         assert action.run_at <= before + timedelta(seconds=BACKOFF_SCHEDULE[1])
 
+    def test_every_rung_of_the_ladder_is_reachable(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """SPEC §9.5 ends the ladder with 6h, and budgeting against the queue's
+        DEFAULT_MAX_ATTEMPTS stopped one rung short — the fifth call was refused
+        before next_run_at(5) could ever be asked for, so the last rung was dead
+        code. A message gets its first call plus one per rung.
+        """
+        assert 1 + len(BACKOFF_SCHEDULE) == MAX_SEND_ATTEMPTS
+        message = queued_message(tenancy, contact, connection)
+
+        scheduled: list[int] = []
+        for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
+            Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(
+                send_attempts=attempt, status=MessageStatus.QUEUED
+            )
+            message.refresh_from_db()
+            before = timezone.now()
+            action = handlers.schedule_send_retry(message)
+            if action is None:
+                break
+            scheduled.append(round((action.run_at - before).total_seconds()))
+
+        # Every rung, in order, and then it gives up.
+        assert scheduled == [pytest.approx(rung, abs=2) for rung in BACKOFF_SCHEDULE]
+        message.refresh_from_db()
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Failure.RETRIES_EXHAUSTED
+
     def test_a_hostile_retry_after_cannot_park_a_message_forever(
         self, tenancy: Any, contact: Any, connection: Any, identity: Any
     ) -> None:
@@ -158,9 +188,7 @@ class TestRepeatedRateDeferral:
     ) -> None:
         """No provider call happened, so there is nothing to charge for."""
         message = queued_message(tenancy, contact, connection)
-        Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(
-            send_attempts=DEFAULT_MAX_ATTEMPTS
-        )
+        Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(send_attempts=MAX_SEND_ATTEMPTS)
         message.refresh_from_db()
         assert handlers.schedule_send_retry(message, delay_seconds=1, use_backoff=False) is not None
         message.refresh_from_db()
@@ -170,9 +198,7 @@ class TestRepeatedRateDeferral:
         self, tenancy: Any, contact: Any, connection: Any, identity: Any
     ) -> None:
         message = queued_message(tenancy, contact, connection)
-        Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(
-            send_attempts=DEFAULT_MAX_ATTEMPTS
-        )
+        Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(send_attempts=MAX_SEND_ATTEMPTS)
         message.refresh_from_db()
         assert handlers.schedule_send_retry(message) is None
         message.refresh_from_db()
@@ -243,9 +269,7 @@ class TestTheHandler:
         message = queued_message(tenancy, contact, connection)
         assert message.send_attempts == 1
 
-        Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(
-            send_attempts=DEFAULT_MAX_ATTEMPTS
-        )
+        Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(send_attempts=MAX_SEND_ATTEMPTS)
         with registered(Platform.TELEGRAM) as adapter:
             run_retry(pending_action())
             assert adapter.sends == []

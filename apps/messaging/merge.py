@@ -18,8 +18,10 @@ import logging
 from typing import Any
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.messaging.models import ContactChannelIdentity, Conversation, Message
+from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +72,46 @@ def repoint_for_merge(primary: Any, duplicate: Any) -> None:
         conversation.delete()
         merged_threads += 1
 
+    retargeted = _retarget_send_retries(primary, duplicate)
+
     logger.info(
-        "Merged messaging rows into contact %s: %s identities, %s threads moved, %s threads folded",
+        "Merged messaging rows into contact %s: %s identities, %s threads moved, %s threads folded, "
+        "%s retries retargeted",
         primary.pk,
         moved_identities,
         moved_threads,
         merged_threads,
+        retargeted,
+    )
+
+
+def _retarget_send_retries(primary: Any, duplicate: Any) -> int:
+    """Point the duplicate's pending ``send_retry`` actions at the survivor.
+
+    ``ScheduledAction.contact_id`` is a plain ``UUIDField``, not a foreign key —
+    deliberately, so the queue does not depend on the contacts app — which means
+    nothing cascades it and a merge leaves it naming a tombstone. The worker
+    takes ``contact_lock(action.contact_id)`` before running a handler, so the
+    action would go on locking the *deleted* contact while its handler sent a
+    message that now belongs to the survivor. The one-step-per-contact invariant
+    (SPEC §9.6) would then be silently off: that send could interleave with flow
+    work holding the survivor's lock, which is exactly what the lock exists to
+    prevent.
+
+    Only ``send_retry`` is retargeted, because it is the only action type this
+    app owns. Other pending actions naming the duplicate belong to the streams
+    that scheduled them (L3-B's ``resume_execution``, L6-A's ``sequence_step``),
+    and reaching into those from here would be this app deciding how another's
+    work should be locked.
+    """
+    return int(
+        ScheduledAction.objects.for_workspace(primary.workspace_id)
+        .filter(
+            type=ActionType.SEND_RETRY,
+            contact_id=duplicate.pk,
+            status__in=(ActionStatus.PENDING, ActionStatus.RUNNING),
+        )
+        .update(contact_id=primary.pk, updated_at=timezone.now())
     )
 
 

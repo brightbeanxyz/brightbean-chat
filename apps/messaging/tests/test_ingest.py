@@ -19,6 +19,7 @@ from apps.messaging.ingest import (
 from apps.messaging.models import (
     ContactChannelIdentity,
     Conversation,
+    ConversationState,
     Message,
     MessageDirection,
     MessageSource,
@@ -125,6 +126,52 @@ class TestIdempotency:
         persist_events(connection, [make_event(connection, event_id="e1")])
         persist_events(other, [make_event(other, user="+15550101234", event_id="e1")])
         assert messages(tenancy.workspace).count() == 2
+
+
+class TestInboundKeyBounds:
+    def test_two_long_ids_sharing_a_prefix_are_two_messages(self, tenancy: Any, connection: Any) -> None:
+        """Slicing the key to fit the column meant two genuinely different
+        messages produced one key, and the second was discarded as a duplicate
+        of the first. The id is hashed instead."""
+        prefix = "e" * 300
+        persist_events(connection, [make_event(connection, event_id=prefix + "a", text="first")])
+        persist_events(connection, [make_event(connection, event_id=prefix + "b", text="second")])
+        assert messages(tenancy.workspace).count() == 2
+
+    def test_a_long_id_still_deduplicates_itself(self, tenancy: Any, connection: Any) -> None:
+        event = make_event(connection, event_id="e" * 400)
+        persist_events(connection, [event])
+        persist_events(connection, [event])
+        assert messages(tenancy.workspace).count() == 1
+
+    def test_a_nul_in_the_event_id_does_not_break_persistence(self, tenancy: Any, connection: Any) -> None:
+        """Postgres cannot store NUL in a text column, so an unscrubbed id made
+        the insert fail and the message vanish."""
+        persist_events(connection, [make_event(connection, event_id="e\x001", text="kept")])
+        assert messages(tenancy.workspace).get().body["blocks"][0]["text"] == "kept"
+
+    def test_the_key_fits_the_column(self, tenancy: Any, connection: Any) -> None:
+        persist_events(connection, [make_event(connection, event_id="e" * 5000)])
+        assert len(messages(tenancy.workspace).get().idempotency_key) <= 255
+
+
+class TestReopeningDoneThreads:
+    def test_an_inbound_message_reopens_a_finished_thread(self, tenancy: Any, connection: Any) -> None:
+        """The inbox list filters on state (SPEC §14), so leaving it done files
+        a message the contact just sent somewhere no agent is looking."""
+        persist_events(connection, [make_event(connection, event_id="e1")])
+        conversation = Conversation.objects.for_workspace(tenancy.workspace).get()
+        Conversation.all_objects.filter(pk=conversation.pk).update(state=ConversationState.DONE)
+
+        persist_events(connection, [make_event(connection, event_id="e2")])
+
+        conversation.refresh_from_db()
+        assert conversation.state == ConversationState.OPEN
+
+    def test_an_open_thread_is_left_alone(self, tenancy: Any, connection: Any) -> None:
+        persist_events(connection, [make_event(connection, event_id="e1")])
+        conversation = Conversation.objects.for_workspace(tenancy.workspace).get()
+        assert conversation.state == ConversationState.OPEN
 
 
 class TestWindowBookkeeping:

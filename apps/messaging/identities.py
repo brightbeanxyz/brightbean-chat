@@ -56,6 +56,7 @@ __all__ = [
     "ADDRESS_PLATFORMS",
     "IdentityResolution",
     "bounded_address",
+    "bounded_key",
     "normalized_address_for",
     "resolve_identity",
 ]
@@ -71,27 +72,34 @@ ADDRESS_PLATFORMS: dict[str, str] = {
 MAX_PLATFORM_USER_ID = 200
 
 
-def bounded_address(value: str) -> str:
-    """A storable ``platform_user_id``: NUL-free, and bounded without truncation.
+def bounded_key(value: Any, *, limit: int) -> str:
+    """A storable identifier: NUL-free, and bounded without truncation.
 
-    An over-long id is **hashed**, not cut. Truncation narrows an identity key
-    without saying so, and two ids that happen to agree in their first 200
-    characters would silently become one person — which on this table means one
-    person receiving another's conversation. ``apps.channels.views_webhooks``
-    made the same call for ``provider_event_id`` and for the same reason.
+    An over-long value is **hashed**, not cut, and that is the whole point.
+    Truncation narrows a key without saying so, so two values agreeing on their
+    first ``limit`` characters silently become one — which on an identity means
+    one person receiving another's conversation, and on a deduplication key
+    means the second message being discarded as a duplicate of the first.
+    ``apps.channels.views_webhooks._dedup_id`` made the same call for the event
+    log, and this is the same rule one layer down.
 
-    Returns ``""`` for an empty or unusable value, which the caller treats as
-    "no identity to resolve" rather than storing an empty id that would collide
-    with every other empty one.
+    Returns ``""`` for an empty or unusable value. A caller treats that as "no
+    key", never as a key of its own: an empty string collides with every other
+    empty string, which is the bug this exists to avoid.
     """
     if not isinstance(value, str):
         return ""
     cleaned = value.replace("\x00", "").strip()
     if not cleaned:
         return ""
-    if len(cleaned) <= MAX_PLATFORM_USER_ID:
+    if len(cleaned) <= limit:
         return cleaned
     return f"sha256:{hashlib.sha256(cleaned.encode('utf-8')).hexdigest()}"
+
+
+def bounded_address(value: str) -> str:
+    """A storable ``platform_user_id``. See :func:`bounded_key`."""
+    return bounded_key(value, limit=MAX_PLATFORM_USER_ID)
 
 
 class IdentityResolution:

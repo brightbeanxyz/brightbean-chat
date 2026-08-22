@@ -149,38 +149,57 @@ def try_acquire(connection: Any, *, cost: float = 1.0) -> Acquisition:
     its bucket — and :func:`acquire`'s poll loop multiplied that by however many
     times it woke up. The row is created only when the locked read finds nothing,
     which is once in a connection's lifetime.
+
+    The loop exists for that one moment. Two workers sending a connection's
+    first two messages both see no row; the unique one-to-one makes exactly one
+    of them the creator, and the loser must go back and debit the winner's row
+    rather than helping itself. Returning a grant to every loser was an
+    unbounded first-use burst straight past the rate limit.
     """
     rate = rate_for(connection.platform)
     capacity = capacity_for(rate)
 
-    with transaction.atomic():
-        bucket = (
-            SendBucket.objects.select_for_update()
-            .annotate(db_now=ClockTimestamp())
-            .filter(connection=connection)
-            .first()
-        )
-        if bucket is None:
-            return _create_full(connection, rate, capacity, cost)
+    # At most two passes: the second runs only after losing the creation race,
+    # and by then the winner's row is committed (get_or_create blocked on the
+    # unique index until it was), so the locked read below cannot miss again.
+    for _ in range(2):
+        with transaction.atomic():
+            bucket = (
+                SendBucket.objects.select_for_update()
+                .annotate(db_now=ClockTimestamp())
+                .filter(connection=connection)
+                .first()
+            )
+            if bucket is not None:
+                return _spend(bucket, rate, capacity, cost)
+            granted = _create_full(connection, rate, capacity, cost)
+            if granted is not None:
+                return granted
 
-        now = bucket.db_now
-        # Re-read the configured rate on every acquire, so a changed
-        # DEFAULT_SEND_RATE_OVERRIDES takes effect at the next send rather than
-        # needing a migration, a management command or a stale row to be noticed.
-        bucket.refill_rate = rate
-        bucket.capacity = capacity
+    # Unreachable: the second pass either finds the row or creates it.
+    raise RuntimeError(f"Could not obtain a send bucket for connection {connection.pk}")
 
-        elapsed = max(0.0, (now - bucket.refilled_at).total_seconds())
-        available = min(capacity, bucket.tokens + elapsed * rate)
-        granted = available >= cost
 
-        bucket.tokens = available - cost if granted else available
-        bucket.refilled_at = now
-        bucket.save(update_fields=["tokens", "capacity", "refill_rate", "refilled_at", "updated_at"])
+def _spend(bucket: SendBucket, rate: float, capacity: float, cost: float) -> Acquisition:
+    """Refill by elapsed time, then debit. Called with the row locked."""
+    now = bucket.db_now  # type: ignore[attr-defined]
+    # Re-read the configured rate on every acquire, so a changed
+    # DEFAULT_SEND_RATE_OVERRIDES takes effect at the next send rather than
+    # needing a migration, a management command or a stale row to be noticed.
+    bucket.refill_rate = rate
+    bucket.capacity = capacity
 
-        if not granted:
-            return Deferred(wait_seconds=(cost - available) / rate)
-        return Granted(tokens_left=bucket.tokens)
+    elapsed = max(0.0, (now - bucket.refilled_at).total_seconds())
+    available = min(capacity, bucket.tokens + elapsed * rate)
+    granted = available >= cost
+
+    bucket.tokens = available - cost if granted else available
+    bucket.refilled_at = now
+    bucket.save(update_fields=["tokens", "capacity", "refill_rate", "refilled_at", "updated_at"])
+
+    if not granted:
+        return Deferred(wait_seconds=(cost - available) / rate)
+    return Granted(tokens_left=bucket.tokens)
 
 
 def acquire(connection: Any, *, cost: float = 1.0, max_wait: float | None = None) -> Acquisition:
@@ -205,20 +224,19 @@ def acquire(connection: Any, *, cost: float = 1.0, max_wait: float | None = None
         time.sleep(min(outcome.wait_seconds, POLL_SECONDS, max(remaining, 0.0)))
 
 
-def _create_full(connection: Any, rate: float, capacity: float, cost: float) -> Acquisition:
+def _create_full(connection: Any, rate: float, capacity: float, cost: float) -> Acquisition | None:
     """First use of a connection: create the bucket full and spend from it.
 
     Full rather than empty so a connection's first message does not wait a
     second for a bucket nobody has drained. The burst it permits is one
     ``capacity``, which is the burst the configuration already asks for.
 
-    ``get_or_create`` rather than a plain create, because two processes can send
-    a connection's first two messages at once and the one-to-one is unique; the
-    loser re-reads instead of raising. Its row is authoritative and this call
-    simply grants against the fresh capacity, which is at most one extra token
-    at the very start of a connection's life.
+    Returns **None** when another worker created the row first. That is not a
+    grant: the winner's row is the real one and the caller has to go back and
+    debit it under the lock. Handing every loser a token instead let a
+    connection's first moment ignore the rate limit entirely.
     """
-    SendBucket.objects.get_or_create(
+    _, created = SendBucket.objects.get_or_create(
         connection=connection,
         defaults={
             "tokens": max(capacity - cost, 0.0),
@@ -229,4 +247,6 @@ def _create_full(connection: Any, rate: float, capacity: float, cost: float) -> 
             "refilled_at": Now(),
         },
     )
+    if not created:
+        return None
     return Granted(tokens_left=max(capacity - cost, 0.0))

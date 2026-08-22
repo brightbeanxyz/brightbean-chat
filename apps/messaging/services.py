@@ -198,11 +198,22 @@ def upsert_contact_identity(
 ) -> ContactChannelIdentity:
     """Create or refresh an identity, recording the consent audit (SPEC §11.8).
 
-    Connection resolution, per contract 1: one identity row per active
-    connection of that platform; if none exists at capture time, a
-    connection-less **pending** record is stored and upgraded lazily at first
-    send. That upgrade happens in :func:`_identity_for` rather than here,
-    because "first send" is when a connection is finally in hand.
+    Connection resolution is contract 1's, spelled out: **one identity row per
+    active connection of that platform**; if none exists at capture time, a
+    connection-less *pending* record is stored and upgraded lazily at first send
+    (that upgrade lives in :func:`_identity_for`, because "first send" is when a
+    connection is finally in hand).
+
+    All of them, not the first one. A workspace can legitimately run two
+    Telegram bots or two WhatsApp numbers, and attaching a captured address to
+    only the oldest meant a send through any of the others failed with
+    ``no_identity`` — for a contact whose address the workspace demonstrably
+    held. Passing ``connection`` explicitly narrows it to that one, which is
+    what a caller who already knows the channel wants.
+
+    Returns the identity for ``connection`` when one was given, and otherwise
+    the one on the workspace's oldest active connection, so the return value is
+    stable across calls.
 
     Consent only ever moves forward. ``opt_in_at`` is stamped once, when
     permission was first given — refreshing it on every touch would replace the
@@ -216,9 +227,64 @@ def upsert_contact_identity(
     address = bounded_address(address)
     if not address:
         raise ValueError("An identity needs an address.")
-    connection = connection or _default_connection(contact.workspace_id, platform)
 
-    identity = _existing_identity(contact, platform, address, connection)
+    targets = [connection] if connection is not None else _active_connections(contact.workspace_id, platform)
+    if not targets:
+        # Nothing to attach it to yet. One pending row, upgraded at first send.
+        return _upsert_one(contact, platform, address, None, source=source, opt_in=opt_in, adopt_pending=True)
+
+    identities: list[ContactChannelIdentity] = []
+    for index, target in enumerate(targets):
+        identities.append(
+            _upsert_one(
+                contact,
+                platform,
+                address,
+                target,
+                source=source,
+                opt_in=opt_in,
+                # A pending row can only be adopted once — it becomes one real
+                # row — so the rest are created outright.
+                adopt_pending=index == 0,
+            )
+        )
+    return identities[0]
+
+
+def _active_connections(workspace_id: Any, platform: str) -> list[Any]:
+    """Every active connection of ``platform``, oldest first."""
+    from apps.channels.models import ChannelConnection, ConnectionStatus
+
+    return list(
+        ChannelConnection.objects.for_workspace(workspace_id)
+        .filter(platform=platform, status=ConnectionStatus.ACTIVE)
+        .order_by("created_at")
+    )
+
+
+def _upsert_one(
+    contact: Any,
+    platform: str,
+    address: str,
+    connection: Any,
+    *,
+    source: str,
+    opt_in: bool,
+    adopt_pending: bool,
+) -> ContactChannelIdentity:
+    """One identity row, created or refreshed."""
+    rows = ContactChannelIdentity.objects.for_workspace(contact.workspace_id).filter(
+        contact=contact, platform=platform, platform_user_id=address
+    )
+    if connection is None:
+        identity = rows.filter(channel_connection__isnull=True).first()
+    else:
+        identity = rows.filter(channel_connection=connection).first()
+        if identity is None and adopt_pending:
+            identity = rows.filter(channel_connection__isnull=True).first()
+            if identity is not None:
+                identity.channel_connection = connection
+
     if identity is None:
         identity = ContactChannelIdentity(
             contact=contact,
@@ -226,8 +292,6 @@ def upsert_contact_identity(
             platform=platform,
             platform_user_id=address,
         )
-    elif connection is not None and identity.channel_connection_id is None:
-        identity.channel_connection = connection
 
     if opt_in and identity.opted_out_at is None:
         identity.opt_in = True
@@ -235,30 +299,6 @@ def upsert_contact_identity(
         identity.opt_in_source = identity.opt_in_source or source or OptInSource.MANUAL
     identity.save()
     return identity
-
-
-def _existing_identity(contact: Any, platform: str, address: str, connection: Any) -> ContactChannelIdentity | None:
-    """This contact's row for the address — the real one, or the pending one."""
-    rows = ContactChannelIdentity.objects.for_workspace(contact.workspace_id).filter(
-        contact=contact, platform=platform, platform_user_id=address
-    )
-    if connection is not None:
-        matched = rows.filter(channel_connection=connection).first()
-        if matched is not None:
-            return matched
-    return rows.filter(channel_connection__isnull=True).first()
-
-
-def _default_connection(workspace_id: Any, platform: str) -> Any:
-    """An active connection of ``platform``, or None for a pending record."""
-    from apps.channels.models import ChannelConnection, ConnectionStatus
-
-    return (
-        ChannelConnection.objects.for_workspace(workspace_id)
-        .filter(platform=platform, status=ConnectionStatus.ACTIVE)
-        .order_by("created_at")
-        .first()
-    )
 
 
 def _identity_for(workspace: Any, contact: Any, connection: Any) -> ContactChannelIdentity | None:

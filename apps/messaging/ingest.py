@@ -99,11 +99,12 @@ from apps.channels import ingest as channels_ingest
 from apps.channels.events import EventType, NormalizedEvent
 from apps.channels.policy import policy_for
 from apps.messaging.events import EVENT_MESSAGE_RECEIVED, emit
-from apps.messaging.identities import bounded_address, record_consent, resolve_identity
+from apps.messaging.identities import bounded_address, bounded_key, record_consent, resolve_identity
 from apps.messaging.models import (
     DELIVERY_PROGRESS,
     ContactChannelIdentity,
     Conversation,
+    ConversationState,
     Message,
     MessageDirection,
     MessageStatus,
@@ -144,6 +145,9 @@ IDENTITY_EVENTS = THREAD_EVENTS | ACTIVITY_EVENTS | CONTACT_ONLY_EVENTS | {Event
 #: accepting it let a receipt walk a failed message backwards to queued and
 #: clear its error — a row nothing would ever move again.
 RECEIPT_STATUSES = frozenset({MessageStatus.SENT, MessageStatus.DELIVERED, MessageStatus.READ, MessageStatus.FAILED})
+
+#: Room for the ``in:`` prefix inside ``Message.idempotency_key``'s 255.
+MAX_EVENT_ID_CHARS = 200
 
 #: Cap on stored inbound text (SECURITY-BASELINE §7). Generous — the widest
 #: platform ceiling is email's 100k — and the point is that it is bounded at all,
@@ -293,13 +297,23 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
 
 
 def _conversation_for(contact: Any, connection: Any) -> Conversation:
-    """The thread for this contact on this connection, creating it if new."""
+    """The thread for this contact on this connection, creating it if new.
+
+    A thread marked ``done`` reopens. The inbox list filters on ``state`` (SPEC
+    §14), so leaving it closed would file a message the contact just sent
+    somewhere no agent is looking — and ``services.open_conversation`` already
+    reopens on the outbound side, which made the closed half of the pair the
+    odd one out rather than a deliberate choice.
+    """
     conversation = (
         Conversation.objects.for_workspace(contact.workspace_id)
         .filter(contact=contact, channel_connection=connection)
         .first()
     )
     if conversation is not None:
+        if conversation.state == ConversationState.DONE:
+            conversation.state = ConversationState.OPEN
+            conversation.save(update_fields=["state", "updated_at"])
         return conversation
     conversation = Conversation(contact=contact, channel_connection=connection)
     try:
@@ -323,8 +337,15 @@ def inbound_idempotency_key(event: NormalizedEvent) -> str:
     seam is driven directly: a replayed batch, a retried processor, L4-A's
     ordered stages re-running after a partial failure. The uniqueness is the
     database's, not a prior read's, so two concurrent attempts cannot both win.
+
+    The id is bounded by hashing rather than by slicing. Slicing to fit the
+    column meant two ids agreeing on a long prefix produced one key, and the
+    second — a genuinely different message — was discarded as a duplicate; a NUL
+    in the id meanwhile made the insert fail outright. ``_dedup_id`` in the
+    webhook view already scrubs and hashes for the log's own constraint, and
+    this layer needs the same treatment for its own.
     """
-    return f"in:{event.provider_event_id}"[:255]
+    return f"in:{bounded_key(event.provider_event_id, limit=MAX_EVENT_ID_CHARS)}"
 
 
 def _insert_inbound(conversation: Conversation, event: NormalizedEvent) -> Message | None:

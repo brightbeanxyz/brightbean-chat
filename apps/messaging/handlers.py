@@ -41,17 +41,29 @@ from django.utils import timezone
 from apps.messaging.codes import Denial, Failure
 from apps.messaging.compliance import Allowed, can_send
 from apps.messaging.models import Message, MessageStatus
-from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionType, ScheduledAction
+from apps.queueing.models import ActionType, ScheduledAction
 from apps.queueing.registry import register_handler, schedule
-from apps.queueing.worker import next_run_at
+from apps.queueing.worker import BACKOFF_SCHEDULE, next_run_at
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["handle_send_retry", "schedule_send_retry"]
+__all__ = ["MAX_SEND_ATTEMPTS", "handle_send_retry", "schedule_send_retry"]
 
 #: Cap on a platform's ``Retry-After``. A hostile or broken header must not be
 #: able to park a message a month into the future.
 MAX_RETRY_AFTER_SECONDS = 6 * 60 * 60
+
+#: How many provider calls one message gets: the first, plus one per rung of the
+#: ladder. Derived from ``BACKOFF_SCHEDULE`` rather than reusing the queue's
+#: ``DEFAULT_MAX_ATTEMPTS``, and the difference is not cosmetic.
+#:
+#: ``ScheduledAction.attempts`` counts attempts *of an action*, and a message's
+#: first call is inline with no action row at all. Budgeting against 5 therefore
+#: stopped one rung early: the fifth call was refused before ``next_run_at(5)``
+#: could ever be asked for, so the 6-hour rung SPEC §9.5 ends the ladder with was
+#: dead code. Six calls is what "30s, 2m, 10m, 1h, 6h then failed" actually
+#: describes.
+MAX_SEND_ATTEMPTS = 1 + len(BACKOFF_SCHEDULE)
 
 
 def schedule_send_retry(
@@ -76,7 +88,7 @@ def schedule_send_retry(
     budget, because no provider call happened.
     """
     attempt = max(message.send_attempts, 1)
-    if use_backoff and attempt >= DEFAULT_MAX_ATTEMPTS:
+    if use_backoff and attempt >= MAX_SEND_ATTEMPTS:
         _give_up(message)
         return None
 
@@ -137,7 +149,7 @@ def handle_send_retry(payload: dict[str, Any], action: ScheduledAction) -> None:
     message = _load(payload, action)
     if message is None or message.status != MessageStatus.QUEUED:
         return
-    if message.send_attempts >= DEFAULT_MAX_ATTEMPTS:
+    if message.send_attempts >= MAX_SEND_ATTEMPTS:
         _give_up(message)
         return
 

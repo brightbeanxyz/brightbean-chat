@@ -237,6 +237,43 @@ class TestUnderConcurrency:
             in_window = sum(1 for stamp in ordered[index:] if stamp - start < 1.0)
             assert in_window <= ceiling, f"{in_window} grants inside one second"
 
+    def test_a_first_use_race_debits_every_racer(self, tenancy: Any) -> None:
+        """Losing the creation race is not a grant. Every worker sees no row,
+        one creates it, and the losers used to be handed a token each without
+        touching the bucket at all — an unbounded burst straight past the rate
+        limit in a connection's first moment, which is exactly when a broadcast
+        fans out."""
+        connection = make_connection(tenancy.workspace, suffix="first-race")
+        workers = 8
+        barrier = threading.Barrier(workers)
+        granted: list[bool] = []
+        lock = threading.Lock()
+
+        def attempt() -> None:
+            try:
+                barrier.wait(timeout=10)
+                outcome = buckets.try_acquire(connection)
+                with lock:
+                    granted.append(isinstance(outcome, buckets.Granted))
+            finally:
+                db_connection.close()
+
+        with override_settings(
+            DEFAULT_SEND_RATE_OVERRIDES={Platform.TELEGRAM.value: 1.0},
+            SEND_BUCKET_BURST_SECONDS=1.0,
+        ):
+            threads = [threading.Thread(target=attempt) for _ in range(workers)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=30)
+                assert not thread.is_alive()
+
+        # Capacity is one token and refill is 1/s, so over a race that resolves
+        # in milliseconds at most a couple can legitimately win.
+        assert sum(granted) <= 2, f"{sum(granted)} of {workers} racers were granted a token"
+        assert bucket_for(connection).tokens < 1.0
+
     def test_a_second_connection_has_its_own_bucket(self, tenancy: Any) -> None:
         """Per channel_connection, so one throttled page cannot starve another."""
         first = make_connection(tenancy.workspace, suffix="bucket-a")
