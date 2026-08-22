@@ -58,6 +58,7 @@ from apps.contacts.models import (
     Segment,
     Tag,
 )
+from apps.flows.compat import installed_model
 
 #: How a contact came to exist. Mirrors SPEC §11.8's ``opt_in_source`` vocabulary
 #: so the two do not drift into two different words for the same thing.
@@ -194,12 +195,16 @@ def merge_contacts(*, primary: Contact, duplicate: Contact) -> Contact:
     two.
 
     The duplicate becomes ``status=deleted`` rather than being removed. SPEC §5
-    put ``deleted`` in the enum for exactly this; issue #29 owns hard delete and
-    GDPR export; and once issue #8 lands, merging must *re-point* identities and
-    conversations at the survivor — an additive change here, whereas destroying
-    the row now would mean v1 deleted what v1.1 needs to move. Its own tag and
-    field rows stay with it: it is a tombstone, and every read surface starts
-    from active contacts.
+    put ``deleted`` in the enum for exactly this, and issue #29 owns hard delete
+    and GDPR export. Its own tag and field rows stay with it: it is a tombstone,
+    and every read surface starts from active contacts.
+
+    Messaging rows are the exception, and they are re-pointed rather than left
+    behind (issue #8). A tag on a tombstone is inert; an *identity* on one keeps
+    receiving webhooks while its conversation has vanished from the inbox. The
+    logic lives in ``apps.messaging.merge`` so this app keeps knowing nothing
+    about messaging, and is reached through ``installed_model`` so this app
+    still imports in a deployment without it.
     """
     if primary.workspace_id != duplicate.workspace_id:
         raise WorkspaceMismatchError("Both contacts must belong to the same workspace.")
@@ -237,9 +242,25 @@ def merge_contacts(*, primary: Contact, duplicate: Contact) -> Contact:
         if changed:
             primary.save(update_fields=[*changed, "updated_at"])
 
+        _repoint_messaging(primary, duplicate)
+
         duplicate.status = ContactStatus.DELETED
         duplicate.save(update_fields=["status", "updated_at"])
     return primary
+
+
+def _repoint_messaging(primary: Contact, duplicate: Contact) -> None:
+    """Hand the merge to ``apps.messaging`` if that app is installed.
+
+    ``installed_model`` is the house pattern for reaching an app that may not be
+    there — it answers "not yet" rather than raising, and starts answering for
+    real the moment the app is installed, with no edit at this call site.
+    """
+    if installed_model("messaging", "apps.messaging", "Conversation") is None:
+        return
+    from apps.messaging.merge import repoint_for_merge
+
+    repoint_for_merge(primary, duplicate)
 
 
 # ---------------------------------------------------------------------------

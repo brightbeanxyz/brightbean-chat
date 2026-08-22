@@ -504,13 +504,16 @@ class TestUnimplementedSources:
     @pytest.mark.parametrize(
         ("rule", "owner"),
         [
-            ({"source": "window", "key": "telegram", "op": "inside"}, "#8"),
+            # `window` was here too until issue #8 (L3-A) filled it. It is now
+            # covered by apps/messaging/tests/test_conditions.py, which is where
+            # the behaviour lives; only `sequence` (#22) is still a slot. The
+            # next issue to fill one deletes its row here the same way.
             ({"source": "sequence", "key": A_SEQUENCE_ID, "op": "subscribed"}, "#22"),
         ],
     )
     def test_a_slot_validates_but_refuses_to_evaluate(self, world, rule, owner):
-        """Issue #6 can ship the whole builder panel before #8 and #22 exist, so
-        a filter using a slot must be saveable — and must fail clearly if run."""
+        """Issue #6 can ship the whole builder panel before #22 exists, so a
+        filter using a slot must be saveable — and must fail clearly if run."""
         from apps.contacts.conditions import validate
 
         validate(world.workspace, _filter(rule))
@@ -519,6 +522,13 @@ class TestUnimplementedSources:
             list(queryset(world.workspace, _filter(rule)))
 
         assert owner in str(exc.value)
+
+    def test_a_filled_slot_stays_saveable(self, world):
+        """Filling a slot supplies behaviour, never vocabulary: a filter written
+        against `window` before issue #8 landed must still validate after."""
+        from apps.contacts.conditions import validate
+
+        validate(world.workspace, _filter({"source": "window", "key": "telegram", "op": "inside"}))
 
 
 @pytest.mark.django_db
@@ -539,10 +549,15 @@ class TestTheRegistry:
     def test_all_six_sources_are_declared(self):
         assert tuple(sources()) == SOURCE_NAMES
 
-    def test_the_two_slots_are_declared_but_not_evaluable(self):
-        assert sources()["window"].is_evaluable is False
+    def test_the_remaining_slot_is_declared_but_not_evaluable(self):
+        """`window` was the other one until issue #8 registered it from
+        MessagingConfig.ready(); `sequence` waits for #22. The registry is what
+        makes that a one-line change in the owning app rather than an edit
+        here."""
         assert sources()["sequence"].is_evaluable is False
-        assert all(sources()[name].is_evaluable for name in ("tag", "custom_field", "system_field", "segment"))
+        assert all(
+            sources()[name].is_evaluable for name in ("tag", "custom_field", "system_field", "segment", "window")
+        )
 
     def test_registering_an_undeclared_source_is_refused(self):
         with pytest.raises(SourceContractError):
@@ -555,19 +570,24 @@ class TestTheRegistry:
             )
 
     def test_registering_the_identical_declaration_twice_is_a_no_op(self):
-        """AppConfig.ready() runs twice under some autoreload paths."""
-        register_source(sources()["window"])
+        """AppConfig.ready() runs twice under some autoreload paths.
 
-        assert sources()["window"].is_evaluable is False
+        Uses ``sequence``, the remaining unimplemented slot: ``window`` is now
+        registered for real by ``MessagingConfig.ready()`` (issue #8), so its
+        "identical" registration is the implemented one and the property under
+        test here is about a declaration."""
+        register_source(sources()["sequence"])
+
+        assert sources()["sequence"].is_evaluable is False
 
     def test_registering_an_implementation_then_restoring_it(self):
-        original = sources()["window"]
+        original = sources()["sequence"]
         implemented = ConditionSource(
             original.name, original.label, original.key_kind, original.ops, lambda ctx, rule: Q(), original.owner
         )
         try:
             register_source(implemented)
-            assert sources()["window"].is_evaluable is True
+            assert sources()["sequence"].is_evaluable is True
             # A second, different implementation needs an explicit replace=True.
             second = ConditionSource(
                 original.name, original.label, original.key_kind, original.ops, lambda ctx, rule: ~Q(), original.owner
@@ -576,7 +596,17 @@ class TestTheRegistry:
                 register_source(second)
         finally:
             register_source(original, replace=True)
-        assert sources()["window"].is_evaluable is False
+        assert sources()["sequence"].is_evaluable is False
+
+    def test_a_real_registration_is_idempotent(self):
+        """The live one, not a stand-in: issue #8 registers ``window`` from
+        ``ready()``, and re-registering the identical source must not raise —
+        which is only true because its ``build_q`` is a module-level function
+        rather than a closure."""
+        from apps.messaging.conditions import register_window_source
+
+        register_window_source()
+        assert sources()["window"].is_evaluable is True
 
 
 class TestTheSchema:
@@ -645,7 +675,7 @@ class TestTheSchema:
         """Built from the frozen vocabulary, not from the registry — otherwise
         the schema issue #6 embeds would depend on which apps had imported."""
         before = copy.deepcopy(CONDITION_SCHEMA)
-        original = sources()["window"]
+        original = sources()["sequence"]
         implemented = ConditionSource(
             original.name, original.label, original.key_kind, original.ops, lambda ctx, rule: Q(), original.owner
         )
