@@ -31,9 +31,12 @@ WRITE_SITES: dict[str, set[str]] = {
     "window_expires_at": {"messaging/ingest.py"},
     # Set by an inbound opt_out event; PR 2's facade adds no second site.
     "opted_out_at": {"messaging/ingest.py"},
-    # PR 2 turns this into {"messaging/services.py"}. Empty is the assertion
-    # that PR 1 leaves the column alone, and the line PR 2 deliberately flips.
-    "automation_paused_until": set(),
+    # SPEC §14's agent takeover, and L4-D's manual pause/resume toggle. Both go
+    # through services.pause_automation() — the agent-send pause in particular
+    # lives inside send_outbound() rather than at its caller, because contract 1
+    # says so and because a caller that forgot it would leave automation
+    # replying over an agent mid-conversation.
+    "automation_paused_until": {"messaging/services.py"},
 }
 
 
