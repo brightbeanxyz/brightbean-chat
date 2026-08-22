@@ -23,9 +23,10 @@ What does a verb *do*?       ``engine.registry`` (here)     L3-B (#9)
 ===========================  =============================  ====================
 
 The split is what lets a node type ship its schema in Layer 2 and its runtime in
-Layer 4 or 5 — ``external_request``, ``send_sms`` and ``send_email`` all have
-validated, drawable schemas today and no runtime — and it is what lets L6-A add
-sequence *behaviour* without touching a schema that already describes it.
+Layer 4 or 5 — ``send_sms`` and ``send_email`` still have validated, drawable
+schemas and no runtime, and ``external_request`` was in that state until L4-E —
+and it is what lets L6-A add sequence *behaviour* without touching a schema that
+already describes it.
 
 **Registration is additive and loud.** Registering a second class for a type
 raises rather than replacing: two apps quietly claiming one node type surfaces
@@ -118,7 +119,8 @@ def unregister_node(node_type: str) -> None:
     :func:`apps.channels.ingest.unregister_processor`. It exists because
     ``replace=True`` cannot undo the case that matters: a test installing a stub
     for a type that has **no** runtime in this layer — ``send_message`` before
-    PR 2, ``external_request`` before L4-E — has nothing to put back, and
+    #9's PR 2, ``send_sms`` and ``send_email`` until L5-D/E — has nothing to put
+    back, and
     without a removal the stub outlives the test and the next module sees a node
     type this deployment does not actually implement.
     """

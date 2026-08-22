@@ -21,7 +21,7 @@ place to stash state between nodes; ``variables`` is.
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from apps.flows.rendering import RenderContext, context_for, render
+from apps.flows.rendering import RenderContext, context_for, render, render_json
 
 if TYPE_CHECKING:
     from apps.flows.engine.graph import Graph
@@ -83,6 +83,18 @@ class NodeContext:
         evaluated anywhere?" a question with one place to look.
         """
         return render(template, self.render_context, mode=mode)
+
+    def render_json(self, template: Any, *, mode: str = "text") -> Any:
+        """Substitute placeholders throughout a JSON document, structure kept.
+
+        :meth:`render`'s rule applied to node config that is a *document* rather
+        than a sentence — SPEC §11.7's External Request body. Offered here, and
+        not imported from :mod:`apps.flows.rendering` by the node, for the same
+        reason :meth:`render` is: one method per node-visible rendering entry
+        point is what keeps "is any user content evaluated anywhere?" a question
+        with one place to look.
+        """
+        return render_json(template, self.render_context, mode=mode)
 
     def set_variable(self, key: str, value: Any) -> None:
         """Record a value for later nodes and for ``{{placeholders}}``.

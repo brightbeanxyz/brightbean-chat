@@ -32,12 +32,24 @@ has nowhere to land.
   author's template back to the contact, and echoing ``{{ secret_field }}`` at
   someone is a worse default than a gap in a sentence.
 
-**Two modes.** Plain text everywhere except HTML bodies. In ``html`` mode the
-*substituted value* is HTML-escaped and the surrounding template is not: the
-template is the author's own markup (SPEC §11.10's ``html_body``), and the value
-is the stranger's. Escaping the template would render an email as source code;
-not escaping the value is stored XSS. The email node (L5-E) is the only planned
-caller of ``html``; it is tested here so the mode cannot arrive untested.
+**Three modes, one rule.** The *substituted value* is encoded for the context it
+lands in; the surrounding template never is. The template is the author's own
+markup or their own URL, and the value is the stranger's — escaping the template
+would render an email as source code and percent-encode the ``://`` out of an
+address, while not encoding the value is stored XSS or a rewritten request.
+
+``text``
+    Plain, everywhere else. The default.
+``html``
+    HTML-escapes the value. SPEC §11.10's ``html_body`` (L5-E) is its caller.
+``url``
+    Percent-encodes the value with **nothing** left safe, for SPEC §11.7's
+    External Request URL (L4-E). ``safe=""`` is the whole point: a contact whose
+    first name is ``../../admin`` or ``x?token=stolen&`` must not be able to add
+    a path segment, a query parameter, a fragment or a port to a URL the author
+    wrote. It follows that a placeholder cannot supply a *structural* piece of a
+    URL — ``{{base_url}}/orders`` does not work, and that is the trade: an author
+    parameterises values, not the shape of the request.
 
 **Where the values come from** (SPEC §9.2's context, in this precedence order):
 
@@ -61,6 +73,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import quote
 
 from django.utils.html import escape
 
@@ -219,12 +232,26 @@ def _coerce(value: Any) -> str:
     return text[:MAX_VALUE_CHARS]
 
 
+#: How each mode encodes a substituted value. The template is never encoded —
+#: see the module docstring for why that asymmetry is the correct one.
+#:
+#: A dict rather than a chain of ``if``s so that ``mode not in _ENCODERS`` is
+#: both the validity check and the lookup: a mode cannot be accepted by one and
+#: missed by the other.
+_ENCODERS: dict[str, Any] = {
+    "text": lambda value: value,
+    "html": escape,
+    "url": lambda value: quote(value, safe=""),
+}
+
+
 def render(template: Any, context: RenderContext, *, mode: str = "text") -> str:
     """Substitute ``{{tokens}}`` in ``template`` from ``context``.
 
-    ``mode="html"`` escapes each substituted value; the template itself is left
-    as authored. See the module docstring for why that asymmetry is the correct
-    one and not an oversight.
+    ``mode="html"`` escapes each substituted value and ``mode="url"``
+    percent-encodes it; the template itself is left as authored in both. See the
+    module docstring for why that asymmetry is the correct one and not an
+    oversight.
 
     A non-string template renders as the empty string rather than raising: node
     config is user-authored JSON that has been through schema validation, but
@@ -234,8 +261,9 @@ def render(template: Any, context: RenderContext, *, mode: str = "text") -> str:
     """
     if not isinstance(template, str) or not template:
         return ""
-    if mode not in ("text", "html"):
-        raise ValueError(f"render() mode must be 'text' or 'html', not {mode!r}.")
+    if mode not in _ENCODERS:
+        raise ValueError(f"render() mode must be one of {', '.join(sorted(_ENCODERS))}, not {mode!r}.")
+    encode = _ENCODERS[mode]
 
     def _replace(match: "re.Match[str]") -> str:
         token = match.group(1)
@@ -247,11 +275,11 @@ def render(template: Any, context: RenderContext, *, mode: str = "text") -> str:
             logger.debug("Placeholder %r resolved to nothing; rendering it as empty.", token)
             return ""
         text = _coerce(value)
-        # The escape happens *here*, on the value alone, and the result is not
+        # The encoding happens *here*, on the value alone, and the result is not
         # rescanned — re.sub never re-examines what a replacement callable
         # returns. That single fact is what makes nested placeholders and
         # template syntax in contact data inert.
-        return escape(text) if mode == "html" else text
+        return str(encode(text))
 
     rendered = _PLACEHOLDER_RE.sub(_replace, template)
     if len(rendered) > MAX_RENDERED_CHARS:

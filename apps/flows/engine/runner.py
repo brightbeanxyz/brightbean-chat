@@ -284,9 +284,9 @@ def _run(execution: FlowExecution, graph: Graph) -> FlowExecution:
         node_type = graph.node_type(node_id)
         node_class = node_class_for(node_type)
         if node_class is None:
-            # A schema without a runtime: external_request until L4-E, send_sms
-            # and send_email until L5-D/E. Publishing allows it, so the run has
-            # to be the thing that says no.
+            # A schema without a runtime: send_sms and send_email until
+            # L5-D/E. Publishing allows it, so the run has to be the thing that
+            # says no.
             return _fail(execution, f"no runtime is registered for {node_type!r} nodes")
 
         ctx = NodeContext(

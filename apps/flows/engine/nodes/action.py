@@ -22,6 +22,11 @@ hands the builder, and it matches SPEC §9.2's "custom fields by name" for the
 renderer. A tag renamed in the CRM therefore breaks a flow that adds it, which is
 the trade ManyChat makes too and the one the schema already chose.
 
+**Field resolution and coercion are not here** either. ``set_field`` shares
+:mod:`apps.flows.engine.fields` with the External Request node (L4-E), which
+writes custom fields from JSON responses rather than from rendered text; the two
+directions meet at ``coerce_value`` and the adaptation belongs in one place.
+
 **Sequence verbs are not here.** ``subscribe_sequence`` and
 ``unsubscribe_sequence`` have schemas (so the builder can offer them today) and
 no runtime until L6-A registers one. Reaching one logs a warning and moves on,
@@ -36,7 +41,7 @@ from typing import Any
 from uuid import UUID
 
 from apps.contacts.errors import ContactsError
-from apps.contacts.models import CustomField, CustomFieldType, Tag
+from apps.contacts.models import Tag
 from apps.contacts.services import (
     add_tag,
     clear_field_value,
@@ -46,6 +51,7 @@ from apps.contacts.services import (
 )
 from apps.flows import messaging
 from apps.flows.engine.context import NodeContext
+from apps.flows.engine.fields import custom_field_by_name, typed_for
 from apps.flows.engine.nodes.base import Node
 from apps.flows.engine.registry import register_node, register_verb, verb_handler
 from apps.flows.engine.results import Continue, StepResult
@@ -54,19 +60,6 @@ from apps.flows.notifications import event_for_via
 __all__ = ["ActionNode"]
 
 logger = logging.getLogger(__name__)
-
-#: Strings a boolean custom field accepts from a flow.
-#:
-#: ``apps.contacts.services.coerce_value`` deliberately refuses a string for a
-#: boolean field — "``True`` would quietly store as ``1``" is its worry, and it
-#: is right for an API. But a flow's ``set_field`` value is *always* a string:
-#: the schema says so, and it has to, because the value may be a
-#: ``{{placeholder}}`` whose type is not known until render time. So the
-#: conversion happens here, at the one call site that knows the value came out
-#: of a text box, with an allowlist rather than Python truthiness — under which
-#: the string ``"false"`` is true.
-_TRUE_WORDS = frozenset({"true", "yes", "y", "1", "on"})
-_FALSE_WORDS = frozenset({"false", "no", "n", "0", "off"})
 
 
 @register_node
@@ -145,15 +138,15 @@ def _remove_tag(ctx: NodeContext, step: dict[str, Any]) -> None:
 
 def _set_field(ctx: NodeContext, step: dict[str, Any]) -> None:
     """Write a custom field, rendering ``{{placeholders}}`` in the value first."""
-    field = _custom_field(ctx, step.get("field"))
+    field = custom_field_by_name(ctx, step.get("field"))
     if field is None:
         return
     rendered = ctx.render(step.get("value"))
-    set_field_value(ctx.contact, field, _typed(field, rendered))
+    set_field_value(ctx.contact, field, typed_for(field, rendered))
 
 
 def _clear_field(ctx: NodeContext, step: dict[str, Any]) -> None:
-    field = _custom_field(ctx, step.get("field"))
+    field = custom_field_by_name(ctx, step.get("field"))
     if field is None:
         return
     clear_field_value(ctx.contact, field)
@@ -228,39 +221,6 @@ for _verb, _handler in (
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
-
-
-def _custom_field(ctx: NodeContext, name: Any) -> CustomField | None:
-    """A custom field by name, case-insensitively, or ``None`` with a warning."""
-    cleaned = _text(name)
-    if not cleaned:
-        raise ValueError("The verb needs a field name.")
-    field = CustomField.objects.for_workspace(ctx.workspace_id).filter(name__iexact=cleaned).first()
-    if field is None:
-        logger.warning(
-            "Execution %s: action node %s names custom field %r, which this workspace does not have.",
-            ctx.execution.pk,
-            ctx.node_id,
-            cleaned,
-        )
-    return field
-
-
-def _typed(field: CustomField, rendered: str) -> Any:
-    """Turn rendered text into what this field's type accepts.
-
-    Only booleans need help; ``coerce_value`` already parses strings into
-    numbers, dates and datetimes and reports a bad one as a
-    :class:`~apps.contacts.errors.FieldTypeError` the caller logs.
-    """
-    if field.type != CustomFieldType.BOOLEAN:
-        return rendered
-    word = rendered.strip().casefold()
-    if word in _TRUE_WORDS:
-        return True
-    if word in _FALSE_WORDS:
-        return False
-    raise ValueError(f"{field.name} holds true or false; {rendered!r} is neither.")
 
 
 def _member(ctx: NodeContext, value: Any) -> Any | None:
