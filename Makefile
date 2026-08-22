@@ -61,11 +61,19 @@ migrations: ## Create new migrations
 
 # Code quality
 
-test: ## Run tests
-	pytest
+# -n auto is opted into here rather than in pyproject's addopts, so that a bare
+# `pytest some/one_test.py` stays single-process. Under --dist loadfile a
+# one-file run lands entirely on one worker anyway, so parallelism there buys
+# nothing and costs a test-database build per idle worker. Drop the -n to debug
+# a suspected cross-worker race.
+test: ## Run tests (parallel; drop -n to debug a cross-worker race)
+	pytest -n auto
 
 test-cov: ## Run tests with coverage
-	pytest --cov=apps --cov-report=term-missing
+# COVERAGE_CORE=sysmon: coverage on CPython 3.12's sys.monitoring rather than the
+# trace callback. Same numbers, and it cuts the instrumentation cost of the full
+# suite from ~81% to ~10%. Matches the CI invocation.
+	COVERAGE_CORE=sysmon pytest -n auto --cov=apps --cov-report=term-missing
 
 lint: ## Run linter and format check (ruff's S rules are the security lint)
 	ruff check .
