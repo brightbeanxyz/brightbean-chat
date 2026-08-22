@@ -65,7 +65,8 @@ from typing import Any
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import F
+from django.db.models import F, Value
+from django.db.models.functions import Greatest
 from django.utils import timezone
 
 from apps.channels.events import OutboundMessage, SendResult, SendStatus
@@ -308,6 +309,14 @@ def send_outbound(
     calls correctly.
     """
     source = MessageSource(source).value
+    if not idempotency_key:
+        # The unique constraint is partial — ``condition=~Q(idempotency_key="")``
+        # — so a blank key is not deduplicated by anything: every call would
+        # insert a fresh row and make a fresh provider call, silently voiding
+        # the guarantee contract 1 is built on. Raising is deliberate and is the
+        # same treatment an unknown ``source`` gets one line up: the never-raises
+        # promise covers send *outcomes*, not a caller passing nonsense.
+        raise ValueError("send_outbound() needs a non-empty idempotency_key (SPEC §9.4).")
     conversation = open_conversation(workspace=workspace, contact=contact, connection=connection)
 
     if source == MessageSource.AGENT:
@@ -318,8 +327,12 @@ def send_outbound(
     if internal:
         # A note never reaches a platform, so it skips compliance and the bucket
         # entirely. It is stored as a message because that is what SPEC §14 says
-        # it is; ``internal`` is what keeps it out of the send path forever.
-        return _record(conversation, outbound, source, idempotency_key, internal=True)[0]
+        # it is; ``internal`` is what keeps it out of the send path forever. It
+        # is real thread content, so unlike a refused send it does set recency.
+        note, created = _record(conversation, outbound, source, idempotency_key, internal=True)
+        if created:
+            _touch(conversation)
+        return note
 
     identity = _identity_for(workspace, contact, connection)
     if identity is None:
@@ -414,7 +427,6 @@ def _record(
             .get()
         )
         return existing, False
-    _touch(conversation)
     return message, True
 
 
@@ -440,42 +452,64 @@ def _dispatch(
     *,
     blocking: bool,
 ) -> Message:
-    """Take a token, claim the attempt, call the adapter, record the outcome."""
-    if blocking:
-        acquisition = buckets.acquire(connection, max_wait=settings.SEND_BUCKET_MAX_WAIT_SECONDS)
-    else:
-        acquisition = buckets.try_acquire(connection)
-    if isinstance(acquisition, buckets.Deferred):
-        # SPEC §7.1: the inline path "falls back to enqueue when empty". Not a
-        # failure and not a rung on the backoff ladder — the token is due when
-        # the bucket says it is, and no provider call happened to charge for.
-        _schedule_retry(message, delay_seconds=acquisition.wait_seconds, use_backoff=False)
-        return _finalize(message, status=MessageStatus.QUEUED, error=Failure.RATE_DEFERRED.value)
+    """Resolve the adapter, claim the attempt, take a token, send, record.
 
-    if not _claim(message):
-        # Another worker owns this attempt. Its outcome is the one that counts.
-        message.refresh_from_db()
-        return message
+    That order is load-bearing and was arrived at the wrong way round once.
 
+    The **adapter first**, because a platform with no adapter installed can never
+    send and must not spend anything finding that out. The **claim second**,
+    because it is the right to make one provider call and only its winner has
+    any use for a token — acquiring first meant every racing caller burned one
+    and then lost the claim, draining the connection's bucket with calls that
+    never happened. The **token last**, so the only thing that consumes rate is
+    a send that is actually about to be attempted.
+    """
     try:
         adapter = adapter_for(connection.platform)
     except LookupError:
         return _finalize(message, status=MessageStatus.FAILED, error=Failure.NO_ADAPTER.value)
 
+    if not _claim(message):
+        # Another caller owns this attempt. Its outcome is the one that counts.
+        message.refresh_from_db()
+        return message
+
+    if blocking:
+        acquisition = buckets.acquire(connection, max_wait=settings.SEND_BUCKET_MAX_WAIT_SECONDS)
+    else:
+        acquisition = buckets.try_acquire(connection)
+    if isinstance(acquisition, buckets.Deferred):
+        # SPEC §7.1: the inline path "falls back to enqueue when empty". Hand
+        # the claim back first — no call was made, so the next attempt must be
+        # able to take it, and must not be charged an attempt for waiting.
+        _release_claim(message)
+        return _defer(
+            message,
+            error=Failure.RATE_DEFERRED.value,
+            delay_seconds=acquisition.wait_seconds,
+            # Not a failure and not a rung on the backoff ladder: the token is
+            # due when the bucket says it is.
+            use_backoff=False,
+        )
+
+    # The thread's recency is set here rather than when the row was inserted:
+    # this is the first point at which a message is genuinely on its way, and a
+    # compliance-denied send must not float a conversation to the top of an
+    # inbox sorted by last_message_at (SPEC §14).
+    _touch(message.conversation)
+
     try:
         result = adapter.send(connection, identity, outbound)
     except RateLimitError as exc:
         # Before APIError: it is a subclass, and the two are treated oppositely.
-        _schedule_retry(message, delay_seconds=exc.retry_after)
-        return _finalize(message, status=MessageStatus.QUEUED, error=Failure.RATE_LIMITED.value)
+        return _defer(message, error=Failure.RATE_LIMITED.value, delay_seconds=exc.retry_after)
     except APIError as exc:
         return _record_api_error(message, exc)
     except Exception:
         # An adapter bug must not kill the flow (SPEC §9.5), and must not be
         # mistaken for the platform rejecting the message.
         logger.exception("Adapter raised while sending message %s", message.pk)
-        _schedule_retry(message)
-        return _finalize(message, status=MessageStatus.QUEUED, error=Failure.PROVIDER_UNAVAILABLE.value)
+        return _defer(message, error=Failure.PROVIDER_UNAVAILABLE.value)
 
     if result.status == SendStatus.FAILED:
         return _finalize(message, status=MessageStatus.FAILED, error=_provider_code(result))
@@ -486,14 +520,48 @@ def _dispatch(
     )
 
 
+def _defer(
+    message: Message,
+    *,
+    error: str,
+    delay_seconds: float | None = None,
+    use_backoff: bool = True,
+) -> Message:
+    """Queue the message for another attempt — or leave it failed if there is none.
+
+    The ordering here is the whole point. ``_schedule_retry`` fails the row
+    itself when the budget is spent, and an earlier version finalised to
+    ``queued`` immediately afterwards regardless: a message that had exhausted
+    five attempts came out marked ``queued`` with nothing scheduled to move it,
+    stuck forever, with an operator staring at the wrong status. So the status
+    is written only when an attempt was actually armed.
+
+    A scheduling error is not allowed to escape either. ``send_outbound``
+    promises never to raise for a send outcome (SPEC §9.5: a failed send follows
+    the ``default`` edge rather than killing the flow), and "the retry could not
+    be scheduled" is a send outcome like any other — so it fails the message
+    with its own code instead of leaving it queued and unreferenced.
+    """
+    try:
+        scheduled = _schedule_retry(message, delay_seconds=delay_seconds, use_backoff=use_backoff)
+    except Exception:
+        logger.exception("Could not schedule a retry for message %s", message.pk)
+        return _finalize(message, status=MessageStatus.FAILED, error=Failure.RETRY_UNSCHEDULABLE.value)
+
+    if scheduled is None:
+        # _schedule_retry already failed the row with retries_exhausted.
+        message.refresh_from_db()
+        return message
+    return _finalize(message, status=MessageStatus.QUEUED, error=error)
+
+
 def _record_api_error(message: Message, exc: APIError) -> Message:
     """4xx is permanent; 5xx, a timeout and an unknown status are not (SPEC §9.5)."""
     status_code = exc.status_code
     retryable = status_code is None or status_code >= 500 or status_code in _RETRYABLE_STATUSES
     if not retryable:
         return _finalize(message, status=MessageStatus.FAILED, error=_code(Failure.PROVIDER_REJECTED, exc))
-    _schedule_retry(message)
-    return _finalize(message, status=MessageStatus.QUEUED, error=_code(Failure.PROVIDER_UNAVAILABLE, exc))
+    return _defer(message, error=_code(Failure.PROVIDER_UNAVAILABLE, exc))
 
 
 def _code(failure: Failure, exc: APIError) -> str:
@@ -531,6 +599,23 @@ def _claim(message: Message) -> bool:
     if claimed:
         message.refresh_from_db()
     return bool(claimed)
+
+
+def _release_claim(message: Message) -> None:
+    """Hand back a claim taken for an attempt that never reached the provider.
+
+    Only ever called before ``adapter.send``. Clearing ``dispatched_at`` re-opens
+    the compare-and-set so the next attempt can take it, and decrementing
+    ``send_attempts`` keeps the SPEC §9.5 budget counting provider calls rather
+    than trips through this function — a message that waited five times for a
+    rate-limit token has not used up its five tries at sending.
+    """
+    Message.objects.for_workspace(message.workspace_id).filter(pk=message.pk).update(
+        dispatched_at=None,
+        send_attempts=Greatest(F("send_attempts") - 1, Value(0)),
+        updated_at=timezone.now(),
+    )
+    message.refresh_from_db()
 
 
 def _finalize(
@@ -573,8 +658,11 @@ def _touch(conversation: Conversation) -> None:
     conversation.save(update_fields=["last_message_at", "updated_at"])
 
 
-def _schedule_retry(message: Message, *, delay_seconds: float | None = None, use_backoff: bool = True) -> None:
-    """Arm a ``send_retry`` for this message. Imported late to avoid a cycle."""
+def _schedule_retry(message: Message, *, delay_seconds: float | None = None, use_backoff: bool = True) -> Any:
+    """Arm a ``send_retry``, returning the action or None if the budget is spent.
+
+    Imported late to avoid a cycle: the handler imports this module back.
+    """
     from apps.messaging.handlers import schedule_send_retry
 
-    schedule_send_retry(message, delay_seconds=delay_seconds, use_backoff=use_backoff)
+    return schedule_send_retry(message, delay_seconds=delay_seconds, use_backoff=use_backoff)

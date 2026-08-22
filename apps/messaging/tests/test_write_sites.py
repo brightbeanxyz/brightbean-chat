@@ -74,8 +74,12 @@ def test_a_routing_field_is_written_in_one_place_only(field: str) -> None:
     allowed = WRITE_SITES[field]
     writers = set()
     for path in python_sources():
-        # The model file declares the column; a declaration is not a write.
-        if path.name == "models.py":
+        # The module that declares the columns; a field declaration is not a
+        # write. Matched on its full path, not the bare filename: skipping every
+        # models.py in the project would let a save() override or a signal
+        # receiver in *another* app assign one of these columns unseen, which is
+        # exactly the invisible second write site this test exists to catch.
+        if path.relative_to(APPS) == Path("messaging/models.py"):
             continue
         if field not in path.read_text():
             continue

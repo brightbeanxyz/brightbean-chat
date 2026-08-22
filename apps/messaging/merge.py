@@ -17,6 +17,8 @@ not be installed.
 import logging
 from typing import Any
 
+from django.db import IntegrityError, transaction
+
 from apps.messaging.models import ContactChannelIdentity, Conversation, Message
 
 logger = logging.getLogger(__name__)
@@ -42,8 +44,11 @@ def repoint_for_merge(primary: Any, duplicate: Any) -> None:
     """
     workspace_id = primary.workspace_id
 
+    # workspace is not reassigned: merge_contacts has already refused a pair
+    # that does not share one, so both rows already hold this value and writing
+    # it again would imply to a reader that it can differ.
     identities = ContactChannelIdentity.objects.for_workspace(workspace_id).filter(contact=duplicate)
-    moved_identities = identities.update(contact=primary, workspace=workspace_id)
+    moved_identities = identities.update(contact=primary)
 
     survivor_threads = {
         conversation.channel_connection_id: conversation
@@ -60,10 +65,7 @@ def repoint_for_merge(primary: Any, duplicate: Any) -> None:
             moved_threads += 1
             continue
 
-        # Bypassing Message.save() is safe here and only here: both threads
-        # belong to the same workspace and the same connection, so the two
-        # columns that save() derives are already identical on every row.
-        Message.objects.for_workspace(workspace_id).filter(conversation=conversation).update(conversation=survivor)
+        _move_messages(workspace_id, conversation, survivor)
         _keep_latest(survivor, conversation)
         conversation.delete()
         merged_threads += 1
@@ -75,6 +77,42 @@ def repoint_for_merge(primary: Any, duplicate: Any) -> None:
         moved_threads,
         merged_threads,
     )
+
+
+def _move_messages(workspace_id: Any, absorbed: Conversation, survivor: Conversation) -> None:
+    """Re-point ``absorbed``'s messages onto ``survivor``.
+
+    Bypassing ``Message.save()`` is safe here and only here: both threads belong
+    to the same workspace and the same connection, so the two columns that
+    ``save()`` derives are already identical on every row.
+
+    The bulk update can still fail. ``(conversation, idempotency_key)`` is
+    unique, so if both threads hold a message with the same key — two sends that
+    reused one across contacts, or one provider event persisted to both people
+    before the merge — the move raises and takes the whole merge down with it.
+    The fallback moves the rows one at a time and clears the key on the ones
+    that collide: the key exists to stop a *future* insert being a duplicate
+    send, and a message already delivered into a thread that is being merged
+    away has no future insert to guard. The message itself is never dropped,
+    because losing history is the one thing a merge must not do.
+    """
+    rows = Message.objects.for_workspace(workspace_id).filter(conversation=absorbed)
+    try:
+        with transaction.atomic():
+            rows.update(conversation=survivor)
+        return
+    except IntegrityError:
+        logger.info("Idempotency keys collide across the merged threads; moving messages individually.")
+
+    for message in list(rows):
+        message.conversation = survivor
+        try:
+            with transaction.atomic():
+                message.save(update_fields=["conversation", "updated_at"])
+        except IntegrityError:
+            message.idempotency_key = ""
+            with transaction.atomic():
+                message.save(update_fields=["conversation", "idempotency_key", "updated_at"])
 
 
 def _keep_latest(survivor: Conversation, absorbed: Conversation) -> None:

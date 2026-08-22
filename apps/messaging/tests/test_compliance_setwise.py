@@ -49,6 +49,10 @@ STATES: dict[str, dict[str, Any]] = {
     "no_consent": {"opt_in": False},
 }
 
+#: A pending identity has no connection to send through (contract 1). It lives
+#: outside STATES because make_identity attaches one to every row it builds.
+PENDING = "pending"
+
 
 def make_identity(
     contact: Any,
@@ -92,6 +96,22 @@ def test_the_two_evaluators_agree_for_every_state(tenancy: Any, platform: str, s
         contact = create_contact(tenancy.workspace, first_name=name)
         ident = make_identity(contact, connection, **state)
         expected[ident.pk] = code_of(can_send(ident, source, outbound, now=now))
+
+    # The connection-less case. annotate_eligibility used to filter these out
+    # entirely, which made the NO_CONNECTION rule unreachable set-wise while it
+    # was reachable per-identity — and left a broadcast preview quietly omitting
+    # those people instead of counting them under a skip reason.
+    pending_contact = create_contact(tenancy.workspace, first_name=PENDING)
+    pending = ContactChannelIdentity.objects.create(
+        contact=pending_contact,
+        channel_connection=None,
+        platform=connection.platform,
+        platform_user_id=f"u-{pending_contact.pk}",
+        opt_in=True,
+        opt_in_at=now,
+        opt_in_source="data_collection",
+    )
+    expected[pending.pk] = code_of(can_send(pending, source, outbound, now=now))
 
     annotated = annotate_eligibility(
         ContactChannelIdentity.objects.for_workspace(tenancy.workspace),
@@ -156,6 +176,52 @@ class TestTheQuerysetContract:
             .annotate(total=Count("id"))
         )
         assert counts["opted_out"] == 2
+
+    def test_a_pending_identity_is_counted_as_a_skip_not_dropped(self, tenancy: Any) -> None:
+        """An operator sizing a broadcast needs to see "we hold this address but
+        have no connection for it", not a silently smaller number."""
+        from apps.messaging.codes import Denial
+
+        connection = make_connection(tenancy.workspace, suffix="pending")
+        contact = create_contact(tenancy.workspace, first_name="captured early")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=None,
+            platform=connection.platform,
+            platform_user_id="+15550101234",
+            opt_in=True,
+            opt_in_at=timezone.now(),
+            opt_in_source="data_collection",
+        )
+        row = annotate_eligibility(
+            ContactChannelIdentity.objects.for_workspace(tenancy.workspace),
+            connection=connection,
+            source="broadcast",
+            outbound=TEXT,
+        ).get()
+        assert getattr(row, DECISION_FIELD) == Denial.NO_CONNECTION
+
+    def test_a_pending_identity_on_another_platform_is_out_of_scope(self, tenancy: Any) -> None:
+        """The widening is per platform: an SMS address says nothing about who a
+        Telegram broadcast can reach."""
+        connection = make_connection(tenancy.workspace, suffix="scope-platform")
+        contact = create_contact(tenancy.workspace, first_name="elsewhere")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=None,
+            platform="sms",
+            platform_user_id="+15550101234",
+            opt_in=True,
+            opt_in_at=timezone.now(),
+            opt_in_source="data_collection",
+        )
+        rows = annotate_eligibility(
+            ContactChannelIdentity.objects.for_workspace(tenancy.workspace),
+            connection=connection,
+            source="broadcast",
+            outbound=TEXT,
+        )
+        assert rows.count() == 0
 
     def test_another_connections_identities_are_excluded(self, tenancy: Any) -> None:
         """The narrowing is what makes deriving one PlatformPolicy sound."""

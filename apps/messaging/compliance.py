@@ -273,7 +273,13 @@ def _decision(code: str, policy: channel_policy.PlatformPolicy, outbound: Outbou
         return Allowed(code)
     if code == Denial.NEEDS_TAG:
         outside = policy.outside_window
-        assert isinstance(outside, channel_policy.NeedsTag)  # noqa: S101 - true by construction
+        if not isinstance(outside, channel_policy.NeedsTag):
+            # Unreachable: only _outside_window_code emits NEEDS_TAG, and only
+            # for a NeedsTag policy. Checked rather than asserted because
+            # ``python -O`` strips an assert, and the line after it would then
+            # raise AttributeError from inside the send chokepoint instead of
+            # failing the way this module documents.
+            raise TypeError(f"NEEDS_TAG from a {type(outside).__name__} policy")
         return NeedsTag(allowed_tags=outside.tags, allowed_use_text=outside.allowed_use_text)
     if code == Denial.NEEDS_TEMPLATE:
         return NeedsTemplate()
@@ -306,7 +312,14 @@ def annotate_eligibility(
     now = now or timezone.now()
     rules = _rules(channel_policy.policy_for(connection.platform), source, outbound, now)
     *guards, terminal = rules
-    return identities.filter(channel_connection=connection).annotate(
+    # This connection's identities, plus the pending records for its platform.
+    # Narrowing to the connection alone is what makes deriving a single policy
+    # sound, but it also dropped pending identities out of the result entirely —
+    # so the NO_CONNECTION rule was unreachable here while reachable in
+    # can_send(), and a broadcast preview silently omitted those people instead
+    # of counting them under a skip reason (SPEC §13.2).
+    in_scope = Q(channel_connection=connection) | Q(channel_connection__isnull=True, platform=connection.platform)
+    return identities.filter(in_scope).annotate(
         **{
             field: Case(
                 *[When(rule.q, then=Value(rule.code)) for rule in guards],

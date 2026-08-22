@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from django.db import connection as db_connection
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.channels.policy import policy_for
@@ -124,6 +125,34 @@ class TestAcquisition:
         started = time.monotonic()
         assert isinstance(buckets.acquire(connection, max_wait=0.2), buckets.Deferred)
         assert time.monotonic() - started < 1.0
+
+
+class TestQueryCost:
+    @override_settings(DEFAULT_SEND_RATE_OVERRIDES={"telegram": 25}, SEND_BUCKET_BURST_SECONDS=1.0)
+    def test_a_steady_state_acquire_reads_the_row_once(self, tenancy: Any) -> None:
+        """It used to read it twice: a get_or_create to find the row, then the
+        locked read of the same row. acquire()'s poll loop multiplied that by
+        however many times it woke up, so a message waiting the default two
+        seconds hit one row about 160 times.
+
+        Counted as SELECTs against the table rather than with
+        django_assert_num_queries, which also counts the SAVEPOINT statements
+        atomic() emits inside the test's own transaction.
+        """
+        connection = make_connection(tenancy.workspace, suffix="queries")
+        buckets.try_acquire(connection)  # first use creates the row
+
+        with CaptureQueriesContext(db_connection) as captured:
+            buckets.try_acquire(connection)
+        reads = [q for q in captured.captured_queries if q["sql"].lstrip().upper().startswith("SELECT")]
+        assert len(reads) == 1, [q["sql"] for q in reads]
+        assert "messaging_send_bucket" in reads[0]["sql"]
+
+    @override_settings(DEFAULT_SEND_RATE_OVERRIDES={"telegram": 5}, SEND_BUCKET_BURST_SECONDS=1.0)
+    def test_the_first_acquire_creates_the_row_and_spends_from_it(self, tenancy: Any) -> None:
+        connection = make_connection(tenancy.workspace, suffix="first")
+        assert isinstance(buckets.try_acquire(connection), buckets.Granted)
+        assert bucket_for(connection).tokens == pytest.approx(4.0, abs=0.1)
 
 
 class TestTheClock:

@@ -220,6 +220,21 @@ class TestTheHandler:
         assert message.status == MessageStatus.FAILED
         assert message.error == Denial.OPTED_OUT
 
+    def test_a_missing_identity_is_reported_as_such(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """Not as no_adapter. ``error`` is what an operator debugging a stuck
+        send reads through codes.describe(), and the two causes send them to
+        completely different places."""
+        message = queued_message(tenancy, contact, connection)
+        ContactChannelIdentity.objects.for_workspace(tenancy.workspace).filter(pk=identity.pk).delete()
+        with registered(Platform.TELEGRAM) as adapter:
+            run_retry(pending_action())
+            assert adapter.sends == []
+        message.refresh_from_db()
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Denial.NO_IDENTITY
+
     def test_the_budget_is_counted_on_the_message(
         self, tenancy: Any, contact: Any, connection: Any, identity: Any
     ) -> None:

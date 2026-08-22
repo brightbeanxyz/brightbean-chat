@@ -138,6 +138,13 @@ CONTACT_ONLY_EVENTS = frozenset({EventType.FOLLOW})
 #: updates an existing row (``delivery_status``) or is ignored (``comment``).
 IDENTITY_EVENTS = THREAD_EVENTS | ACTIVITY_EVENTS | CONTACT_ONLY_EVENTS | {EventType.OPT_OUT}
 
+#: What a ``delivery_status`` receipt may say. Narrower than
+#: ``MessageStatus.values`` on purpose: ``queued`` is a state *we* put a message
+#: into before calling anyone, never something a platform reports back, and
+#: accepting it let a receipt walk a failed message backwards to queued and
+#: clear its error — a row nothing would ever move again.
+RECEIPT_STATUSES = frozenset({MessageStatus.SENT, MessageStatus.DELIVERED, MessageStatus.READ, MessageStatus.FAILED})
+
 #: Cap on stored inbound text (SECURITY-BASELINE §7). Generous — the widest
 #: platform ceiling is email's 100k — and the point is that it is bounded at all,
 #: because ``body`` is jsonb and an unbounded string in it is an unbounded row.
@@ -259,7 +266,16 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
     if event.type in THREAD_EVENTS and message is None:
         # Already persisted. Returning before the bookkeeping is what stops a
         # redelivery re-extending the messaging window past first-receipt plus
-        # window_hours — which would be a policy violation, not a cosmetic one.
+        # window_hours.
+        #
+        # This guard covers thread events only, because the message row is what
+        # it is built on. An activity event carries no row and so has no
+        # second-line dedup: redelivery of one is caught upstream by
+        # ``webhook_event_log``'s unique (connection, provider_event_id), and a
+        # deliberate re-dispatch of the same batch re-extends its window by the
+        # gap between the two calls. That is bounded by how long a caller takes
+        # to retry rather than by anything a platform controls, which is why it
+        # is documented here rather than defended against with a second table.
         return
 
     _record_activity(identity, contact, conversation, now, message_at=now if message else None)
@@ -342,7 +358,13 @@ def _inbound_body(event: NormalizedEvent) -> dict[str, Any]:
     text = _clean(payload.text, MAX_TEXT_CHARS)
     if text:
         blocks.append({"type": "text", "text": text})
-    for url in payload.attachments[:MAX_ATTACHMENTS]:
+    # Type-checked before slicing, not assumed. EventPayload's contract is that
+    # an adapter meeting a wrongly typed key leaves the field at its default, and
+    # ``text`` is guarded by _clean for exactly that reason — but an int here
+    # used to raise TypeError, which persist_events swallows, so one bad field
+    # cost the whole message rather than just its attachments.
+    attachments = payload.attachments if isinstance(payload.attachments, list | tuple) else ()
+    for url in attachments[:MAX_ATTACHMENTS]:
         cleaned = _clean(url, MAX_ATTACHMENT_URL_CHARS)
         if cleaned:
             # Recorded, never fetched: SECURITY-BASELINE §6 forbids a
@@ -418,7 +440,7 @@ def _apply_delivery_status(connection: Any, event: NormalizedEvent) -> None:
     extra = event.payload.extra if isinstance(event.payload.extra, dict) else {}
     provider_id = _clean(extra.get("provider_message_id"), 200)
     status = extra.get("status")
-    if not provider_id or status not in MessageStatus.values:
+    if not provider_id or status not in RECEIPT_STATUSES:
         logger.debug("Unusable delivery_status payload on connection %s; ignored.", connection.pk)
         return
 

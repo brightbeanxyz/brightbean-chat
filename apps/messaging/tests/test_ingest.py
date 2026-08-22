@@ -295,6 +295,26 @@ class TestBodyShape:
         assert messages(tenancy.workspace).get().body["ref"] == "promo-42"
 
 
+class TestMalformedPayloadFields:
+    @pytest.mark.parametrize("value", [42, None, {"a": 1}, object()])
+    def test_a_wrongly_typed_attachments_field_keeps_the_message(
+        self, tenancy: Any, connection: Any, value: Any
+    ) -> None:
+        """EventPayload's contract is that a wrongly typed key leaves the field
+        at its default. Slicing this one used to raise TypeError, which
+        persist_events swallows — so one bad field cost the whole message rather
+        than just its attachments."""
+        payload = EventPayload(text="still readable", attachments=value)  # type: ignore[arg-type]
+        persist_events(connection, [make_event(connection, payload=payload)])
+        body = messages(tenancy.workspace).get().body
+        assert body["blocks"] == [{"type": "text", "text": "still readable"}]
+
+    def test_a_string_attachments_field_is_not_iterated_as_characters(self, tenancy: Any, connection: Any) -> None:
+        payload = EventPayload(text="", attachments="https://x.test/a.png")  # type: ignore[arg-type]
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert messages(tenancy.workspace).get().body["blocks"] == []
+
+
 class TestDeliveryStatus:
     @pytest.fixture
     def sent(self, tenancy: Any, connection: Any) -> Message:
@@ -363,6 +383,18 @@ class TestDeliveryStatus:
         sent.refresh_from_db()
         assert sent.status == MessageStatus.SENT
 
+    def test_a_queued_receipt_cannot_walk_a_failed_message_backwards(
+        self, tenancy: Any, connection: Any, sent: Message
+    ) -> None:
+        """It used to: 'queued' passed the vocabulary check, and the
+        beats-a-failure rule then wrote it over the failure and cleared the
+        error — leaving a row in a state nothing would ever move again."""
+        Message.all_objects.filter(pk=sent.pk).update(status=MessageStatus.FAILED, error="timeout")
+        persist_events(connection, [self.receipt(connection, provider_message_id="pm-1", status="queued")])
+        sent.refresh_from_db()
+        assert sent.status == MessageStatus.FAILED
+        assert sent.error == "timeout"
+
     def test_a_receipt_never_touches_the_window(self, tenancy: Any, connection: Any, sent: Message) -> None:
         """Our own delivery receipt is not the contact interacting with us."""
         identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get()
@@ -379,6 +411,10 @@ class TestDeliveryStatus:
             {"status": "delivered"},
             {"provider_message_id": "pm-1", "status": "not-a-status"},
             {"provider_message_id": "", "status": "read"},
+            # "queued" is a real MessageStatus but not a receipt: it is a state
+            # *we* put a message into before calling anyone, never something a
+            # platform reports back.
+            {"provider_message_id": "pm-1", "status": "queued"},
         ],
     )
     def test_an_unusable_payload_is_ignored_rather_than_raised_on(

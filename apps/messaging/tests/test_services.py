@@ -24,9 +24,10 @@ from apps.messaging.models import (
     Message,
     MessageStatus,
     OptInSource,
+    SendBucket,
 )
 from apps.messaging.tests.conftest import make_connection
-from apps.queueing.models import ActionType, ScheduledAction
+from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionType, ScheduledAction
 
 pytestmark = pytest.mark.django_db
 
@@ -318,6 +319,210 @@ class TestFailurePolicy:
         message = self._send_with(tenancy, contact, connection, leaky)
         assert "SECRET" not in message.error
         assert message.error == f"{Failure.PROVIDER_REJECTED.value}:400"
+
+
+class TestIdempotencyKeyIsRequired:
+    def test_an_empty_key_is_refused(self, tenancy: Any, contact: Any, connection: Any, identity: Any) -> None:
+        """The unique constraint is partial — condition=~Q(idempotency_key="") —
+        so a blank key is deduplicated by nothing and every call would make a
+        fresh provider call, silently voiding the guarantee contract 1 rests on.
+        Raising matches how an unknown ``source`` is already treated."""
+        with registered(Platform.TELEGRAM) as adapter:
+            with pytest.raises(ValueError, match="idempotency_key"):
+                send(tenancy, contact, connection, idempotency_key="")
+            assert adapter.sends == []
+        assert Message.objects.for_workspace(tenancy.workspace).count() == 0
+
+
+class TestDispatchOrdering:
+    """Adapter, then claim, then token — nothing spends rate it cannot use."""
+
+    def test_a_missing_adapter_spends_no_token_and_no_attempt(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        message = send(tenancy, contact, connection)
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Failure.NO_ADAPTER
+        assert message.send_attempts == 0
+        assert message.dispatched_at is None
+        assert not SendBucket.objects.filter(connection=connection).exists()
+
+    def test_a_caller_that_loses_the_claim_spends_no_token(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """Acquiring before claiming meant every racing caller burned a token
+        and then discovered it had nothing to spend it on, draining the
+        connection's bucket with calls that never happened."""
+        with registered(Platform.TELEGRAM):
+            first = send(tenancy, contact, connection)
+        assert first.status == MessageStatus.SENT
+        spent = SendBucket.objects.get(connection=connection).tokens
+
+        # Force the row back to queued with its claim still held, the state a
+        # second caller racing the first one sees.
+        Message.objects.for_workspace(tenancy.workspace).filter(pk=first.pk).update(status=MessageStatus.QUEUED)
+        first.refresh_from_db()
+        with registered(Platform.TELEGRAM) as adapter:
+            services._dispatch(first, connection, identity, TEXT, blocking=False)
+            assert adapter.sends == []
+        assert SendBucket.objects.get(connection=connection).tokens == spent
+
+    @override_settings(DEFAULT_SEND_RATE_OVERRIDES={"telegram": 1}, SEND_BUCKET_BURST_SECONDS=1.0)
+    def test_a_deferred_send_hands_its_claim_back(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """No call was made, so the next attempt must be able to take the claim
+        and must not be charged an attempt for having waited."""
+        with registered(Platform.TELEGRAM):
+            send(tenancy, contact, connection, idempotency_key="a")
+            deferred = send(tenancy, contact, connection, idempotency_key="b")
+        assert deferred.status == MessageStatus.QUEUED
+        assert deferred.error == Failure.RATE_DEFERRED
+        assert deferred.dispatched_at is None
+        assert deferred.send_attempts == 0
+
+
+class TestThreadRecency:
+    def test_a_sent_message_sets_the_threads_recency(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        with registered(Platform.TELEGRAM):
+            send(tenancy, contact, connection)
+        assert Conversation.objects.for_workspace(tenancy.workspace).get().last_message_at is not None
+
+    def test_a_refused_message_does_not(self, tenancy: Any, contact: Any, connection: Any) -> None:
+        """SPEC §14 sorts the inbox on last_message_at. An opted-out contact
+        targeted daily by an automation would otherwise float to the top of an
+        agent's queue every day for messages that never left the building."""
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=connection,
+            platform=connection.platform,
+            platform_user_id="u1",
+            opt_in=False,
+            opted_out_at=timezone.now(),
+        )
+        with registered(Platform.TELEGRAM):
+            message = send(tenancy, contact, connection)
+        assert message.status == MessageStatus.FAILED
+        assert Conversation.objects.for_workspace(tenancy.workspace).get().last_message_at is None
+
+    def test_an_internal_note_does(self, tenancy: Any, contact: Any, connection: Any, identity: Any) -> None:
+        """A note is real thread content even though it is never sent."""
+        services.send_as_agent(
+            workspace=tenancy.workspace,
+            contact=contact,
+            connection=connection,
+            outbound=TEXT,
+            idempotency_key="note",
+            internal=True,
+        )
+        assert Conversation.objects.for_workspace(tenancy.workspace).get().last_message_at is not None
+
+
+class TestExhaustedBudget:
+    """A message that runs out of attempts must end up failed, not queued.
+
+    ``_schedule_retry`` fails the row itself when the budget is spent, and the
+    finalise that used to follow it unconditionally put the row back to
+    ``queued`` — with nothing scheduled to move it. The message sat there
+    forever and the operator read the wrong status.
+    """
+
+    def _exhausted(self, tenancy: Any, contact: Any, connection: Any) -> Message:
+        conversation = services.open_conversation(workspace=tenancy.workspace, contact=contact, connection=connection)
+        return Message.objects.create(
+            conversation=conversation,
+            direction="out",
+            source="automation",
+            status=MessageStatus.QUEUED,
+            idempotency_key="spent",
+            # One short of the cap: the claim inside _dispatch takes it to five.
+            send_attempts=DEFAULT_MAX_ATTEMPTS - 1,
+        )
+
+    def _last_attempt(self, tenancy: Any, contact: Any, connection: Any, behaviour: Any) -> Message:
+        message = self._exhausted(tenancy, contact, connection)
+        identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get()
+        with registered(Platform.TELEGRAM) as adapter:
+            adapter.send = behaviour  # type: ignore[method-assign,assignment]
+            services._dispatch(message, connection, identity, TEXT, blocking=False)
+        message.refresh_from_db()
+        return message
+
+    def test_a_5xx_on_the_last_attempt_fails_rather_than_queueing(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        def unavailable(_self: Any, c: Any, i: Any, o: Any) -> SendResult:
+            raise APIError("down", status_code=503)
+
+        message = self._last_attempt(tenancy, contact, connection, unavailable)
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Failure.RETRIES_EXHAUSTED
+        assert not ScheduledAction.objects.unscoped().filter(type=ActionType.SEND_RETRY).exists()
+
+    def test_a_rate_limit_on_the_last_attempt_fails_rather_than_queueing(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        def throttled(_self: Any, c: Any, i: Any, o: Any) -> SendResult:
+            raise RateLimitError(retry_after=30)
+
+        message = self._last_attempt(tenancy, contact, connection, throttled)
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Failure.RETRIES_EXHAUSTED
+
+    def test_an_adapter_bug_on_the_last_attempt_fails_rather_than_queueing(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        def explode(_self: Any, c: Any, i: Any, o: Any) -> SendResult:
+            raise ValueError("adapter bug")
+
+        message = self._last_attempt(tenancy, contact, connection, explode)
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Failure.RETRIES_EXHAUSTED
+
+    def test_no_message_is_ever_left_queued_with_nothing_scheduled(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """The invariant the bug broke, stated directly: a queued row always has
+        an action that will come back to it."""
+
+        def unavailable(_self: Any, c: Any, i: Any, o: Any) -> SendResult:
+            raise APIError("down", status_code=503)
+
+        self._last_attempt(tenancy, contact, connection, unavailable)
+        for message in Message.objects.for_workspace(tenancy.workspace).filter(status=MessageStatus.QUEUED):
+            assert (
+                ScheduledAction.objects.unscoped()
+                .filter(type=ActionType.SEND_RETRY, payload__message_id=str(message.pk))
+                .exists()
+            )
+
+
+class TestSchedulingFailures:
+    def test_a_retry_that_cannot_be_scheduled_fails_the_message(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
+    ) -> None:
+        """send_outbound promises never to raise for a send outcome, and "the
+        retry could not be armed" is a send outcome — leaving the row queued and
+        unreferenced would be the stuck-forever bug by another route."""
+
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("queue is down")
+
+        monkeypatch.setattr("apps.messaging.handlers.schedule_send_retry", boom)
+
+        def unavailable(_self: Any, c: Any, i: Any, o: Any) -> SendResult:
+            raise APIError("down", status_code=503)
+
+        message = self._send(tenancy, contact, connection, unavailable)
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Failure.RETRY_UNSCHEDULABLE
+
+    def _send(self, tenancy: Any, contact: Any, connection: Any, behaviour: Any) -> Message:
+        with registered(Platform.TELEGRAM) as adapter:
+            adapter.send = behaviour  # type: ignore[method-assign,assignment]
+            return send(tenancy, contact, connection)
 
 
 class TestComplianceDenials:

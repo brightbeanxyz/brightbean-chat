@@ -113,6 +113,34 @@ class TestConversations:
         assert threads(tenancy.workspace, first).count() == 2
 
 
+class TestCollidingIdempotencyKeys:
+    def test_two_threads_holding_one_key_still_merge(self, tenancy: Any, connection: Any) -> None:
+        """(conversation, idempotency_key) is unique, so folding two threads that
+        each hold a message with the same key used to raise out of the bulk
+        update and take the whole merge down. History is never dropped; the key
+        is cleared instead, because it guards a *future* insert and a thread
+        being merged away has none."""
+        persist_events(connection, [make_event(connection, user="u1", event_id="e1", text="from A")])
+        first = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get().contact
+        persist_events(connection, [make_event(connection, user="u2", event_id="e2", text="from B")])
+        second = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).exclude(contact=first).get().contact
+        # The same key in both threads — two sends that reused one across
+        # contacts, or one provider event persisted to both people.
+        for conversation in Conversation.objects.for_workspace(tenancy.workspace):
+            Message.objects.for_workspace(tenancy.workspace).filter(conversation=conversation).update(
+                idempotency_key="shared"
+            )
+
+        merge_contacts(primary=first, duplicate=second)
+
+        surviving = threads(tenancy.workspace, first).get()
+        moved = Message.objects.for_workspace(tenancy.workspace).filter(conversation=surviving)
+        assert moved.count() == 2
+        assert {m.body["blocks"][0]["text"] for m in moved} == {"from A", "from B"}
+        # Exactly one kept the key; the other had it cleared to make room.
+        assert sorted(m.idempotency_key for m in moved) == ["", "shared"]
+
+
 class TestTheTombstoneIsClean:
     def test_nothing_messaging_is_left_pointing_at_the_duplicate(self, tenancy: Any, connection: Any) -> None:
         persist_events(connection, [make_event(connection, user="u1")])

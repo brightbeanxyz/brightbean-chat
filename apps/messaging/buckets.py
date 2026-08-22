@@ -143,13 +143,26 @@ def try_acquire(connection: Any, *, cost: float = 1.0) -> Acquisition:
 
     SPEC §7.1's inline path: "performs a non-blocking acquire and falls back to
     enqueue when empty".
+
+    One query in the steady state. An earlier version ran ``get_or_create``
+    first and then the locked read, so every send cost two round trips to find
+    its bucket — and :func:`acquire`'s poll loop multiplied that by however many
+    times it woke up. The row is created only when the locked read finds nothing,
+    which is once in a connection's lifetime.
     """
     rate = rate_for(connection.platform)
     capacity = capacity_for(rate)
-    _ensure_row(connection, rate, capacity)
 
     with transaction.atomic():
-        bucket = SendBucket.objects.select_for_update().annotate(db_now=ClockTimestamp()).get(connection=connection)
+        bucket = (
+            SendBucket.objects.select_for_update()
+            .annotate(db_now=ClockTimestamp())
+            .filter(connection=connection)
+            .first()
+        )
+        if bucket is None:
+            return _create_full(connection, rate, capacity, cost)
+
         now = bucket.db_now
         # Re-read the configured rate on every acquire, so a changed
         # DEFAULT_SEND_RATE_OVERRIDES takes effect at the next send rather than
@@ -192,17 +205,23 @@ def acquire(connection: Any, *, cost: float = 1.0, max_wait: float | None = None
         time.sleep(min(outcome.wait_seconds, POLL_SECONDS, max(remaining, 0.0)))
 
 
-def _ensure_row(connection: Any, rate: float, capacity: float) -> None:
-    """Create the bucket on first use, full.
+def _create_full(connection: Any, rate: float, capacity: float, cost: float) -> Acquisition:
+    """First use of a connection: create the bucket full and spend from it.
 
     Full rather than empty so a connection's first message does not wait a
     second for a bucket nobody has drained. The burst it permits is one
     ``capacity``, which is the burst the configuration already asks for.
+
+    ``get_or_create`` rather than a plain create, because two processes can send
+    a connection's first two messages at once and the one-to-one is unique; the
+    loser re-reads instead of raising. Its row is authoritative and this call
+    simply grants against the fresh capacity, which is at most one extra token
+    at the very start of a connection's life.
     """
     SendBucket.objects.get_or_create(
         connection=connection,
         defaults={
-            "tokens": capacity,
+            "tokens": max(capacity - cost, 0.0),
             "capacity": capacity,
             "refill_rate": rate,
             # Now(), not timezone.now(): the row's clock and the refill
@@ -210,3 +229,4 @@ def _ensure_row(connection: Any, rate: float, capacity: float) -> None:
             "refilled_at": Now(),
         },
     )
+    return Granted(tokens_left=max(capacity - cost, 0.0))

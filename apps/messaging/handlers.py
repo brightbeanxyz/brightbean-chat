@@ -38,7 +38,7 @@ from typing import Any
 
 from django.utils import timezone
 
-from apps.messaging.codes import Failure
+from apps.messaging.codes import Denial, Failure
 from apps.messaging.compliance import Allowed, can_send
 from apps.messaging.models import Message, MessageStatus
 from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionType, ScheduledAction
@@ -145,7 +145,11 @@ def handle_send_retry(payload: dict[str, Any], action: ScheduledAction) -> None:
     connection = message.channel_connection
     identity = _identity_for(message.workspace_id, conversation.contact, connection)
     if identity is None:
-        _finalize(message, status=MessageStatus.FAILED, error=Failure.NO_ADAPTER.value)
+        # NO_IDENTITY, not NO_ADAPTER: the contact has no address on this
+        # channel, which is a different thing from the platform having no
+        # adapter installed — and ``error`` is what an operator debugging a
+        # stuck send reads, through codes.describe().
+        _finalize(message, status=MessageStatus.FAILED, error=Denial.NO_IDENTITY.value)
         return
 
     if message.dispatched_at is not None and not message.provider_message_id:

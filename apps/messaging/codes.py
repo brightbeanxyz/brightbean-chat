@@ -54,6 +54,7 @@ class Failure(StrEnum):
     RATE_LIMITED = "rate_limited"
     RATE_DEFERRED = "rate_deferred"
     RETRIES_EXHAUSTED = "retries_exhausted"
+    RETRY_UNSCHEDULABLE = "retry_unschedulable"
 
 
 #: One sentence per code, for the inbox and the flow-run log. Keyed by the raw
@@ -78,6 +79,7 @@ REASON_COPY: dict[str, str] = {
     Failure.RATE_LIMITED: "The platform is throttling this connection.",
     Failure.RATE_DEFERRED: "Waiting for this connection's send rate to allow another message.",
     Failure.RETRIES_EXHAUSTED: "Gave up after retrying this send.",
+    Failure.RETRY_UNSCHEDULABLE: "The send failed and another attempt could not be scheduled.",
 }
 
 
