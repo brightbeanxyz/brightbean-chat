@@ -21,11 +21,12 @@ tag would trigger itself for ever.
 
 Not here, deliberately:
 
-* Contact deletion. Issue #13 owns it, contract 7 has no event for it, and
-  nothing in this issue calls it.
 * Deduplication on create. Identity-based dedup is issue #8's — a channel
-  identity is the natural key — and import dedup is #13's. A third rule invented
+  identity is the natural key — and import dedup is :mod:`apps.contacts.imports`',
+  which matches on the email or phone the operator mapped. A third rule invented
   here is one both of them would have to unlearn.
+* Hard deletion. :func:`delete_contact` sets ``status``; erasing the row, its
+  messages and its identities is issue #29's GDPR work.
 """
 
 from collections.abc import Iterator
@@ -64,7 +65,27 @@ from apps.flows.compat import installed_model
 #: so the two do not drift into two different words for the same thing.
 CONTACT_SOURCES: frozenset[str] = frozenset({"manual", "api", "import", "flow", "inbound"})
 
-_SCALAR_FIELDS: tuple[str, ...] = ("first_name", "last_name", "email", "phone", "locale", "timezone")
+#: The contact columns a human may edit — the allowlist ``update_contact``
+#: enforces and the detail page renders. Public because the view and the CSV
+#: importer both build their inputs from it, and a second list of six strings is
+#: a second thing to forget when a seventh column arrives.
+EDITABLE_FIELDS: tuple[str, ...] = ("first_name", "last_name", "email", "phone", "locale", "timezone")
+
+#: The old private spelling, kept because ``merge_contacts`` reads it.
+_SCALAR_FIELDS: tuple[str, ...] = EDITABLE_FIELDS
+
+#: Column widths. Both write paths read this table rather than repeating the
+#: literals, so a contact typed into the detail page and one created by an import
+#: are normalised identically — and a column widened in ``models.py`` has one
+#: place here to follow it.
+_SCALAR_LIMITS: dict[str, int] = {
+    "first_name": 150,
+    "last_name": 150,
+    "email": 254,
+    "phone": 32,
+    "locale": 16,
+    "timezone": 63,
+}
 
 
 def _clean_text(value: Any, *, limit: int) -> str:
@@ -169,12 +190,12 @@ def create_contact(
     with transaction.atomic():
         contact = Contact.objects.create(
             workspace=workspace,
-            first_name=_clean_text(first_name, limit=150),
-            last_name=_clean_text(last_name, limit=150),
-            email=_clean_text(email, limit=254).lower(),
-            phone=_clean_text(phone, limit=32),
-            locale=_clean_text(locale, limit=16),
-            timezone=_clean_text(contact_timezone, limit=63),
+            first_name=_clean_text(first_name, limit=_SCALAR_LIMITS["first_name"]),
+            last_name=_clean_text(last_name, limit=_SCALAR_LIMITS["last_name"]),
+            email=_clean_text(email, limit=_SCALAR_LIMITS["email"]).lower(),
+            phone=_clean_text(phone, limit=_SCALAR_LIMITS["phone"]),
+            locale=_clean_text(locale, limit=_SCALAR_LIMITS["locale"]),
+            timezone=_clean_text(contact_timezone, limit=_SCALAR_LIMITS["timezone"]),
             last_interaction_at=last_interaction_at,
         )
         emit(
@@ -263,6 +284,35 @@ def _repoint_messaging(primary: Contact, duplicate: Contact) -> None:
     repoint_for_merge(primary, duplicate)
 
 
+def delete_contact(contact: Contact) -> bool:
+    """Soft-delete a contact. ``True`` when this call is the one that did it.
+
+    ``status = deleted`` rather than a row deletion, which is what SPEC §5 put
+    the enum value there for and what ``merge_contacts`` already does to the
+    duplicate. Every read surface starts from active contacts, and the condition
+    engine refuses to segment on ``status`` at all
+    (:mod:`apps.contacts.conditions`), so a tombstone cannot find its way back
+    into a send path.
+
+    Contract 7 has **no** ``contact.deleted`` event and this does not invent one:
+    the catalog is a wire format that issue #25's outbound webhooks subscribe to
+    by name, so adding a key here would be adding it to that format from the
+    wrong side of the repository.
+
+    Tag links, field values, identities and messages all stay. They belong to the
+    tombstone, they are inert while it is one, and they are what issue #29's
+    export has to read to answer a subject-access request. **Live automation does
+    not stay** — but stopping it is the caller's move, not this function's, since
+    it is the flow engine's business and this app knows nothing about flows. The
+    CRM view pairs the two; see ``apps.contacts.activity.stop_automation``.
+    """
+    if contact.status == ContactStatus.DELETED:
+        return False
+    contact.status = ContactStatus.DELETED
+    contact.save(update_fields=["status", "updated_at"])
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Tags
 # ---------------------------------------------------------------------------
@@ -315,6 +365,84 @@ def delete_tag(tag: Tag) -> int:
     )
     tag.delete()
     return live
+
+
+def merge_tags(source: Tag, target: Tag) -> int:
+    """Fold ``source`` into ``target`` and delete it. Returns how many links moved.
+
+    Two tags that mean the same thing are a data-quality problem the case-
+    insensitive unique index cannot catch — "VIP" and "Priority" are distinct
+    strings and the same idea — so merging is the repair, and it has to be one
+    operation rather than "retag everyone, then delete", which leaves the
+    workspace half-migrated if it stops half way.
+
+    Links are **moved, not re-created**: a contact who already carries the target
+    simply loses the source link, and one who does not has their existing row
+    re-pointed. Deleting and re-adding would work too and would cost one insert
+    per contact plus a full round of contract-7 events.
+
+    Which is the second half of the decision: like :func:`delete_tag`, this sends
+    **no per-contact event**. At ten thousand tagged contacts one administrative
+    click would otherwise mean ten thousand rule-trigger evaluations and ten
+    thousand webhook deliveries — and worse than for a deletion, because a merge
+    is *both* a removal and an addition, so it would emit two. Issue #25's
+    consumers should read a tag merge as a schema change, exactly as they read a
+    tag deletion.
+    """
+    if source.workspace_id != target.workspace_id:
+        raise WorkspaceMismatchError("Both tags must belong to the same workspace.")
+    if source.pk == target.pk:
+        raise ContactsError("A tag cannot be merged into itself.")
+
+    links = ContactTag.objects.for_workspace(source.workspace_id)
+    with transaction.atomic():
+        # Contacts already carrying the target: their source link is a duplicate
+        # the (contact, tag) unique constraint would reject on re-point, so it
+        # goes rather than moving.
+        already = set(links.filter(tag=target).values_list("contact_id", flat=True))
+        links.filter(tag=source, contact_id__in=already).delete()
+        # `update` rather than a loop: the rows keep their workspace and contact,
+        # so ContactScopedModel.save()'s derivation has nothing left to derive,
+        # and a per-row save would be one query per contact for no added
+        # invariant.
+        moved = links.filter(tag=source).update(tag=target, updated_at=timezone.now())
+        source.delete()
+    return moved
+
+
+def update_contact(contact: Contact, **fields: Any) -> list[str]:
+    """Write the system fields on a contact. Returns the names that changed.
+
+    The inline editor on issue #13's detail page. Only the six columns in
+    :data:`_SCALAR_FIELDS` are writable — an allowlist, not a filtered ``**kwargs``
+    pass-through, because the caller is a form POST and ``status`` and
+    ``last_interaction_at`` are both columns on this model that a mass assignment
+    would otherwise reach.
+
+    Cleaning matches :func:`create_contact` exactly, ``email`` lowercasing
+    included, so a contact edited by hand and one created by an import are
+    normalised the same way — otherwise the ``(workspace, email)`` index stops
+    being usable as an equality probe for exactly the rows a human touched.
+
+    Contract 7 has no ``contact.updated`` event, and this adds none: the catalog
+    covers tags and custom fields, which is what automation keys off.
+    """
+    unknown = sorted(set(fields) - set(_SCALAR_FIELDS))
+    if unknown:
+        raise ContactsError(f"Not an editable contact field: {', '.join(unknown)}.")
+
+    changed: list[str] = []
+    for name, raw in fields.items():
+        limit = _SCALAR_LIMITS[name]
+        value = _clean_text(raw, limit=limit)
+        if name == "email":
+            value = value.lower()
+        if getattr(contact, name) != value:
+            setattr(contact, name, value)
+            changed.append(name)
+    if changed:
+        contact.save(update_fields=[*changed, "updated_at"])
+    return changed
 
 
 def add_tag(contact: Contact, tag: Tag) -> bool:

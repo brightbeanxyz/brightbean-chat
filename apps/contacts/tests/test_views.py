@@ -1,9 +1,13 @@
-"""The three pages this issue owns: role gating, HTMX responses, tenancy.
+"""The two **settings** pages: role gating, HTMX responses, tenancy.
+
+L2-A shipped this file covering three pages. The contact list moved out with
+issue #13 — it is no longer gated the same way, and its own suite is
+``test_crm.py`` — so what is left here is tags and custom fields, which are
+still ``manage_crm`` throughout.
 
 The cross-tenant sweep in ``tests/idor.py`` covers every URL kwarg
-automatically. What it cannot see is the contact list's ``?segment=`` query
-parameter — it walks kwargs, not the query string — so that one has its own test
-here, and the gap is named in the PR.
+automatically. What it cannot see is a tenant id in a query string or a POST
+body; those gaps are tested directly, here and in ``test_crm.py``.
 """
 
 import json
@@ -24,7 +28,12 @@ def url(tenancy, suffix: str) -> str:
     return f"/w/{tenancy.workspace.id}/{suffix}"
 
 
-PAGES = ("contacts/", "settings/tags/", "settings/fields/")
+#: The pages that are still ``manage_crm`` end to end. ``contacts/`` is
+#: deliberately absent: issue #13 moved the CRM's *read* gate down to "is a
+#: member of this workspace" so an Agent can edit a contact's tags and fields and
+#: a Viewer can see the list read-only, which SPEC §4's table requires and none
+#: of its nine permission keys expresses. ``test_crm.py`` owns that matrix.
+PAGES = ("settings/tags/", "settings/fields/")
 
 
 def triggers(response) -> dict:

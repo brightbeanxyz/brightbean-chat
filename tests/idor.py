@@ -53,6 +53,14 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "invitation_id": lambda t: _victim_invitation(t).pk,
     "tag_id": lambda t: _victim_tag(t).pk,
     "field_id": lambda t: _victim_custom_field(t).pk,
+    # Issue #13's CRM. `identity_id` names a messaging row rather than a contacts
+    # one — the identity table lives in apps.messaging — but it is reached through
+    # a contacts URL nested under its contact, so the victim it needs is a
+    # contact's.
+    "contact_id": lambda t: _victim_contact(t).pk,
+    "segment_id": lambda t: _victim_segment(t).pk,
+    "identity_id": lambda t: _victim_identity(t).pk,
+    "import_id": lambda t: _victim_contact_import(t).pk,
     "connection_id": lambda t: _victim_connection(t).pk,
     "asset_id": lambda t: _victim_media_asset(t).pk,
     "folder_id": lambda t: _victim_media_folder(t).pk,
@@ -175,6 +183,62 @@ def _victim_custom_field(tenancy: Tenancy) -> Any:
 
     field = CustomField.objects.for_workspace(tenancy.workspace).first()
     return field or CustomField.objects.create(workspace=tenancy.workspace, name="Plan", type=CustomFieldType.TEXT)
+
+
+def _victim_contact(tenancy: Tenancy) -> Any:
+    """A contact owned by the victim, created on demand.
+
+    Built through the model rather than ``services.create_contact``: the sweep is
+    about tenancy, and going through the service would fire a ``contact.created``
+    signal per route for a row nothing reads.
+    """
+    from apps.contacts.models import Contact
+
+    contact = Contact.objects.for_workspace(tenancy.workspace).first()
+    return contact or Contact.objects.create(
+        workspace=tenancy.workspace, first_name="Victim", email=f"victim@{tenancy.slug}.test"
+    )
+
+
+def _victim_segment(tenancy: Tenancy) -> Any:
+    """A saved segment owned by the victim, created on demand."""
+    from apps.contacts.models import Segment
+
+    segment = Segment.objects.for_workspace(tenancy.workspace).first()
+    return segment or Segment.objects.create(
+        workspace=tenancy.workspace, name="Victim segment", filter_json={"match": "all", "rules": []}
+    )
+
+
+def _victim_identity(tenancy: Tenancy) -> Any:
+    """A channel identity on the victim's contact, created on demand.
+
+    Connection-less — ROADMAP contract 1's "pending" shape — so the sweep does not
+    have to build a ``ChannelConnection`` as well. The opt-out route resolves it
+    by workspace *and* contact, which is the pairing under test.
+    """
+    from apps.messaging.models import ContactChannelIdentity
+
+    contact = _victim_contact(tenancy)
+    identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).filter(contact=contact).first()
+    if identity is None:
+        identity = ContactChannelIdentity(
+            contact=contact, platform="telegram", platform_user_id=f"victim-{tenancy.slug}"
+        )
+        identity.save()
+    return identity
+
+
+def _victim_contact_import(tenancy: Tenancy) -> Any:
+    """A CSV import run owned by the victim, created on demand.
+
+    No file is attached: the sweep never reads one, and writing a CSV to storage
+    per route would make an isolation test do IO.
+    """
+    from apps.contacts.models import ContactImport
+
+    run = ContactImport.objects.for_workspace(tenancy.workspace).first()
+    return run or ContactImport.objects.create(workspace=tenancy.workspace, original_filename="victim.csv")
 
 
 def _victim_media_asset(tenancy: Tenancy) -> Any:

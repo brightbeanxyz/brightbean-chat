@@ -91,7 +91,12 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: [resolve(import.meta.dirname, "vitest.setup.ts")],
-    include: ["src/**/*.test.{ts,tsx}"],
+    // Two roots. The island's own tests live beside its source; tests/js holds
+    // tests for JavaScript that ships inside a Django template — issue #13's
+    // contact filter builder is the first, and it is deliberately not a bundle
+    // (fifty lines of Alpine glue for one page), so this is the only place a
+    // test for it can run. The path is outside `root`, which vitest allows.
+    include: ["src/**/*.test.{ts,tsx}", "../../tests/js/**/*.test.{ts,tsx}"],
     restoreMocks: true,
   },
 });

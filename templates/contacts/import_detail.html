@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% comment %}
+One import run, at whichever step it has reached.
+
+A single template branching on `run.status` rather than four, because the steps
+share nearly all of their chrome and a four-template wizard drifts apart at the
+edges. It also means the progress view and the report share a URL, so a link an
+operator kept open still works after the run finishes.
+
+Column mapping is keyed by **index**, not by heading: a CSV may legitimately
+repeat a heading, and a name-keyed mapping collapses the duplicates into
+whichever one it saw last — importing data from a column nobody chose.
+{% endcomment %}
+
+{% block title %}{{ run.original_filename|default:"Import" }} · Import contacts{% endblock %}
+
+{% block page_header %}
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div class="min-w-0">
+      <h1 class="truncate">{{ run.original_filename|default:"Import" }}</h1>
+      <p class="muted text-xs">Uploaded {{ run.created_at }}</p>
+    </div>
+    <a class="media-pill flex-shrink-0" href="{% url 'contacts:import_list' workspace_id=request.workspace.id %}">All imports</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+
+{% if file_problem %}
+  <p class="alert-error">{{ file_problem }}</p>
+{% endif %}
+
+{% include "contacts/_import_progress.html" %}
+
+{% if header and not run.is_running %}
+  <section class="crm-panel">
+    <h2>Map the columns</h2>
+    <p class="muted text-xs">
+      Leave a column unmapped to ignore it. Mapping a column to <strong>Tags</strong> splits
+      its cell on <code>;</code> or <code>,</code> and attaches each name, creating tags that
+      do not exist yet.
+    </p>
+
+    <form hx-post="{% url 'contacts:import_mapping' workspace_id=request.workspace.id import_id=run.id %}"
+          hx-swap="none">
+      <table>
+        <thead><tr><th>Column</th><th>Sample</th><th>Import as</th></tr></thead>
+        <tbody>
+          {% for column in columns %}
+            <tr>
+              <td>{{ column.name|default:"(unnamed)" }}</td>
+              <td class="muted text-xs">
+                {% for sample in column.samples %}{{ sample|truncatechars:40 }}{% if not forloop.last %} · {% endif %}{% empty %}—{% endfor %}
+              </td>
+              <td>
+                <label class="sr-only" for="column-{{ column.index }}">Import column {{ column.name }} as</label>
+                <select id="column-{{ column.index }}" name="column-{{ column.index }}" class="w-56">
+                  <option value="" {% if not column.target %}selected{% endif %}>Ignore</option>
+                  {% for target in system_targets %}
+                    <option value="{{ target.value }}" {% if column.target == target.value %}selected{% endif %}>{{ target.label }}</option>
+                  {% endfor %}
+                  <option value="{{ tags_target }}" {% if column.target == tags_target %}selected{% endif %}>Tags</option>
+                  {% for target in field_targets %}
+                    <option value="{{ target.value }}" {% if column.target == target.value %}selected{% endif %}>{{ target.label }} ({{ target.type }})</option>
+                  {% endfor %}
+                </select>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <label for="dedupe">When a row matches an existing contact</label>
+      <select id="dedupe" name="dedupe" class="w-72">
+        {% for value, label in dedupe_choices %}
+          <option value="{{ value }}" {% if run.dedupe == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <p class="muted text-xs">
+        Matched on email when you map one, otherwise on phone. Blank cells never clear a
+        stored value — emptying a field is an edit you make on the contact.
+      </p>
+
+      <button type="submit" class="btn-brand btn-inline mt-3">Check the file</button>
+      <span class="muted text-xs">Nothing is written until you confirm.</span>
+    </form>
+  </section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,30 @@
+{% comment %}
+The typeahead's results. Each row POSTs the tag it names; the "create" row POSTs
+a name instead, and only appears when the term matches nothing AND the caller
+holds manage_crm — creating a tag changes the workspace's vocabulary, while
+attaching an existing one does not (SPEC §4's edit_contact_fields vs manage_crm).
+{% endcomment %}
+{% for tag in suggestions %}
+  <button type="button" class="crm-suggestion"
+          hx-post="{% url 'contacts:tag_add' workspace_id=request.workspace.id contact_id=contact.id %}"
+          hx-vals='{"tag_id": "{{ tag.id }}"}'
+          hx-swap="none">{{ tag.name }}</button>
+{% endfor %}
+
+{% if can_create %}
+  {% comment %}
+    hx-vals rather than hx-include: the search box is named `q` because that is
+    what the suggestion GET reads, and including it would post `q` where the add
+    endpoint expects `name`. escapejs is what makes the term safe inside a JSON
+    attribute — it escapes quotes and angle brackets to \uXXXX, so a tag called
+    `"><script>` is a string and not markup.
+  {% endcomment %}
+  <button type="button" class="crm-suggestion crm-suggestion-new"
+          hx-post="{% url 'contacts:tag_add' workspace_id=request.workspace.id contact_id=contact.id %}"
+          hx-vals='{"name": "{{ term|escapejs }}"}'
+          hx-swap="none">Create “{{ term }}”</button>
+{% elif not suggestions %}
+  <p class="muted text-xs mt-1">
+    {% if term %}No tag matches “{{ term }}”.{% else %}Every tag is already on this contact.{% endif %}
+  </p>
+{% endif %}

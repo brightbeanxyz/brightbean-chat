@@ -75,6 +75,10 @@ from apps.channels.registry import adapter_for
 from apps.messaging import buckets
 from apps.messaging.codes import Denial, Failure
 from apps.messaging.compliance import Allowed, can_send
+
+# The single write site for `opted_out_at` (ROADMAP contract 3). No cycle:
+# ingest.py reads identities and models, never this module.
+from apps.messaging.ingest import apply_opt_out
 from apps.messaging.models import (
     ContactChannelIdentity,
     Conversation,
@@ -94,6 +98,7 @@ __all__ = [
     "close_conversation",
     "open_conversation",
     "pause_automation",
+    "record_opt_out",
     "send_as_agent",
     "send_outbound",
     "send_via_api",
@@ -185,6 +190,36 @@ def _extend_automation_pause(conversation: Conversation, by: timedelta) -> Conve
 # ---------------------------------------------------------------------------
 # Identities
 # ---------------------------------------------------------------------------
+
+
+def record_opt_out(identity: ContactChannelIdentity, *, source: str = "") -> bool:
+    """Withdraw consent on one identity, by hand. ``True`` when it was not already out.
+
+    The operator-facing half of SPEC §19. A contact who asks a human to stop
+    messaging them has withdrawn consent exactly as surely as one who typed STOP,
+    and before this the CRM had no audited way to record it: :func:`record_consent`
+    only ever *adds* consent, and the inbound path was private.
+
+    **This function does not write ``opted_out_at``.** It delegates to
+    :func:`apps.messaging.ingest.apply_opt_out`, which ROADMAP contract 3 makes the
+    single write site — so the facade is the door a caller uses without the column
+    growing a second writer. Issue #13's contact detail page is the first caller.
+
+    There is deliberately **no matching re-subscribe**. ``opted_out_at`` is set once
+    and never cleared from here: SPEC §19 puts opt-out at a chokepoint precisely so
+    it cannot be bypassed, and an operator toggle that could un-say it is a bypass
+    with a nicer name. Re-consent arrives the way consent did — from the contact,
+    through L5-D's keyword hook — not from the team's side of the conversation.
+
+    ``source`` is recorded in the log line only. It does not touch ``opt_in_source``,
+    which is the *consent* audit: overwriting "they messaged us" with "an operator
+    opted them out" would destroy the record of how permission was obtained at the
+    moment it stopped applying, which is the pair a regulator asks to see together.
+    """
+    changed = apply_opt_out(identity)
+    if changed:
+        logger.info("Identity %s opted out manually (source=%s)", identity.pk, source or "manual")
+    return changed
 
 
 def upsert_contact_identity(

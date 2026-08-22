@@ -1,65 +1,210 @@
 {% extends "base.html" %}
-{% block title %}Contacts · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Contacts</h1>{% endblock %}
+{% load static %}
+{% load common_extras %}
+{% comment %}
+The CRM list (issue #13).
+
+Three regions, and the split is what keeps it cheap: a toolbar plus filter
+builder that is one <form>, a bulk bar driven by Alpine, and `#contact-rows` —
+the only thing htmx ever swaps.
+
+Every control in that form submits the same GET, so the filter, the search term
+and the sort are one set of parameters with one canonical spelling. Two forms
+would mean a search keystroke that silently dropped the filter beside it.
+
+Loading a **segment** is the one control that navigates for real rather than
+swapping. It has to: picking a saved filter changes the rule editor as well as
+the rows, and the server is the only thing that has the segment's stored
+document — shipping every segment's rules to the browser so the client could
+hydrate one would put a workspace's whole filter library in every page load.
+
+`hx-push-url` is not used here even though the URL does track the view. The form
+GETs the rows partial, so pushing *its* URL would give the reader a bookmark to a
+bare <table>; `contacts:rows` sets `HX-Push-Url` to the list URL instead, which
+is the address the reader actually wants.
+
+No inline event handlers anywhere. The CSP allows 'unsafe-eval' for Alpine's
+x-* expressions but NOT 'unsafe-inline', so an `onclick=` attribute is silently
+inert — a button that looks fine and does nothing.
+{% endcomment %}
+
+{% block title %}Contacts · {{ request.workspace.name }}{% endblock %}
+
+{% block extra_head %}
+  {% comment %}
+    Vendored, not a CDN (deviation 6). This page is the project's first
+    consumer: the date operators in the filter builder need a picker, and
+    styles.css has themed flatpickr since L1-B in anticipation.
+  {% endcomment %}
+  <link rel="stylesheet" href="{% static 'js/vendor/flatpickr.min.css' %}">
+{% endblock %}
+
+{% block page_header %}
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <h1>Contacts</h1>
+      <p class="muted">Everyone who has messaged this workspace, plus anyone you have imported.</p>
+    </div>
+    {% if can_manage_crm %}
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <a class="media-pill" href="{% url 'contacts:import_list' workspace_id=request.workspace.id %}">Import CSV</a>
+        {% comment %}
+          A plain link, and it carries the toolbar's canonical querystring, which
+          is what makes "export what you are looking at" true rather than
+          approximately true. It is regenerated on every rows render, so it
+          follows the filter.
+        {% endcomment %}
+        <a class="media-pill" id="contact-export"
+           href="{% url 'contacts:export' workspace_id=request.workspace.id %}{% if querystring %}?{{ querystring }}{% endif %}">Export CSV</a>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}
 
 {% block content %}
-  {% comment %}
-  Read-only on purpose. Issue #13 (L4-C) owns the CRM — detail pages, inline
-  editing, search, CSV import and export. What this page adds beyond a list is
-  the segment selector, which puts the condition engine's set-wise path
-  (ROADMAP contract 8) in front of a human rather than only in a test.
-  {% endcomment %}
+{% comment %}
+  Selection lives on this wrapper, OUTSIDE #contact-rows: htmx replaces that
+  element wholesale on every search keystroke, and a selection stored inside it
+  would be discarded by the very swap that redraws the checkboxes.
 
-  {% if segments %}
-    <form method="get">
-      <label for="segment">Segment</label>
-      <select id="segment" name="segment">
+  `.camel` is load-bearing on the listener. The HTML parser lowercases attribute
+  names, so `@contactsChanged` reaches Alpine as `contactschanged` and would
+  never match htmx's `contactsChanged` event; `.camel` on a kebab-cased name is
+  the documented way back. htmx reads the *value* of hx-trigger, so it keeps its
+  capitals without any of this.
+{% endcomment %}
+<div x-data="contactSelection()" x-on:contacts-changed.camel.window="clear()">
+
+  <div class="crm-toolbar">
+    <form class="flex-shrink-0 mb-0" method="get"
+          action="{% url 'contacts:list' workspace_id=request.workspace.id %}">
+      <label for="contact-segment" class="sr-only">Segment</label>
+      {% comment %}
+        x-on, never onchange: the CSP has no 'unsafe-inline' in script-src, so an
+        inline handler attribute is silently inert. This element is inside the
+        wrapper's x-data tree, which is what makes the Alpine directive run.
+      {% endcomment %}
+      <select id="contact-segment" name="segment" class="w-56" x-on:change="$el.form.requestSubmit()">
         <option value="">Everyone</option>
-        {% for segment in segments %}
-          <option value="{{ segment.id }}" {% if segment.id|stringformat:"s" == selected_segment %}selected{% endif %}>
-            {{ segment.name }}
-          </option>
+        {% for segment in segment_rows %}
+          <option value="{{ segment.id }}" {% if query.segment and query.segment.id == segment.id %}selected{% endif %}>{{ segment.name }}</option>
         {% endfor %}
       </select>
-      <button type="submit">Apply</button>
+      <noscript><button type="submit">Load</button></noscript>
+    </form>
+  </div>
+
+  {% comment %}
+    The filter component wraps BOTH forms rather than sitting on the toolbar.
+    Saving a segment is a POST and the toolbar is a GET, so they cannot be one
+    form — and forms cannot nest — but they must serialise the same rules, or a
+    segment could be saved as something other than what the list is showing.
+  {% endcomment %}
+  <div x-data="contactFilters({{ filter_config|json_attr }})">
+  <form id="contact-toolbar"
+        hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}"
+        hx-target="#contact-rows"
+        hx-swap="outerHTML"
+        hx-trigger="submit, input changed delay:300ms from:#contact-search, change from:#contact-sort">
+
+    <div class="crm-toolbar">
+      <div class="flex-1 min-w-48">
+        <label for="contact-search" class="sr-only">Search contacts</label>
+        <input type="search" id="contact-search" name="q" value="{{ query.search_term }}"
+               placeholder="Search name, email or phone" maxlength="200">
+      </div>
+      <div class="flex-shrink-0">
+        <label for="contact-sort" class="sr-only">Sort</label>
+        <select id="contact-sort" name="sort" class="w-48">
+          {% for option in sorts %}
+            <option value="{{ option.value }}" {% if option.value == query.sort %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    {% include "contacts/_filter_bar.html" %}
+  </form>
+
+  {% if can_manage_crm %}
+    <form x-ref="saveSegment" class="hidden"
+          hx-post="{% url 'contacts:segment_create' workspace_id=request.workspace.id %}"
+          hx-swap="none">
+      <input type="hidden" name="name" :value="segmentName">
+      <input type="hidden" name="filter" :value="serialised">
     </form>
   {% endif %}
+  </div>
 
-  {% if segment_error %}
-    <p class="alert-warning">
-      This segment could not be applied, so no contacts are shown: {{ segment_error }}
-    </p>
-  {% endif %}
+  <div class="crm-bulkbar" x-show="count > 0" x-cloak>
+    <span class="text-sm font-semibold" x-text="`${count} selected`"></span>
 
-  {% if page.object_list %}
-    <table>
-      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Tags</th><th>Last interaction</th></tr></thead>
-      <tbody>
-        {% for contact in page.object_list %}
-          <tr>
-            <td>{{ contact.display_name }}</td>
-            <td>{{ contact.email|default:"—" }}</td>
-            <td>{{ contact.phone|default:"—" }}</td>
-            <td>{% for tag in contact.tags.all %}{{ tag.name }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</td>
-            <td>{{ contact.last_interaction_at|default:"—" }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    {% if can_edit_contacts %}
+      <form class="flex items-center gap-2 mb-0"
+            hx-post="{% url 'contacts:bulk_tag' workspace_id=request.workspace.id %}"
+            hx-swap="none">
+        <template x-for="id in ids" :key="id"><input type="hidden" name="ids" :value="id"></template>
+        <label for="bulk-tag" class="sr-only">Tag</label>
+        <select id="bulk-tag" name="tag_id" class="w-44" required>
+          <option value="">Choose a tag…</option>
+          {% for tag in filter_config.tags %}<option value="{{ tag.value }}">{{ tag.label }}</option>{% endfor %}
+        </select>
+        <button type="submit" name="mode" value="add">Add tag</button>
+        <button type="submit" name="mode" value="remove">Remove tag</button>
+      </form>
+    {% endif %}
 
-    <p class="muted">
-      Page {{ page.number }} of {{ page.paginator.num_pages }} — {{ page.paginator.count }} contact{{ page.paginator.count|pluralize }}.
-      {% if page.has_previous %}
-        <a href="?segment={{ selected_segment }}&amp;page={{ page.previous_page_number }}">Previous</a>
-      {% endif %}
-      {% if page.has_next %}
-        <a href="?segment={{ selected_segment }}&amp;page={{ page.next_page_number }}">Next</a>
-      {% endif %}
-    </p>
-  {% else %}
-    <p class="muted">
-      {% if selected_segment %}No contacts match this segment.
-      {% else %}No contacts yet. They arrive when someone messages a connected channel.{% endif %}
-    </p>
-  {% endif %}
+    {% comment %}
+      Disabled until L6-A registers the subscribe/unsubscribe verbs. The endpoint
+      behind it already exists and answers politely, so #22 enables a button
+      rather than shipping the route, the control and its tests all at once.
+    {% endcomment %}
+    <button type="button" disabled title="Sequences arrive with issue #22 (L6-A)">Subscribe to sequence</button>
+
+    {% if can_manage_crm %}
+      <form class="mb-0"
+            hx-post="{% url 'contacts:bulk_delete' workspace_id=request.workspace.id %}"
+            hx-swap="none"
+            hx-confirm="Delete the selected contacts? They are hidden everywhere and drop out of every segment.">
+        <template x-for="id in ids" :key="id"><input type="hidden" name="ids" :value="id"></template>
+        <button type="submit" class="btn-outline btn-inline btn-danger-soft">Delete</button>
+      </form>
+    {% endif %}
+
+    <button type="button" @click="clear()">Clear selection</button>
+  </div>
+
+  {% include "contacts/_rows.html" %}
+</div>
+{% endblock %}
+
+{% block alpine_components %}
+{% comment %}
+  Defined in this block rather than inside x-data because base.html loads Alpine
+  *deferred, after* it — which is exactly the window in which a global function
+  definition has to land for x-data to be able to call it.
+{% endcomment %}
+<script nonce="{{ request.csp_nonce }}">
+  function contactSelection() {
+    return {
+      ids: [],
+      get count() { return this.ids.length; },
+      isSelected(id) { return this.ids.includes(id); },
+      toggle(id, on) {
+        if (on) { if (!this.isSelected(id)) this.ids.push(id); }
+        else { this.ids = this.ids.filter(function (x) { return x !== id; }); }
+      },
+      togglePage(rowIds, on) {
+        var self = this;
+        rowIds.forEach(function (id) { self.toggle(id, on); });
+      },
+      clear() { this.ids = []; },
+    };
+  }
+</script>
+{% include "contacts/_filter_bar_script.html" %}
+{% endblock %}
+
+{% block extra_js %}
+  <script src="{% static 'js/vendor/flatpickr.min.js' %}"></script>
 {% endblock %}

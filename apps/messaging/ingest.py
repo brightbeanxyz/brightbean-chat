@@ -116,6 +116,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "PERSISTENCE_PROCESSOR",
     "ROUTING_PROCESSOR",
+    "apply_opt_out",
     "persist_events",
     "register_processors",
 ]
@@ -258,7 +259,7 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
     contact = resolution.contact
 
     if event.type == EventType.OPT_OUT:
-        _apply_opt_out(identity, now)
+        apply_opt_out(identity, now)
         return
     if event.type in CONTACT_ONLY_EVENTS:
         # A follow is a relationship, not a message: an identity to match on,
@@ -440,14 +441,29 @@ def _record_activity(
         conversation.save(update_fields=["last_message_at", "updated_at"])
 
 
-def _apply_opt_out(identity: ContactChannelIdentity, now: Any) -> None:
-    """Record a hard opt-out. Idempotent — the first refusal is the one that counts."""
+def apply_opt_out(identity: ContactChannelIdentity, now: Any = None) -> bool:
+    """Record a hard opt-out. ``True`` when this call is the one that set it.
+
+    Idempotent — the first refusal is the one that counts, and re-stamping the
+    timestamp on a second STOP would keep moving the audit's answer to "when did
+    they withdraw consent?" forward every time they repeated themselves.
+
+    **The only assignment to ``opted_out_at`` in the project.** ROADMAP contract 3
+    pins that column to this module and ``tests/test_write_sites.py`` asserts it
+    over the AST rather than trusting the prose. An operator-initiated opt-out from
+    the CRM (issue #13) therefore does not write the column itself: it arrives
+    through :func:`apps.messaging.services.record_opt_out`, the facade door, which
+    delegates here. One write site, two ways in — which is the shape SPEC §19
+    wants, because opt-out enforcement living in exactly one place is what makes
+    it unbypassable.
+    """
     if identity.opted_out_at is not None:
-        return
-    identity.opted_out_at = now
+        return False
+    identity.opted_out_at = now or timezone.now()
     identity.opt_in = False
     identity.save(update_fields=["opted_out_at", "opt_in", "updated_at"])
     logger.info("Identity %s opted out on connection %s", identity.pk, identity.channel_connection_id)
+    return True
 
 
 def _apply_delivery_status(connection: Any, event: NormalizedEvent) -> None:

@@ -521,6 +521,29 @@ MEDIA_MAX_IMAGE_PIXELS = env.int("MEDIA_MAX_IMAGE_PIXELS", default=50_000_000)
 # media library. The media cap is enforced where it means something — the upload
 # view — and Django's default still bounds the absurd case.
 
+# ---------------------------------------------------------------------------
+# Contact CSV import (SECURITY-BASELINE §7, issue #13)
+# ---------------------------------------------------------------------------
+# The issue's acceptance criterion is "50k-row CSV imports in background without
+# web-request timeouts", so the row cap is the number the product promises and
+# the batch size is what keeps one queued action — and therefore one database
+# transaction (apps.queueing.worker) — short.
+#
+# The byte cap is the one that actually stops an attack: rows are bounded by it
+# whatever CONTACT_IMPORT_MAX_ROWS says, and it is checked against the upload's
+# size before a single row is parsed.
+CONTACT_IMPORT_MAX_BYTES = env.int("CONTACT_IMPORT_MAX_BYTES", default=20 * _MB)
+CONTACT_IMPORT_MAX_ROWS = env.int("CONTACT_IMPORT_MAX_ROWS", default=50_000)
+CONTACT_IMPORT_BATCH_ROWS = env.int("CONTACT_IMPORT_BATCH_ROWS", default=500)
+# Rows shown in the wizard's inline preview. Read synchronously in the request,
+# so it is small on purpose; the full-file check is the queued dry run.
+CONTACT_IMPORT_PREVIEW_ROWS = env.int("CONTACT_IMPORT_PREVIEW_ROWS", default=20)
+# How long a finished import's uploaded file is kept. The file is a spreadsheet
+# of personal data whose only remaining purpose is the report beside it, so the
+# default is short and the housekeeping job in apps.contacts.housekeeping drops
+# the file while leaving the run's counters and row errors readable.
+CONTACT_IMPORT_FILE_RETENTION_DAYS = env.int("CONTACT_IMPORT_FILE_RETENTION_DAYS", default=30)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---------------------------------------------------------------------------

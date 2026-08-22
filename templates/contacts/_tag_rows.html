@@ -12,7 +12,7 @@ workspace switcher, every context-processor query) per keystroke-sized edit.
      hx-swap="outerHTML">
   {% if tags %}
     <table>
-      <thead><tr><th>Tag</th><th>Contacts</th><th></th></tr></thead>
+      <thead><tr><th>Tag</th><th>Contacts</th><th>Merge into</th><th></th></tr></thead>
       <tbody>
         {% for tag in tags %}
           <tr>
@@ -25,6 +25,26 @@ workspace switcher, every context-processor query) per keystroke-sized edit.
               </form>
             </td>
             <td>{{ tag.contact_count }}</td>
+            <td>
+              {% comment %}
+                Merging is the repair for two tags that mean the same thing — a
+                data-quality problem the case-insensitive unique index cannot
+                catch, because "VIP" and "Priority" are distinct strings and one
+                idea. The links move in a single transaction, so the workspace is
+                never half-migrated.
+              {% endcomment %}
+              <form hx-post="{% url 'contacts:tag_merge' workspace_id=request.workspace.id tag_id=tag.id %}"
+                    hx-confirm="Merge “{{ tag.name }}” into the chosen tag? “{{ tag.name }}” is deleted and its {{ tag.contact_count }} contact{{ tag.contact_count|pluralize }} keep the other one.">
+                <label class="sr-only" for="tag-merge-{{ tag.id }}">Merge {{ tag.name }} into</label>
+                <select id="tag-merge-{{ tag.id }}" name="target_id" required>
+                  <option value="">Choose a tag…</option>
+                  {% for other in tags %}
+                    {% if other.id != tag.id %}<option value="{{ other.id }}">{{ other.name }}</option>{% endif %}
+                  {% endfor %}
+                </select>
+                <button type="submit">Merge</button>
+              </form>
+            </td>
             <td>
               <form hx-post="{% url 'contacts:tag_delete' workspace_id=request.workspace.id tag_id=tag.id %}"
                     hx-confirm="Delete “{{ tag.name }}”? It will be removed from {{ tag.contact_count }} contact{{ tag.contact_count|pluralize }}.">
