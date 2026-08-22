@@ -51,6 +51,8 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "target_id": lambda t: t.workspace.pk,
     "membership_id": lambda t: t.org_membership.pk,
     "invitation_id": lambda t: _victim_invitation(t).pk,
+    "asset_id": lambda t: _victim_media_asset(t).pk,
+    "folder_id": lambda t: _victim_media_folder(t).pk,
     "flow_id": lambda t: _victim_flow(t).pk,
     # Notifications (issue #7) are keyed by user, not by workspace, so "the
     # victim" here is a person rather than a tenant. Registering it is an
@@ -112,6 +114,38 @@ def _victim_invitation(tenancy: Tenancy) -> Any:
             expires_at=timezone.now() + timedelta(days=7),
         )
     return invitation
+
+
+def _victim_media_asset(tenancy: Tenancy) -> Any:
+    """A media asset owned by the victim, created on demand.
+
+    Built through the model rather than the upload view: the sweep is about
+    tenancy, not about validation, and going through ``create_asset`` would make
+    every IDOR run write a file to storage and sniff it.
+    """
+    from apps.media_library.models import MediaAsset
+
+    asset = MediaAsset.objects.for_workspace(tenancy.workspace).first()
+    if asset is None:
+        asset = MediaAsset.objects.create(
+            workspace=tenancy.workspace,
+            filename="victim.png",
+            kind="image",
+            mime="image/png",
+            size=1,
+            file="media/victim.png",
+        )
+    return asset
+
+
+def _victim_media_folder(tenancy: Tenancy) -> Any:
+    """A media folder owned by the victim, created on demand."""
+    from apps.media_library.models import MediaFolder
+
+    folder = MediaFolder.objects.for_workspace(tenancy.workspace).first()
+    if folder is None:
+        folder = MediaFolder.objects.create(workspace=tenancy.workspace, name="Victim folder")
+    return folder
 
 
 def _victim_notification(tenancy: Tenancy) -> Any:

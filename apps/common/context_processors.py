@@ -172,6 +172,16 @@ MAIN_NAV: list[NavGroup] = [
             NavItem(
                 key="broadcasts", label="Broadcasts", icon="broadcasts", url_name="broadcasts", workspace_scoped=True
             ),
+            # Issue #16. The detail page is the same section to a reader, so it
+            # lights the same row — that is what url_names is for.
+            NavItem(
+                key="media",
+                label="Media",
+                icon="image",
+                url_name="media:library",
+                url_names=frozenset({"media:library", "media:asset_detail"}),
+                workspace_scoped=True,
+            ),
             # Deliberately NOT workspace_scoped (issue #7): a notification is
             # addressed to a person, and the feed spans every workspace they
             # belong to — an alert about the workspace you are not currently

@@ -1,0 +1,58 @@
+{% comment %}
+The folder rail, refreshable on its own.
+
+It lives outside #media-grid, so the `mediaChanged` event that refreshes the
+grid would otherwise leave a newly created folder invisible until a full page
+load. It re-fetches itself from the same view with ?fragment=folders rather
+than from a second route — one endpoint, two fragments.
+
+Rename and delete live here rather than nowhere: both endpoints existed and were
+permission-gated from the start, but no template linked to them, so a mistyped
+folder name was permanent outside the Django admin.
+{% endcomment %}
+<nav id="media-folders"
+     aria-label="Media folders"
+     class="space-y-0.5"
+     hx-get="{% url 'media:library' workspace_id=request.workspace.id %}?fragment=folders&folder={{ current_folder|urlencode }}"
+     hx-trigger="mediaChanged from:body"
+     hx-swap="outerHTML">
+  <a class="media-folder {% if not current_folder %}is-active{% endif %}"
+     href="{% url 'media:library' workspace_id=request.workspace.id %}">All media</a>
+  <a class="media-folder {% if current_folder == 'root' %}is-active{% endif %}"
+     href="?folder=root">Not in a folder</a>
+
+  {% for row in folder_rows %}
+    <div class="media-folder-row" x-data="{ renaming: false }">
+      <a class="media-folder {% if current_folder == row.id %}is-active{% endif %}"
+         href="?folder={{ row.id }}"
+         style="padding-left: {{ row.indent }}rem;"
+         x-show="!renaming">{{ row.name }}</a>
+
+      {% if can_manage %}
+        <div class="media-folder-actions" x-show="!renaming">
+          <button type="button" class="media-folder-action" x-on:click="renaming = true"
+                  aria-label="Rename {{ row.name }}">Rename</button>
+          <form hx-post="{% url 'media:folder_delete' workspace_id=request.workspace.id folder_id=row.id %}"
+                hx-swap="none"
+                hx-confirm="Delete the folder “{{ row.name }}”? Anything inside it moves up one level; nothing is deleted.">
+            {# Lets the view notice it is deleting the folder currently being browsed. #}
+            <input type="hidden" name="current_folder" value="{{ current_folder }}">
+            <button type="submit" class="media-folder-action" aria-label="Delete {{ row.name }}">Delete</button>
+          </form>
+        </div>
+
+        <form x-show="renaming" x-cloak
+              hx-post="{% url 'media:folder_rename' workspace_id=request.workspace.id folder_id=row.id %}"
+              hx-swap="none"
+              hx-on::after-request="if (event.detail.successful) renaming = false">
+          <label for="rename-{{ row.id }}" class="sr-only">New name for {{ row.name }}</label>
+          <input type="text" id="rename-{{ row.id }}" name="name" value="{{ row.name }}" maxlength="255" required>
+          <button type="submit" class="mt-1.5">Save</button>
+          <button type="button" class="mt-1.5" x-on:click="renaming = false">Cancel</button>
+        </form>
+      {% endif %}
+    </div>
+  {% empty %}
+    <p class="text-xs muted px-2.5 py-1.5">No folders yet.</p>
+  {% endfor %}
+</nav>

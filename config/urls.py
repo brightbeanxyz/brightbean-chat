@@ -75,6 +75,10 @@ urlpatterns = [
     path("organization/members/", include("apps.members.urls")),
     # Invite acceptance is unauthenticated — the recipient has no org yet.
     path("", include("apps.members.urls_public")),
+    # Public, token-bearing media delivery (#16). The fetcher is a messaging
+    # platform with no session; the signed token is the whole credential. Joins
+    # the /u/, /c/ and /o/ family documented in apps/common/signing.py.
+    path("", include("apps.media_library.urls_public")),
     # Per-user, so no workspace prefix: the bell shows every workspace at once
     # (issue #7).
     path("notifications/", include("apps.notifications.urls")),
@@ -82,6 +86,7 @@ urlpatterns = [
     # RBACMiddleware's resolution contract; do not rename it.
     path("w/<uuid:workspace_id>/", include("apps.workspaces.urls")),
     path("w/<uuid:workspace_id>/settings/credentials/", include("apps.credentials.urls")),
+    path("w/<uuid:workspace_id>/media/", include("apps.media_library.urls")),
     # Flows own two prefixes under the workspace — the pages at flows/ and
     # SPEC §16's builder data API at api/flows/ — so they mount at the
     # workspace root together under one namespace. See apps/flows/urls.py.

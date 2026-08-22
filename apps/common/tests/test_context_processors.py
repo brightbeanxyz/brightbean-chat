@@ -64,6 +64,7 @@ class TestActiveFlag:
             ("inbox/", "inbox"),
             ("sequences/", "sequences"),
             ("broadcasts/", "broadcasts"),
+            ("media/", "media"),
         ],
     )
     def test_exactly_one_main_nav_item_is_active_per_route(self, suffix, expected, tenancy):
@@ -243,6 +244,7 @@ class TestNavStructure:
             "inbox",
             "sequences",
             "broadcasts",
+            "media",
             "notifications",
         }
 
