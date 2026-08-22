@@ -110,7 +110,14 @@ class TestJobRegistry:
         with only_housekeeping_jobs(dupe=lambda: None), pytest.raises(RuntimeError, match="already registered"):
             register_housekeeping_job("dupe")(lambda: None)
 
-    def test_one_failing_job_does_not_starve_the_others(self) -> None:
+    def test_one_failing_job_does_not_starve_the_others(self, monkeypatch: Any) -> None:
+        # OPTIONAL_JOB_PATHS is emptied for the same reason only_housekeeping_jobs
+        # empties the registry: this test asserts "which jobs failed", and a real
+        # dotted-path job resolving alongside the two below would join the answer.
+        # It is no longer hypothetical — L3-B (#9) landed
+        # apps.flows.housekeeping.expire_stale_executions at the path this tuple
+        # already reserved for it.
+        monkeypatch.setattr(housekeeping, "OPTIONAL_JOB_PATHS", ())
         ran: list[str] = []
 
         def ok() -> str:
@@ -203,8 +210,16 @@ class TestJobRegistry:
 
         assert attempts == ["apps.nope.module"]
 
-    def test_dotted_path_jobs_for_apps_that_have_not_landed_are_skipped(self) -> None:
-        """L2-B, L3-B and L5-C all register into this; none of them exist yet."""
+    def test_dotted_path_jobs_for_apps_that_have_not_landed_are_skipped(self, monkeypatch: Any) -> None:
+        """A path whose module is absent resolves to nothing, quietly.
+
+        Written against a synthetic path rather than the real tuple, which no
+        longer answers the question: L3-B (#9) has landed
+        ``apps.flows.housekeeping.expire_stale_executions``, so the real tuple
+        now resolves one job and asserting an empty registry would be asserting
+        that a shipped feature is missing.
+        """
+        monkeypatch.setattr(housekeeping, "OPTIONAL_JOB_PATHS", (("absent", "apps.nonexistent.module.job"),))
         with only_housekeeping_jobs():
             assert housekeeping_jobs() == {}
 

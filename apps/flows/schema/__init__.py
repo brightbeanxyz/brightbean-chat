@@ -36,7 +36,7 @@ from apps.flows.schema.nodes import (
     register_action_verb,
     register_node_type,
 )
-from apps.flows.schema.validation import ValidationResult, validate_graph
+from apps.flows.schema.validation import ValidationResult, entry_node_id, validate_graph
 
 __all__ = [
     "ACTION_VERBS",
@@ -53,6 +53,7 @@ __all__ = [
     "ValidationResult",
     "artifact_path",
     "empty_graph",
+    "entry_node_id",
     "handles_for_node",
     "json_schema",
     "limits",
