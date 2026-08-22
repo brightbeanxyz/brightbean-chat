@@ -325,11 +325,14 @@ def _resume_data_collection(execution: FlowExecution, event: Any, config: dict[s
 
     try:
         value = normalise_answer(text, reply_type)
+        # Storing is part of the question "is this a usable answer": a reply can
+        # parse as an email and still be too long for the column it is filed in,
+        # and the contact should be re-asked rather than the run crashing.
+        _store_answer(execution, config.get("target"), value, reply_type)
     except InvalidAnswerError as exc:
         logger.debug("Execution %s: answer rejected (%s)", execution.pk, exc)
         return _retry_or_fall_through(execution, config, reason="invalid")
 
-    _store_answer(execution, config.get("target"), value, reply_type)
     moved = advance(execution, Graph(execution.flow_version.graph_json), "default")
     return Consumed(moved, reason="answered")
 
@@ -434,8 +437,14 @@ def _phone(answer: str) -> str:
     Not a full libphonenumber parse — that is a dependency for a validator whose
     job here is "did the contact type a phone number or a sentence". The rule is
     ITU E.164's: an optional ``+``, then 7 to 15 digits.
+
+    ASCII digits only, and deliberately not ``str.isdigit()``: that predicate is
+    true for superscripts and for every Unicode decimal script, so ``"²²²²²²²"``
+    would have validated as a phone number and been handed to
+    ``upsert_contact_identity`` as an E.164 address. Anything outside ``0-9`` is
+    dropped, which leaves such a reply with too few digits to pass.
     """
-    digits = "".join(character for character in answer if character.isdigit())
+    digits = "".join(character for character in answer if character in "0123456789")
     if not 7 <= len(digits) <= 15:
         raise InvalidAnswerError("that is not a phone number")
     return f"+{digits}" if answer.strip().startswith("+") else digits
@@ -491,38 +500,95 @@ _IDENTITY_PLATFORM = {"email": "email", "phone": "sms"}
 
 
 def _store_answer(execution: FlowExecution, target: Any, value: Any, reply_type: str) -> None:
-    """Save the answer where the node said, and record consent where §11.8 says.
+    """Save the answer, then honour SPEC §11.8's "also" clause.
 
-    A target that no longer resolves is a warning rather than a failure: the run
-    has already got its answer, and killing it because somebody deleted a custom
-    field last week helps nobody.
+        On valid input: save; if reply_type email/phone **also** update
+        contact.email/phone and create/refresh the corresponding email/SMS
+        identity with opt_in true recorded with timestamp + source (consent
+        audit).
+
+    Two writes, and the second is tied to ``reply_type`` rather than to where
+    the answer was filed. An email captured into a *custom* field is still an
+    email address the deployment now holds, and it still needs the consent
+    record saying why it may be messaged — reading that obligation off the
+    target instead would skip it for every ``custom_field`` node.
+
+    **Every check runs before any write.** Raising
+    :class:`InvalidAnswerError` half-way through would still commit what had
+    already been written, alongside the retry counter the caller is about to
+    bump — so the column limits for both writes are tested up front and the two
+    writers that can refuse do so before they mutate anything.
+
+    A target that no longer *resolves* is a different case: a warning, not a
+    refusal. The run has its answer, and killing it because somebody deleted a
+    custom field last week helps nobody.
+    """
+    contact = execution.contact
+    text = str(value)
+    system_key = _system_target(execution, target)
+    platform = _IDENTITY_PLATFORM.get(reply_type)
+
+    if system_key is not None:
+        _assert_fits(contact, system_key, text)
+    if platform is not None:
+        # `reply_type` is "email" or "phone", which are also the column names.
+        _assert_fits(contact, reply_type, text)
+
+    if system_key is not None:
+        setattr(contact, system_key, text)
+        contact.save(update_fields=[system_key, "updated_at"])
+    elif isinstance(target, dict) and str(target.get("type") or "") == "custom_field":
+        # The only remaining writer that can refuse, and it refuses before it
+        # writes — so nothing above is left dangling if it does.
+        _store_custom_field(execution, str(target.get("key") or "").strip(), value)
+
+    if platform is not None:
+        _capture_identity(execution, text, reply_type, platform)
+
+
+def _system_target(execution: FlowExecution, target: Any) -> str | None:
+    """The contact column this answer is filed under, if any.
+
+    ``None`` covers every other shape — a custom-field target, a missing one,
+    and a system field nobody may write — each of which is logged here so the
+    caller stays a straight line.
     """
     if not isinstance(target, dict):
         logger.warning("Execution %s: data_collection has no target; the answer is discarded.", execution.pk)
-        return
+        return None
 
     kind = str(target.get("type") or "")
     key = str(target.get("key") or "").strip()
-    if kind == "system_field":
-        _store_system_field(execution, key, value, reply_type)
-    elif kind == "custom_field":
-        _store_custom_field(execution, key, value)
-    else:
+    if kind == "custom_field":
+        return None
+    if kind != "system_field":
         logger.warning("Execution %s: %r is not a data_collection target type.", execution.pk, kind)
-
-
-def _store_system_field(execution: FlowExecution, key: str, value: Any, reply_type: str) -> None:
+        return None
     if key not in WRITABLE_SYSTEM_FIELDS:
         logger.warning("Execution %s: %r is not a writable contact field.", execution.pk, key)
-        return
-    contact = execution.contact
-    setattr(contact, key, str(value))
-    contact.save(update_fields=[key, "updated_at"])
-    _record_consent(execution, key, str(value), reply_type)
+        return None
+    return key
+
+
+def _assert_fits(contact: Any, key: str, text: str) -> None:
+    """Refuse an answer the column will not hold.
+
+    Answers are capped at :data:`MAX_ANSWER_CHARS`, and the columns they land in
+    are far shorter — ``first_name`` is 150 characters, ``email`` is 254. Django
+    does not check length outside ``full_clean()``, so without this the ``save``
+    reaches Postgres and raises ``StringDataRightTruncation``: the resume
+    transaction rolls back, the queue retries it five times, and the execution
+    stays parked. Inbound text is attacker-controlled (SECURITY-BASELINE §2), so
+    an over-long reply has to be an *invalid answer* the contact is re-asked
+    for, not a database error.
+    """
+    limit = contact._meta.get_field(key).max_length
+    if limit is not None and len(text) > limit:
+        raise InvalidAnswerError(f"that answer is longer than {key} can hold")
 
 
 def _store_custom_field(execution: FlowExecution, key: str, value: Any) -> None:
-    from apps.contacts.errors import ContactsError
+    from apps.contacts.errors import FieldTypeError
     from apps.contacts.models import CustomField
     from apps.contacts.services import set_field_value
 
@@ -532,17 +598,31 @@ def _store_custom_field(execution: FlowExecution, key: str, value: Any) -> None:
         return
     try:
         set_field_value(execution.contact, field, value)
-    except ContactsError as exc:
-        logger.warning("Execution %s: the answer does not fit field %r: %s", execution.pk, key, exc)
+    except FieldTypeError as exc:
+        # The value does not fit the field's declared type or length. That is a
+        # statement about what the contact typed, so it re-asks rather than
+        # being logged and dropped. ``coerce_value`` raises before writing.
+        raise InvalidAnswerError(str(exc)) from exc
 
 
-def _record_consent(execution: FlowExecution, key: str, address: str, reply_type: str) -> None:
-    """SPEC §11.8's consent audit, through ROADMAP contract 1.
+def _capture_identity(execution: FlowExecution, address: str, column: str, platform: str) -> None:
+    """SPEC §11.8's "also": the contact column and the consent record.
 
-        On valid input: save; if reply_type email/phone also update
-        contact.email/phone and create/refresh the corresponding email/SMS
-        identity with opt_in true recorded with timestamp + source (consent
-        audit).
+    Reached from ``reply_type`` and nothing else. Keying on the *target's* name
+    as well would record consent for a reply that was never validated as an
+    address — a ``reply_type: "text"`` question filed under ``email`` would
+    register whatever the contact typed as an opted-in identity, which is
+    exactly what a consent audit exists to make impossible.
+    """
+    contact = execution.contact
+    if getattr(contact, column, None) != address:
+        setattr(contact, column, address)
+        contact.save(update_fields=[column, "updated_at"])
+    _record_consent(execution, platform, address)
+
+
+def _record_consent(execution: FlowExecution, platform: str, address: str) -> None:
+    """The consent audit itself, through ROADMAP contract 1.
 
     The ``source="data_collection"`` string is the record of *why* this
     deployment believes it may message that address, and it is the reason this
@@ -550,9 +630,6 @@ def _record_consent(execution: FlowExecution, key: str, address: str, reply_type
     """
     from apps.flows.messaging import FacadeUnavailableError, upsert_contact_identity
 
-    platform = _IDENTITY_PLATFORM.get(key) or _IDENTITY_PLATFORM.get(reply_type)
-    if platform is None:
-        return
     try:
         upsert_contact_identity(execution.contact, platform, address, source="data_collection", opt_in=True)
     except FacadeUnavailableError:

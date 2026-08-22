@@ -72,7 +72,12 @@ def handle_start_flow(payload: dict[str, Any], action: ScheduledAction) -> None:
             flow_version=version,
             connection=connection,
         )
-    except FlowNotRunnableError as exc:
+    except (FlowNotRunnableError, ValueError) as exc:
+        # ValueError covers the two permanent argument faults start_flow can
+        # raise — a flow_version belonging to another flow, and the contact and
+        # flow being in different workspaces (WorkspaceMismatchError is a
+        # ValueError). Neither can come true on a retry, so letting them
+        # propagate would spend the whole backoff ladder before failing the row.
         logger.warning("start_flow action %s cannot run: %s", action.pk, exc)
 
 

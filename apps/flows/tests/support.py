@@ -22,7 +22,7 @@ from typing import Any
 
 from apps.contacts.models import Contact
 from apps.flows import messaging
-from apps.flows.models import Flow, FlowVersion
+from apps.flows.models import Flow
 from apps.flows.schema import empty_graph
 from apps.flows.services import create_flow, publish, save_draft
 
@@ -32,7 +32,6 @@ __all__ = [
     "connection_for",
     "contact_for",
     "inbound",
-    "draft_version",
     "edge",
     "graph",
     "node",
@@ -83,11 +82,6 @@ def published_flow(workspace: Any, document: dict[str, Any], *, name: str = "Tes
     publish(flow)
     flow.refresh_from_db()
     return flow
-
-
-def draft_version(flow: Flow, document: dict[str, Any]) -> FlowVersion:
-    """Add an unpublished draft on top of ``flow``'s published version."""
-    return save_draft(flow, document)
 
 
 @dataclass

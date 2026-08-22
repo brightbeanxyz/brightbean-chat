@@ -26,6 +26,7 @@ obeying:
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from apps.channels.events import Button, Card, CardBlock, GalleryBlock, MediaBlock, OutboundMessage, QuickReply
 from apps.channels.events import TextBlock as OutboundText
@@ -84,17 +85,22 @@ class SendMessageNode(Node):
         if not outcome.sent:
             return Continue("default")
 
-        if buttons or quick_replies:
-            return Wait(
-                buttons_wait(
-                    ctx.node_id,
-                    buttons=ctx.config.get("buttons"),
-                    quick_replies=ctx.config.get("quick_replies"),
-                    followup=ctx.config.get("followup"),
-                    retry_unmatched=ctx.config.get("retry_unmatched"),
-                    labels=_labels(buttons, quick_replies),
-                )
-            )
+        wait = buttons_wait(
+            ctx.node_id,
+            buttons=ctx.config.get("buttons"),
+            quick_replies=ctx.config.get("quick_replies"),
+            followup=ctx.config.get("followup"),
+            retry_unmatched=ctx.config.get("retry_unmatched"),
+            labels=_labels(buttons, quick_replies),
+        )
+        if wait["handles"] or wait.get("timeout"):
+            return Wait(wait)
+
+        # Buttons were present but none of them can ever reply: a message whose
+        # only buttons are URL buttons produces no inbound event, and no
+        # followup was configured to move it on either. Waiting would park the
+        # contact until the 30-day sweep — and since SPEC §22 allows one live
+        # execution per contact, that is every other flow dead for a month.
         return Continue("default")
 
 
@@ -129,6 +135,10 @@ def _blocks(ctx: NodeContext) -> list[Any]:
 def _card(ctx: NodeContext, card: dict[str, Any]) -> Card:
     """SPEC §11.1's card — the same four fields alone or inside a gallery."""
     url_button = card.get("url_button") if isinstance(card.get("url_button"), dict) else {}
+    # Rendered once. It goes in two places — `Card.url` and the Button — and a
+    # second `ctx.render` of the same string is a second substitution pass per
+    # card, ten of them in a full gallery.
+    button_url = ctx.render(url_button.get("url")) if url_button else ""
     buttons: tuple[Button, ...] = ()
     if url_button:
         buttons = (
@@ -138,41 +148,69 @@ def _card(ctx: NodeContext, card: dict[str, Any]) -> Card:
                 # adapter to render it.
                 id="url",
                 label=ctx.render(url_button.get("label")),
-                url=ctx.render(url_button.get("url")),
+                url=button_url,
             ),
         )
     return Card(
         title=ctx.render(card.get("title")),
         subtitle=ctx.render(card.get("subtitle")),
-        image_url=_media_url(ctx, card, key="image"),
-        url=ctx.render(url_button.get("url")) if url_button else "",
+        image_url=_card_image(ctx, card.get("image")),
+        url=button_url,
         buttons=buttons,
     )
 
 
-def _media_url(ctx: NodeContext, block: dict[str, Any], key: str = "media_id") -> str:
-    """A deliverable URL for one media reference — library id or plain URL.
+def _card_image(ctx: NodeContext, reference: Any) -> str:
+    """A card's ``image``: "Media library id or URL" (SPEC §11.1), in one field.
+
+    Which one it is decides which path to take, so that is what is tested. An
+    earlier version called :func:`resolve` unconditionally and caught
+    ``MediaNotFoundError`` to mean "so it was a URL" — an exception on the
+    *common* authoring choice, and two branches distinguished by a failure
+    rather than by what the value is.
+    """
+    if not isinstance(reference, str) or not reference:
+        return ""
+    if _is_media_id(reference):
+        try:
+            return str(resolve(reference, workspace=ctx.workspace)["url"])
+        except MediaNotFoundError:
+            # A card is one block of a message and its image is decoration; a
+            # deleted one loses the picture rather than the whole send.
+            logger.warning("Execution %s: card image %r is not in the library.", ctx.execution.pk, reference)
+            return ""
+    return ctx.render(reference)
+
+
+def _media_url(ctx: NodeContext, block: dict[str, Any]) -> str:
+    """A deliverable URL for one media block — library id or plain URL.
 
     SPEC §11.1 allows either. A library id is resolved to a signed delivery URL
     at send time, so a block stores a stable id and the URL is minted fresh from
     whatever storage the deployment runs.
-
-    A card's ``image`` is one field carrying both forms, which is why ``key``
-    exists: it is tried as an id first and falls back to being rendered as a URL.
     """
-    reference = block.get(key)
-    if isinstance(reference, str) and reference:
+    media_id = block.get("media_id")
+    if isinstance(media_id, str) and media_id:
         try:
-            return str(resolve(reference, workspace=ctx.workspace)["url"])
+            return str(resolve(media_id, workspace=ctx.workspace)["url"])
         except MediaNotFoundError:
-            if key == "media_id":
-                # An explicit media_id that does not resolve is a deleted asset,
-                # not a URL. The library's own contract: stop the message.
-                raise _UnresolvableMediaError(f"media {reference!r} is not in this workspace's library") from None
-    url = ctx.render(block.get("url") if key == "media_id" else reference)
-    if not url and key == "media_id":
+            # An explicit media_id that does not resolve is a deleted asset,
+            # not a URL. The library's own contract: stop the message.
+            raise _UnresolvableMediaError(f"media {media_id!r} is not in this workspace's library") from None
+
+    url = ctx.render(block.get("url"))
+    if not url:
         raise _UnresolvableMediaError("a media block carries neither a library id nor a URL")
     return url
+
+
+def _is_media_id(reference: str) -> bool:
+    """Whether this string is a library id rather than a URL."""
+    try:
+        UUID(reference)
+    except ValueError:
+        return False
+    return True
 
 
 def _buttons(ctx: NodeContext) -> list[Button]:

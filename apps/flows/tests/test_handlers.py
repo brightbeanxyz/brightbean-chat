@@ -105,6 +105,28 @@ class TestStartFlowAction:
         assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
         assert {tag.name for tag in contact.tags.all()} == set()
 
+    def test_a_version_belonging_to_another_flow_is_dropped_not_retried(self, tenancy):
+        """A permanent argument fault: five attempts over six hours cannot fix it."""
+        from apps.flows.services import latest_version
+
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", TAG_ACTION)]))
+        other = published_flow(tenancy.workspace, graph([node("a", "action", TAG_ACTION)]), name="Other")
+        contact = contact_for(tenancy.workspace)
+        action = schedule(
+            ActionType.START_FLOW,
+            timezone.now(),
+            {
+                "contact_id": str(contact.pk),
+                "flow_id": str(flow.pk),
+                "flow_version_id": str(latest_version(other).pk),
+            },
+            workspace=tenancy.workspace,
+            contact=contact,
+        )
+
+        assert _run(action).status == ActionStatus.DONE
+        assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
+
     def test_a_missing_contact_is_dropped(self, tenancy):
         flow = published_flow(tenancy.workspace, graph([node("a", "action", TAG_ACTION)]))
         action = schedule(

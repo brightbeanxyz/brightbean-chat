@@ -38,8 +38,6 @@ from apps.flows.tests.support import (
     published_flow,
 )
 
-TAG = {"actions": [{"verb": "add_tag", "tag": "{handle}"}]}
-
 
 def _tagger(name: str) -> dict:
     return {"actions": [{"verb": "add_tag", "tag": name}]}
@@ -421,6 +419,111 @@ class TestDataCollectionResume:
         execution.refresh_from_db()
         assert execution.status == ExecutionStatus.WAITING_REPLY
 
+    def test_an_email_into_a_custom_field_still_records_consent(self, tenancy, facade):
+        """SPEC §11.8's "also" clause is keyed on reply_type, not on the target.
+
+        An address captured into a custom field is still an address the
+        deployment holds, so ``contact.email`` and the identity row are written
+        either way — otherwise every custom-field node would quietly collect
+        addresses with no record of why they may be messaged.
+        """
+        connection = connection_for(tenancy.workspace)
+        create_custom_field(tenancy.workspace, name="Work email", field_type="text")
+        flow = self._flow(tenancy.workspace, target={"type": "custom_field", "key": "Work email"})
+        contact, execution = _parked(tenancy.workspace, flow, connection)
+
+        attempt_resume(execution, inbound(connection, text="ada@example.test"))
+
+        contact.refresh_from_db()
+        assert contact.email == "ada@example.test"
+        assert facade.named("upsert_contact_identity") == [
+            {
+                "contact": contact,
+                "platform": "email",
+                "address": "ada@example.test",
+                "source": "data_collection",
+                "opt_in": True,
+            }
+        ]
+
+    def test_a_text_question_filed_under_email_records_no_consent(self, tenancy, facade):
+        """The mirror: consent must never be recorded for an unvalidated reply."""
+        connection = connection_for(tenancy.workspace)
+        flow = self._flow(tenancy.workspace, reply_type="text")
+        contact, execution = _parked(tenancy.workspace, flow, connection)
+
+        outcome = attempt_resume(execution, inbound(connection, text="dunno"))
+
+        assert isinstance(outcome, Consumed)
+        contact.refresh_from_db()
+        assert contact.email == "dunno"
+        assert facade.named("upsert_contact_identity") == []
+
+    def test_an_answer_too_long_for_the_column_is_invalid_not_a_crash(self, tenancy, facade):
+        """`Contact.first_name` is 150 chars; answers are allowed 4096.
+
+        Without a length check the save reaches Postgres and raises
+        ``StringDataRightTruncation``, rolling the resume back and parking the
+        execution while the queue burns its retries. Inbound text is
+        attacker-controlled, so this has to be an ordinary invalid answer.
+        """
+        connection = connection_for(tenancy.workspace)
+        flow = self._flow(
+            tenancy.workspace,
+            reply_type="text",
+            target={"type": "system_field", "key": "first_name"},
+            retry={"max": 2, "invalid_text": "Shorter, please."},
+        )
+        contact, execution = _parked(tenancy.workspace, flow, connection)
+
+        outcome = attempt_resume(execution, inbound(connection, text="x" * 200))
+
+        assert isinstance(outcome, Consumed)
+        execution.refresh_from_db()
+        assert execution.status == ExecutionStatus.WAITING_REPLY
+        contact.refresh_from_db()
+        assert contact.first_name == "Ada"
+        assert facade.named("send_outbound")[-1]["outbound"].blocks[0].text == "Shorter, please."
+
+    def test_nothing_is_half_written_when_the_second_column_refuses(self, tenancy, facade):
+        """An address that fits its custom field but not ``Contact.email``.
+
+        Both writes are length-checked before either happens, so the refusal
+        leaves the custom field untouched rather than committing it alongside
+        the bumped retry counter.
+        """
+        connection = connection_for(tenancy.workspace)
+        create_custom_field(tenancy.workspace, name="Work email", field_type="text")
+        flow = self._flow(tenancy.workspace, target={"type": "custom_field", "key": "Work email"})
+        contact, execution = _parked(tenancy.workspace, flow, connection)
+        long_address = f"{'a' * 250}@example.test"
+
+        outcome = attempt_resume(execution, inbound(connection, text=long_address))
+
+        assert isinstance(outcome, Consumed)
+        assert field_values_for(contact) == {}
+        contact.refresh_from_db()
+        assert contact.email == ""
+        assert facade.named("upsert_contact_identity") == []
+
+    def test_a_value_that_does_not_fit_the_field_type_re_asks(self, tenancy, facade):
+        """A number question filed in a date field is the contact's problem to fix."""
+        connection = connection_for(tenancy.workspace)
+        create_custom_field(tenancy.workspace, name="Renewal", field_type="date")
+        flow = self._flow(
+            tenancy.workspace,
+            reply_type="text",
+            target={"type": "custom_field", "key": "Renewal"},
+            retry={"max": 1, "invalid_text": "Use YYYY-MM-DD."},
+        )
+        _contact, execution = _parked(tenancy.workspace, flow, connection)
+
+        outcome = attempt_resume(execution, inbound(connection, text="soon"))
+
+        assert isinstance(outcome, Consumed)
+        execution.refresh_from_db()
+        assert execution.status == ExecutionStatus.WAITING_REPLY
+
     def test_a_target_that_no_longer_exists_does_not_kill_the_run(self, tenancy, facade, caplog):
         connection = connection_for(tenancy.workspace)
         flow = self._flow(tenancy.workspace, reply_type="text", target={"type": "custom_field", "key": "deleted"})
@@ -474,6 +577,9 @@ class TestAnswerValidation:
             ("email", "not an email"),
             ("phone", "12345"),
             ("phone", "call me"),
+            # str.isdigit() is true for these; they are not phone numbers.
+            ("phone", "²²²²²²²"),
+            ("phone", "٣٣٣٣٣٣٣"),
             ("number", "many"),
             ("number", "NaN"),
             ("date", "the third"),

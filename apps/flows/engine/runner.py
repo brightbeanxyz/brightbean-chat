@@ -17,6 +17,24 @@ counted per session, so the worker having already taken the same lock (it does �
 than a deadlock, which is what lets these functions be honest about their own
 requirements instead of trusting a caller to have done it.
 
+**That lock blocks, and the inline path must not.** SPEC §9.6: "Inline path:
+``pg_try_advisory_xact_lock``; if unavailable, enqueue instead of blocking the
+web request." Calling :func:`start_flow` or
+:func:`apps.flows.engine.waits.attempt_resume` straight from a webhook request
+would hold a gunicorn thread behind whatever the worker is doing to that
+contact. The counted-lock property above is what makes the fix two lines rather
+than a second set of entry points — take the non-blocking lock first, and the
+engine's own acquisition inside it is then free::
+
+    with transaction.atomic(), try_contact_lock(contact) as acquired:
+        if not acquired:
+            schedule(ActionType.RESUME_EXECUTION, timezone.now(), ..., contact=contact)
+            return
+        attempt_resume(execution, event)
+
+The worker needs none of this: it has no client on the other end of the socket
+and is expected to wait.
+
 **The runner owns every write to the execution row.** Nodes report through
 :mod:`apps.flows.engine.results` and never save. That is the reason status can be
 reasoned about at all: there is exactly one function per terminal state, each
@@ -582,11 +600,17 @@ def locked_execution(execution: FlowExecution) -> FlowExecution | None:
     wider deadlock surface. And ``channel_connection`` is nullable, so its
     ``select_related`` is a LEFT OUTER JOIN: Postgres refuses ``FOR UPDATE`` on
     the nullable side of one outright.
+
+    ``workspace__organization`` is in the list because ``NodeContext.workspace``
+    is read by four node paths (media resolution, tag creation, notify_members,
+    the smart-delay clock) and ``Workspace.effective_timezone`` reaches through
+    to the organization — so leaving them out cost two lazy queries on the
+    critical path of every resumed step.
     """
     return (
         FlowExecution.objects.for_workspace(execution.workspace_id)
         .select_for_update(of=("self",))
-        .select_related("flow_version", "contact", "flow", "channel_connection")
+        .select_related("flow_version", "contact", "flow", "channel_connection", "workspace", "workspace__organization")
         .filter(pk=execution.pk)
         .first()
     )

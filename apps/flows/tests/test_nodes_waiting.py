@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from apps.contacts.services import create_custom_field, set_field_value
 from apps.flows.engine import start_flow
+from apps.flows.engine.nodes.smart_delay import WEEKDAYS
 from apps.flows.models import ExecutionStatus, StartedBy
 from apps.flows.tests.support import (
     FakeFacade,
@@ -114,6 +115,72 @@ class TestSendMessage:
         assert outbound.buttons[0].url == "https://e.test/Ada"
         assert [reply.label for reply in outbound.quick_replies] == ["Later"]
         assert execution.status == ExecutionStatus.WAITING_REPLY
+
+    def test_url_only_buttons_do_not_park_the_execution(self, tenancy, facade):
+        """A URL button opens a link and never replies, so waiting on one is a trap.
+
+        The wait would carry an empty handle map, nothing the contact could ever
+        send would match, and — with SPEC §22's one-live-execution-per-contact —
+        that contact would be locked out of every flow until the 30-day sweep.
+        """
+        connection = connection_for(tenancy.workspace)
+        config = {
+            "blocks": [{"type": "text", "text": "Here are the docs"}],
+            "buttons": [{"id": "docs", "label": "Docs", "action": "url", "url": "https://e.test/"}],
+        }
+        document = graph(
+            [node("m", "send_message", config), node("n", "action", _tagger("next"), x=200)],
+            [edge("m", "default", "n")],
+        )
+
+        contact, execution = _run(tenancy.workspace, document, connection=connection)
+
+        assert execution.status == ExecutionStatus.COMPLETED
+        assert {tag.name for tag in contact.tags.all()} == {"next"}
+
+    def test_url_only_buttons_with_a_followup_still_wait(self, tenancy, facade):
+        """Because now something *can* move it on: the timer the author armed."""
+        connection = connection_for(tenancy.workspace)
+        config = {
+            "blocks": [{"type": "text", "text": "Here are the docs"}],
+            "buttons": [{"id": "docs", "label": "Docs", "action": "url", "url": "https://e.test/"}],
+            "followup": {"enabled": True, "delay": 1, "unit": "hours"},
+        }
+        document = graph([node("m", "send_message", config)])
+
+        _contact, execution = _run(tenancy.workspace, document, connection=connection)
+
+        assert execution.status == ExecutionStatus.WAITING_REPLY
+        assert execution.wait_config["handles"] == {}
+        assert ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.FOLLOWUP_TIMER).exists()
+
+    def test_a_card_image_url_is_not_looked_up_in_the_library(self, tenancy, facade, monkeypatch):
+        """A card's `image` holds an id *or* a URL; only an id is resolved."""
+        from apps.flows.engine.nodes import send_message as module
+
+        def _explode(media_id, workspace):
+            raise AssertionError(f"resolve() should not be called for {media_id!r}")
+
+        monkeypatch.setattr(module, "resolve", _explode)
+        connection = connection_for(tenancy.workspace)
+        blocks = [{"type": "card", "title": "Plans", "image": "https://example.test/{{first_name}}.png"}]
+        document = graph([node("m", "send_message", {"blocks": blocks})])
+
+        _run(tenancy.workspace, document, connection=connection)
+
+        assert _sent(facade).blocks[0].card.image_url == "https://example.test/Ada.png"
+
+    def test_a_deleted_card_image_loses_the_picture_not_the_message(self, tenancy, facade, caplog):
+        """A card image is decoration; unlike a media block it does not stop the send."""
+        connection = connection_for(tenancy.workspace)
+        blocks = [{"type": "card", "title": "Plans", "image": "0192f000-0000-7000-8000-0000000000ff"}]
+        document = graph([node("m", "send_message", {"blocks": blocks})])
+
+        with caplog.at_level("WARNING"):
+            _run(tenancy.workspace, document, connection=connection)
+
+        assert _sent(facade).blocks[0].card.image_url == ""
+        assert "card image" in caplog.text
 
     def test_no_buttons_means_it_continues(self, tenancy, facade):
         connection = connection_for(tenancy.workspace)
@@ -359,13 +426,8 @@ class TestContinueWindow:
         _run(workspace, document, contact=contact)
         return ScheduledAction.objects.for_workspace(workspace).get(type=ActionType.RESUME_EXECUTION).run_at
 
-    def test_a_moment_inside_the_window_is_untouched(self, tenancy, monkeypatch):
-        window = {
-            "enabled": True,
-            "days": list(("mon", "tue", "wed", "thu", "fri", "sat", "sun")),
-            "from": "00:00",
-            "to": "23:59",
-        }
+    def test_a_moment_inside_the_window_is_untouched(self, tenancy):
+        window = {"enabled": True, "days": list(WEEKDAYS), "from": "00:00", "to": "23:59"}
         run_at = self._run_at(tenancy.workspace, window)
         assert run_at <= timezone.now() + timedelta(minutes=2)
 

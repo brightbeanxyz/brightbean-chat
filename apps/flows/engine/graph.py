@@ -39,9 +39,9 @@ class Graph:
                 self._nodes[node["id"]] = node
 
         # (source, handle) -> target. Validation already rejects two edges
-        # leaving one handle, so the last-one-wins collapse here can only bite a
-        # draft — and picking one deterministically beats a runner that raises
-        # while the author is still wiring the node up.
+        # leaving one handle, so the first-one-wins collapse `setdefault` gives
+        # can only bite a draft — and picking one deterministically beats a
+        # runner that raises while the author is still wiring the node up.
         self._edges: dict[tuple[str, str], str] = {}
         for edge in self._raw.get("edges") or []:
             if not isinstance(edge, dict):
