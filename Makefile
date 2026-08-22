@@ -1,4 +1,4 @@
-.PHONY: help setup lock frontend schema css-watch server worker migrate migrations test test-cov lint format typecheck audit \
+.PHONY: help setup lock frontend schema css-watch js-watch server worker migrate migrations test test-cov lint format typecheck audit \
         docker-up docker-down docker-build docker-logs
 
 help: ## Show this help
@@ -24,18 +24,27 @@ lock: ## Recompile requirements*.txt from requirements*.in (run after editing ei
 # Frontend
 #
 # The vendored libraries in static/js/vendor/ are committed, so a clone with no
-# Node at all still serves working JavaScript. Only the Tailwind bundle needs
-# building: it is a gitignored artefact.
+# Node at all still serves the shell's JavaScript. Two things are built: the
+# Tailwind bundle and the flow-builder island (issue #10), both gitignored
+# artefacts. Without them the app runs, unstyled and with the builder page
+# showing its "not built" notice.
 #
 # static/flows/flow-schema.json is generated but committed, because the flow
 # builder's bundle imports it at build time and a clone should not need a Python
 # environment to produce it. `make schema` regenerates it and a test asserts the
 # committed copy matches the registry, so it cannot silently go stale.
+#
+# `schema` therefore runs BEFORE `npm run build`, not after: `build:js` inlines
+# the artefact, so the old order built the island from a stale copy of a
+# registry change made in the same commit — with nothing red to say so.
 
-frontend: ## Install JS deps and build the Tailwind bundle + vendored JS + flow schema
+frontend: ## Install JS deps, regenerate the flow schema, build every bundle
 	npm ci
-	npm run build
 	$(MAKE) schema
+	npm run build
+
+js-watch: ## Rebuild the flow-builder bundle on save (leave running alongside `make server`)
+	npm run watch:js
 
 schema: ## Regenerate static/flows/flow-schema.json from the node registry (issue #6)
 	python manage.py export_flow_schema

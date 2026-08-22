@@ -1,10 +1,15 @@
-"""The contract-1 seam: what it does while ``apps.messaging`` is not installed.
+"""The contract-1 seam: what it does when ``apps.messaging`` cannot be reached.
 
-Worth its own module because the answer is load-bearing for the whole PR. L3-A
-is a parallel sibling, so on this branch every one of these functions is
-unavailable, and the engine's behaviour in that state is what a reviewer running
-the suite actually sees. Once #8 merges the seam resolves for real and these
-tests describe the fallback rather than the norm.
+Worth its own module because the answer is load-bearing. It was written while
+L3-A was a parallel sibling, when every one of these functions was genuinely
+unavailable and the fallback was simply what a reviewer running the suite saw.
+
+L3-A has landed, so that is no longer the ambient state — but the fallback is
+still live code. ``_services()`` answers ``None`` for a deployment that does not
+install messaging, and for one where the app is installed but its services
+module fails to import. Those paths decide whether a flow reaching a send node
+reports why it stopped or crashes, so the tests now *simulate* the absence
+rather than depending on it.
 """
 
 import pytest
@@ -13,8 +18,15 @@ from apps.flows import messaging
 from apps.flows.models import FlowExecution
 
 
+@pytest.fixture
+def messaging_unavailable(monkeypatch):
+    """Make the seam answer "not installed", whatever this tree actually has."""
+    monkeypatch.setattr(messaging, "_services", lambda: None)
+
+
+@pytest.mark.usefixtures("messaging_unavailable")
 class TestUnavailable:
-    def test_available_is_false_before_l3a_lands(self):
+    def test_available_is_false_when_the_facade_cannot_be_reached(self):
         assert messaging.available() is False
 
     @pytest.mark.parametrize(
@@ -41,6 +53,12 @@ class TestUnavailable:
                 source="automation",
                 idempotency_key="k",
             )
+
+
+class TestAvailable:
+    def test_the_seam_resolves_now_that_l3a_has_landed(self):
+        """The other half of the contract, and the reason the fixture exists."""
+        assert messaging.available() is True
 
 
 class TestFakingIt:

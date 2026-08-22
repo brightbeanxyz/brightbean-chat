@@ -1,0 +1,259 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`toGraph / fromGraph > is stable as a canonical snapshot 1`] = `
+{
+  "edges": [
+    {
+      "id": "e1",
+      "source": "n1",
+      "sourceHandle": "default",
+      "target": "n2",
+    },
+    {
+      "id": "e2",
+      "source": "n1",
+      "sourceHandle": "timeout",
+      "target": "n2",
+    },
+    {
+      "id": "e3",
+      "source": "n2",
+      "sourceHandle": "default",
+      "target": "n1",
+    },
+    {
+      "id": "e4",
+      "source": "n4",
+      "sourceHandle": "cond:true",
+      "target": "n1",
+    },
+    {
+      "id": "e5",
+      "source": "n4",
+      "sourceHandle": "cond:false",
+      "target": "n1",
+    },
+    {
+      "id": "e6",
+      "source": "n5",
+      "sourceHandle": "default",
+      "target": "n1",
+    },
+    {
+      "id": "e7",
+      "source": "n6",
+      "sourceHandle": "rand:i1",
+      "target": "n1",
+    },
+    {
+      "id": "e8",
+      "source": "n6",
+      "sourceHandle": "rand:i2",
+      "target": "n1",
+    },
+    {
+      "id": "e9",
+      "source": "n7",
+      "sourceHandle": "default",
+      "target": "n1",
+    },
+    {
+      "id": "e10",
+      "source": "n7",
+      "sourceHandle": "error",
+      "target": "n1",
+    },
+    {
+      "id": "e11",
+      "source": "n8",
+      "sourceHandle": "default",
+      "target": "n1",
+    },
+    {
+      "id": "e12",
+      "source": "n8",
+      "sourceHandle": "timeout",
+      "target": "n1",
+    },
+    {
+      "id": "e13",
+      "source": "n9",
+      "sourceHandle": "default",
+      "target": "n1",
+    },
+    {
+      "id": "e14",
+      "source": "n9",
+      "sourceHandle": "error",
+      "target": "n1",
+    },
+    {
+      "id": "e15",
+      "source": "n10",
+      "sourceHandle": "default",
+      "target": "n1",
+    },
+    {
+      "id": "e16",
+      "source": "n10",
+      "sourceHandle": "error",
+      "target": "n1",
+    },
+  ],
+  "nodes": [
+    {
+      "config": {
+        "blocks": [
+          {
+            "text": "New message",
+            "type": "text",
+          },
+        ],
+      },
+      "id": "n1",
+      "position": {
+        "x": 0,
+        "y": 0,
+      },
+      "type": "send_message",
+    },
+    {
+      "config": {
+        "actions": [
+          {
+            "tag": "tag",
+            "verb": "add_tag",
+          },
+        ],
+      },
+      "id": "n2",
+      "position": {
+        "x": 240,
+        "y": 160,
+      },
+      "type": "action",
+    },
+    {
+      "config": {
+        "flow_id": "flow_id",
+      },
+      "id": "n3",
+      "position": {
+        "x": 480,
+        "y": 320,
+      },
+      "type": "start_flow",
+    },
+    {
+      "config": {
+        "match": "all",
+        "rules": [],
+      },
+      "id": "n4",
+      "position": {
+        "x": 720,
+        "y": 0,
+      },
+      "type": "condition",
+    },
+    {
+      "config": {
+        "duration": {
+          "unit": "minutes",
+          "value": 1,
+        },
+        "mode": "duration",
+      },
+      "id": "n5",
+      "position": {
+        "x": 960,
+        "y": 160,
+      },
+      "type": "smart_delay",
+    },
+    {
+      "config": {
+        "paths": [
+          {
+            "id": "i1",
+            "weight": 1,
+          },
+          {
+            "id": "i2",
+            "weight": 1,
+          },
+        ],
+      },
+      "id": "n6",
+      "position": {
+        "x": 1200,
+        "y": 320,
+      },
+      "type": "randomizer",
+    },
+    {
+      "config": {
+        "method": "GET",
+        "url": "https://example.com",
+      },
+      "id": "n7",
+      "position": {
+        "x": 1440,
+        "y": 0,
+      },
+      "type": "external_request",
+    },
+    {
+      "config": {
+        "question": "What is your answer?",
+        "reply_type": "text",
+        "target": {
+          "key": "field",
+          "type": "custom_field",
+        },
+      },
+      "id": "n8",
+      "position": {
+        "x": 1680,
+        "y": 160,
+      },
+      "type": "data_collection",
+    },
+    {
+      "config": {
+        "text": "New message",
+      },
+      "id": "n9",
+      "position": {
+        "x": 1920,
+        "y": 320,
+      },
+      "type": "send_sms",
+    },
+    {
+      "config": {
+        "html_body": "<p>Hello {{first_name}}</p>",
+        "subject": "Subject",
+      },
+      "id": "n10",
+      "position": {
+        "x": 2160,
+        "y": 0,
+      },
+      "type": "send_email",
+    },
+    {
+      "config": {
+        "text": "New message",
+      },
+      "id": "n11",
+      "position": {
+        "x": 2400,
+        "y": 160,
+      },
+      "type": "note",
+    },
+  ],
+  "schema": 1,
+}
+`;

@@ -8,6 +8,7 @@ from django.core.management import CommandError, call_command
 
 from apps.flows.schema import artifact_path, json_schema, serialize
 from apps.flows.schema.condition import CONDITION_SCHEMA, CONDITION_SCHEMA_IS_VENDORED
+from apps.flows.schema.nodes import GROUPS
 
 
 class TestDeterminism:
@@ -44,6 +45,26 @@ class TestTheCommittedArtefact:
             json_schema()["$defs"]["node"]["discriminator"]["mapping"]
         )
         assert extras["limits"]["max_nodes"] == 500
+
+    def test_every_node_type_declares_a_palette_group(self):
+        """Issue #10's palette is generated, so a node type with no group — or
+        one naming a drawer that does not exist — would silently vanish from it."""
+        extras = json_schema()["x-brightbean"]
+        known = {key for key, _ in GROUPS}
+
+        for entry in extras["node_types"]:
+            assert entry["group"] in known, f"{entry['type']} declares unknown group {entry['group']!r}"
+
+    def test_the_palette_groups_ship_ordered_with_their_labels(self):
+        """Order and copy are data too, so the builder needs no second table."""
+        assert json_schema()["x-brightbean"]["groups"] == [{"key": key, "label": label} for key, label in GROUPS]
+
+    def test_every_group_but_the_fallback_has_a_node_type_in_it(self):
+        """`other` is the default a later issue's node type falls into, so it is
+        allowed to be empty. A named drawer that is empty is a typo."""
+        used = {entry["group"] for entry in json_schema()["x-brightbean"]["node_types"]}
+
+        assert {key for key, _ in GROUPS} - used == {"other"}
 
 
 class TestTheManagementCommand:

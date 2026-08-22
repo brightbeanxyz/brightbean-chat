@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------------------
-# Frontend — compile the Tailwind bundle.
+# Frontend — compile the Tailwind bundle and the flow-builder island.
 # ---------------------------------------------------------------------------
-# The output has to exist before collectstatic runs in the runtime stage:
+# Both outputs have to exist before collectstatic runs in the runtime stage:
 # production uses CompressedManifestStaticFilesStorage, which hard-fails on a
-# {% static %} reference it cannot resolve. It is also gitignored, so it cannot
-# simply arrive with the source copy.
+# {% static %} reference it cannot resolve. Both are also gitignored, so they
+# cannot simply arrive with the source copy.
 #
 # The vendored JS in static/js/vendor/ is committed and needs no build step —
 # see scripts/vendor-js.mjs for why.
@@ -21,8 +21,8 @@ WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --no-audit --no-fund
 
-# Only what styles.css actually reads: its own source, and the one tree its
-# @source directive scans. `COPY . .` here meant an edit to a setting, a test or
+# Only what styles.css actually reads: its own source, and the trees its
+# @source directives scan. `COPY . .` here meant an edit to a setting, a test or
 # any other file invalidated the CSS build and every layer after it, for a
 # bundle that could not possibly have changed.
 #
@@ -30,10 +30,32 @@ RUN npm ci --no-audit --no-fund
 # theme/static_src/src/styles.css. TestTailwindSourceCoverage in
 # apps/common/tests/test_shell.py fails if a template appears somewhere this
 # stage does not copy, so the two cannot drift apart silently.
+#
+# frontend/builder/ is one of those globs — the island's class names live in
+# TSX — and it is also the input to the build:js below, so it arrives once and
+# serves both.
 COPY theme/static_src/ ./theme/static_src/
 COPY templates/ ./templates/
+COPY frontend/ ./frontend/
 RUN npm run build:css \
     && test -s theme/static/css/dist/styles.css
+
+# The flow-builder React island (issue #10). A separate layer from the CSS so a
+# stylesheet change does not rebuild the bundle and vice versa.
+#
+# It inlines static/flows/flow-schema.json, which is committed, so this needs no
+# Python. Both outputs are asserted because
+# apps/flows/templatetags/flow_builder.py deliberately renders a notice rather
+# than raising when one is missing — right for a running app, exactly wrong for
+# a release build, which should never get that far. `builder.css` is also the
+# tripwire for the asset filename drifting, and the single-file check for a
+# Rollup chunk appearing: collectstatic does not rewrite ES-module specifiers,
+# so a second chunk would lose its cache-busting silently.
+COPY static/flows/flow-schema.json ./static/flows/flow-schema.json
+RUN npm run build:js \
+    && test -s apps/flows/static/flows/builder/builder.js \
+    && test -s apps/flows/static/flows/builder/builder.css \
+    && test "$(ls apps/flows/static/flows/builder/*.js | wc -l)" -eq 1
 
 # ---------------------------------------------------------------------------
 # Builder — resolve dependencies into a virtualenv we can copy wholesale.
@@ -83,6 +105,10 @@ COPY --chown=app:app . .
 # Must land before the collectstatic below, and be owned by the app user, which
 # is what runs it.
 COPY --from=frontend --chown=app:app /app/theme/static/css/dist /app/theme/static/css/dist
+
+# The flow-builder island, for the same two reasons: .gitignore keeps it out of
+# the build context, and the collectstatic below has to see it.
+COPY --from=frontend --chown=app:app /app/apps/flows/static/flows/builder /app/apps/flows/static/flows/builder
 
 # WORKDIR creates /app as root and COPY --chown only covers the files it
 # copies, so the app user could not create staticfiles/ at build time or write

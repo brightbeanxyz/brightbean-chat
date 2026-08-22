@@ -14,7 +14,8 @@ list in the document comes from a literal or from registry insertion order.
 into a failing test in the suite CI already runs.
 
 Alongside the schema proper, ``x-brightbean`` carries what a *builder* needs and
-a validator does not: each node type's label, its handles, and the graph limits.
+a validator does not: each node type's label, its palette group, its handles,
+and the graph limits.
 It is an extension keyword, so any other JSON-Schema consumer ignores it, and it
 means L3-C reads one file rather than one file plus a hard-coded table.
 """
@@ -27,7 +28,7 @@ from typing import Any
 from apps.flows.schema import fields as f
 from apps.flows.schema.envelope import ID_PATTERN, MAX_EDGES, MAX_NODES, SCHEMA_VERSION, limits
 from apps.flows.schema.handles import HANDLE_PATTERN
-from apps.flows.schema.nodes import NODE_TYPES, all_defs
+from apps.flows.schema.nodes import GROUPS, NODE_TYPES, all_defs
 
 __all__ = ["ARTIFACT_RELATIVE_PATH", "artifact_path", "json_schema", "serialize"]
 
@@ -115,11 +116,16 @@ def json_schema() -> dict[str, Any]:
         "x-brightbean": {
             "schema_version": SCHEMA_VERSION,
             "limits": limits(),
+            # The palette drawers, ordered. Shipping the order and the labels as
+            # data — rather than only the group key on each node type — is what
+            # lets the builder render a drawer it has never heard of.
+            "groups": [{"key": key, "label": label} for key, label in GROUPS],
             "node_types": [
                 {
                     "type": spec.type,
                     "label": spec.label,
                     "description": spec.description,
+                    "group": spec.group,
                     "handles": list(spec.handles),
                     "dynamic_handles": [
                         {"prefix": prefix, "config_key": config_key} for prefix, config_key in spec.dynamic_handles

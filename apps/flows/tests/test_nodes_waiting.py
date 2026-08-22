@@ -12,6 +12,7 @@ import pytest
 from django.utils import timezone
 
 from apps.contacts.services import create_custom_field, set_field_value
+from apps.flows import messaging
 from apps.flows.engine import start_flow
 from apps.flows.engine.nodes.smart_delay import WEEKDAYS
 from apps.flows.models import ExecutionStatus, StartedBy
@@ -281,8 +282,14 @@ class TestSendMessage:
         assert execution.status == ExecutionStatus.COMPLETED
         assert "no channel connection" in caplog.text
 
-    def test_without_the_messaging_app_the_node_fails_by_name(self, tenancy):
-        """The state of this branch until L3-A merges — worth being explicit about."""
+    def test_without_the_messaging_app_the_node_fails_by_name(self, tenancy, monkeypatch):
+        """A deployment that cannot reach the facade fails by name, not by crash.
+
+        Simulated rather than ambient: this was the real state of the tree until
+        L3-A merged, and the behaviour still matters for a deployment that does
+        not install messaging — but it has to be arranged now.
+        """
+        monkeypatch.setattr(messaging, "_services", lambda: None)
         connection = connection_for(tenancy.workspace)
         document = graph([node("m", "send_message", {"blocks": [{"type": "text", "text": "Hi"}]})])
 

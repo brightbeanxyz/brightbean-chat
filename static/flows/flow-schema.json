@@ -2062,6 +2062,24 @@
   "title": "BrightBean Chat flow graph",
   "type": "object",
   "x-brightbean": {
+    "groups": [
+      {
+        "key": "content",
+        "label": "Content"
+      },
+      {
+        "key": "logic",
+        "label": "Logic"
+      },
+      {
+        "key": "actions",
+        "label": "Actions"
+      },
+      {
+        "key": "other",
+        "label": "Other"
+      }
+    ],
     "limits": {
       "max_edges": 2000,
       "max_graph_bytes": 524288,
@@ -2083,6 +2101,7 @@
             "prefix": "qr"
           }
         ],
+        "group": "content",
         "handles": [
           "default",
           "timeout"
@@ -2095,6 +2114,7 @@
         "annotation": false,
         "description": "SPEC §11.2. Runs its verbs in order and always continues.",
         "dynamic_handles": [],
+        "group": "actions",
         "handles": [
           "default"
         ],
@@ -2106,6 +2126,7 @@
         "annotation": false,
         "description": "SPEC §11.3. Terminal in-graph: it ends this execution and starts the target flow.",
         "dynamic_handles": [],
+        "group": "logic",
         "handles": [],
         "label": "Start Flow",
         "terminal": true,
@@ -2115,6 +2136,7 @@
         "annotation": false,
         "description": "SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded, not re-declared.",
         "dynamic_handles": [],
+        "group": "logic",
         "handles": [
           "cond:true",
           "cond:false"
@@ -2127,6 +2149,7 @@
         "annotation": false,
         "description": "SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
         "dynamic_handles": [],
+        "group": "logic",
         "handles": [
           "default"
         ],
@@ -2143,6 +2166,7 @@
             "prefix": "rand"
           }
         ],
+        "group": "logic",
         "handles": [],
         "label": "Randomizer",
         "terminal": false,
@@ -2152,6 +2176,7 @@
         "annotation": false,
         "description": "SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard (SECURITY-BASELINE §6); nothing in this app fetches the URL.",
         "dynamic_handles": [],
+        "group": "actions",
         "handles": [
           "default",
           "error"
@@ -2164,6 +2189,7 @@
         "annotation": false,
         "description": "SPEC §11.8. Validated reply capture; email/phone answers also record consent.",
         "dynamic_handles": [],
+        "group": "content",
         "handles": [
           "default",
           "timeout"
@@ -2176,6 +2202,7 @@
         "annotation": false,
         "description": "SPEC §11.9. Runtime is L5-D. Needs an SMS connection and a phone identity.",
         "dynamic_handles": [],
+        "group": "actions",
         "handles": [
           "default",
           "error"
@@ -2188,6 +2215,7 @@
         "annotation": false,
         "description": "SPEC §11.10. Runtime is L5-E. Needs an email connection and an email identity.",
         "dynamic_handles": [],
+        "group": "actions",
         "handles": [
           "default",
           "error"
@@ -2200,6 +2228,7 @@
         "annotation": true,
         "description": "SPEC §11.11. Builder-only annotation, ignored at runtime and never connected.",
         "dynamic_handles": [],
+        "group": "content",
         "handles": [],
         "label": "Note",
         "terminal": false,

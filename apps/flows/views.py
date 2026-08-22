@@ -137,8 +137,8 @@ def flow_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
     """The builder's host page: a mount div and a placeholder.
 
-    L3-C (issue #10) replaces the placeholder with the React island. The URLs it
-    needs are ``data-`` attributes rather than something it reverses itself, and
+    L3-C (issue #10) mounts the React island here. The URLs it needs are
+    ``data-`` attributes rather than something it reverses itself, and
     ``ensure_csrf_cookie`` guarantees the token is there for the first PUT —
     without it an autosave two seconds after load would be the request that
     finds no cookie.
@@ -157,6 +157,10 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             "api_publish_url": reverse("flows:api_publish", kwargs=keys),
             "api_stats_url": reverse("flows:api_stats", kwargs=keys),
             "api_schema_url": reverse("flows:api_schema", kwargs={"workspace_id": workspace_id}),
+            # #16's picker, for the send_message media block. Reversed here like
+            # its four siblings rather than assembled from location.pathname in
+            # the bundle, which would break under FORCE_SCRIPT_NAME.
+            "media_picker_url": reverse("media:picker", kwargs={"workspace_id": workspace_id}),
             "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
         },
     )
