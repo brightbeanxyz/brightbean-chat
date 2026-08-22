@@ -95,6 +95,25 @@ class TestAuthRateLimiting:
         for _ in range(AUTH_RATE_LIMIT + 5):
             assert client.get("/healthz").status_code == 200
 
+    def test_the_whole_burst_counts_against_one_window(self, client):
+        """The property whose absence made this class flaky, asserted directly.
+
+        ``test_the_window_is_pinned_for_this_class`` proves the pin reaches the
+        limiter by comparing keys. This comes at it from the other end and
+        checks the consequence: a burst that crossed a boundary would write a
+        *second* counter row and split its hits across the two, so neither
+        reaches the limit. One row means one window, which is the precondition
+        every counting test in this class rests on.
+        """
+        from apps.common.models import RateLimitCounter
+
+        assert RateLimitCounter.objects.count() == 0
+
+        for _ in range(AUTH_RATE_LIMIT + 1):
+            client.post(LOGIN, {})
+
+        assert RateLimitCounter.objects.count() == 1
+
     def test_the_bucket_rotates_with_the_clock(self):
         """The window number is part of the key, so the window starts on the
         clock instead of sliding forward with every attempt — which is what
