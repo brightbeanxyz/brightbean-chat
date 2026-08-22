@@ -22,6 +22,7 @@ from apps.notifications.models import (
     NotificationDelivery,
     NotificationSetting,
 )
+from apps.notifications.queue import NotificationEmailError
 
 LOOP_CAP_CONTEXT = {"flow_name": "Welcome", "contact_name": "Ada"}
 
@@ -123,15 +124,15 @@ class TestUnknownEventType:
 
 @pytest.mark.django_db
 class TestEmail:
-    def test_an_email_event_renders_both_parts_and_sends(self, tenancy, django_capture_on_commit_callbacks):
+    def test_an_email_event_renders_both_parts_and_sends(self, tenancy, drain_emails):
         """The synchronous path, which is what runs until issue #5 merges.
 
         The send is wrapped in transaction.on_commit, and pytest.mark.django_db
         never commits — so without capturing the callbacks the outbox stays
         empty and this test would silently prove nothing.
         """
-        with django_capture_on_commit_callbacks(execute=True):
-            loop_cap(tenancy.workspace)
+        loop_cap(tenancy.workspace)
+        drain_emails()
 
         assert len(mail.outbox) == 2
         message = mail.outbox[0]
@@ -141,18 +142,16 @@ class TestEmail:
         assert mime == "text/html"
         assert "<!DOCTYPE html>" in alternative
 
-    def test_the_email_links_back_with_an_absolute_url(self, tenancy, django_capture_on_commit_callbacks):
-        with (
-            override_settings(APP_URL="https://chat.example.test/"),
-            django_capture_on_commit_callbacks(execute=True),
-        ):
+    def test_the_email_links_back_with_an_absolute_url(self, tenancy, drain_emails):
+        with override_settings(APP_URL="https://chat.example.test/"):
             loop_cap(tenancy.workspace)
+            drain_emails()
 
         assert "https://chat.example.test/notifications/" in mail.outbox[0].body
 
-    def test_a_delivery_row_records_the_outcome(self, tenancy, django_capture_on_commit_callbacks):
-        with django_capture_on_commit_callbacks(execute=True):
-            loop_cap(tenancy.workspace)
+    def test_a_delivery_row_records_the_outcome(self, tenancy, drain_emails):
+        loop_cap(tenancy.workspace)
+        drain_emails()
 
         delivery = NotificationDelivery.objects.first()
         assert delivery.channel == Channel.EMAIL
@@ -167,49 +166,55 @@ class TestEmail:
 
         assert not NotificationDelivery.objects.filter(channel=Channel.IN_APP).exists()
 
-    def test_opting_out_suppresses_the_email_but_keeps_the_in_app_row(
-        self, tenancy, django_capture_on_commit_callbacks
-    ):
+    def test_opting_out_suppresses_the_email_but_keeps_the_in_app_row(self, tenancy, drain_emails):
         NotificationSetting.objects.create(user=tenancy.owner, email_enabled=False)
 
-        with django_capture_on_commit_callbacks(execute=True):
-            loop_cap(tenancy.workspace)
+        loop_cap(tenancy.workspace)
+        drain_emails()
 
         assert Notification.objects.filter(user=tenancy.owner).exists()
         assert [m.to for m in mail.outbox] == [[tenancy.members["admin"].email]]
 
-    def test_an_event_the_registry_marks_in_app_only_never_mails(self, tenancy, django_capture_on_commit_callbacks):
-        with django_capture_on_commit_callbacks(execute=True):
-            notify(tenancy.workspace, "broadcast_finished", context={"broadcast_name": "Launch"})
+    def test_an_event_the_registry_marks_in_app_only_never_mails(self, tenancy, drain_emails):
+        notify(tenancy.workspace, "broadcast_finished", context={"broadcast_name": "Launch"})
+        drain_emails()
 
         assert Notification.objects.exists()
         assert mail.outbox == []
 
     def test_the_opt_out_check_is_one_query_for_the_whole_fan_out(self, tenancy, django_assert_max_num_queries):
         """Studio asks per recipient, which is O(N) queries to answer a question
-        that already has N ids in it."""
-        with django_assert_max_num_queries(12):
+        that already has N ids in it.
+
+        The ceiling covers the enqueue too, since #5 merged: one scheduled
+        action per recipient plus its savepoint. What the cap is really pinning
+        is that nothing here is O(N) *in the opt-out lookup* — the parametrised
+        recipient counts below are the direct check on that.
+        """
+        with django_assert_max_num_queries(18):
             loop_cap(tenancy.workspace)
 
-    def test_an_smtp_failure_is_recorded_and_does_not_lose_the_notification(
-        self, tenancy, django_capture_on_commit_callbacks, caplog
-    ):
+    def test_an_smtp_failure_is_recorded_and_does_not_lose_the_notification(self, tenancy, drain_emails, caplog):
         with (
             patch(
                 "django.core.mail.EmailMultiAlternatives.send",
                 side_effect=smtplib.SMTPException("mail server on fire"),
             ),
             caplog.at_level("ERROR", logger="apps.notifications.mail"),
-            django_capture_on_commit_callbacks(execute=True),
         ):
             created = loop_cap(tenancy.workspace)
+            # The handler raises so the queue applies its backoff (SPEC §15);
+            # the delivery row is still written FAILED, which is what the
+            # assertions below are about.
+            with pytest.raises(NotificationEmailError):
+                drain_emails()
 
         assert len(created) == 2
         assert Notification.objects.count() == 2
         assert set(NotificationDelivery.objects.values_list("status", flat=True)) == {DeliveryStatus.FAILED}
         assert "mail server on fire" in NotificationDelivery.objects.first().error_message
 
-    def test_the_recipient_address_is_not_written_to_the_log(self, tenancy, django_capture_on_commit_callbacks, caplog):
+    def test_the_recipient_address_is_not_written_to_the_log(self, tenancy, drain_emails, caplog):
         """The address is personal data; apps/accounts/adapters.py omits it for
         the same reason."""
         with (
@@ -218,25 +223,27 @@ class TestEmail:
                 side_effect=smtplib.SMTPException("nope"),
             ),
             caplog.at_level("ERROR", logger="apps.notifications.mail"),
-            django_capture_on_commit_callbacks(execute=True),
         ):
             loop_cap(tenancy.workspace)
+            with pytest.raises(NotificationEmailError):
+                drain_emails()
 
         assert tenancy.owner.email not in caplog.text
 
-    def test_a_template_error_is_not_swallowed_as_a_delivery_failure(self, tenancy, django_capture_on_commit_callbacks):
+    def test_a_template_error_is_not_swallowed_as_a_delivery_failure(self, tenancy, drain_emails):
         """The narrow `except (OSError, SMTPException)` is the point: a renamed
         context key reported as an SMTP problem would leave every notification
         email in the deployment silently missing."""
-        with (
-            patch(
-                "apps.notifications.mail.render_to_string",
-                side_effect=TypeError("template blew up"),
-            ),
-            pytest.raises(TypeError, match="template blew up"),
-            django_capture_on_commit_callbacks(execute=True),
+        with patch(
+            "apps.notifications.mail.render_to_string",
+            side_effect=TypeError("template blew up"),
         ):
             loop_cap(tenancy.workspace)
+            # The render now happens in the worker, so that is where the
+            # TypeError has to surface — and surfacing is the point: the queue
+            # only retries what raises.
+            with pytest.raises(TypeError, match="template blew up"):
+                drain_emails()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -374,17 +381,17 @@ class TestWorkspaceMayBeAnId:
 
 @pytest.mark.django_db
 class TestSubjectCannotBreakTheHeader:
-    def test_a_newline_in_the_title_does_not_escape_as_a_bad_header(self, tenancy, django_capture_on_commit_callbacks):
+    def test_a_newline_in_the_title_does_not_escape_as_a_bad_header(self, tenancy, drain_emails):
         """BadHeaderError is a ValueError, so it slipped past the
         transport-only except clause and escaped between the in-memory attempts
         increment and the save — leaving the row PENDING with attempts=0."""
-        with django_capture_on_commit_callbacks(execute=True):
-            notify(
-                tenancy.workspace,
-                "flow_loop_cap_hit",
-                users=[tenancy.owner],
-                context={"flow_name": "Welcome\nseries\r\nBcc: attacker@evil.test"},
-            )
+        notify(
+            tenancy.workspace,
+            "flow_loop_cap_hit",
+            users=[tenancy.owner],
+            context={"flow_name": "Welcome\nseries\r\nBcc: attacker@evil.test"},
+        )
+        drain_emails()
 
         message = mail.outbox[0].message()
         assert len(mail.outbox) == 1
@@ -395,7 +402,7 @@ class TestSubjectCannotBreakTheHeader:
         assert message["To"] == tenancy.owner.email
         assert NotificationDelivery.objects.get().status == DeliveryStatus.SENT
 
-    def test_a_non_dict_payload_does_not_crash_the_send(self, tenancy, django_capture_on_commit_callbacks):
+    def test_a_non_dict_payload_does_not_crash_the_send(self, tenancy, drain_emails):
         """payload is a JSONField; a row edited elsewhere can hold a list."""
         created = notify(tenancy.workspace, "flow_loop_cap_hit", users=[tenancy.owner], context={"flow_name": "W"})
         Notification.objects.filter(pk=created[0].pk).update(payload=["not", "a", "dict"])
