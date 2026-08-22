@@ -24,3 +24,20 @@ class EncryptionProbe(BaseModel):
 
     class Meta:
         app_label = "testapp"
+
+
+class QueueProbe(BaseModel):
+    """One row per action the queue actually executed.
+
+    The exactly-once assertion in ``apps/queueing/tests/test_concurrency.py``
+    needs a side effect it can count, and counting in memory would not survive
+    the threads that test runs. ``action_id`` is unique, so a second execution
+    of one action is an ``IntegrityError`` at the moment it happens rather than
+    a total that quietly reads 1001 at the end.
+    """
+
+    action_id = models.UUIDField(unique=True)
+    worker = models.CharField(max_length=50, blank=True, default="")
+
+    class Meta:
+        app_label = "testapp"

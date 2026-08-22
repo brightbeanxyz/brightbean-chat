@@ -52,6 +52,16 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "membership_id": lambda t: t.org_membership.pk,
     "invitation_id": lambda t: _victim_invitation(t).pk,
     "connection_id": lambda t: _victim_connection(t).pk,
+    "asset_id": lambda t: _victim_media_asset(t).pk,
+    "folder_id": lambda t: _victim_media_folder(t).pk,
+    "flow_id": lambda t: _victim_flow(t).pk,
+    # Notifications (issue #7) are keyed by user, not by workspace, so "the
+    # victim" here is a person rather than a tenant. Registering it is an
+    # opt-in: iter_tenant_routes() skips a route carrying no *registered*
+    # kwarg before it ever reaches the unknown-kwarg check, so this route
+    # would otherwise be neither swept nor reported. The per-user boundary is
+    # also covered directly in apps/notifications/tests/test_views.py.
+    "notification_id": lambda t: _victim_notification(t).pk,
 }
 
 #: Kwargs that need *a* value but do not identify a tenant. A route made only of
@@ -113,6 +123,23 @@ def _victim_connection(tenancy: Tenancy) -> Any:
     return connection
 
 
+def _victim_flow(tenancy: Tenancy) -> Any:
+    """A flow owned by the victim, created on demand.
+
+    The sweep reaches these routes through the victim's ``workspace_id`` too, so
+    the middleware answers first; ``apps/flows/tests/test_api.py`` covers the
+    sharper case this cannot — the attacker's *own* workspace id paired with the
+    victim's flow id, where only ``get_scoped_object_or_404`` stands in the way.
+    """
+    from apps.flows.models import Flow
+    from apps.flows.services import create_flow
+
+    flow = Flow.objects.for_workspace(tenancy.workspace).first()
+    if flow is None:
+        flow = create_flow(workspace=tenancy.workspace, name="Victim onboarding")
+    return flow
+
+
 def _victim_invitation(tenancy: Tenancy) -> Any:
     """A pending invitation owned by the victim, created on demand."""
     from datetime import timedelta
@@ -130,6 +157,53 @@ def _victim_invitation(tenancy: Tenancy) -> Any:
             expires_at=timezone.now() + timedelta(days=7),
         )
     return invitation
+
+
+def _victim_media_asset(tenancy: Tenancy) -> Any:
+    """A media asset owned by the victim, created on demand.
+
+    Built through the model rather than the upload view: the sweep is about
+    tenancy, not about validation, and going through ``create_asset`` would make
+    every IDOR run write a file to storage and sniff it.
+    """
+    from apps.media_library.models import MediaAsset
+
+    asset = MediaAsset.objects.for_workspace(tenancy.workspace).first()
+    if asset is None:
+        asset = MediaAsset.objects.create(
+            workspace=tenancy.workspace,
+            filename="victim.png",
+            kind="image",
+            mime="image/png",
+            size=1,
+            file="media/victim.png",
+        )
+    return asset
+
+
+def _victim_media_folder(tenancy: Tenancy) -> Any:
+    """A media folder owned by the victim, created on demand."""
+    from apps.media_library.models import MediaFolder
+
+    folder = MediaFolder.objects.for_workspace(tenancy.workspace).first()
+    if folder is None:
+        folder = MediaFolder.objects.create(workspace=tenancy.workspace, name="Victim folder")
+    return folder
+
+
+def _victim_notification(tenancy: Tenancy) -> Any:
+    """A notification belonging to the victim's owner, created on demand."""
+    from apps.notifications.models import Notification
+
+    notification = Notification.objects.filter(user=tenancy.owner).first()
+    if notification is None:
+        notification = Notification.objects.create(
+            user=tenancy.owner,
+            event_type="flow_loop_cap_hit",
+            title="Victim notification",
+            payload={"workspace_id": str(tenancy.workspace.pk)},
+        )
+    return notification
 
 
 # ---------------------------------------------------------------------------

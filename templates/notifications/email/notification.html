@@ -1,0 +1,76 @@
+{% comment %}
+Ported from BrightBean Studio's notifications/email/notification.html.
+
+Table layout and inline styles are not a stylistic choice: Outlook's Word
+rendering engine ignores most of a stylesheet, so an email that uses the design
+system's classes arrives unstyled. The brand values below are the *literal*
+resolutions of --brand-500 / --neutral-* from theme/static_src/src/styles.css —
+a var() in an email is another thing Outlook drops.
+
+Studio's footer links to /notifications/preferences/, which belonged to the
+per-event preference matrix this port drops; that URL 404s here. It points at
+the notification list, which is where the one remaining toggle lives.
+{% endcomment %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ notification.title }}</title>
+<style>
+  body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+  img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+  body { margin: 0; padding: 0; width: 100% !important; }
+</style>
+</head>
+<body style="margin:0;padding:0;background-color:#FAFAF9;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1C1917;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FAFAF9;">
+<tr><td align="center" style="padding:40px 20px;">
+
+  <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background-color:#FFFFFF;border-radius:12px;border:1px solid #E7E5E4;">
+
+    <tr>
+      <td style="padding:28px 32px 20px;border-bottom:1px solid #F5F5F4;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="width:28px;height:28px;background-color:#F97316;border-radius:6px;text-align:center;vertical-align:middle;color:#FFFFFF;font-weight:700;font-size:13px;">B</td>
+            <td style="padding-left:10px;font-weight:700;font-size:15px;color:#1C1917;letter-spacing:-0.01em;">BrightBean Chat</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr>
+      <td style="padding:28px 32px 24px;">
+        <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;color:#1C1917;line-height:1.3;">{{ notification.title }}</h1>
+        {% if notification.body %}
+        <p style="margin:0 0 20px;font-size:15px;color:#57534E;line-height:1.65;">{{ notification.body }}</p>
+        {% endif %}
+        {% if notification.payload.workspace_name %}
+        <p style="margin:0 0 20px;font-size:13px;color:#A8A29E;">Workspace: {{ notification.payload.workspace_name }}</p>
+        {% endif %}
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="border-radius:9999px;background-color:#F97316;text-align:center;">
+              <a href="{{ action_url }}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 24px;color:#FFFFFF;font-size:13px;font-weight:600;text-decoration:none;border-radius:9999px;">View it</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+
+    <tr>
+      <td style="padding:20px 32px 28px;border-top:1px solid #F5F5F4;">
+        <p style="margin:0;font-size:12px;color:#A8A29E;line-height:1.5;">
+          You are receiving this because notification emails are on for your account.
+          <a href="{{ settings_url }}" style="color:#F97316;text-decoration:underline;">Turn them off</a>.
+        </p>
+      </td>
+    </tr>
+
+  </table>
+
+</td></tr>
+</table>
+</body>
+</html>

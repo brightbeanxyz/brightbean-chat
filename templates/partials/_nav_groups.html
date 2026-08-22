@@ -24,7 +24,10 @@ Args:
    title="{{ item.label }}">
     {% include "partials/_nav_icon.html" with name=item.icon %}
     <span class="sidebar-nav-label">{{ item.label }}</span>
-    {% if item.badge %}<span class="sidebar-badge">{{ item.badge }}</span>{% endif %}
+    {% comment %}The id lets the owning app keep its own count in step with an
+    in-page action, via an htmx out-of-band swap, without re-rendering the nav.
+    Issue #7 uses it; #14's inbox badge gets it for free.{% endcomment %}
+    {% if item.badge %}<span class="sidebar-badge" id="nav-badge-{{ item.key }}">{{ item.badge }}</span>{% endif %}
 </a>
 {% endfor %}
 {% endfor %}

@@ -9,9 +9,20 @@ pruned can be replayed, signature and all, and will be processed as new. Thirty
 days is the specification's number, and the tradeoff is documented on
 :class:`~apps.channels.models.WebhookEventLog`.
 
-Registered with L2-C's housekeeping registry from ``ChannelsConfig.ready``, and
-available as ``manage.py prune_webhook_events`` so a deployment without the
-queue — or one running this issue before #5 merges — can still cron it.
+Registered with L2-C's hourly sweep by the decorator below, which runs when
+``ChannelsConfig.ready`` imports this module — the shape
+``apps.queueing.housekeeping`` documents. It is also available as
+``manage.py prune_webhook_events``, so an operator can force a prune without
+waiting for the hour.
+
+The registered name is ``prune_webhook_event_log``, which is the name
+``apps.queueing.housekeeping.OPTIONAL_JOB_PATHS`` reserves for this job. That
+matters: registering under any other name would leave that entry unresolved and
+the sweep would try to import a second copy of this job every hour. Its entry
+points at ``apps.channels.ingest.prune_webhook_event_log``, which is not where
+this function lives — but a name already in the registry is skipped before the
+path is ever tried, so the explicit registration wins and the stale path is
+inert. Worth tidying in that module; not worth reaching into it from here.
 """
 
 import logging
@@ -21,6 +32,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.channels.models import WebhookEventLog
+from apps.queueing.housekeeping import register_housekeeping_job
 
 logger = logging.getLogger(__name__)
 
@@ -62,3 +74,17 @@ def prune_webhook_event_log(older_than_days: int | None = None) -> int:
     if total:
         logger.info("Pruned %s webhook event log rows older than %s days", total, older_than_days)
     return total
+
+
+@register_housekeeping_job("prune_webhook_event_log")
+def _prune_webhook_event_log_job() -> str | None:
+    """The zero-argument, string-returning shape the hourly sweep expects.
+
+    A thin wrapper rather than decorating :func:`prune_webhook_event_log`
+    directly: that one takes a window and returns a count, which is what the
+    management command and the tests want, and the sweep wants neither. Returning
+    None on an empty prune keeps the hourly log quiet when there was nothing to
+    do.
+    """
+    deleted = prune_webhook_event_log()
+    return f"pruned {deleted} webhook event log rows" if deleted else None

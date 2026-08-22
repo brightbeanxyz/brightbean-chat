@@ -64,3 +64,39 @@ class TestManagementCommand:
         make_events(connection, 2, age_days=10)
         call_command("prune_webhook_events", "--older-than-days", "3")
         assert WebhookEventLog.objects.count() == 0
+
+
+class TestQueueRegistration:
+    """The seam into L2-C's hourly sweep (#5), verified rather than assumed.
+
+    This was a soft, guessed registration while #5 was an unmerged sibling. The
+    real API turned out to be a decorator factory taking a zero-argument job, so
+    the guess would have raised TypeError inside ready() and stopped the process
+    booting. Nothing here is obvious enough to leave untested.
+    """
+
+    def test_the_prune_is_registered_with_the_sweep(self) -> None:
+        from apps.queueing.housekeeping import housekeeping_jobs
+
+        assert "prune_webhook_event_log" in housekeeping_jobs()
+
+    def test_it_uses_the_name_the_queue_reserves_for_it(self) -> None:
+        """Registering under any other name would leave the queue's own entry
+        unresolved, and the sweep would import a second copy every hour."""
+        from apps.queueing.housekeeping import OPTIONAL_JOB_PATHS
+
+        assert "prune_webhook_event_log" in {name for name, _ in OPTIONAL_JOB_PATHS}
+
+    def test_the_job_has_the_shape_the_sweep_expects(self, connection: Any) -> None:
+        """Zero arguments, and a string the sweep logs — or None when idle."""
+        from apps.queueing.housekeeping import housekeeping_jobs
+
+        job = housekeeping_jobs()["prune_webhook_event_log"]
+
+        assert job() is None
+
+        make_events(connection, 2, age_days=40)
+        summary = job()
+        assert summary is not None
+        assert "2" in summary
+        assert WebhookEventLog.objects.count() == 0

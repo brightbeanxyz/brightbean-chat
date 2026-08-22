@@ -87,6 +87,24 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  worker:
+    build: .
+    image: brightbean-chat:${IMAGE_TAG:-dev}
+    command: python manage.py process_tasks
+    environment: *app-environment
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Deliberately no healthcheck: the worker serves no port, and a liveness
+    # probe that shelled into it would report "alive" for a process stuck on a
+    # handler just as happily as for a healthy one. Zombie recovery is the real
+    # liveness mechanism (SPEC §15) — abandoned rows come back after 10 minutes
+    # whatever killed the process.
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   media_data:

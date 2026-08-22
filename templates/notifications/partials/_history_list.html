@@ -1,0 +1,94 @@
+{% comment %}
+The history page's rows, swapped in by the filter controls.
+
+Args: notifications, page, has_next, has_previous, selected_* (for the pager's
+hx-get, which has to carry the current filters forward).
+{% endcomment %}
+{% comment %}
+The page the reader is on, so the container's refresh returns it rather than
+snapping back to page 1. It lives in this partial because this partial is what
+gets re-rendered, so the value is always the one just served.
+{% endcomment %}
+<input type="hidden" name="page" value="{{ page }}">
+
+{% if notifications %}
+<ul class="divide-y" style="border-color: var(--border);">
+    {% for n in notifications %}
+    <li class="notif-item{% if not n.is_read %} is-unread{% endif %} flex gap-3 px-4 py-3.5">
+        <span class="notif-icon notif-icon-{{ n.payload.tone|default:'info' }} flex-shrink-0">
+            {% include "partials/_nav_icon.html" with name=n.payload.icon|default:"bell" %}
+        </span>
+        <div class="flex-1 min-w-0">
+            {% comment %}
+              Linked here as well as in the bell. An actionable notification
+              that has scrolled out of the bell's 20-row window would otherwise
+              be reachable from the email but from nowhere in the product. The
+              path was reduced to this origin at write time, so it is safe to
+              render directly; a row without one stays plain text rather than
+              becoming a dead link.
+            {% endcomment %}
+            <p class="text-[13px] font-semibold leading-snug" style="color: var(--text-primary);">
+                {% if n.payload.action_url %}
+                <a href="{{ n.payload.action_url }}" class="btn-text-hover-primary">{{ n.title }}</a>
+                {% else %}{{ n.title }}{% endif %}
+            </p>
+            {% if n.body %}
+            <p class="text-[12px] leading-relaxed mt-0.5" style="color: var(--text-secondary);">{{ n.body }}</p>
+            {% endif %}
+            <p class="text-[11px] mt-1 tabular-nums" style="color: var(--text-ghost);">
+                {{ n.created_at|timesince }} ago
+                {% if n.payload.workspace_name %} · {{ n.payload.workspace_name }}{% endif %}
+            </p>
+        </div>
+        {% if not n.is_read %}
+        <button type="button"
+                {% comment %}swap="none": the response is the out-of-band badge
+                plus a notificationsChanged event, and the container below
+                re-fetches itself with its own filter and page state. Swapping
+                a write response into the list is what lost the reader's
+                place.{% endcomment %}
+                hx-post="{% url 'notifications:mark_read' n.id %}"
+                hx-swap="none"
+                class="btn-text-hover-primary flex-shrink-0 self-start text-[11px] font-semibold cursor-pointer"
+                style="color: var(--primary);">Mark read</button>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+
+{% if has_previous or has_next %}
+<div class="flex items-center justify-between px-4 py-3 border-t" style="border-color: var(--border);">
+    {% if has_previous %}
+    <button type="button" class="btn-outline btn-inline text-xs"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'-1' }}&event_type={{ selected_event_type|urlencode }}&read_state={{ selected_read_state|urlencode }}"
+            hx-target="#notification-history" hx-swap="innerHTML">Newer</button>
+    {% else %}<span></span>{% endif %}
+    {% if has_next %}
+    <button type="button" class="btn-outline btn-inline text-xs"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'1' }}&event_type={{ selected_event_type|urlencode }}&read_state={{ selected_read_state|urlencode }}"
+            hx-target="#notification-history" hx-swap="innerHTML">Older</button>
+    {% else %}<span></span>{% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="flex flex-col items-center justify-center py-16 px-6 text-center">
+    <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+         style="background: var(--surface-2); color: var(--text-ghost);">
+        {% include "partials/_nav_icon.html" with name="bell" %}
+    </div>
+    <p class="text-sm font-medium" style="color: var(--text-primary);">Nothing here</p>
+    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+        {% if selected_event_type or selected_read_state %}No notifications match this filter.{% else %}Notifications about your flows, channels and broadcasts will appear here.{% endif %}
+    </p>
+</div>
+{% endif %}
+
+{% comment %}
+No _badge.html include here. This partial is rendered BOTH as an htmx response
+and inline by list.html on the full-page path, and _badge.html carries
+`id="notification-badge"` and `id="nav-badge-notifications"` with hx-swap-oob —
+which on the full page would be a second copy of ids the shell already renders,
+and an out-of-band swap resolves its target by id. The badge now travels with
+the write responses instead, where it is unambiguously a response fragment.
+{% endcomment %}
