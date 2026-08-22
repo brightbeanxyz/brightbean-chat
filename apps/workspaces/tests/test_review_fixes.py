@@ -106,8 +106,13 @@ class TestCredentialPageQueryCount:
 
         queries = count_queries(client, url)
 
-        # Two for the page's own data, whatever the platform count.
-        assert queries < 10 + len(CONFIGURABLE_PLATFORMS), queries
+        # The property under test is the *per-platform* one: the budget is a
+        # fixed base plus one query per platform, and a regression here would
+        # scale with the platform count. The base moved 10 -> 11 when issue #7
+        # added the unread-notification count to the shell's context processor,
+        # which is one indexed count() on every authenticated page and does not
+        # vary with platforms.
+        assert queries < 11 + len(CONFIGURABLE_PLATFORMS), queries
 
 
 @pytest.mark.django_db

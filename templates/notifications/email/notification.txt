@@ -1,0 +1,9 @@
+{{ notification.title }}
+{% if notification.body %}
+{{ notification.body }}
+{% endif %}
+View it: {{ action_url }}
+
+---
+You are receiving this because notification emails are on for your account.
+Turn them off: {{ settings_url }}

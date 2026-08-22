@@ -1,0 +1,74 @@
+{% comment %}
+The notification bell, mounted in base.html's sidebar footer.
+
+**Why the footer and not a topbar:** there is no desktop topbar in this shell —
+templates/base.html is an <aside> plus a <main>, and its only header is
+mobile-only. Studio's bell has nowhere else to go.
+
+**Why expanded-only:** it sits inside `.sidebar-org-expanded`, so the collapsed
+60px rail does not show it — exactly as that rail already hides the sign-out
+control. Notifications stay reachable there through the nav row, which is
+icon-only when collapsed. Putting a second copy in the collapsed half would mean
+two elements sharing the badge's id, and an out-of-band swap only ever finds the
+first.
+
+**Why no `{% block alpine_components %}` and no inline script:** `x-data` on a
+wrapper is the workspace switcher's pattern (base.html:140) — there is no
+`Alpine.data()` to register, so nothing has to slot into base.html's
+load-bearing htmx → components → Alpine script order, and there is no inline
+script to carry a CSP nonce. Inline `x-*` needs `unsafe-eval`, which
+config/settings/base.py already grants for exactly this reason.
+{% endcomment %}
+<div class="relative flex-shrink-0"
+     x-data="{ bellOpen: false }"
+     @click.away="bellOpen = false"
+     @keydown.escape.window="bellOpen = false">
+
+    <button type="button"
+            @click="bellOpen = !bellOpen"
+            hx-get="{% url 'notifications:bell' %}"
+            hx-target="#notification-panel-body"
+            hx-swap="innerHTML"
+            class="btn-icon-hover relative w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer"
+            style="color: var(--text-tertiary);"
+            title="Notifications"
+            aria-haspopup="true"
+            :aria-expanded="bellOpen ? 'true' : 'false'">
+        {% include "partials/_nav_icon.html" with name="bell" %}
+        {% comment %}The dot, not _badge.html: that partial is the out-of-band
+        *response* fragment and carries a second id for the nav row's badge,
+        which would collide with the nav row's own on a first render.{% endcomment %}
+        <span id="notification-badge">{% include "notifications/partials/_dot.html" %}</span>
+    </button>
+
+    {% comment %}
+      `bottom-full` rather than the switcher's `mt-1`: this dropdown hangs off
+      the bottom of the sidebar, so it opens upward. The <aside> sets no
+      overflow, so a panel wider than the 240px rail is not clipped.
+
+      A separate polling element rather than `hx-trigger="every 60s"` on the
+      button: the button's own request fills the panel, and one element cannot
+      have two targets. `hx-swap="none"` means only the out-of-band badge in the
+      response is applied. Deleting this <div> is the complete rollback if the
+      poll is ever unwelcome — the open-refetch and the OOB swap keep the count
+      correct without it.
+    {% endcomment %}
+    <div hx-get="{% url 'notifications:badge' %}" hx-trigger="every 60s" hx-swap="none"></div>
+
+    <div x-show="bellOpen" x-cloak
+         class="bb-select-panel anim-collapse absolute bottom-full left-0 mb-2 z-50 w-80 py-1">
+        {% comment %}
+          Two triggers, one target: the button's hx-get fills this on open, and
+          `notificationsChanged from:body` refills it after anything is marked
+          read — from this panel or from the history page, since the event
+          bubbles either way. The write view therefore never has to know which
+          surface asked.
+        {% endcomment %}
+        <div id="notification-panel-body"
+             hx-get="{% url 'notifications:bell' %}"
+             hx-trigger="notificationsChanged from:body"
+             hx-swap="innerHTML">
+            <div class="px-4 py-6 text-center text-xs" style="color: var(--text-tertiary);">Loading…</div>
+        </div>
+    </div>
+</div>
