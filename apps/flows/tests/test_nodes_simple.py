@@ -283,8 +283,15 @@ class TestConditionNode:
         assert "condition node c" in execution.last_error
 
     def test_an_unregistered_condition_source_fails_the_run(self, tenancy):
-        """``window`` is L3-A's slot and ``sequence`` is L6-A's, both unfilled."""
-        flow = self._branching_flow(tenancy.workspace, [{"source": "window", "key": "telegram", "op": "inside"}])
+        """``sequence`` is L6-A's slot, still declared but not evaluable.
+
+        This used to use ``window``, which was L3-A's and is filled now — the
+        rule evaluated, the run completed, and the test failed. The behaviour
+        being checked is unchanged: a source registered as a slot with no
+        ``build_q`` validates at publish and fails by name at runtime.
+        """
+        sequence_id = "00000000-0000-0000-0000-0000000000aa"
+        flow = self._branching_flow(tenancy.workspace, [{"source": "sequence", "key": sequence_id, "op": "subscribed"}])
         contact = contact_for(tenancy.workspace)
 
         execution = start_flow(contact, flow, started_by=StartedBy.API)
