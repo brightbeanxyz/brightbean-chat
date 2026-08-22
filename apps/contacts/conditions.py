@@ -530,24 +530,51 @@ _VALUE_SCHEMA: dict[str, Any] = {
 }
 
 
-def _rule_variant(source: str) -> dict[str, Any]:
-    """One ``oneOf`` branch of the rule schema, discriminated on ``source``."""
+def _rule_variant(source: str, ops: Iterable[str], *, takes_value: bool) -> dict[str, Any]:
+    """One ``oneOf`` branch of the rule schema, discriminated on ``source``.
+
+    A source whose operators are a mix of value-taking and valueless gets **two**
+    branches rather than one with an optional ``value``. That is the difference
+    between a schema that describes the language and one that merely permits it:
+    with a single branch, ``{"source": "custom_field", "op": ">"}`` — a
+    comparison with nothing to compare against — validates, so issue #6 publishes
+    the flow and :func:`validate` only refuses it later, when the node runs.
+    Splitting lets ``required`` carry the rule, which is the one keyword every
+    consumer of this schema already implements.
+    """
     declaration = _SOURCES[source]
     properties: dict[str, Any] = {
         "source": {"const": source},
         "key": _KEY_SCHEMAS[declaration.key_kind],
-        "op": {"type": "string", "enum": sorted(_legal_ops(source))},
+        "op": {"type": "string", "enum": sorted(ops)},
     }
-    if not set(_legal_ops(source)) <= VALUELESS_OPS:
+    required = ["source", "key", "op"]
+    if takes_value:
         properties["value"] = _VALUE_SCHEMA
+        required.append("value")
     return {
         "type": "object",
-        "title": declaration.label,
-        # The mass-assignment guard, restated where the builder can see it.
+        "title": declaration.label if not takes_value else f"{declaration.label} comparison",
+        # The mass-assignment guard, restated where the builder can see it. It is
+        # also what makes the valueless branch reject a stray `value`.
         "additionalProperties": False,
-        "required": ["source", "key", "op"],
+        "required": required,
         "properties": properties,
     }
+
+
+def _rule_variants() -> list[dict[str, Any]]:
+    """Every branch, in source order, valueless before value-taking."""
+    variants: list[dict[str, Any]] = []
+    for source in SOURCE_NAMES:
+        legal = _legal_ops(source)
+        valueless = legal & VALUELESS_OPS
+        with_value = legal - VALUELESS_OPS
+        if valueless:
+            variants.append(_rule_variant(source, valueless, takes_value=False))
+        if with_value:
+            variants.append(_rule_variant(source, with_value, takes_value=True))
+    return variants
 
 
 def _build_schema() -> dict[str, Any]:
@@ -568,7 +595,7 @@ def _build_schema() -> dict[str, Any]:
                 "type": "array",
                 "minItems": 0,
                 "maxItems": MAX_RULES,
-                "items": {"oneOf": [_rule_variant(name) for name in SOURCE_NAMES]},
+                "items": {"oneOf": _rule_variants()},
             },
         },
         # Everything JSON Schema structurally cannot express. The `op` enum for
@@ -605,6 +632,10 @@ _ROOT_KEYS = frozenset({"match", "rules"})
 _RULE_KEYS = frozenset({"source", "key", "op", "value"})
 _RULE_REQUIRED = frozenset({"source", "key", "op"})
 MAX_NODES = 5_000
+
+#: Charged per non-string node when estimating a parsed document's serialized
+#: size — a number, a bool, a null, or the braces of a container.
+_NODE_OVERHEAD_BYTES = 8
 
 
 def _reject_constant(name: str) -> Any:
@@ -646,15 +677,24 @@ def _max_bracket_depth(raw: str) -> int:
 
 
 def _assert_shape(document: Any) -> None:
-    """Depth and node caps on an already-parsed document.
+    """Depth, node and **size** caps on an already-parsed document.
 
     Iterative rather than recursive: a recursive walk over a depth bomb is the
     very ``RecursionError`` the caps exist to prevent. Django's ``JSONField``
     hands back a ``dict``, so this is the only guard that runs on the path from
-    a stored ``Segment.filter_json``.
+    a stored ``Segment.filter_json`` — which is the usual path, and the reason
+    the size cap lives here rather than only beside ``json.loads``.
+
+    Size is accumulated during the walk instead of by serialising the document:
+    ``json.dumps`` on something this function has not yet vetted is the work the
+    cap exists to bound, and it raises on values the walk handles calmly.
+    The estimate counts each string's own length plus a small per-node overhead
+    for the punctuation that would surround it, which is close enough for a
+    limit whose job is to have an order of magnitude.
     """
     stack: list[tuple[Any, int]] = [(document, 1)]
     nodes = 0
+    size = 0
     while stack:
         node, depth = stack.pop()
         nodes += 1
@@ -662,8 +702,12 @@ def _assert_shape(document: Any) -> None:
             raise ConditionValidationError("filter document is too large", code="too_large")
         if depth > MAX_JSON_DEPTH:
             raise ConditionValidationError("filter document is nested too deeply", code="too_deep")
+        size += len(node) + 2 if isinstance(node, str) else _NODE_OVERHEAD_BYTES
+        if size > MAX_FILTER_BYTES:
+            raise ConditionValidationError("filter document is too large", code="too_large")
         if isinstance(node, dict):
             stack.extend((child, depth + 1) for child in node.values())
+            size += sum(len(str(key)) + 4 for key in node)
         elif isinstance(node, list):
             stack.extend((child, depth + 1) for child in node)
 

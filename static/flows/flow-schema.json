@@ -423,6 +423,32 @@
                   },
                   "op": {
                     "enum": [
+                      "has_value",
+                      "no_value"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "custom_field"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
+                  "op"
+                ],
+                "title": "Custom field",
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
                       "!=",
                       "<",
                       "<=",
@@ -432,10 +458,8 @@
                       "after",
                       "before",
                       "contains",
-                      "has_value",
                       "is",
                       "is_not",
-                      "no_value",
                       "on"
                     ],
                     "type": "string"
@@ -493,9 +517,45 @@
                 "required": [
                   "source",
                   "key",
+                  "op",
+                  "value"
+                ],
+                "title": "Custom field comparison",
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "key": {
+                    "enum": [
+                      "created_at",
+                      "email",
+                      "first_name",
+                      "last_interaction_at",
+                      "last_name",
+                      "locale",
+                      "phone",
+                      "timezone"
+                    ],
+                    "type": "string"
+                  },
+                  "op": {
+                    "enum": [
+                      "has_value",
+                      "no_value"
+                    ],
+                    "type": "string"
+                  },
+                  "source": {
+                    "const": "system_field"
+                  }
+                },
+                "required": [
+                  "source",
+                  "key",
                   "op"
                 ],
-                "title": "Custom field",
+                "title": "Contact field",
                 "type": "object"
               },
               {
@@ -525,10 +585,8 @@
                       "after",
                       "before",
                       "contains",
-                      "has_value",
                       "is",
                       "is_not",
-                      "no_value",
                       "on"
                     ],
                     "type": "string"
@@ -586,9 +644,10 @@
                 "required": [
                   "source",
                   "key",
-                  "op"
+                  "op",
+                  "value"
                 ],
-                "title": "Contact field",
+                "title": "Contact field comparison",
                 "type": "object"
               },
               {

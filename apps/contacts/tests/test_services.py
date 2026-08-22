@@ -407,3 +407,121 @@ class TestMergeDoesNotReProbeTagsItAlreadyFiltered:
 
         assert len(selects) == 2, selects
         assert primary.tags.count() == 5
+
+
+@pytest.mark.django_db
+class TestASubscribersFailureIsNotSwallowed:
+    """Once issue #22 or #25 connects a receiver, its own IntegrityError must
+    reach the caller rather than being read as "the tag was already there"."""
+
+    def test_an_integrity_error_from_a_receiver_propagates(self, contact, tag):
+        from django.db import IntegrityError
+
+        from apps.contacts.events import EVENT_CATALOG, EVENT_CONTACT_TAG_ADDED
+
+        def exploding(sender, **kwargs):
+            raise IntegrityError("a subscriber's own constraint")
+
+        EVENT_CATALOG[EVENT_CONTACT_TAG_ADDED].connect(exploding, weak=False)
+        try:
+            with pytest.raises(IntegrityError):
+                services.add_tag(contact, tag)
+        finally:
+            EVENT_CATALOG[EVENT_CONTACT_TAG_ADDED].disconnect(exploding)
+
+    def test_a_receiver_that_raises_takes_the_link_with_it(self, contact, tag):
+        from django.db import IntegrityError, transaction
+
+        from apps.contacts.events import EVENT_CATALOG, EVENT_CONTACT_TAG_ADDED
+        from apps.contacts.models import ContactTag
+
+        def exploding(sender, **kwargs):
+            raise IntegrityError("a subscriber's own constraint")
+
+        EVENT_CATALOG[EVENT_CONTACT_TAG_ADDED].connect(exploding, weak=False)
+        try:
+            with pytest.raises(IntegrityError), transaction.atomic():
+                services.add_tag(contact, tag)
+        finally:
+            EVENT_CATALOG[EVENT_CONTACT_TAG_ADDED].disconnect(exploding)
+
+        assert ContactTag.objects.for_workspace(contact.workspace_id).count() == 0
+
+    def test_the_genuine_link_conflict_is_still_absorbed(self, contact, tag):
+        services.add_tag(contact, tag)
+
+        assert services.add_tag(contact, tag) is False
+
+
+@pytest.mark.django_db
+class TestConcurrentFirstTimeFieldWrites:
+    def test_a_stale_read_lands_on_the_update_path_instead_of_a_constraint_error(
+        self, contact, custom_field, monkeypatch
+    ):
+        """Simulates the loser of the race: its pre-read says the field is unset,
+        but by the time it writes the row exists.
+
+        Patching `first()` to report None is the observable half of that race
+        without threads — the write then has to cope with a row it did not expect
+        to find. Before `update_or_create`, this path built a fresh
+        `CustomFieldValue` and hit the (contact, field) unique constraint.
+        """
+        from django.db.models.query import QuerySet
+
+        from apps.contacts.models import CustomFieldValue
+
+        services.set_field_value(contact, custom_field, "first")
+        monkeypatch.setattr(QuerySet, "first", lambda self: None)
+
+        row = services.set_field_value(contact, custom_field, "second")
+
+        monkeypatch.undo()
+        assert row.value_text == "second"
+        assert CustomFieldValue.objects.for_workspace(contact.workspace_id).count() == 1
+
+    def test_the_event_still_fires_once_for_a_real_change(self, contact, custom_field):
+        from apps.contacts.events import EVENT_CATALOG, EVENT_CONTACT_FIELD_CHANGED
+
+        seen = []
+        receiver = lambda sender, **kwargs: seen.append(kwargs)  # noqa: E731
+        EVENT_CATALOG[EVENT_CONTACT_FIELD_CHANGED].connect(receiver, weak=False)
+        try:
+            services.set_field_value(contact, custom_field, "a")
+            services.set_field_value(contact, custom_field, "a")
+            services.set_field_value(contact, custom_field, "b")
+        finally:
+            EVENT_CATALOG[EVENT_CONTACT_FIELD_CHANGED].disconnect(receiver)
+
+        assert len(seen) == 2  # the no-op rewrite in the middle fires nothing
+
+
+@pytest.mark.django_db
+class TestNulBytesAreRefusedEverywhere:
+    @pytest.mark.parametrize("field", ["first_name", "last_name", "email", "phone", "locale"])
+    def test_a_contact_scalar_carrying_a_nul_is_refused(self, workspace, field):
+        """Postgres text cannot hold one, and `split()` does not strip it, so
+        without the guard psycopg raises at execute time — a 500 for a value an
+        inbound platform or a CSV import supplied."""
+        with pytest.raises(ContactsError, match="null byte"):
+            services.create_contact(workspace, **{field: "a\x00b"})
+
+    def test_a_tag_name_carrying_a_nul_is_refused(self, workspace):
+        with pytest.raises(ContactsError, match="null byte"):
+            services.get_or_create_tag(workspace, "vi\x00p")
+
+
+@pytest.mark.django_db
+class TestTheMergeSurvivorMustBeActive:
+    def test_merging_into_a_tombstone_is_refused(self, workspace):
+        """Otherwise the duplicate's data is copied onto a row no surface shows,
+        and the duplicate is tombstoned too — losing both contacts at once."""
+        primary = services.create_contact(workspace, first_name="Primary")
+        duplicate = services.create_contact(workspace, first_name="Duplicate")
+        primary.status = ContactStatus.DELETED
+        primary.save(update_fields=["status"])
+
+        with pytest.raises(ContactsError, match="deleted"):
+            services.merge_contacts(primary=primary, duplicate=duplicate)
+
+        duplicate.refresh_from_db()
+        assert duplicate.status == ContactStatus.ACTIVE

@@ -17,6 +17,7 @@ from apps.contacts import services
 from apps.contacts.conditions import (
     MAX_FILTER_BYTES,
     MAX_RULES,
+    MAX_VALUE_CHARS,
     ConditionValidationError,
     queryset,
     validate,
@@ -309,3 +310,48 @@ class TestEveryRefusalIsAConditionError:
             validate(workspace, payload)
 
         assert exc.value.code == "bad_number"
+
+
+@pytest.mark.django_db
+class TestTheSizeCapAppliesToParsedDocumentsToo:
+    """The byte cap used to run only on the raw-text path.
+
+    Every real caller hands over a parsed dict — Django's JSONField, the admin
+    form, and any JSON API — so the identical document sailed past the limit it
+    was written to enforce (SECURITY-BASELINE §7).
+    """
+
+    @staticmethod
+    def _fat_document(rules: int) -> dict:
+        return {
+            "match": "any",
+            "rules": [
+                {"source": "system_field", "key": "email", "op": "contains", "value": "x" * MAX_VALUE_CHARS}
+                for _ in range(rules)
+            ],
+        }
+
+    def test_an_oversized_dict_is_refused(self, workspace):
+        document = self._fat_document(MAX_RULES)
+
+        with pytest.raises(ConditionValidationError) as exc:
+            validate(workspace, document)
+
+        assert exc.value.code == "too_large"
+
+    def test_the_same_document_as_text_is_refused_identically(self, workspace):
+        """The two paths must agree; they used to disagree by 12 KiB."""
+        import json
+
+        document = self._fat_document(MAX_RULES)
+
+        with pytest.raises(ConditionValidationError) as as_dict:
+            validate(workspace, document)
+        with pytest.raises(ConditionValidationError) as as_text:
+            validate(workspace, json.dumps(document))
+
+        assert as_dict.value.code == as_text.value.code == "too_large"
+
+    def test_a_document_within_the_cap_still_validates(self, workspace):
+        """The cap must not have been tightened into the legal range."""
+        validate(workspace, self._fat_document(4))

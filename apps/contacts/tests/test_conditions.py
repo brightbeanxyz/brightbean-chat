@@ -588,23 +588,47 @@ class TestTheSchema:
 
         assert json.loads(json.dumps(CONDITION_SCHEMA)) == CONDITION_SCHEMA
 
-    def test_every_variants_operator_enum_matches_the_python_tables(self):
-        from apps.contacts.conditions import TYPE_OPS, _legal_ops
+    def test_the_variants_of_a_source_together_cover_its_operator_table(self):
+        """A source with both valueless and value-taking operators has two
+        branches, so the check is on the union rather than on one branch."""
+        from apps.contacts.conditions import _legal_ops
 
+        seen: dict[str, set[str]] = {}
         for variant in CONDITION_SCHEMA["properties"]["rules"]["items"]["oneOf"]:
             source = variant["properties"]["source"]["const"]
-            assert set(variant["properties"]["op"]["enum"]) == set(_legal_ops(source)), source
-        assert set(CONDITION_SCHEMA["x-brightbean"]["opsByType"]) == {
-            t for t in CONDITION_SCHEMA["x-brightbean"]["opsByType"]
-        }
-        assert TYPE_OPS
+            ops = set(variant["properties"]["op"]["enum"])
+            assert ops <= set(_legal_ops(source)), source
+            assert not (seen.get(source, set()) & ops), f"{source} lists an operator twice"
+            seen.setdefault(source, set()).update(ops)
+
+        for source, ops in seen.items():
+            assert ops == set(_legal_ops(source)), source
+
+    def test_a_branch_requires_a_value_exactly_when_its_operators_take_one(self):
+        """The property this split exists for. With one branch per source and an
+        optional `value`, `{"source": "custom_field", "op": ">"}` — a comparison
+        with nothing to compare against — validated, so issue #6 published the
+        flow and the engine only refused it when the node ran."""
+        from apps.contacts.conditions import VALUELESS_OPS
+
+        for variant in CONDITION_SCHEMA["properties"]["rules"]["items"]["oneOf"]:
+            ops = set(variant["properties"]["op"]["enum"])
+            takes_value = not (ops <= VALUELESS_OPS)
+
+            assert ("value" in variant["required"]) is takes_value, ops
+            assert ("value" in variant["properties"]) is takes_value, ops
+            # additionalProperties:false is what stops a valueless branch
+            # carrying a stray operand.
+            assert variant["additionalProperties"] is False
 
     def test_it_declares_all_six_sources_including_the_unimplemented_ones(self):
         declared = [
             v["properties"]["source"]["const"] for v in CONDITION_SCHEMA["properties"]["rules"]["items"]["oneOf"]
         ]
 
-        assert declared == list(SOURCE_NAMES)
+        # Source order is preserved; a source may appear twice (valueless and
+        # value-taking), so compare the ordered unique names.
+        assert list(dict.fromkeys(declared)) == list(SOURCE_NAMES)
         assert CONDITION_SCHEMA["x-brightbean"]["unimplementedSources"] == ["sequence", "window"]
 
     def test_the_system_field_key_enum_is_the_allowlist(self):

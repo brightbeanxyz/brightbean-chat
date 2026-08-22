@@ -80,6 +80,12 @@ def _clean_text(value: Any, *, limit: int) -> str:
         return ""
     if not isinstance(value, str):
         raise ContactsError("Expected text.")
+    # Postgres text cannot hold a NUL, and `split()` does not treat one as
+    # whitespace, so without this it survives into `objects.create()` and psycopg
+    # raises at execute time — a 500 for a value an inbound platform or a CSV
+    # import supplied. The custom-field and condition paths already refuse it.
+    if "\x00" in value:
+        raise ContactsError("Text cannot contain a null byte.")
     return " ".join(value.split())[:limit]
 
 
@@ -95,6 +101,8 @@ def _clean_name(value: Any, *, limit: int, noun: str) -> str:
     """
     if not isinstance(value, str) and value is not None:
         raise ContactsError(f"A {noun} name must be text.")
+    if value and "\x00" in value:
+        raise ContactsError(f"A {noun} name cannot contain a null byte.")
     cleaned = " ".join((value or "").split())
     if not cleaned:
         raise ContactsError(f"A {noun} needs a name.")
@@ -197,6 +205,11 @@ def merge_contacts(*, primary: Contact, duplicate: Contact) -> Contact:
         raise WorkspaceMismatchError("Both contacts must belong to the same workspace.")
     if primary.pk == duplicate.pk:
         raise ContactsError("A contact cannot be merged into itself.")
+    if primary.status == ContactStatus.DELETED:
+        # Merging *into* a tombstone would copy the duplicate's tags and values
+        # onto a row no active-contact surface renders, then tombstone the
+        # duplicate as well — losing both contacts in one call.
+        raise ContactsError("The surviving contact has been deleted.")
     if duplicate.status == ContactStatus.DELETED:
         raise ContactsError("That contact has already been deleted.")
 
@@ -305,21 +318,32 @@ def _link_tag(contact: Contact, tag: Tag) -> bool:
     per tag re-establishing what that set says, inside the merge's own
     transaction.
     """
-    try:
-        with transaction.atomic():
-            # ContactScopedModel.save() derives `workspace` from the contact, so
-            # it is deliberately not passed here.
-            ContactTag(contact=contact, tag=tag).save()
-            emit(
-                EVENT_CONTACT_TAG_ADDED,
-                workspace_id=contact.workspace_id,
-                contact_id=contact.pk,
-                tag_id=tag.pk,
-            )
-    except IntegrityError:
-        # Two concurrent adds both missed the SELECT. The row exists, which is
-        # the requested state; the savepoint keeps the outer transaction usable.
-        return False
+    # Two nested blocks, and the nesting is the point. The inner savepoint wraps
+    # the insert *alone*, so the only IntegrityError it can absorb is the
+    # (contact, tag) conflict this function knows how to answer. Wrapping the
+    # emit() too would mean a subscriber's own integrity failure — once issue #22
+    # or #25 connects one — was caught here, rolled back, and reported as "the
+    # tag was already there": a receiver failure silently swallowed, which is the
+    # opposite of the signal contract.
+    #
+    # The outer block keeps the link and its subscribers in one unit, so a
+    # subscriber that raises still takes the link with it.
+    with transaction.atomic():
+        try:
+            with transaction.atomic():
+                # ContactScopedModel.save() derives `workspace` from the contact,
+                # so it is deliberately not passed here.
+                ContactTag(contact=contact, tag=tag).save()
+        except IntegrityError:
+            # Two concurrent adds both missed the SELECT. The row exists, which
+            # is the requested state; the savepoint keeps the outer block usable.
+            return False
+        emit(
+            EVENT_CONTACT_TAG_ADDED,
+            workspace_id=contact.workspace_id,
+            contact_id=contact.pk,
+            tag_id=tag.pk,
+        )
     return True
 
 
@@ -481,17 +505,21 @@ def set_field_value(contact: Contact, field: CustomField, value: Any) -> CustomF
     columns: dict[str, Any] = dict.fromkeys(VALUE_COLUMNS.values())
     columns[column] = coerced
 
+    rows = CustomFieldValue.objects.for_workspace(contact.workspace_id)
     with transaction.atomic():
-        row = CustomFieldValue.objects.for_workspace(contact.workspace_id).filter(contact=contact, field=field).first()
-        changed = row is None or getattr(row, column) != coerced
-        if row is None:
-            row = CustomFieldValue(contact=contact, field=field, **columns)
-        else:
-            for name, item in columns.items():
-                setattr(row, name, item)
-        # ContactScopedModel.save() derives `workspace`; no update_fields, so
-        # all five typed columns go in one statement and the constraint holds.
-        row.save()
+        existing = rows.filter(contact=contact, field=field).first()
+        changed = existing is None or getattr(existing, column) != coerced
+        # update_or_create rather than a hand-rolled read-then-write: two workers
+        # setting the same previously-unset field both see `existing is None` and
+        # both insert, and the loser hits the (contact, field) unique constraint.
+        # Django's implementation absorbs exactly that conflict and re-reads,
+        # which turns a routine automation race into an applied write instead of
+        # a failed request.
+        #
+        # `defaults` carries all five typed columns, four of them None: the check
+        # constraint is "exactly one populated", so a partial write over a row
+        # that previously held another type would be an IntegrityError.
+        row, _created = rows.update_or_create(contact=contact, field=field, defaults=columns)
         if changed:
             emit(
                 EVENT_CONTACT_FIELD_CHANGED,
