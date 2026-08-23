@@ -38,7 +38,7 @@ config/settings/base.py already grants for exactly this reason.
         {% comment %}The dot, not _badge.html: that partial is the out-of-band
         *response* fragment and carries a second id for the nav row's badge,
         which would collide with the nav row's own on a first render.{% endcomment %}
-        <span id="notification-badge">{% include "notifications/partials/_dot.html" %}</span>
+        {% include "notifications/partials/_dot_slot.html" with key="notification-badge" %}
     </button>
 
     {% comment %}

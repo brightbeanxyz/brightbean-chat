@@ -108,6 +108,20 @@ class NavItem:
             "active": current in matches,
             # A blank badge_key is never a key in `badges`, so this is 0.
             "badge": badges.get(self.badge_key, 0),
+            # Whether the row gets a badge *element* at all — a different
+            # question from whether the count is non-zero. The owning app keeps
+            # its number live with an htmx out-of-band swap, and htmx resolves
+            # such a swap by id, so the element has to exist at zero too or the
+            # notification bell's 60s poll logs htmx:oobErrorNoTarget on every
+            # page for the whole session. templates/partials/_nav_badge.html
+            # renders the zero state as an empty, hidden span for that reason.
+            #
+            # Rows no app owns get no slot: an id nothing swaps is dead weight,
+            # and templates/partials/_nav_badge_sinks.html mirrors this same
+            # list for the settings layouts, which replace the main nav
+            # wholesale and would otherwise leave the poll with no target at
+            # all — the bug this flag exists to close.
+            "badge_slot": bool(self.badge_key),
         }
 
     def _url(self, workspace_id: Any) -> str:

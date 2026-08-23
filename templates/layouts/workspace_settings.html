@@ -18,4 +18,8 @@ copy to keep in sync.
     <span class="sidebar-nav-label">Back to app</span>
 </a>
 {% include "partials/_nav_groups.html" with groups=workspace_settings_nav_groups %}
+{% comment %}The main nav is gone from this page, and with it the badge ids the
+bell's poll swaps into — base.html renders that poll outside this block. See
+partials/_nav_badge_sinks.html.{% endcomment %}
+{% include "partials/_nav_badge_sinks.html" %}
 {% endblock %}
