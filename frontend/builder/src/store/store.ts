@@ -33,6 +33,7 @@ import type {
   Picklists,
   Position,
   StatsPayload,
+  TriggerSummary,
   ValidationPayload,
   VersionMeta,
 } from "../schema/types";
@@ -89,6 +90,8 @@ export interface BuilderState extends GraphState {
   dragging: boolean;
 
   picklists: Picklists;
+  /** Read-only, from the flow API. The HTMX drawer on the page owns editing. */
+  triggers: TriggerSummary[];
   validation: ValidationSlice;
   save: SaveSlice;
   stats: StatsPayload | null;
@@ -96,6 +99,9 @@ export interface BuilderState extends GraphState {
   statsFailed: boolean;
   statsVisible: boolean;
   loaded: boolean;
+
+  /** Replace the read-only trigger list after a drawer edit or a tab refocus. */
+  setTriggers: (triggers: TriggerSummary[]) => void;
 
   // ── graph mutations ───────────────────────────────────────────────────────
   load: (detail: FlowDetail) => void;
@@ -219,6 +225,7 @@ export function createBuilderStore(env: BuilderEnv) {
         picklists: EMPTY_PICKLISTS,
         validation: { ...emptyValidationIndex(), revision: 0 },
         save: { state: "clean", version: null, publishedVersion: null, message: null, issues: [] },
+        triggers: [],
         stats: null,
         statsFailed: false,
         statsVisible: false,
@@ -228,6 +235,7 @@ export function createBuilderStore(env: BuilderEnv) {
           set((state) => ({
             ...fromGraph(detail.graph),
             picklists: detail.picklists,
+            triggers: detail.triggers,
             limits: detail.limits,
             validation: { ...indexIssues(detail.validation), revision: state.revision },
             save: {
@@ -242,6 +250,8 @@ export function createBuilderStore(env: BuilderEnv) {
             selection: { nodes: [], edges: [] },
             loaded: true,
           })),
+
+        setTriggers: (triggers) => set({ triggers }),
 
         addNode: (type, position, options) => {
           const state = get();

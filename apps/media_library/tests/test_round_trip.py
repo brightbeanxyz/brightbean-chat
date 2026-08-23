@@ -8,12 +8,26 @@ meant to — where the bytes come back from.
 import pytest
 from django.urls import reverse
 
+from apps.media_library.delivery import read_token
 from apps.media_library.picker import picker_payload
 from apps.media_library.resolution import resolve
 from apps.media_library.services import create_folder, move_asset
 from apps.media_library.tests import factories as f
 
 pytestmark = pytest.mark.django_db
+
+
+def addressed(url: str) -> tuple[str, bool]:
+    """What a delivery URL points at: ``(asset id, is thumbnail)``.
+
+    Two delivery URLs for the same asset are *not* byte-identical. Every call to
+    ``delivery_url`` mints a fresh token, and ``django.core.signing`` stamps each
+    one with a second-resolution timestamp, so two calls that straddle a second
+    boundary sign differently. Comparing the tokens directly is a coin flip on
+    CI; comparing what they address is what the assertion actually means, and it
+    checks the thumbnail flag as well.
+    """
+    return read_token(url.rstrip("/").rsplit("/", 1)[-1])
 
 
 @pytest.fixture(params=["local", "s3"])
@@ -65,7 +79,7 @@ def test_the_full_round_trip(backend, editor_client, client, workspace):
     # 5. resolve() gives the send path the same asset from the id alone.
     resolved = resolve(media_id, workspace=workspace)
     assert resolved["mime"] == "image/png"
-    assert resolved["url"] == picked["url"]
+    assert addressed(resolved["url"]) == addressed(picked["url"])
 
     # 6. And the URL serves the bytes, with no session anywhere in sight.
     delivery = client.get(resolved["url"].replace("http://localhost:8000", ""))

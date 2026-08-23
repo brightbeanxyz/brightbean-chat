@@ -1,0 +1,33 @@
+{% comment %}
+One nav row's badge, in both of its states.
+
+Shared by the shell's first render (partials/_nav_groups.html) and by the
+out-of-band response fragments that keep the number live
+(notifications/partials/_badge.html), because the two have to agree: an
+out-of-band swap replaces the whole element, so the markup one swap puts in is
+the markup the next swap has to find.
+
+**Zero is an empty slot, not nothing.** The count is polled — _bell.html
+refetches it every 60s — and htmx resolves an out-of-band target by id, so a
+row whose badge is simply absent at zero gives every poll nothing to swap into
+and logs `htmx:oobErrorNoTarget` once a minute for the whole session. Rendering
+the span unconditionally, empty and `hidden`, gives the swap a permanent target
+without breaking the shell's contract that a zero badge shows nothing at all:
+the `sidebar-badge` class *is* the visible pill, and it is on the non-zero
+branch only. An empty `display: none` span is not a flex item either, so it
+cannot open a gap in .sidebar-nav-item's 9px row.
+
+Args:
+  key: the nav item's key. The id is `nav-badge-<key>`.
+  count: the number to show. Falsy renders the empty slot.
+  oob: True in a response fragment, where the element carries hx-swap-oob.
+       Never set on a first render — hx-swap-oob is meaningful only in a
+       response, and apps/notifications/tests/test_shell.py fails the page if
+       one leaks in.
+{% endcomment %}{% spaceless %}
+{% if count %}
+<span class="sidebar-badge" id="nav-badge-{{ key }}"{% if oob %} hx-swap-oob="true"{% endif %}>{{ count }}</span>
+{% else %}
+<span id="nav-badge-{{ key }}" hidden{% if oob %} hx-swap-oob="true"{% endif %}></span>
+{% endif %}
+{% endspaceless %}

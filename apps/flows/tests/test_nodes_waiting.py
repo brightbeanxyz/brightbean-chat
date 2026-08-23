@@ -6,14 +6,17 @@ it schedules, and which handle it takes when something goes wrong.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 from django.utils import timezone
 
+from apps.channels.capabilities import capabilities_for
+from apps.common.platforms import Platform
 from apps.contacts.services import create_custom_field, set_field_value
 from apps.flows import messaging
-from apps.flows.engine import start_flow
+from apps.flows.engine import Consumed, attempt_resume, start_flow
 from apps.flows.engine.nodes.smart_delay import WEEKDAYS
 from apps.flows.models import ExecutionStatus, StartedBy
 from apps.flows.tests.support import (
@@ -23,6 +26,7 @@ from apps.flows.tests.support import (
     contact_for,
     edge,
     graph,
+    inbound,
     node,
     published_flow,
 )
@@ -597,3 +601,76 @@ class TestWindowArithmetic:
 
         assert moved.astimezone(auckland).hour == 9
         assert moved.astimezone(auckland).weekday() == 6
+
+
+@pytest.mark.django_db
+class TestNumberedOptionsAreMatchable:
+    """SPEC §6.1's numbered fallback has to be answerable.
+
+    A platform that cannot carry every button gets the leftovers appended as
+    "Reply 1 for ..." and the contact is told to type a number. The numbering
+    happens in the adapter, but the answer key has to be in the wait config,
+    which the node writes — so the node recomputes it. ``downgrade`` is pure, so
+    recomputing is exact rather than approximate.
+
+    Without it a contact who does exactly what the message said falls through to
+    the retry or the default edge, which is the quietest possible bug.
+    """
+
+    def _node(self, count: int) -> dict[str, Any]:
+        return node(
+            "ask",
+            "send_message",
+            {
+                "blocks": [{"type": "text", "text": "Pick one"}],
+                "buttons": [
+                    {"id": f"b{index}", "label": f"Option {index}", "action": "postback"} for index in range(count)
+                ],
+            },
+        )
+
+    def test_overflowed_buttons_get_numeric_labels(self, tenancy: Any, monkeypatch: Any) -> None:
+        # Telegram carries ten; the last three have to be numbered.
+        caps = capabilities_for(Platform.TELEGRAM)
+        flow = published_flow(tenancy.workspace, graph([self._node(caps.max_buttons + 3)], []))
+        contact = contact_for(tenancy.workspace)
+        connection = connection_for(tenancy.workspace, platform=Platform.TELEGRAM)
+        FakeFacade().install(monkeypatch)
+
+        execution = start_flow(contact, flow, started_by="test", connection=connection)
+
+        labels = execution.wait_config["labels"]
+        assert labels["1"] == f"b{caps.max_buttons}"
+        assert labels["3"] == f"b{caps.max_buttons + 2}"
+        # And every numbered id is a handle the engine can actually route.
+        for number in ("1", "2", "3"):
+            assert labels[number] in execution.wait_config["handles"]
+
+    def test_a_message_that_fits_gets_no_numbers(self, tenancy: Any, monkeypatch: Any) -> None:
+        flow = published_flow(tenancy.workspace, graph([self._node(2)], []))
+        contact = contact_for(tenancy.workspace)
+        connection = connection_for(tenancy.workspace, platform=Platform.TELEGRAM)
+        FakeFacade().install(monkeypatch)
+
+        execution = start_flow(contact, flow, started_by="test", connection=connection)
+
+        assert not any(key.isdigit() for key in execution.wait_config["labels"])
+
+    def test_typing_the_number_advances_the_flow(self, tenancy: Any, monkeypatch: Any) -> None:
+        caps = capabilities_for(Platform.TELEGRAM)
+        overflow_id = f"b{caps.max_buttons}"
+        # A real node rather than a note: a note is an annotation and the schema
+        # refuses it as an edge endpoint.
+        picked = node("picked", "send_message", {"blocks": [{"type": "text", "text": "Thanks"}]}, x=200)
+        nodes = [self._node(caps.max_buttons + 1), picked]
+        flow = published_flow(tenancy.workspace, graph(nodes, [edge("ask", f"btn:{overflow_id}", "picked")]))
+        contact = contact_for(tenancy.workspace)
+        connection = connection_for(tenancy.workspace, platform=Platform.TELEGRAM)
+        FakeFacade().install(monkeypatch)
+        execution = start_flow(contact, flow, started_by="test", connection=connection)
+
+        outcome = attempt_resume(execution, inbound(connection, text="1"))
+
+        assert isinstance(outcome, Consumed)
+        execution.refresh_from_db()
+        assert execution.current_node_id == "picked"

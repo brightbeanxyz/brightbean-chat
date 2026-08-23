@@ -13,7 +13,7 @@ import pytest
 from django.db import transaction
 from django.utils import timezone
 
-from apps.flows.engine import start_flow, stop_executions
+from apps.flows.engine import start_flow, stop_automation
 from apps.flows.engine.results import Wait
 from apps.flows.models import LIVE_STATUSES, ExecutionStatus, FlowExecution, StartedBy
 from apps.flows.services import latest_version, save_draft
@@ -188,13 +188,16 @@ class TestDraftPreview:
 
 @pytest.mark.django_db
 class TestStoppingAnExecutionByHand:
-    """``stop_executions`` — the manual half of the same rule (issue #14).
+    """``stop_automation`` — the manual half of the same rule (issues #13, #14).
 
     An operator taking a conversation over from automation wants exactly what a
     new ``start_flow`` would have done to the contact's live run, without
     starting anything. It is public because the alternative is every caller
     writing ``status`` itself, and one function per terminal state is the reason
     an execution's status can be reasoned about at all.
+
+    Exercised at the engine level here; ``apps/contacts/tests/test_crm.py``
+    covers it from the contact page, and the inbox from its stop button.
     """
 
     def test_it_expires_the_live_execution(self, tenancy):
@@ -202,7 +205,7 @@ class TestStoppingAnExecutionByHand:
         contact = contact_for(tenancy.workspace)
         execution = _waiting(tenancy.workspace, contact, flow)
 
-        stopped = stop_executions(contact)
+        stopped = stop_automation(contact)
 
         execution.refresh_from_db()
         assert stopped == 1
@@ -224,7 +227,7 @@ class TestStoppingAnExecutionByHand:
             idempotency_key="timer:stop-test",
         )
 
-        stop_executions(contact)
+        stop_automation(contact)
 
         action.refresh_from_db()
         assert action.status == ActionStatus.CANCELLED
@@ -232,7 +235,7 @@ class TestStoppingAnExecutionByHand:
     def test_a_contact_with_nothing_running_is_a_no_op(self, tenancy):
         contact = contact_for(tenancy.workspace)
 
-        assert stop_executions(contact) == 0
+        assert stop_automation(contact) == 0
 
     def test_it_leaves_a_terminal_execution_alone(self, tenancy):
         """Only the three live statuses "own" the contact; re-expiring a
@@ -243,7 +246,7 @@ class TestStoppingAnExecutionByHand:
         execution.status = ExecutionStatus.COMPLETED
         execution.save(update_fields=["status", "updated_at"])
 
-        stopped = stop_executions(contact)
+        stopped = stop_automation(contact)
 
         execution.refresh_from_db()
         assert stopped == 0
@@ -260,7 +263,7 @@ class TestStoppingAnExecutionByHand:
         execution = _waiting(tenancy.workspace, contact, flow)
 
         with transaction.atomic(), contact_lock(contact):
-            stopped = stop_executions(contact)
+            stopped = stop_automation(contact)
 
         execution.refresh_from_db()
         assert stopped == 1
@@ -271,5 +274,5 @@ class TestStoppingAnExecutionByHand:
         rather than an implementation detail."""
         import apps.flows.engine as engine
 
-        assert "stop_executions" in engine.__all__
-        assert engine.stop_executions is stop_executions
+        assert "stop_automation" in engine.__all__
+        assert engine.stop_automation is stop_automation

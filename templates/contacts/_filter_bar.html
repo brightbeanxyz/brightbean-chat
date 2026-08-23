@@ -1,0 +1,169 @@
+{% comment %}
+SPEC §11.4's filter builder, as a row of add-a-rule controls.
+
+Every word of vocabulary in here — which sources exist, which operators each
+value type takes, which operators take no value at all, what to call them, which
+sources this deployment cannot evaluate yet — comes from `filter_config`, which
+the view builds from `CONDITION_SCHEMA["x-brightbean"]` and the condition
+engine's own source registry. There is no second table of operators in this
+template, and that is the point: an operator added to
+apps/contacts/conditions.py shows up here with no edit.
+
+The rules live in Alpine state and are serialised into one hidden input on every
+change, so the form GETs a single `filter=<json>` parameter that the server hands
+straight to the condition engine. Posting the rules as separate form fields would
+mean re-assembling the document server-side — a second parser for a language that
+already has one.
+
+Plain <select> elements rather than the {% templatetag openblock %} ui_select {% templatetag closeblock %} component, and that is a
+decision rather than an oversight. ui_select renders a FIXED option list at
+template-render time and binds it to one Alpine property; the pickers here are
+per-rule and their options change client-side the moment the source changes — a
+tag list becomes a custom-field list becomes a platform list. It also renders a
+button plus a panel rather than a form control, so nothing it holds would be
+carried by this GET form without a second hidden input shadowing it. A native
+select is what actually fits, and it keeps keyboard and screen-reader behaviour
+for free.
+{% endcomment %}
+<div class="crm-filters" x-cloak>
+
+  <div class="crm-filters-head">
+    <label for="filter-match" class="sr-only">Match</label>
+    <select id="filter-match" class="w-40" x-model="match" @change="touch()">
+      <option value="all">Match all rules</option>
+      <option value="any">Match any rule</option>
+    </select>
+    <button type="button" @click="addRule()">Add rule</button>
+    <template x-if="rules.length">
+      <button type="button" @click="clearRules()">Clear</button>
+    </template>
+    <span class="muted text-xs" x-show="!rules.length">No filter — showing everyone.</span>
+  </div>
+
+  <template x-for="(rule, index) in rules" :key="index">
+    <div class="crm-rule">
+      {# Source #}
+      <label class="sr-only" :for="`rule-source-${index}`">Source</label>
+      <select :id="`rule-source-${index}`" class="w-40" x-model="rule.source" @change="onSourceChange(rule)">
+        <template x-for="source in config.sources" :key="source.name">
+          <option :value="source.name" :disabled="!source.evaluable"
+                  x-text="source.evaluable ? source.label : `${source.label} — ${source.owner}`"></option>
+        </template>
+      </select>
+
+      {# Key: whichever picker this source's key kind calls for #}
+      <label class="sr-only" :for="`rule-key-${index}`">Field</label>
+      <select :id="`rule-key-${index}`" class="w-52" x-model="rule.key" @change="onKeyChange(rule)">
+        <option value="">Choose…</option>
+        <template x-for="option in keyOptions(rule)" :key="option.value">
+          <option :value="option.value" x-text="option.label"></option>
+        </template>
+      </select>
+
+      {# Operator #}
+      <label class="sr-only" :for="`rule-op-${index}`">Operator</label>
+      <select :id="`rule-op-${index}`" class="w-44" x-model="rule.op" @change="touch()">
+        <template x-for="op in opOptions(rule)" :key="op">
+          <option :value="op" x-text="opLabel(op)"></option>
+        </template>
+      </select>
+
+      {% comment %}
+        Value, typed. Absent entirely for the valueless operators — the schema
+        rejects a `value` alongside one of those, so rendering a disabled box
+        would invite a document the server refuses.
+      {% endcomment %}
+      <template x-if="takesValue(rule)">
+        <div class="crm-rule-value">
+          <label class="sr-only" :for="`rule-value-${index}`">Value</label>
+
+          <template x-if="valueType(rule) === 'boolean'">
+            <select :id="`rule-value-${index}`" class="w-32" x-model="rule.value" @change="touch()">
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
+          </template>
+
+          <template x-if="valueType(rule) === 'number'">
+            <input :id="`rule-value-${index}`" type="number" step="any" class="w-32"
+                   x-model="rule.value" @input.debounce.300ms="touch()">
+          </template>
+
+          <template x-if="isDate(rule)">
+            <div class="flex items-center gap-2">
+              <select class="w-36" x-model="rule.mode" @change="touch()">
+                <option value="on">a date</option>
+                <option value="relative">days ago / ahead</option>
+              </select>
+              <template x-if="rule.mode !== 'relative'">
+                {% comment %}
+                  flatpickr binds on x-init and writes back through the input's
+                  own change event, which keeps x-model in step.
+                {% endcomment %}
+                <input :id="`rule-value-${index}`" type="text" class="form-datetime w-40"
+                       placeholder="YYYY-MM-DD" x-model="rule.value"
+                       x-init="datePicker($el)" @change="touch()">
+              </template>
+              <template x-if="rule.mode === 'relative'">
+                <input :id="`rule-value-${index}`" type="number" class="w-28"
+                       :max="config.vocabulary.limits.maxRelativeOffset"
+                       :min="-config.vocabulary.limits.maxRelativeOffset"
+                       x-model="rule.offset" @input.debounce.300ms="touch()"
+                       title="Negative is days ago, positive is days from now">
+              </template>
+            </div>
+          </template>
+
+          <template x-if="valueType(rule) === 'text'">
+            <input :id="`rule-value-${index}`" type="text" class="w-52"
+                   :maxlength="config.vocabulary.limits.maxValueChars"
+                   x-model="rule.value" @input.debounce.300ms="touch()">
+          </template>
+        </div>
+      </template>
+
+      <button type="button" class="crm-rule-remove" @click="removeRule(index)"
+              :aria-label="`Remove rule ${index + 1}`">&times;</button>
+    </div>
+  </template>
+
+  <div class="crm-filters-foot">
+    <input type="hidden" name="filter" :value="serialised">
+    <button type="submit" class="btn-brand btn-inline">Apply filter</button>
+
+    {% if can_manage_crm %}
+      {% comment %}
+        Saving is its own POST, and it carries the same serialised document the
+        Apply button sends — one spelling of the filter, so a segment can never
+        be saved as something other than what the list is showing.
+
+        Three controls, not one, because "save" means two different things
+        depending on where the rules came from. With a segment loaded, the
+        obvious act is to update *it*; offering only "Save as segment" meant an
+        operator correcting a saved filter silently minted a second one beside
+        the original, and left the update and delete routes with no way in at
+        all.
+      {% endcomment %}
+      <span class="crm-filters-save" x-show="rules.length">
+        {% if filter_config.segmentId %}
+          <button type="button" class="btn-outline btn-inline"
+                  @click="$refs.updateSegment.requestSubmit()">Update “{{ query.segment.name }}”</button>
+        {% endif %}
+        <label for="segment-name" class="sr-only">Segment name</label>
+        <input type="text" id="segment-name" class="w-52" x-model="segmentName"
+               placeholder="Save as a new segment…" maxlength="100">
+        <button type="button" class="btn-outline btn-inline"
+                :disabled="!segmentName.trim()"
+                @click="$refs.saveSegment.requestSubmit()">Save as segment</button>
+      </span>
+
+      {% if filter_config.segmentId %}
+        <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                @click="$refs.deleteSegment.requestSubmit()">Delete segment</button>
+      {% endif %}
+    {% endif %}
+
+    <span class="muted text-xs" x-show="rules.length"
+          x-text="`${rules.length} of ${config.vocabulary.limits.maxRules} rules`"></span>
+  </div>
+</div>

@@ -53,12 +53,21 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "invitation_id": lambda t: _victim_invitation(t).pk,
     "tag_id": lambda t: _victim_tag(t).pk,
     "field_id": lambda t: _victim_custom_field(t).pk,
+    # Issue #13's CRM. `identity_id` names a messaging row rather than a contacts
+    # one — the identity table lives in apps.messaging — but it is reached through
+    # a contacts URL nested under its contact, so the victim it needs is a
+    # contact's.
+    "contact_id": lambda t: _victim_contact(t).pk,
+    "segment_id": lambda t: _victim_segment(t).pk,
+    "identity_id": lambda t: _victim_identity(t).pk,
+    "import_id": lambda t: _victim_contact_import(t).pk,
     "connection_id": lambda t: _victim_connection(t).pk,
     "asset_id": lambda t: _victim_media_asset(t).pk,
     "folder_id": lambda t: _victim_media_folder(t).pk,
     "flow_id": lambda t: _victim_flow(t).pk,
     "conversation_id": lambda t: _victim_conversation(t).pk,
     "message_id": lambda t: _victim_message(t).pk,
+    "trigger_id": lambda t: _victim_trigger(t).pk,
     # Notifications (issue #7) are keyed by user, not by workspace, so "the
     # victim" here is a person rather than a tenant. Registering it is an
     # opt-in: iter_tenant_routes() skips a route carrying no *registered*
@@ -152,17 +161,17 @@ def _victim_conversation(tenancy: Tenancy) -> Any:
     fixture that writes the row directly is a fixture that can drift from what
     the product produces.
     """
-    from apps.contacts.models import Contact
     from apps.messaging.models import Conversation
     from apps.messaging.services import open_conversation
 
     conversation = Conversation.objects.for_workspace(tenancy.workspace).first()
     if conversation is not None:
         return conversation
-    contact = Contact.objects.for_workspace(tenancy.workspace).first() or Contact.objects.create(
-        workspace=tenancy.workspace, first_name="Ada", last_name=tenancy.slug
+    return open_conversation(
+        workspace=tenancy.workspace,
+        contact=_victim_contact(tenancy),
+        connection=_victim_connection(tenancy),
     )
-    return open_conversation(workspace=tenancy.workspace, contact=contact, connection=_victim_connection(tenancy))
 
 
 def _victim_message(tenancy: Tenancy) -> Any:
@@ -204,6 +213,31 @@ def _victim_message(tenancy: Tenancy) -> Any:
     )
 
 
+def _victim_trigger(tenancy: Tenancy) -> Any:
+    """A ref-URL trigger owned by the victim, created on demand.
+
+    Built on ``_victim_flow`` and ``_victim_connection`` rather than on fresh
+    objects, so the flow the route names and the trigger it names belong to the
+    same workspace — a trigger whose flow was somebody else's would make the
+    sweep pass for the wrong reason.
+
+    ``ref_url`` specifically, because the QR endpoint 404s any other type and a
+    route that 404s for a reason other than tenancy proves nothing.
+    """
+    from apps.flows.models import Trigger, TriggerType
+
+    trigger = Trigger.objects.for_workspace(tenancy.workspace).first()
+    if trigger is None:
+        trigger = Trigger(
+            flow=_victim_flow(tenancy),
+            channel_connection=_victim_connection(tenancy),
+            type=TriggerType.REF_URL,
+            config_json={"ref": f"ref-{tenancy.slug}"},
+        )
+        trigger.save()
+    return trigger
+
+
 def _victim_invitation(tenancy: Tenancy) -> Any:
     """A pending invitation owned by the victim, created on demand."""
     from datetime import timedelta
@@ -237,6 +271,62 @@ def _victim_custom_field(tenancy: Tenancy) -> Any:
 
     field = CustomField.objects.for_workspace(tenancy.workspace).first()
     return field or CustomField.objects.create(workspace=tenancy.workspace, name="Plan", type=CustomFieldType.TEXT)
+
+
+def _victim_contact(tenancy: Tenancy) -> Any:
+    """A contact owned by the victim, created on demand.
+
+    Built through the model rather than ``services.create_contact``: the sweep is
+    about tenancy, and going through the service would fire a ``contact.created``
+    signal per route for a row nothing reads.
+    """
+    from apps.contacts.models import Contact
+
+    contact = Contact.objects.for_workspace(tenancy.workspace).first()
+    return contact or Contact.objects.create(
+        workspace=tenancy.workspace, first_name="Victim", email=f"victim@{tenancy.slug}.test"
+    )
+
+
+def _victim_segment(tenancy: Tenancy) -> Any:
+    """A saved segment owned by the victim, created on demand."""
+    from apps.contacts.models import Segment
+
+    segment = Segment.objects.for_workspace(tenancy.workspace).first()
+    return segment or Segment.objects.create(
+        workspace=tenancy.workspace, name="Victim segment", filter_json={"match": "all", "rules": []}
+    )
+
+
+def _victim_identity(tenancy: Tenancy) -> Any:
+    """A channel identity on the victim's contact, created on demand.
+
+    Connection-less — ROADMAP contract 1's "pending" shape — so the sweep does not
+    have to build a ``ChannelConnection`` as well. The opt-out route resolves it
+    by workspace *and* contact, which is the pairing under test.
+    """
+    from apps.messaging.models import ContactChannelIdentity
+
+    contact = _victim_contact(tenancy)
+    identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).filter(contact=contact).first()
+    if identity is None:
+        identity = ContactChannelIdentity(
+            contact=contact, platform="telegram", platform_user_id=f"victim-{tenancy.slug}"
+        )
+        identity.save()
+    return identity
+
+
+def _victim_contact_import(tenancy: Tenancy) -> Any:
+    """A CSV import run owned by the victim, created on demand.
+
+    No file is attached: the sweep never reads one, and writing a CSV to storage
+    per route would make an isolation test do IO.
+    """
+    from apps.contacts.models import ContactImport
+
+    run = ContactImport.objects.for_workspace(tenancy.workspace).first()
+    return run or ContactImport.objects.create(workspace=tenancy.workspace, original_filename="victim.csv")
 
 
 def _victim_media_asset(tenancy: Tenancy) -> Any:

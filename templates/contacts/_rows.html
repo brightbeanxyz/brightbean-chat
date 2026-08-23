@@ -1,0 +1,116 @@
+{% load common_extras %}{% comment %}
+The refreshable half of the contact list: the table, the empty state and the
+pager. Everything else on the page — the toolbar, the filter builder, the bulk
+bar — stays put across a swap.
+
+It re-fetches itself on `contactsChanged`, which every mutation's toast carries,
+the same way `_tag_rows.html` answers `tagsChanged`. Fetching the whole page and
+picking one div out of it with hx-select also works and costs a full shell
+render — sidebar, workspace switcher, every context-processor query — per
+keystroke-sized edit.
+
+Everything rendered here is attacker-controlled: names, emails and platform
+usernames all arrive from strangers (SECURITY-BASELINE §2). Django autoescapes,
+nothing is marked safe, and no value from a contact reaches an href or a src.
+{% endcomment %}
+<div id="contact-rows"
+     hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}{% if page_querystring %}?{{ page_querystring }}{% endif %}"
+     hx-trigger="contactsChanged from:body"
+     hx-swap="outerHTML">
+
+  {% if list_error %}
+    <p class="alert-warning">
+      This filter could not be applied, so no contacts are shown: {{ list_error }}
+    </p>
+  {% endif %}
+
+  {% if page.object_list %}
+    <table>
+      <thead>
+        <tr>
+          <th class="w-8">
+            {% comment %}
+              Selects this page, not the whole filter. A "select every matching
+              contact" affordance would promise a bulk action over a set the
+              endpoint caps at 500 — targeting a whole segment is a broadcast's
+              shape (issue #23), not a checkbox on a list.
+            {% endcomment %}
+            <label class="sr-only" for="select-page">Select this page</label>
+            <input type="checkbox" id="select-page" class="bb-checkbox"
+                   x-on:change="togglePage({{ page_ids|json_attr }}, $event.target.checked)">
+          </th>
+          <th>Name</th>
+          <th>Channels</th>
+          <th>Tags</th>
+          <th>Last interaction</th>
+          <th>Opt-in</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for contact in page.object_list %}
+          <tr>
+            <td>
+              <label class="sr-only" for="select-{{ contact.id }}">Select {{ contact.display_name }}</label>
+              <input type="checkbox" id="select-{{ contact.id }}" class="bb-checkbox" value="{{ contact.id }}"
+                     x-bind:checked="isSelected('{{ contact.id }}')"
+                     x-on:change="toggle('{{ contact.id }}', $event.target.checked)">
+            </td>
+            <td>
+              <a href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=contact.id %}">{{ contact.display_name }}</a>
+              {% if contact.email %}<br><span class="muted text-xs">{{ contact.email }}</span>
+              {% elif contact.phone %}<br><span class="muted text-xs">{{ contact.phone }}</span>{% endif %}
+            </td>
+            <td>
+              {% for platform in contact.channel_platforms %}
+                <span class="pi-chip {{ platform|platform_class }} w-5 h-5" title="{{ platform }}">
+                  {% include "partials/_platform_icon.html" with platform=platform size="sm" %}
+                </span>
+              {% empty %}
+                <span class="muted">—</span>
+              {% endfor %}
+            </td>
+            <td>
+              {% for tag in contact.tags.all %}<span class="crm-chip">{{ tag.name }}</span>{% empty %}<span class="muted">—</span>{% endfor %}
+            </td>
+            <td>{{ contact.last_interaction_at|default:"—" }}</td>
+            <td>
+              {% comment %}
+                Two pills, not an if/elif chain. `has_opt_in` and `has_opted_out`
+                are independent facts — a contact can have consented on Telegram
+                and opted out on SMS — and `annotate_reachability`'s docstring
+                says collapsing them "would have to pick which one to lie about".
+                An elif did exactly that: it hid a still-reachable channel behind
+                the opt-out and read as though the contact were unreachable.
+              {% endcomment %}
+              {% if contact.has_opt_in %}<span class="status-pill status-pill-active">Opted in</span>{% endif %}
+              {% if contact.has_opted_out %}
+                <span class="status-pill status-pill-disabled"
+                      title="Opted out on at least one channel{% if contact.has_opt_in %}, still opted in on another{% endif %}">Opted out</span>
+              {% endif %}
+              {% if not contact.has_opt_in and not contact.has_opted_out %}<span class="muted">—</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <p class="muted">
+      Page {{ page.number }} of {{ page.paginator.num_pages }} — {{ page.paginator.count }} contact{{ page.paginator.count|pluralize }}.
+      {% if page.has_previous %}
+        <a href="?{% if querystring %}{{ querystring }}&amp;{% endif %}page={{ page.previous_page_number }}"
+           hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}?{% if querystring %}{{ querystring }}&amp;{% endif %}page={{ page.previous_page_number }}"
+           hx-target="#contact-rows" hx-swap="outerHTML">Previous</a>
+      {% endif %}
+      {% if page.has_next %}
+        <a href="?{% if querystring %}{{ querystring }}&amp;{% endif %}page={{ page.next_page_number }}"
+           hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}?{% if querystring %}{{ querystring }}&amp;{% endif %}page={{ page.next_page_number }}"
+           hx-target="#contact-rows" hx-swap="outerHTML">Next</a>
+      {% endif %}
+    </p>
+  {% else %}
+    <p class="muted">
+      {% if query.is_filtered or query.segment %}No contacts match this filter.
+      {% else %}No contacts yet. They arrive when someone messages a connected channel, or when you import a CSV.{% endif %}
+    </p>
+  {% endif %}
+</div>

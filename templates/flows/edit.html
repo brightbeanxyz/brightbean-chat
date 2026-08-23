@@ -37,22 +37,47 @@ guaranteed flash of an unstyled canvas.
     <div class="flex items-center gap-2 text-xs" style="color: var(--text-tertiary);">
         {% if version %}<span>Draft v{{ version.version }}</span>{% endif %}
         {% if not can_edit %}<span>Read-only</span>{% endif %}
+        {% comment %}
+        The header and the drawer live in different template blocks, so one
+        Alpine x-data cannot span them. $dispatch's CustomEvent bubbles to
+        window, which the drawer catches with @toggle-triggers.window. An
+        onclick= would silently do nothing: CSP grants 'unsafe-eval' for Alpine
+        but never 'unsafe-inline'.
+        {% endcomment %}
+        <button type="button" class="btn-outline btn-inline" x-data
+                @click="$dispatch('toggle-triggers')">Triggers</button>
     </div>
 </div>
 {% endblock %}
 
 {% block content %}
 {% flow_builder_bundle as builder %}
+{% comment %}
+The Triggers drawer overlays the canvas rather than sitting beside it, so the
+mount div's box never changes size and React Flow is never asked to reflow.
+The body is fetched by htmx on first open and re-fetched on `triggersChanged`.
+{% endcomment %}
+{% comment %}
+Dispatching `triggers-opened` on the way open is what makes the panel's first
+fetch lazy: most visits to the builder never touch the drawer, and `load once`
+made every one of them pay for the panel query plus a channel query per ref
+trigger.
+{% endcomment %}
+<div class="flex-1 min-h-0 relative"
+     x-data="{ triggersOpen: false }"
+     @toggle-triggers.window="triggersOpen = !triggersOpen; if (triggersOpen) $dispatch('triggers-opened')"
+     @keydown.escape.window="triggersOpen = false">
 <div id="flow-builder"
-     class="fb-mount flex-1 min-h-0 rounded-xl border overflow-hidden"
-     style="border-color: var(--border); background: var(--surface-1);"
+     class="fb-mount h-full rounded-xl border overflow-hidden"
+     style="border-color: var(--border); background: var(--surface-1); height: 100%;"
      data-flow-id="{{ flow.id }}"
      data-can-edit="{{ can_edit|yesno:"true,false" }}"
      data-detail-url="{{ api_detail_url }}"
      data-publish-url="{{ api_publish_url }}"
      data-stats-url="{{ api_stats_url }}"
      data-schema-url="{{ api_schema_url }}"
-     data-media-picker-url="{{ media_picker_url }}">
+     data-media-picker-url="{{ media_picker_url }}"
+     data-preview-url="{{ preview_url }}">
     {% if builder %}
     {% comment %}
     Replaced by createRoot().render() on mount. Kept until then so a slow parse
@@ -72,6 +97,17 @@ guaranteed flash of an unstyled canvas.
         </div>
     </div>
     {% endif %}
+</div>
+
+<aside x-show="triggersOpen" x-cloak aria-label="Triggers"
+       class="bb-drawer anim-collapse absolute inset-y-0 right-0 w-96 max-w-full z-30 overflow-y-auto">
+    <div id="flow-triggers"
+         hx-get="{% url 'flows:trigger_panel' workspace_id=request.workspace.id flow_id=flow.id %}"
+         hx-trigger="triggers-opened from:body once, triggersChanged from:body"
+         hx-swap="outerHTML">
+        <p class="p-4 text-sm" style="color: var(--text-secondary);">Loading triggers…</p>
+    </div>
+</aside>
 </div>
 {% endblock %}
 

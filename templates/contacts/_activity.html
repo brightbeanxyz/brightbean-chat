@@ -1,0 +1,90 @@
+{% comment %}
+Recent messages plus whatever automation is running for this contact.
+
+A window on the thread, not the thread: rendering conversations is the inbox's
+job (issue #14) and each row links there rather than reproducing it. There is no
+compose box — replying is `reply_in_inbox`, which is a different permission on a
+different page.
+
+The pane refreshes on `contactAutomationChanged`, which the start-flow and
+stop-automation toasts carry, so the execution line redraws without rebuilding
+the field editor and the channel list beside it.
+
+Message text and platform usernames are attacker-controlled
+(SECURITY-BASELINE §2): escaped, never marked safe, and never used as a URL.
+{% endcomment %}
+<section class="crm-panel" id="contact-activity"
+         hx-get="{% url 'contacts:activity' workspace_id=request.workspace.id contact_id=contact.id %}"
+         hx-trigger="contactAutomationChanged from:body"
+         hx-swap="outerHTML">
+  <h2>Activity</h2>
+
+  {# ── Automation ──────────────────────────────────────────────── #}
+  <div class="crm-automation">
+    {% if execution %}
+      <div>
+        <span class="status-pill status-pill-active">{{ execution.get_status_display }}</span>
+        <span class="text-sm">{{ execution.flow.name }}</span>
+        <span class="muted text-xs">v{{ execution.flow_version.version }} · since {{ execution.updated_at }}</span>
+      </div>
+      {% if can_manage_crm %}
+        <form class="mb-0"
+              hx-post="{% url 'contacts:stop_automation' workspace_id=request.workspace.id contact_id=contact.id %}"
+              hx-swap="none"
+              hx-confirm="Stop this automation? The run is expired and its pending timers are cancelled.">
+          <button type="submit" class="btn-outline btn-inline btn-danger-soft">Stop automation</button>
+        </form>
+      {% endif %}
+    {% else %}
+      <span class="muted text-xs">No automation running.</span>
+    {% endif %}
+  </div>
+
+  {% if can_manage_crm %}
+    <form class="crm-automation mb-0"
+          hx-post="{% url 'contacts:start_flow' workspace_id=request.workspace.id contact_id=contact.id %}"
+          hx-swap="none">
+      <label for="start-flow" class="sr-only">Flow</label>
+      <select id="start-flow" name="flow_id" class="w-56" required>
+        <option value="">Start a flow…</option>
+        {% for flow in startable_flows %}<option value="{{ flow.id }}">{{ flow.name }}</option>{% endfor %}
+      </select>
+      <button type="submit">Start</button>
+      {% comment %}
+        Only published flows are offered: start_flow raises for a draft, so a
+        picker listing them would be a picker full of error messages. Draft runs
+        are issue #12's "test on Telegram", a different affordance elsewhere.
+      {% endcomment %}
+      <span class="muted text-xs">Starting a flow ends whatever this contact is already running.</span>
+    </form>
+
+    {% comment %}
+      Sequence enrolment is L6-A's (#22). Rendered disabled rather than hidden so
+      the shape of the page does not change when it lands.
+    {% endcomment %}
+    <p class="muted text-xs">
+      <button type="button" disabled title="Sequences arrive with issue #22 (L6-A)">Enrol in a sequence</button>
+    </p>
+  {% endif %}
+
+  {# ── Messages ────────────────────────────────────────────────── #}
+  <h3 class="mt-4">Recent messages</h3>
+  {% for row in recent_messages %}
+    <div class="crm-msg {% if row.inbound %}crm-msg-in{% else %}crm-msg-out{% endif %}">
+      <div class="crm-msg-meta">
+        <span>{% if row.inbound %}Received{% else %}Sent{% endif %}</span>
+        <span>{{ row.created_at }}</span>
+        {% if row.message.internal %}<span class="status-pill status-pill-disabled">Internal note</span>{% endif %}
+        <a href="{% url 'inbox' workspace_id=request.workspace.id %}">Open in inbox</a>
+      </div>
+      <div class="crm-msg-body">
+        {% if row.text %}{{ row.text }}{% else %}<span class="muted">No text</span>{% endif %}
+        {% if row.attachment_count %}
+          <span class="muted text-xs">· {{ row.attachment_count }} attachment{{ row.attachment_count|pluralize }}</span>
+        {% endif %}
+      </div>
+    </div>
+  {% empty %}
+    <p class="muted text-xs">Nothing yet. Messages appear here as soon as this contact writes in.</p>
+  {% endfor %}
+</section>

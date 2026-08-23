@@ -732,15 +732,18 @@ def pause(request: WorkspaceRequest, workspace_id: str, conversation_id: str) ->
 def stop_automation(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> HttpResponse:
     """Expire whatever flow is currently holding this contact.
 
-    Through ``apps.flows.engine.stop_executions``, which takes the contact
+    Through ``apps.flows.engine.stop_automation``, which takes the contact
     advisory lock and cancels the queue rows that would have woken the run back
     up. Writing ``status`` here instead would be a second write site for a
     column the runner is built around owning.
+
+    Issue #13 needed the same call for its contact page and got there first, so
+    this uses its name rather than adding a synonym beside it.
     """
-    from apps.flows.engine import stop_executions
+    from apps.flows.engine import stop_automation
 
     conversation = _conversation(request, conversation_id)
-    stopped = stop_executions(conversation.contact)
+    stopped = stop_automation(conversation.contact)
     if not stopped:
         return toast_response(tone="info", title="Nothing running", events=_refresh())
     return toast_response(tone="success", title="Automation stopped", events=_refresh())

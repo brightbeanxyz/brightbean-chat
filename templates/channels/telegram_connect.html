@@ -1,0 +1,53 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Connect Telegram · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Connect a Telegram bot</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Telegram bots are created by talking to BotFather. The token it gives you is
+    the whole credential — anyone holding it can read and send as your bot — so
+    it is stored encrypted and never shown again.
+  </p>
+
+  <h2>Before you paste</h2>
+  <ol>
+    <li>Open <code>@BotFather</code> in Telegram and send <code>/newbot</code>.</li>
+    <li>Choose a display name and a username ending in <code>bot</code>.</li>
+    <li>Copy the token it replies with. It looks like <code>123456789:AA…</code>.</li>
+  </ol>
+
+  {% if error %}
+    <div class="alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    <p>
+      <label for="bot_token">Bot token</label><br />
+      {% comment %}
+      autocomplete="off" and a password input: this value is a live credential
+      and must not end up in the browser's saved form data.
+      {% endcomment %}
+      <input type="password" id="bot_token" name="bot_token" autocomplete="off"
+             spellcheck="false" required />
+      <span class="muted">Pasted once. We verify it with Telegram before saving anything.</span>
+    </p>
+    <button type="submit">Connect</button>
+  </form>
+
+  <h2>What happens next</h2>
+  <p class="muted">
+    We call <code>getMe</code> to check the token and learn your bot's username,
+    then point Telegram at this deployment with <code>setWebhook</code> and a
+    secret only the two of us know:
+  </p>
+  <p><code>{{ webhook_url }}</code></p>
+  <p class="muted">
+    That URL has to be reachable from the public internet over HTTPS with a
+    valid certificate — Telegram will not deliver to anything else. On a local
+    machine, put a tunnel in front of it first. Full setup notes are in
+    <code>docs/channels/telegram.md</code>.
+  </p>
+
+  <p><a href="{{ list_url }}">Back to channels</a></p>
+{% endblock %}

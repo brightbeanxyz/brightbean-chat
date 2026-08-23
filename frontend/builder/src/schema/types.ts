@@ -155,12 +155,34 @@ export interface ValidationPayload {
   warnings: Issue[];
 }
 
+/**
+ * One trigger, read-only.
+ *
+ * The builder does not edit triggers — the HTMX drawer on the same page does —
+ * so this is a rendered summary and deliberately carries no `config_json`.
+ * Shipping the raw config would make this store a second place a trigger's
+ * configuration lives, with the drawer as the first.
+ */
+export interface TriggerSummary {
+  id: string;
+  type: string;
+  type_label: string;
+  enabled: boolean;
+  priority: number;
+  summary: string;
+  connection: { id: string; label: string; platform: string } | null;
+  /** The platforms this trigger resolved to — what the capability warnings used. */
+  platforms: string[];
+}
+
 export interface FlowDetail {
   flow: FlowMeta;
   version: VersionMeta | null;
   graph: FlowGraph;
   published_version: VersionMeta | null;
   picklists: Picklists;
+  /** Always present; an empty array when the flow has none. */
+  triggers: TriggerSummary[];
   validation: ValidationPayload;
   limits: GraphLimits;
   schema_url: string;

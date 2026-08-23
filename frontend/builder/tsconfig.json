@@ -20,5 +20,5 @@
       "@flow-schema": ["./src/schema/flow-schema.d.ts"]
     }
   },
-  "include": ["src", "vite.config.mts", "vitest.setup.ts"]
+  "include": ["src", "vite.config.mts", "vitest.setup.ts", "../../tests/js"]
 }

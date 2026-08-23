@@ -66,17 +66,35 @@ class PublishResult:
     validation: ValidationResult
 
 
-def validate_for_workspace(graph: Any, workspace: Any, *, known_size: int | None = None) -> ValidationResult:
-    """Validate a graph with this workspace's connected platforms in view.
+def validate_for_workspace(
+    graph: Any,
+    workspace: Any,
+    *,
+    known_size: int | None = None,
+    flow: Any = None,
+) -> ValidationResult:
+    """Validate a graph with the platforms it will actually run on in view.
 
-    The platform list is empty until issue #4 ships ``ChannelConnection``, which
-    means no capability warning is emitted in a running deployment yet — see
-    :func:`apps.flows.capabilities.connected_platforms`.
+    ``flow`` narrows the platform set to what that flow is *triggered* on
+    (issue #11): a flow whose only trigger is an SMS keyword should warn about
+    its buttons, and one triggered only on Telegram should not be warned about
+    what SMS cannot do. A flow with no platform-bearing trigger — none at all, or
+    only ``api`` and ``rule`` ones — falls back to the workspace's connected
+    platforms, which is the answer this function gave before triggers existed.
+
+    The argument is optional so a caller holding only a workspace keeps that
+    behaviour without changing.
 
     ``known_size`` lets a caller that already knows an upper bound on the
     serialized size skip re-measuring it (:func:`apps.flows.schema.envelope.check_limits`).
     """
-    return validate_graph(graph, platforms=connected_platforms(workspace), known_size=known_size)
+    if flow is not None:
+        from apps.flows.triggers.platforms import platforms_for_flow
+
+        platforms = platforms_for_flow(flow)
+    else:
+        platforms = connected_platforms(workspace)
+    return validate_graph(graph, platforms=platforms, known_size=known_size)
 
 
 def _versions(flow: Flow) -> Any:
@@ -205,7 +223,7 @@ def publish(flow: Flow, *, user: Any = None) -> PublishResult:
     if target is None:  # pragma: no cover - create_flow always makes version 1
         raise FlowValidationError(validate_graph(empty_graph()))
 
-    result = validate_for_workspace(target.graph_json, locked.workspace)
+    result = validate_for_workspace(target.graph_json, locked.workspace, flow=locked)
     if not result.is_publishable:
         raise FlowValidationError(result)
 

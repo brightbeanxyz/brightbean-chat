@@ -1,0 +1,15 @@
+{% comment %}
+A rule trigger's event. The condition filters SPEC §10 also allows are stored and
+validated already, but nothing fires a rule trigger until L6-A binds them to the
+internal event catalogue (ROADMAP contract 7) — so the form offers the event and
+says so rather than pretending the trigger is live.
+{% endcomment %}
+<label class="block text-xs font-medium mb-1" for="trigger-event" style="color: var(--text-primary);">Event</label>
+<select id="trigger-event" name="event" class="form-input-styled">
+    {% for value, label in rule_events %}
+    <option value="{{ value }}" {% if config.event == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+</select>
+<p class="text-xs mt-1" style="color: var(--text-tertiary);">
+    Rule triggers are saved now and start firing when sequences ship.
+</p>

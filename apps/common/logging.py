@@ -120,7 +120,15 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
     # Telegram bot tokens: <bot_id>:<35-char secret>.
-    (re.compile(r"\b\d{6,12}:[A-Za-z0-9_\-]{30,}"), REDACTED),
+    #
+    # The `/bot` alternative is not decoration. A bot token's one appearance at
+    # runtime is the path of a Bot API URL, `https://api.telegram.org/bot<token>/…`,
+    # and httpx logs the URL of every request it makes at INFO. A plain `\b`
+    # does not match there — the `t` of "bot" is a word character, so there is
+    # no boundary before the digits — which meant the single most likely way for
+    # this credential to reach a log was the one form the pattern missed
+    # (found by apps/channels/tests/test_telegram_scrubbing.py, issue #12).
+    (re.compile(r"(?:(?<=/bot)|(?<![A-Za-z0-9_]))\d{6,12}:[A-Za-z0-9_\-]{30,}"), REDACTED),
     # Bearer credentials carried in a URL path. An invitation link is a
     # capability — anyone holding it joins the organization — and it reaches
     # logs through the request line rather than through any key=value pair:

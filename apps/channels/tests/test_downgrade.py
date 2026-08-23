@@ -259,7 +259,7 @@ class TestTextLength:
 
 
 class TestSplittingEdgeCases:
-    """Regressions in _split_text, which is pure and has no way to complain."""
+    """Regressions in split_text, which is pure and has no way to complain."""
 
     def test_leading_whitespace_does_not_produce_an_empty_message(self) -> None:
         """An empty TextBlock is a blank message, which platforms reject."""

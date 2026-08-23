@@ -82,7 +82,7 @@ __all__ = [
     "locked_execution",
     "resume_execution",
     "start_flow",
-    "stop_executions",
+    "stop_automation",
 ]
 
 logger = logging.getLogger(__name__)
@@ -140,15 +140,22 @@ def start_flow(
     variables: dict[str, Any] | None = None,
     flow_version: FlowVersion | None = None,
     connection: Any = None,
+    preview: bool | None = None,
     _carry_blocks: int = 0,
 ) -> FlowExecution:
     """Begin ``flow`` for ``contact`` and run it until it pauses or ends.
 
     ``flow_version`` names an explicit version, which is how #12's "test on
-    Telegram" runs a **draft** without the runner needing a preview mode: the
-    resulting execution is flagged ``preview`` and L7-A's counters exclude it.
-    Omitted, the flow's published version is used and a flow with none raises
-    :class:`FlowNotRunnableError`.
+    Telegram" runs a draft. Omitted, the flow's published version is used and a
+    flow with none raises :class:`FlowNotRunnableError`.
+
+    ``preview`` marks the execution as a test run, which keeps it out of L7-A's
+    counters. Left as None it is **derived** from the version — an unpublished
+    version can only be a preview — and that derivation is right for every
+    caller except one. A "test on Telegram" run of a flow that was published and
+    not edited since has the published version as its latest, so deriving would
+    call a deliberate test a production run and let it move the flow's reported
+    numbers. The caller that knows it is testing says so.
 
     ``connection`` is the channel this run happens on. It is remembered on the
     execution because ROADMAP contract 1 requires one on every send and SPEC
@@ -191,7 +198,7 @@ def start_flow(
             variables=dict(variables or {}),
             blocks_since_pause=_carry_blocks,
             started_by=started_by,
-            preview=not version.published,
+            preview=(not version.published) if preview is None else preview,
         )
         execution.save()
         logger.info(
@@ -204,6 +211,32 @@ def start_flow(
             superseded,
         )
         return _run(execution, graph)
+
+
+def stop_automation(contact: Any) -> int:
+    """Expire whatever this contact is currently running. Returns how many stopped.
+
+    The engine-side half of issue #13's "stop automation" button. A support agent
+    looking at a contact stuck part-way through an onboarding flow needs a way to
+    end it, and the wrong way to build that is a view assigning
+    ``execution.status``: it would leave the queue rows that resume the execution
+    armed, so the run the operator believed they had stopped would wake up on its
+    next timer and carry on.
+
+    So this is :func:`_supersede` — the same body SPEC §22's one-live-execution
+    rule already uses — with the lock and the transaction it needs of its own.
+    Expiring is deliberately not failing: the run did not go wrong, somebody
+    ended it, and L7-A's per-node counters read ``failed`` as a flow that needs
+    fixing.
+
+    Blocking rather than ``try_contact_lock``: the caller is an operator who
+    clicked a button and is waiting for the answer, not the inline webhook path
+    SPEC §9.6 keeps off a blocking acquisition.
+    """
+    with transaction.atomic(), contact_lock(contact):
+        stopped = _supersede(contact)
+    logger.info("Automation stopped for contact %s: %s execution(s) expired.", contact.pk, stopped)
+    return stopped
 
 
 def resume_execution(
@@ -285,9 +318,9 @@ def _run(execution: FlowExecution, graph: Graph) -> FlowExecution:
         node_type = graph.node_type(node_id)
         node_class = node_class_for(node_type)
         if node_class is None:
-            # A schema without a runtime: external_request until L4-E, send_sms
-            # and send_email until L5-D/E. Publishing allows it, so the run has
-            # to be the thing that says no.
+            # A schema without a runtime: send_sms and send_email until
+            # L5-D/E. Publishing allows it, so the run has to be the thing that
+            # says no.
             return _fail(execution, f"no runtime is registered for {node_type!r} nodes")
 
         ctx = NodeContext(
@@ -560,27 +593,6 @@ def _supersede(contact: Any) -> int:
         type__in=(ActionType.RESUME_EXECUTION, ActionType.FOLLOWUP_TIMER),
     ).update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
     return expired
-
-
-def stop_executions(contact: Any) -> int:
-    """Expire every live execution this contact has. Returns how many.
-
-    The manual half of :func:`_supersede`: an operator taking a conversation
-    over from automation, from the inbox's stop button (#14) or a contact page's
-    "stop automation" (#13). Same effect a new ``start_flow`` would have had,
-    without starting anything.
-
-    Public because there is otherwise no way to do this that is not "write
-    ``status`` yourself", and the reason the runner owns every write to an
-    execution row is that a second write site is how the status stops being
-    something anyone can reason about.
-
-    It takes the contact lock itself, unlike ``_supersede``, whose only caller
-    is already holding it. Advisory locks are counted per session, so a caller
-    that happens to hold it too pays nothing for this one.
-    """
-    with transaction.atomic(), contact_lock(contact):
-        return _supersede(contact)
 
 
 def _hand_off(execution: FlowExecution, start_next: StartNext) -> FlowExecution:

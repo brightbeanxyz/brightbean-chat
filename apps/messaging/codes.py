@@ -36,6 +36,7 @@ class Denial(StrEnum):
     """Why compliance refused. Every one of these ends up on a failed row."""
 
     OPTED_OUT = "opted_out"
+    CONTACT_DELETED = "contact_deleted"
     NO_OPT_IN = "no_opt_in"
     NO_IDENTITY = "no_identity"
     NO_CONNECTION = "no_connection"
@@ -66,6 +67,7 @@ REASON_COPY: dict[str, str] = {
     Grant.TAG_SUPPLIED: "Sent outside the window under an approved message tag.",
     Grant.TEMPLATE_SUPPLIED: "Sent outside the window using an approved template.",
     Denial.OPTED_OUT: "This contact opted out of messages on this channel.",
+    Denial.CONTACT_DELETED: "This contact has been deleted.",
     Denial.NO_OPT_IN: "This contact has never given permission to message them on this channel.",
     Denial.NO_IDENTITY: "There is no address for this contact on this channel.",
     Denial.NO_CONNECTION: "This address was captured before a channel connection existed.",

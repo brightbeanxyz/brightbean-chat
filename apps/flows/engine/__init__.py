@@ -43,7 +43,7 @@ from apps.flows.engine.runner import (
     advance,
     resume_execution,
     start_flow,
-    stop_executions,
+    stop_automation,
 )
 from apps.flows.engine.waits import Consumed, NotConsumed, ResumeOutcome, attempt_resume
 
@@ -75,7 +75,7 @@ __all__ = [
     "registered_verbs",
     "resume_execution",
     "start_flow",
-    "stop_executions",
+    "stop_automation",
     "synchronous_safe",
     "types_without_runtime",
     "unregister_node",

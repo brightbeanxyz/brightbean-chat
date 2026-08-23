@@ -177,7 +177,11 @@ class TestRegistry:
             assert registered_platforms() == (Platform.TELEGRAM,)
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
-        assert not has_adapter(Platform.TELEGRAM)
+        # Restored, not cleared. Telegram has a real adapter since issue #12 and
+        # `registered` puts it back; the property under test is that the fake
+        # does not outlive the block, not that the slot ends up empty.
+        assert has_adapter(Platform.TELEGRAM)
+        assert not isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
 
     def test_missing_adapter_raises_rather_than_returning_none(self) -> None:
         # On the webhook path, None would read as "nothing to do" — a silently

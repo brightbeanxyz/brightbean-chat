@@ -66,7 +66,7 @@ class TestCreate:
         client = client_for(tenancy.owner)
         response = client.post(
             url_for("create", tenancy),
-            {"platform": Platform.TELEGRAM, "display_name": "Support bot", "external_id": "bot-123"},
+            {"platform": Platform.WHATSAPP, "display_name": "Support bot", "external_id": "bot-123"},
         )
         assert response.status_code == 200
 
@@ -85,7 +85,7 @@ class TestCreate:
         client = client_for(tenancy.owner)
         client.post(
             url_for("create", tenancy),
-            {"platform": Platform.TELEGRAM, "display_name": "Bot", "external_id": "bot-123"},
+            {"platform": Platform.WHATSAPP, "display_name": "Bot", "external_id": "bot-123"},
         )
         connection = ChannelConnection.objects.for_workspace(tenancy.workspace).get()
         stored_session = "".join(str(value) for value in client.session.items())
@@ -95,7 +95,7 @@ class TestCreate:
         with caplog.at_level(logging.DEBUG):
             client_for(tenancy.owner).post(
                 url_for("create", tenancy),
-                {"platform": Platform.TELEGRAM, "display_name": "Bot", "external_id": "bot-123"},
+                {"platform": Platform.WHATSAPP, "display_name": "Bot", "external_id": "bot-123"},
             )
         connection = ChannelConnection.objects.for_workspace(tenancy.workspace).get()
         assert connection.webhook_secret not in caplog.text
@@ -106,13 +106,13 @@ class TestCreate:
         """SPEC §5's constraint is deployment-wide; the message must not leak across it."""
         ChannelConnection.objects.create(
             workspace=other_tenancy.workspace,
-            platform=Platform.TELEGRAM,
+            platform=Platform.WHATSAPP,
             display_name="Rival bot",
             external_id="contested",
         )
         response = client_for(tenancy.owner).post(
             url_for("create", tenancy),
-            {"platform": Platform.TELEGRAM, "display_name": "Mine", "external_id": "contested"},
+            {"platform": Platform.WHATSAPP, "display_name": "Mine", "external_id": "contested"},
         )
         body = response.content.decode()
 
@@ -140,7 +140,7 @@ class TestCreate:
 
         ChannelConnection.objects.create(
             workspace=other_tenancy.workspace,
-            platform=Platform.TELEGRAM,
+            platform=Platform.WHATSAPP,
             display_name="Winner",
             external_id="contested",
         )
@@ -150,7 +150,7 @@ class TestCreate:
 
         response = client_for(tenancy.owner).post(
             url_for("create", tenancy),
-            {"platform": Platform.TELEGRAM, "display_name": "Loser", "external_id": "contested"},
+            {"platform": Platform.WHATSAPP, "display_name": "Loser", "external_id": "contested"},
         )
         body = response.content.decode()
 
@@ -169,7 +169,7 @@ class TestCreate:
 
         ChannelConnection.objects.create(
             workspace=other_tenancy.workspace,
-            platform=Platform.TELEGRAM,
+            platform=Platform.WHATSAPP,
             display_name="Winner",
             external_id="contested",
         )
@@ -179,7 +179,7 @@ class TestCreate:
         client = client_for(tenancy.owner)
         client.post(
             url_for("create", tenancy),
-            {"platform": Platform.TELEGRAM, "display_name": "Loser", "external_id": "contested"},
+            {"platform": Platform.WHATSAPP, "display_name": "Loser", "external_id": "contested"},
         )
 
         # A query in the same request cycle would fail on a poisoned transaction.
@@ -192,7 +192,7 @@ class TestCreate:
         client_for(tenancy.owner).post(
             url_for("create", tenancy),
             {
-                "platform": Platform.TELEGRAM,
+                "platform": Platform.WHATSAPP,
                 "display_name": "Bot",
                 "external_id": "bot-123",
                 "workspace": str(other_tenancy.workspace.pk),

@@ -1,0 +1,10 @@
+{
+  "update_id": 900006,
+  "message": {
+    "message_id": 44,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada"},
+    "chat": {"id": 5150, "type": "private"},
+    "date": 1735689605,
+    "video": {"file_id": "BAACvideo", "file_unique_id": "u5", "width": 640, "height": 480, "duration": 12}
+  }
+}

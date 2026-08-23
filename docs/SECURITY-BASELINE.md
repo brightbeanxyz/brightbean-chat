@@ -26,8 +26,10 @@ Threat model in one paragraph: a self-hosted deployment exposes webhook endpoint
 - The global log-scrubbing filter (L1-A) is installed in all environments; tests assert tokens never appear in captured logs, error reports, admin list displays, or API responses.
 
 ## 6. Outbound HTTP (SSRF)
-- Any server-initiated request to a user-supplied or contact-supplied URL goes through the SSRF guard (`guarded_request`, issue #15) — External Request node, outbound webhook deliveries, media fetch-by-URL, provider callbacks. No exceptions; new call sites add a test proving the guard is in the path.
-- Until the guard exists (it lands in Layer 4), **no feature may fetch user-supplied URLs server-side** — pass URLs through to platforms instead.
+- Any server-initiated request to a user-supplied or contact-supplied URL goes through the SSRF guard — `apps.common.outbound.guarded_request`, landed by issue #15 — for the External Request node, outbound webhook deliveries, media fetch-by-URL and provider callbacks. No exceptions; new call sites add a test proving the guard is in the path.
+- "Proving" means `tests/ssrf.py`'s `guard_required()`, which fails any HTTP request made inside its block that did not come from the guard. Asserting that a patched `guarded_request` was called is not the same claim: it stays green when a second, unguarded request is made beside it.
+- The guard denies loopback, link-local (cloud metadata), multicast, reserved and unspecified addresses and the deployment's own host, resolves before connecting, **pins the resolved address** so DNS cannot rebind between the check and the connect, re-validates every redirect (cap 3), allows only `http`/`https`, and caps the response body with a streaming cutoff — requesting `Accept-Encoding: identity` and declining to expand a body compressed anyway, since a cap on a decompressed stream fires only after the allocation it exists to prevent. `EXTERNAL_REQUEST_ALLOW_PRIVATE` relaxes the private-range rule alone, for on-prem deployments; it opens nothing else.
+- `apps.channels.providers.base.request_json` is the sibling for URLs an adapter builds from constants and stored ids. A call site that cannot tell which of the two it is wants the guard.
 
 ## 7. Input limits
 - Request body-size caps on every webhook and public endpoint, enforced before signature work where possible and always before DB writes.

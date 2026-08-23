@@ -1,0 +1,188 @@
+{% comment %}
+The filter builder's Alpine component.
+
+Its own file because it is a hundred lines of JavaScript and list.html is
+already a page. It is included from that page's alpine_components block, which
+base.html renders before Alpine's own deferred script tag — the window in which
+a global x-data factory has to be defined for x-data to be able to call it.
+
+Written as a plain function rather than Alpine.data() for the same reason, and
+kept out of the flow-builder bundle deliberately: it is glue for one page, and a
+build step for it would mean a second entry point and a second artefact that can
+go stale. tests/js/contacts-filter-bar.test.ts reads THIS file, pulls the script
+out and evaluates it, so what the test checks is what the browser gets — which
+is why the prose above must not contain a literal script tag for the extractor
+to trip over.
+
+It knows the *shape* of a §11.4 filter and nothing about its vocabulary. Every
+operator, label, type mapping and limit is read out of `config.vocabulary`,
+which the view fills from CONDITION_SCHEMA's `x-brightbean` extension block.
+Hard-coding "text fields take is/is_not/contains" here would be the second
+operator table the condition engine's docstring exists to prevent.
+{% endcomment %}
+<script nonce="{{ request.csp_nonce }}">
+  function contactFilters(config) {
+    var vocab = config.vocabulary;
+
+    // A stored rule -> the editor's working shape. Dates are the only value that
+    // is not a scalar on the wire: SPEC §11.4 writes "days ago / days from now"
+    // as {relative: {unit, offset}}, so the editor splits it into a mode plus a
+    // number and puts it back together on the way out.
+    function hydrate(rule) {
+      var working = {
+        source: rule.source || '',
+        key: rule.key || '',
+        op: rule.op || '',
+        value: '',
+        mode: 'on',
+        offset: 0,
+      };
+      var value = rule.value;
+      if (value && typeof value === 'object' && value.relative) {
+        working.mode = 'relative';
+        working.offset = value.relative.offset;
+      } else if (typeof value === 'boolean') {
+        working.value = value ? 'true' : 'false';
+      } else if (value !== undefined && value !== null) {
+        working.value = String(value);
+      }
+      return working;
+    }
+
+    return {
+      config: config,
+      match: (config.document && config.document.match) || 'all',
+      rules: ((config.document && config.document.rules) || []).map(hydrate),
+      segmentName: '',
+
+      // --- vocabulary lookups -------------------------------------------
+      sourceNamed: function (name) {
+        return this.config.sources.find(function (s) { return s.name === name; });
+      },
+      keyOptions: function (rule) {
+        var kind = (this.sourceNamed(rule.source) || {}).keyKind;
+        if (rule.source === 'tag') return this.config.tags;
+        if (rule.source === 'custom_field') return this.config.fields;
+        if (rule.source === 'segment') return this.config.segments;
+        if (kind === 'platform') return this.config.platforms;
+        if (kind === 'system_field') {
+          return Object.keys(vocab.systemFields).map(function (name) {
+            return { value: name, label: vocab.systemFields[name].label };
+          });
+        }
+        // A declared source with no picker yet (sequence, until issue #22).
+        return [];
+      },
+      valueType: function (rule) {
+        if (rule.source === 'system_field') {
+          return (vocab.systemFields[rule.key] || {}).type || '';
+        }
+        if (rule.source === 'custom_field') {
+          var field = this.config.fields.find(function (f) { return f.value === rule.key; });
+          return field ? field.type : '';
+        }
+        // Every other source's operators are source-native and valueless, so
+        // there is no type to report.
+        return '';
+      },
+      opOptions: function (rule) {
+        if (vocab.opsBySource[rule.source]) return vocab.opsBySource[rule.source];
+        return vocab.opsByType[this.valueType(rule)] || [];
+      },
+      opLabel: function (op) { return vocab.opLabels[op] || op; },
+      takesValue: function (rule) {
+        return Boolean(rule.op) && vocab.valuelessOps.indexOf(rule.op) === -1;
+      },
+      isDate: function (rule) {
+        var type = this.valueType(rule);
+        return type === 'date' || type === 'datetime';
+      },
+
+      // --- editing -------------------------------------------------------
+      addRule: function () {
+        if (this.rules.length >= vocab.limits.maxRules) return;
+        var first = this.config.sources.find(function (s) { return s.evaluable; });
+        this.rules.push(hydrate({ source: first ? first.name : '' }));
+      },
+      removeRule: function (index) { this.rules.splice(index, 1); },
+      clearRules: function () { this.rules = []; },
+      onSourceChange: function (rule) {
+        rule.key = '';
+        rule.op = '';
+        rule.value = '';
+        // A source with exactly one operator pair still needs an op chosen, and
+        // a source-native one has no key to wait for.
+        var options = this.opOptions(rule);
+        if (options.length && !this.keyOptions(rule).length) rule.op = options[0];
+      },
+      onKeyChange: function (rule) {
+        var options = this.opOptions(rule);
+        // Keep the operator when the new key still allows it — changing "Email
+        // is X" to "Phone is X" should not silently reset to the first operator.
+        if (options.indexOf(rule.op) === -1) rule.op = options[0] || '';
+        this.touch();
+      },
+      touch: function () {
+        // Normalise after an edit: a rule whose operator stopped taking a value
+        // must not keep one, because the schema's valueless branch sets
+        // additionalProperties:false and rejects the document outright.
+        this.rules.forEach(function (rule) {
+          if (rule.op && vocab.valuelessOps.indexOf(rule.op) !== -1) {
+            rule.value = '';
+            rule.offset = 0;
+          }
+        });
+      },
+
+      // --- serialisation --------------------------------------------------
+      packed: function (rule) {
+        // An incomplete rule is dropped rather than sent. Half-built rows are
+        // the normal state of a builder mid-edit, and shipping one would make
+        // "Apply" answer with a validation error about a rule the operator has
+        // not finished typing.
+        if (!rule.source || !rule.key || !rule.op) return null;
+        var out = { source: rule.source, key: rule.key, op: rule.op };
+        if (!this.takesValue(rule)) return out;
+
+        var type = this.valueType(rule);
+        if (type === 'boolean') {
+          out.value = rule.value === 'true';
+        } else if (type === 'number') {
+          if (rule.value === '' || isNaN(Number(rule.value))) return null;
+          out.value = Number(rule.value);
+        } else if (type === 'date' || type === 'datetime') {
+          if (rule.mode === 'relative') {
+            out.value = { relative: { unit: vocab.relativeUnits[0], offset: Number(rule.offset) || 0 } };
+          } else {
+            if (!rule.value) return null;
+            out.value = rule.value;
+          }
+        } else {
+          if (rule.value === '') return null;
+          out.value = rule.value;
+        }
+        return out;
+      },
+      get serialised() {
+        var self = this;
+        var packed = this.rules.map(function (rule) { return self.packed(rule); })
+                               .filter(function (rule) { return rule !== null; });
+        // An empty document is the empty string, not `{"match":"all","rules":[]}`
+        // — under `all` that document matches everyone, which is the same set as
+        // no filter, but only the empty string leaves the URL clean and lets the
+        // view tell "no filter" from "a filter that happens to be empty".
+        if (!packed.length) return '';
+        return JSON.stringify({ match: this.match, rules: packed });
+      },
+
+      // --- flatpickr ------------------------------------------------------
+      datePicker: function (el) {
+        // Guarded: the page still works with the picker missing (the input is a
+        // plain text box accepting YYYY-MM-DD), and a hard reference would take
+        // the whole filter bar down with it.
+        if (!window.flatpickr) return;
+        window.flatpickr(el, { dateFormat: 'Y-m-d', allowInput: true });
+      },
+    };
+  }
+</script>

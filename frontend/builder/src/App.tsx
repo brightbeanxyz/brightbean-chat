@@ -79,29 +79,46 @@ function Shell() {
   }, [loaded, canEdit, store]);
 
   /**
-   * Re-check when the tab regains focus.
+   * Re-check when the tab regains focus, or when the trigger drawer changes.
    *
-   * Capability warnings depend on which channels are connected, and #11's
-   * trigger drawer can change that in another tab. Re-fetching the detail
-   * payload is how those warnings update without the user touching the canvas.
+   * Capability warnings are computed from what this flow is *triggered* on, and
+   * the drawer that edits triggers is on this same page — so `triggersChanged`,
+   * the event its htmx mutations already broadcast on `body`, is the precise
+   * moment those warnings and the toolbar's trigger count go stale. `focus`
+   * covers the other tab, which is what this effect originally existed for.
+   *
+   * Both paths re-apply the trigger list as well as the validation, because
+   * they change together and for the same reason.
    */
   useEffect(() => {
     if (!loaded) {
       return;
     }
     let last = 0;
-    const onFocus = () => {
+    const refresh = (throttle: boolean) => {
       const now = Date.now();
-      if (now - last < 30_000 || store.getState().save.state !== "clean") {
+      if ((throttle && now - last < 30_000) || store.getState().save.state !== "clean") {
         return;
       }
       last = now;
       void loadFlow(store.getState().env)
-        .then((detail) => store.getState().applyValidation(detail.validation, store.getState().revision))
+        .then((detail) => {
+          store.getState().applyValidation(detail.validation, store.getState().revision);
+          store.getState().setTriggers(detail.triggers);
+        })
         .catch(() => {});
     };
+    const onFocus = () => refresh(true);
+    // Not throttled: this one is a direct consequence of something the user
+    // just did on this page, and a 30-second window would make their own edit
+    // appear not to have registered.
+    const onTriggersChanged = () => refresh(false);
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    document.body.addEventListener("triggersChanged", onTriggersChanged);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.body.removeEventListener("triggersChanged", onTriggersChanged);
+    };
   }, [loaded, store]);
 
   if (failure) {

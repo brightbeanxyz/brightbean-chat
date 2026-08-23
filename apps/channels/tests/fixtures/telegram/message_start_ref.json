@@ -1,0 +1,11 @@
+{
+  "update_id": 900003,
+  "message": {
+    "message_id": 2,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada", "username": "ada"},
+    "chat": {"id": 5150, "first_name": "Ada", "username": "ada", "type": "private"},
+    "date": 1735689602,
+    "text": "/start spring-sale",
+    "entities": [{"offset": 0, "length": 6, "type": "bot_command"}]
+  }
+}

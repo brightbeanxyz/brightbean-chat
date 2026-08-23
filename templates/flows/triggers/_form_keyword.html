@@ -1,0 +1,48 @@
+{% comment %}
+The repeatable keyword list.
+
+`json_script` is a security control, not a convenience. Keyword text is
+user-authored and a keyword containing `</script>` interpolated straight into an
+x-data attribute is stored XSS (SECURITY-BASELINE §2). json_script emits it as
+escaped JSON inside a script tag the browser will not execute, and Alpine reads
+it back with JSON.parse.
+
+The rows post two parallel lists, keyword_text and keyword_mode. The view zips
+them with strict=True and refuses a length mismatch rather than pairing off a
+truncated list — see apps/flows/triggers/forms.py.
+{% endcomment %}
+{{ config.keywords|default_if_none:""|json_script:"trigger-keyword-rows" }}
+<div x-data="{
+        rows: JSON.parse(document.getElementById('trigger-keyword-rows').textContent) || [],
+        modes: [['exact', 'Exact'], ['contains', 'Contains'], ['any_word', 'Whole word']],
+        add() { this.rows.push({ text: '', mode: 'contains' }) },
+        remove(index) { this.rows.splice(index, 1) }
+     }"
+     x-init="if (!rows.length) add()">
+
+    <label class="block text-xs font-medium mb-1" style="color: var(--text-primary);">Keywords</label>
+
+    <template x-for="(row, index) in rows" :key="index">
+        <div class="flex items-center gap-1.5 mb-1.5">
+            <input type="text" name="keyword_text" x-model="row.text" maxlength="200"
+                   class="form-input-styled" style="flex: 1 1 auto;" placeholder="help"
+                   aria-label="Keyword">
+            <input type="hidden" name="keyword_mode" :value="row.mode">
+            <template x-for="mode in modes" :key="mode[0]">
+                <button type="button"
+                        class="bb-chip"
+                        :class="row.mode === mode[0] && 'bb-chip-selected'"
+                        @click="row.mode = mode[0]"
+                        x-text="mode[1]"></button>
+            </template>
+            <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                    @click="remove(index)" aria-label="Remove keyword">×</button>
+        </div>
+    </template>
+
+    <button type="button" class="btn-link text-xs" @click="add()">+ Add keyword</button>
+    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+        Matching ignores case and surrounding spaces. “Contains” matches inside a word,
+        “whole word” does not.
+    </p>
+</div>

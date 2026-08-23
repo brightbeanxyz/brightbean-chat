@@ -1,0 +1,11 @@
+{
+  "update_id": 900002,
+  "message": {
+    "message_id": 1,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada", "username": "ada"},
+    "chat": {"id": 5150, "first_name": "Ada", "username": "ada", "type": "private"},
+    "date": 1735689601,
+    "text": "/start",
+    "entities": [{"offset": 0, "length": 6, "type": "bot_command"}]
+  }
+}

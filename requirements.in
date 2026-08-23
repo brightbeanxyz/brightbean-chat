@@ -53,3 +53,9 @@ sentry-sdk[django]==2.68.0
 # Auth
 django-allauth[socialaccount]==65.19.1   # 65.x API: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS
 bcrypt==5.0.0             # BCryptSHA256PasswordHasher's runtime dep; Django does not declare it
+
+# QR codes for ref-URL triggers (issue #11, SPEC §21 phase 2). Pure Python with
+# no runtime dependencies on 3.12, and it renders SVG without Pillow — the QR
+# has to be generated locally because SPEC forbids handing a workspace's deep
+# link to an external image service.
+segno==1.6.6

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from django.utils import timezone
 
-from apps.channels.events import OutboundMessage, SendResult, TextBlock
+from apps.channels.events import OutboundMessage, SendResult, SendStatus, TextBlock
 from apps.channels.providers.exceptions import APIError
 from apps.channels.tests.fake_adapter import registered
 from apps.common.platforms import Platform
@@ -351,3 +351,50 @@ class TestUnknownOutcome:
             adapter.find_sent_message = lambda _self, c, key: None  # type: ignore[attr-defined]
             run_retry(pending_action())
             assert len(adapter.sends) == 1
+
+
+class TestDeletedContacts:
+    """The case a guard in ``send_outbound`` alone would have missed: the message
+    was accepted while the contact was live, and the deletion happens while it
+    sits on the backoff ladder. ``_dispatch`` is the last gate before the
+    provider call, which is why the check lives there."""
+
+    def test_a_retry_for_a_deleted_contact_never_reaches_the_provider(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        from apps.contacts.services import delete_contact
+
+        message = queued_message(tenancy, contact, connection)
+        action = pending_action()
+        delete_contact(contact)
+
+        calls: list[Any] = []
+
+        def record(_self: Any, c: Any, i: Any, o: Any) -> SendResult:
+            calls.append(c)
+            return SendResult(status=SendStatus.SENT, provider_message_id="pm-1")
+
+        with registered(Platform.TELEGRAM) as adapter:
+            adapter.send = record  # type: ignore[method-assign,assignment]
+            handlers.handle_send_retry(action.payload, action)
+
+        message.refresh_from_db()
+        assert calls == []
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Denial.CONTACT_DELETED
+
+    def test_a_retry_for_a_live_contact_still_sends(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        message = queued_message(tenancy, contact, connection)
+        action = pending_action()
+
+        def ok(_self: Any, c: Any, i: Any, o: Any) -> SendResult:
+            return SendResult(status=SendStatus.SENT, provider_message_id="pm-1")
+
+        with registered(Platform.TELEGRAM) as adapter:
+            adapter.send = ok  # type: ignore[method-assign,assignment]
+            handlers.handle_send_retry(action.payload, action)
+
+        message.refresh_from_db()
+        assert message.status == MessageStatus.SENT

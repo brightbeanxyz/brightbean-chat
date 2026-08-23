@@ -26,7 +26,7 @@ from apps.channels.capabilities import capabilities_for
 from apps.channels.events import EventPayload, EventType, NormalizedEvent, OutboundMessage, SendResult, SendStatus
 from apps.channels.models import ChannelConnection
 from apps.channels.providers.base import Adapter
-from apps.channels.registry import register_adapter, unregister_adapter
+from apps.channels.registry import entry_for, register_adapter, unregister_adapter
 
 SIGNATURE_HEADER = "X-Fake-Signature"
 SECRET_HEADER = "X-Fake-Secret"
@@ -108,16 +108,46 @@ def fake_adapter_for(platform: str) -> type[FakeAdapter]:
 
 
 @contextmanager
+def unregistered(platform: str) -> Iterator[None]:
+    """Take ``platform``'s adapter away for the duration of a test, then give it back.
+
+    For the tests about what happens when a platform has **no** adapter. Before
+    issue #12 that state was simply the shipped state and needed no setup; now
+    Telegram has a real one registered in every process, and a test that wants
+    the empty slot has to say so — which is better anyway, because "this assertion
+    depends on no adapter existing" was previously invisible.
+    """
+    previous = entry_for(platform).adapter_cls
+    unregister_adapter(platform)
+    try:
+        yield
+    finally:
+        if previous is not None:
+            register_adapter(platform, previous)
+
+
+@contextmanager
 def registered(platform: str) -> Iterator[type[FakeAdapter]]:
     """Register a fake adapter for ``platform`` for the duration of a test.
 
     The registry is process-global, so leaving one behind would leak into every
     later test in the same process — including the ones asserting that a
     platform *without* an adapter answers 503.
+
+    It **restores** what was there rather than clearing the slot, which stopped
+    being the same thing when issue #12 shipped a real Telegram adapter:
+    ``ChannelsConfig.ready()`` registers it in every process, so plain
+    unregistering left the rest of the run with no Telegram adapter at all, and
+    plain registering hit the duplicate guard on the way in. Save-and-restore is
+    correct for both an occupied slot and an empty one.
     """
     adapter_cls = fake_adapter_for(platform)
+    previous = entry_for(platform).adapter_cls
+    unregister_adapter(platform)
     register_adapter(platform, adapter_cls)
     try:
         yield adapter_cls
     finally:
         unregister_adapter(platform)
+        if previous is not None:
+            register_adapter(platform, previous)

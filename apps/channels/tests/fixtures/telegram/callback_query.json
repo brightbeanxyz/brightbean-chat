@@ -1,0 +1,16 @@
+{
+  "update_id": 900010,
+  "callback_query": {
+    "id": "4382bfdwdsb323b2d9",
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada", "username": "ada"},
+    "message": {
+      "message_id": 48,
+      "from": {"id": 777000, "is_bot": true, "first_name": "Acme", "username": "acme_bot"},
+      "chat": {"id": 5150, "type": "private"},
+      "date": 1735689609,
+      "text": "Pick one"
+    },
+    "chat_instance": "-1234567890",
+    "data": "node_ask:btn_yes"
+  }
+}

@@ -21,7 +21,7 @@ unexpected (rolled back and retried by the queue).
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from apps.channels.events import OutboundMessage, TextBlock
@@ -82,7 +82,12 @@ def deliver(
         workspace=execution.workspace,
         contact=execution.contact,
         connection=execution.channel_connection,
-        outbound=outbound,
+        # Stamped here rather than by each node, because this is the one place
+        # that knows both the message and the node it came from. SPEC §6.2 needs
+        # it in Telegram's `callback_data` as `node_id:button_id`, and Meta's
+        # postback payloads take the same shape (issue #12). Adapters that have
+        # no use for it ignore it.
+        outbound=replace(outbound, node_id=node_id),
         source=SEND_SOURCE,
         idempotency_key=messaging.message_idempotency_key(execution, node_id, attempt),
     )

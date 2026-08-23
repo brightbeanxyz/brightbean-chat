@@ -1,0 +1,32 @@
+{% comment %}
+The nav badges' swap targets, for a layout that replaces {% block sidebar_nav %}.
+
+An out-of-band response resolves its target by id and htmx logs
+`htmx:oobErrorNoTarget` when that id is not in the document. base.html renders
+the notification bell — and its `every 60s` poll — for every authenticated
+user, at base.html:179, *outside* the nav block. So a layout that swaps the
+main nav out takes the badge ids with it while leaving the poll behind, and
+every poll on those pages errors. That was real: layouts/settings.html and its
+workspace variant override the block wholesale, and all 14 settings pages
+logged the error once a minute, plus once more for every "mark read" from the
+bell dropdown.
+
+Those layouts include this instead. It renders the same slots the main nav
+would have rendered, from the same `nav_groups` the loop reads, so #14's inbox
+badge is covered the day it exists without editing this file.
+
+**Why the wrapper is `hidden` and the slots are always zero:** a settings page
+has no Notifications row for a number to belong to, so nothing here should ever
+become visible. A bare slot would not stay that way — the next poll carrying a
+non-zero count swaps in the pill form, and a stray "3" would appear floating in
+the settings sidebar. Hiding the parent makes the swap land and stay silent
+whatever it carries.
+
+apps/notifications/tests/test_shell.py discovers every template that overrides
+the block and asserts it includes this, so the next layout to override it
+cannot forget.
+{% endcomment %}{% spaceless %}
+<span hidden>
+{% for group in nav_groups %}{% for item in group.items %}{% if item.badge_slot %}{% include "partials/_nav_badge.html" with key=item.key count=0 only %}{% endif %}{% endfor %}{% endfor %}
+</span>
+{% endspaceless %}

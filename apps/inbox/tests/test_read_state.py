@@ -146,12 +146,29 @@ class TestTheUnreadCount:
         self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
     ) -> None:
         """The nav row's badge was wired and hard-zeroed with a TODO(L4-D);
-        this is that TODO's assertion."""
+        this is that TODO's assertion.
+
+        On the visible pill, not on the id. Issue #67 made the slot render
+        unconditionally — empty and hidden at zero, so a polled out-of-band swap
+        always has a target — which means the id alone would now pass whatever
+        the count was. The `sidebar-badge` class is on the non-zero branch only.
+        """
         inbound("hello")
 
         page = agent_client.get(url_for("list")).content.decode()
 
-        assert 'id="nav-badge-inbox"' in page
+        assert '<span class="sidebar-badge" id="nav-badge-inbox">1</span>' in page
+
+    def test_the_badge_is_an_empty_slot_when_nothing_is_waiting(
+        self, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        """Zero shows nothing, but still leaves the element issue #67's swap
+        needs — the inbox row uses the same `nav-badge-<key>` convention, so it
+        inherits that fix and has to keep holding up its end of it."""
+        page = agent_client.get(url_for("list")).content.decode()
+
+        assert '<span id="nav-badge-inbox" hidden></span>' in page
+        assert 'class="sidebar-badge" id="nav-badge-inbox"' not in page
 
     def test_it_saturates_rather_than_scanning_the_whole_workspace(self, tenancy: Any) -> None:
         """This runs in the shell's context processor, so it is on the critical

@@ -1,0 +1,22 @@
+{% comment %}
+One unread dot, wrapped in the element an out-of-band swap aims at.
+
+_dot.html is the dot; this is the dot plus its id, which is the part the shell
+and the response fragment have to agree on. Both ends were hand-written before,
+in three files — base.html's mobile bar, _bell.html's button and _badge.html's
+two response spans — which is the same drift the nav badge's partial exists to
+prevent: an id that changes on one side and not the other fails silently, as a
+swap that lands nowhere.
+
+Args:
+  key: the element id. `notification-badge` for the footer bell,
+       `notification-badge-mobile` for the mobile bar.
+  oob: True in a response fragment. Never on a first render — hx-swap-oob is
+       meaningful only in a response.
+
+`unread_notification_count` comes from the surrounding context (the shell's
+context processor, or the view's own dict on a response), so this is included
+without `only`.
+{% endcomment %}{% spaceless %}
+<span id="{{ key }}"{% if oob %} hx-swap-oob="true"{% endif %}>{% include "notifications/partials/_dot.html" %}</span>
+{% endspaceless %}

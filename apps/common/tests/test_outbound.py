@@ -1,0 +1,957 @@
+"""The SSRF guard — SECURITY-BASELINE §6, issue #15's acceptance table.
+
+Nothing here opens a socket. DNS is patched at :func:`resolve_host`, the one
+place the guard resolves anything, and the transport is ``httpx.MockTransport``
+— which is also what lets the pinning assertions work: the handler sees the
+request the guard actually built, so "did it connect to the literal address and
+claim the original ``Host``?" is a fact the test reads rather than infers.
+"""
+
+import ipaddress
+from collections.abc import Iterator
+from typing import Any
+
+import httpx
+import pytest
+
+from apps.common import outbound
+from apps.common.outbound import (
+    GUARD_EXTENSION,
+    MAX_REDIRECTS,
+    MAX_RESPONSE_BYTES,
+    BlockedURLError,
+    GuardedResponse,
+    OutboundTransportError,
+    guarded_request,
+    max_response_bytes,
+    reset_deployment_cache,
+)
+
+PUBLIC = "93.184.216.34"
+PUBLIC_ALT = "93.184.216.35"
+PUBLIC_V6 = "2606:2800:220:1:248:1893:25c8:1946"
+
+#: Issue #15's table, plus the address that matters most in practice:
+#: 169.254.169.254 is the cloud instance-metadata service, and reaching it is
+#: how an SSRF becomes stolen cloud credentials.
+PRIVATE_ADDRESSES = [
+    "127.0.0.1",
+    "127.16.3.4",
+    "10.0.0.1",
+    "172.16.0.1",
+    "192.168.1.1",
+    "169.254.169.254",
+    "::1",
+    "fd00::1",
+    "fe80::1",
+    "::ffff:127.0.0.1",
+    "::ffff:10.0.0.1",
+    "::ffff:169.254.169.254",
+    "2002:7f00:0001::",  # 6to4 wrapping 127.0.0.1
+    "0.0.0.0",  # noqa: S104 - denying it is the assertion, not binding to it
+    "224.0.0.1",
+    # Carrier-grade NAT. Neither is_private nor is_reserved in Python's
+    # ipaddress, so a guard written as "deny private" allows it — see _refusal.
+    "100.64.0.1",
+]
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dns(monkeypatch: Any) -> Iterator[None]:
+    """No test in this file touches the network, including for DNS.
+
+    Every unstubbed name answers "does not resolve", which is what a real
+    resolver would say about ``example.test``. Tests that need a name to point
+    somewhere call :func:`resolving`, which replaces ``resolve_host`` outright —
+    address literals keep working either way, because ``resolve_host``
+    short-circuits them before ``getaddrinfo`` is reached.
+    """
+
+    def _gaierror(*args: Any, **kwargs: Any) -> Any:
+        raise outbound.socket.gaierror("no such host")
+
+    monkeypatch.setattr(outbound.socket, "getaddrinfo", _gaierror)
+    # The deployment's own addresses are cached for DEPLOYMENT_ADDRESS_TTL, so
+    # one test's APP_URL resolution would otherwise answer the next one's.
+    reset_deployment_cache()
+    yield
+    reset_deployment_cache()
+
+
+def resolving(mapping: dict[str, list[str]], monkeypatch: Any, *, calls: list[str] | None = None) -> None:
+    """Point :func:`resolve_host` at a table. Unknown names do not resolve."""
+
+    def _resolve(host: str) -> tuple[Any, ...]:
+        if calls is not None:
+            calls.append(host)
+        return tuple(ipaddress.ip_address(value) for value in mapping.get(host.lower(), []))
+
+    monkeypatch.setattr(outbound, "resolve_host", _resolve)
+
+
+def transport(handler: Any) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def ok(payload: Any = None, **kwargs: Any) -> Any:
+    return lambda request: httpx.Response(200, json=payload if payload is not None else {"ok": True}, **kwargs)
+
+
+def unreachable(request: httpx.Request) -> httpx.Response:
+    raise AssertionError(f"the guard connected to {request.url} when it should have refused")
+
+
+class TestAddressRules:
+    @pytest.mark.parametrize("address", PRIVATE_ADDRESSES)
+    def test_an_address_literal_is_refused(self, address: str) -> None:
+        host = f"[{address}]" if ":" in address else address
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", f"http://{host}/", client=transport(unreachable))
+
+    @pytest.mark.parametrize("address", PRIVATE_ADDRESSES)
+    def test_a_name_resolving_to_one_is_refused(self, address: str, monkeypatch: Any) -> None:
+        """The interesting half: the URL looks entirely ordinary."""
+        resolving({"internal.example.test": [address]}, monkeypatch)
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", "https://internal.example.test/", client=transport(unreachable))
+
+    def test_one_bad_address_among_good_ones_refuses_the_whole_name(self, monkeypatch: Any) -> None:
+        """A name answering both is rebinding with the timing taken out."""
+        resolving({"split.example.test": [PUBLIC, "127.0.0.1"]}, monkeypatch)
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", "https://split.example.test/", client=transport(unreachable))
+
+    def test_a_name_that_does_not_resolve_is_refused(self, monkeypatch: Any) -> None:
+        resolving({}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="does not resolve"):
+            guarded_request("GET", "https://nowhere.example.test/", client=transport(unreachable))
+
+    def test_a_public_address_is_allowed(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        response = guarded_request("GET", "https://api.example.test/v1", client=transport(ok()))
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+
+
+class TestSchemes:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "file:///etc/passwd",
+            "gopher://127.0.0.1:11211/_stats",
+            "ftp://files.example.test/x",
+            "data:text/plain,hello",
+            "//example.test/x",
+        ],
+    )
+    def test_only_http_and_https_are_requested(self, url: str) -> None:
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", url, client=transport(unreachable))
+
+    def test_a_url_with_credentials_in_it_is_refused(self, monkeypatch: Any) -> None:
+        """``https://api.example.test@evil.test/`` reads as one host and is another."""
+        resolving({"evil.test": [PUBLIC]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="username or password"):
+            guarded_request("GET", "https://api.example.test@evil.test/", client=transport(unreachable))
+
+    def test_an_unparseable_url_is_a_refusal_not_a_crash(self) -> None:
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", "http://[oops", client=transport(unreachable))
+
+
+class TestTheDeploymentsOwnHost:
+    @pytest.fixture(autouse=True)
+    def _deployment(self, settings: Any) -> None:
+        settings.APP_URL = "https://chat.example.test"
+        settings.ALLOWED_HOSTS = ["chat.example.test", "www.example.test"]
+
+    def test_the_app_url_host_is_refused(self, monkeypatch: Any) -> None:
+        resolving({"chat.example.test": [PUBLIC]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", "https://chat.example.test/internal/tick", client=transport(unreachable))
+
+    def test_it_is_refused_on_any_port(self, monkeypatch: Any) -> None:
+        """SPEC §11.7 says "the deployment's own host"; behind a proxy it answers on several."""
+        resolving({"chat.example.test": [PUBLIC]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", "http://chat.example.test:8000/admin/", client=transport(unreachable))
+
+    def test_an_allowed_hosts_entry_is_refused(self, monkeypatch: Any) -> None:
+        resolving({"www.example.test": [PUBLIC]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", "https://www.example.test/", client=transport(unreachable))
+
+    def test_reaching_it_by_address_is_refused_too(self, monkeypatch: Any) -> None:
+        """The name check alone would be defeated by typing the IP instead."""
+        resolving({"chat.example.test": [PUBLIC], PUBLIC: [PUBLIC]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", f"https://{PUBLIC}/internal/tick", client=transport(unreachable))
+
+    def test_a_wildcard_allowed_hosts_does_not_deny_everything(self, monkeypatch: Any, settings: Any) -> None:
+        """Development sets ``["*"]``; reading it as a hostname would break every flow."""
+        settings.ALLOWED_HOSTS = ["*"]
+        resolving({"api.example.test": [PUBLIC], "chat.example.test": [PUBLIC_ALT]}, monkeypatch)
+        assert guarded_request("GET", "https://api.example.test/", client=transport(ok())).ok
+
+    def test_a_deployment_whose_own_name_does_not_resolve_still_works(self, monkeypatch: Any) -> None:
+        """Ordinary inside a private network — and not a reason to refuse every URL.
+
+        ``resolve_host`` returns nothing for ``chat.example.test`` here, so only
+        the name check can fire — and the URL under test is a different name.
+        """
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        assert guarded_request("GET", "https://api.example.test/", client=transport(ok())).ok
+
+
+class TestPinning:
+    def test_the_connection_uses_the_resolved_address(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://api.example.test/v1/orders?x=1", client=transport(handler))
+
+        request = seen[0]
+        assert request.url.host == PUBLIC, "the socket must go to the checked address, not to a fresh lookup"
+        assert request.url.path == "/v1/orders"
+        assert request.url.params["x"] == "1"
+        assert request.headers["host"] == "api.example.test"
+        assert request.extensions["sni_hostname"] == "api.example.test"
+        assert request.extensions[GUARD_EXTENSION] is True
+
+    def test_an_ipv6_target_is_pinned_in_brackets(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC_V6]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://api.example.test/v1", client=transport(handler))
+        assert seen[0].url.host == PUBLIC_V6
+        assert seen[0].headers["host"] == "api.example.test"
+
+    def test_a_non_default_port_survives_pinning(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://api.example.test:8443/v1", client=transport(handler))
+        assert seen[0].url.port == 8443
+        assert seen[0].headers["host"] == "api.example.test:8443"
+
+    def test_dns_rebinding_cannot_move_the_connection(self, monkeypatch: Any) -> None:
+        """The attack the pinning exists for.
+
+        The nameserver answers with a public address while the checks run and a
+        loopback address a millisecond later. A guard that let httpx resolve the
+        name would connect to 127.0.0.1 with every check having passed.
+        """
+        answers = iter([[PUBLIC], ["127.0.0.1"], ["127.0.0.1"]])
+        calls: list[str] = []
+
+        def _resolve(host: str) -> tuple[Any, ...]:
+            if host != "rebind.example.test":
+                return ()
+            calls.append(host)
+            return tuple(ipaddress.ip_address(value) for value in next(answers, ["127.0.0.1"]))
+
+        monkeypatch.setattr(outbound, "resolve_host", _resolve)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://rebind.example.test/", client=transport(handler))
+
+        assert seen[0].url.host == PUBLIC
+        assert calls == ["rebind.example.test"], "the name must be resolved exactly once"
+
+
+class TestRedirects:
+    def _chain(self, targets: dict[str, str]) -> Any:
+        def handler(request: httpx.Request) -> httpx.Response:
+            location = targets.get(request.url.path)
+            if location:
+                return httpx.Response(302, headers={"Location": location})
+            return httpx.Response(200, json={"path": request.url.path})
+
+        return handler
+
+    def test_a_redirect_to_a_private_address_is_refused(self, monkeypatch: Any) -> None:
+        """The bypass a first-URL-only check hands over for free."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        handler = self._chain({"/start": "http://169.254.169.254/latest/meta-data/"})
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", "https://api.example.test/start", client=transport(handler))
+
+    def test_a_redirect_to_the_deployment_is_refused(self, monkeypatch: Any, settings: Any) -> None:
+        settings.APP_URL = "https://chat.example.test"
+        settings.ALLOWED_HOSTS = ["chat.example.test"]
+        resolving({"api.example.test": [PUBLIC], "chat.example.test": [PUBLIC_ALT]}, monkeypatch)
+        handler = self._chain({"/start": "https://chat.example.test/internal/tick"})
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", "https://api.example.test/start", client=transport(handler))
+
+    def test_an_unparseable_location_is_a_refusal_not_a_crash(self, monkeypatch: Any) -> None:
+        """``Location`` is written by the far end, which is a stranger's server."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        handler = self._chain({"/start": "http://[oops"})
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", "https://api.example.test/start", client=transport(handler))
+
+    def test_a_javascript_location_is_refused(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        handler = self._chain({"/start": "javascript:alert(1)"})
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", "https://api.example.test/start", client=transport(handler))
+
+    def test_a_whitespace_only_location_keeps_the_body(self, monkeypatch: Any) -> None:
+        """Two conditions had to agree on "is this a followable redirect?" and did
+        not: one tested the raw header, the other its stripped form, so the body
+        was dropped by the first and then returned empty by the second."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(302, json={"still": "here"}, headers={"Location": "   "})
+
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert response.status_code == 302
+        assert response.json() == {"still": "here"}
+
+    def test_redirects_are_followed_up_to_the_cap(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        handler = self._chain({"/0": "/1", "/1": "/2", "/2": "/3"})
+        response = guarded_request("GET", "https://api.example.test/0", client=transport(handler))
+        assert response.json() == {"path": "/3"}
+        assert response.final_url == "https://api.example.test/3"
+
+    def test_one_redirect_too_many_is_refused(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        handler = self._chain({"/0": "/1", "/1": "/2", "/2": "/3", "/3": "/4"})
+        with pytest.raises(BlockedURLError, match=f"more than {MAX_REDIRECTS}"):
+            guarded_request("GET", "https://api.example.test/0", client=transport(handler))
+
+    def test_credentials_are_dropped_when_the_origin_changes(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC], "cdn.example.test": [PUBLIC_ALT]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(302, headers={"Location": "https://cdn.example.test/blob"})
+            return httpx.Response(200, json={})
+
+        guarded_request(
+            "GET",
+            "https://api.example.test/start",
+            headers={"Authorization": "Bearer shhh", "X-Trace": "keep-me"},
+            client=transport(handler),
+        )
+        assert seen[0].headers.get("authorization") == "Bearer shhh"
+        assert "authorization" not in seen[1].headers, "a redirect must not leak the token to another host"
+        assert seen[1].headers["x-trace"] == "keep-me"
+
+    def test_credentials_survive_a_same_origin_redirect(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(302, headers={"Location": "/moved"})
+            return httpx.Response(200, json={})
+
+        guarded_request(
+            "GET",
+            "https://api.example.test/start",
+            headers={"Authorization": "Bearer shhh"},
+            client=transport(handler),
+        )
+        assert seen[1].headers.get("authorization") == "Bearer shhh"
+
+    def test_a_303_becomes_a_get_without_a_body(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(303, headers={"Location": "/result"})
+            return httpx.Response(200, json={})
+
+        guarded_request("POST", "https://api.example.test/start", json={"a": 1}, client=transport(handler))
+        assert [request.method for request in seen] == ["POST", "GET"]
+        assert seen[1].read() == b""
+
+    def test_a_307_keeps_the_method_and_the_body(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(307, headers={"Location": "/result"})
+            return httpx.Response(200, json={})
+
+        guarded_request("POST", "https://api.example.test/start", json={"a": 1}, client=transport(handler))
+        assert [request.method for request in seen] == ["POST", "POST"]
+        assert seen[1].read() == b'{"a":1}'
+
+
+class TestPrivateRangesAllowed:
+    """``EXTERNAL_REQUEST_ALLOW_PRIVATE`` and the exact size of the hole it opens."""
+
+    @pytest.fixture(autouse=True)
+    def _on_prem(self, settings: Any) -> None:
+        settings.EXTERNAL_REQUEST_ALLOW_PRIVATE = True
+
+    @pytest.mark.parametrize("address", ["10.0.0.1", "172.16.0.1", "192.168.1.1", "fd00::1", "100.64.0.1"])
+    def test_private_ranges_become_reachable(self, address: str) -> None:
+        host = f"[{address}]" if ":" in address else address
+        assert guarded_request("GET", f"http://{host}/health", client=transport(ok())).ok
+
+    @pytest.mark.parametrize(
+        "address",
+        ["127.0.0.1", "169.254.169.254", "::1", "0.0.0.0", "224.0.0.1"],  # noqa: S104 - see above
+    )
+    def test_it_flips_private_ranges_only(self, address: str) -> None:
+        """Loopback and the metadata service are never an integration target."""
+        host = f"[{address}]" if ":" in address else address
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", f"http://{host}/", client=transport(unreachable))
+
+    @pytest.mark.parametrize("address", ["::ffff:127.0.0.1", "2002:7f00:0001::", "::ffff:169.254.169.254"])
+    def test_a_v6_wrapper_around_a_denied_v4_is_still_denied(self, address: str) -> None:
+        """The case ``_unwrap`` exists for, and it only bites with the flag on.
+
+        With the flag off these are refused anyway — Python calls every one of
+        them ``is_private``. With it on, the not-globally-routable rule stops
+        applying, and unwrapping the embedded ``127.0.0.1`` is the only thing
+        left between an on-prem deployment and its own loopback interface.
+        """
+        with pytest.raises(BlockedURLError):
+            guarded_request("GET", f"http://[{address}]/", client=transport(unreachable))
+
+    def test_a_v6_wrapper_around_a_private_v4_is_reachable(self) -> None:
+        """The other side of the same coin: on-prem means on-prem."""
+        assert guarded_request("GET", "http://[::ffff:10.0.0.1]/health", client=transport(ok())).ok
+
+    def test_the_deployments_own_host_stays_refused(self, monkeypatch: Any, settings: Any) -> None:
+        settings.APP_URL = "http://10.0.0.5:8000"
+        settings.ALLOWED_HOSTS = ["10.0.0.5"]
+        resolving({"10.0.0.5": ["10.0.0.5"]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", "http://10.0.0.5:8000/internal/tick", client=transport(unreachable))
+
+    def test_the_v4_mapped_spelling_of_the_deployment_is_refused(self, monkeypatch: Any, settings: Any) -> None:
+        """The bypass this flag makes reachable.
+
+        The category rules unwrap ``::ffff:10.0.0.5`` before testing it, so with
+        private ranges allowed it passes them — and ``str()`` of that address is
+        ``'::ffff:a00:5'``, which matches no entry written as ``'10.0.0.5'``.
+        Both sides of the comparison are canonicalised now.
+        """
+        settings.APP_URL = "http://10.0.0.5:8000"
+        settings.ALLOWED_HOSTS = []
+        resolving({"10.0.0.5": ["10.0.0.5"], "sneaky.example.test": ["::ffff:10.0.0.5"]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", "http://sneaky.example.test/internal/tick", client=transport(unreachable))
+
+
+class TestResponseCap:
+    def test_a_declared_oversize_body_is_never_read(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"x" * 50, headers={"Content-Length": "999999999"})
+
+        response = guarded_request("GET", "https://api.example.test/big", max_bytes=1024, client=transport(handler))
+        assert response.truncated is True
+        assert response.content == b""
+
+    def test_a_streamed_body_is_cut_off_at_the_cap(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def chunks() -> Any:
+            for _ in range(100):
+                yield b"y" * 100
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        response = guarded_request("GET", "https://api.example.test/big", max_bytes=250, client=transport(handler))
+        assert response.truncated is True
+        assert len(response.content) == 250
+
+    def test_a_body_exactly_at_the_cap_is_not_truncated(self, monkeypatch: Any) -> None:
+        """``>=`` here made a complete response look cut off, and the External
+        Request node skips *every* response mapping on a truncated body."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def chunks() -> Any:
+            yield b'{"a": 1}'  # exactly eight bytes
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        response = guarded_request("GET", "https://api.example.test/", max_bytes=8, client=transport(handler))
+        assert response.content == b'{"a": 1}'
+        assert response.truncated is False
+        assert response.json() == {"a": 1}
+
+    def test_one_byte_over_the_cap_is_truncated(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def chunks() -> Any:
+            yield b"123456789"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        response = guarded_request("GET", "https://api.example.test/", max_bytes=8, client=transport(handler))
+        assert len(response.content) == 8
+        assert response.truncated is True
+
+    @pytest.mark.parametrize("value", ["1mb", None, "", -1, 0, object()])
+    def test_an_unusable_cap_setting_falls_back_instead_of_crashing(self, value: Any, settings: Any) -> None:
+        """``int("1mb")`` is a ValueError, which is not an OutboundError and
+        would sail past every caller's handler."""
+        settings.EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = value
+        assert max_response_bytes() == MAX_RESPONSE_BYTES
+
+    def test_a_body_under_the_cap_arrives_whole(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        response = guarded_request("GET", "https://api.example.test/", client=transport(ok({"id": "abc"})))
+        assert response.truncated is False
+        assert response.json() == {"id": "abc"}
+
+    def test_the_default_cap_comes_from_settings(self, monkeypatch: Any, settings: Any) -> None:
+        settings.EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = 64
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def chunks() -> Any:
+            for _ in range(50):
+                yield b"z" * 10
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert len(response.content) == 64
+        assert response.truncated is True
+
+
+class TestWireFormatAuthority:
+    """What goes in ``Host`` and SNI is the wire form, not the display form."""
+
+    def test_an_internationalized_host_is_sent_as_punycode(self, monkeypatch: Any) -> None:
+        """``URL.host`` decodes an IDN back to Unicode for humans to read.
+
+        Putting that in a header raises ``UnicodeEncodeError`` from inside
+        httpx — not an ``OutboundError``, so it escaped every caller's handler.
+        """
+        resolving({"xn--xample-9ua.com": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        response = guarded_request("GET", "https://éxample.com/p", client=transport(handler))
+
+        assert seen[0].headers["host"] == "xn--xample-9ua.com"
+        assert seen[0].extensions["sni_hostname"] == "xn--xample-9ua.com"
+        assert response.final_host == "xn--xample-9ua.com"
+
+    def test_an_ipv6_literal_keeps_its_brackets_in_host(self, monkeypatch: Any) -> None:
+        """``2606:2800::1:8443`` is not an authority — it is a host and a port
+        run together, which a server may reject or misparse."""
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", f"https://[{PUBLIC_V6}]:8443/p", client=transport(handler))
+
+        assert seen[0].headers["host"] == f"[{PUBLIC_V6}]:8443"
+
+    def test_an_ipv6_literal_without_a_port_is_still_bracketed(self, monkeypatch: Any) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", f"https://[{PUBLIC_V6}]/p", client=transport(handler))
+        assert seen[0].headers["host"] == f"[{PUBLIC_V6}]"
+
+    def test_a_mixed_case_host_is_lowercased_on_the_wire(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://API.Example.TEST/p", client=transport(handler))
+        assert seen[0].headers["host"] == "api.example.test"
+
+
+class TestDeadlineDuringStreaming:
+    """httpx's read timeout is per-read; a slow drip never trips it."""
+
+    def test_a_slow_drip_body_is_cut_off_by_the_wall_clock(self, monkeypatch: Any) -> None:
+        """The far end sends a chunk just inside the read timeout, forever.
+
+        Without a deadline check in the body loop this runs until the size cap
+        is reached — a nominally ten-second request holding a contact's advisory
+        lock for as long as the server cares to keep talking.
+        """
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        clock = iter(range(0, 100_000))
+        monkeypatch.setattr(outbound.time, "monotonic", lambda: float(next(clock)))
+
+        delivered = 0
+
+        def chunks() -> Any:
+            nonlocal delivered
+            for _ in range(10_000):
+                delivered += 1
+                yield b"x"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        with pytest.raises(OutboundTransportError, match="budget"):
+            guarded_request("GET", "https://api.example.test/", timeout=10, client=transport(handler))
+
+        assert delivered < 10_000, "the stream must be abandoned, not drained"
+
+    def test_a_prompt_body_is_unaffected(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        assert guarded_request("GET", "https://api.example.test/", client=transport(ok({"a": 1}))).ok
+
+
+class TestJsonDepth:
+    """SECURITY-BASELINE §7, applied to a body a stranger's server chose."""
+
+    def _response(self, raw: bytes) -> GuardedResponse:
+        return GuardedResponse(200, httpx.Headers({}), raw, False, 1, "https://api.example.test/", "api.example.test")
+
+    def test_a_deeply_nested_body_is_a_value_error_not_a_recursion_error(self) -> None:
+        """``json.loads`` raises ``RecursionError`` here, which is not a
+        ``ValueError`` and so is not what any caller is catching."""
+        bomb = b"[" * 10_000 + b"0" + b"]" * 10_000
+        assert len(bomb) < MAX_RESPONSE_BYTES, "a few kilobytes — nowhere near the size cap"
+        with pytest.raises(ValueError, match="nested"):
+            self._response(bomb).json()
+
+    def test_an_ordinary_document_still_parses(self) -> None:
+        assert self._response(b'{"a": {"b": [1, 2, {"c": 3}]}}').json() == {"a": {"b": [1, 2, {"c": 3}]}}
+
+    def test_the_cap_is_on_the_bytes_not_the_parse(self) -> None:
+        """Brackets inside a string are not nesting, so this must parse."""
+        assert self._response(b'{"a": "[[[[[[[[[[[[["}').json() == {"a": "[" * 13}
+
+
+class TestRedirectMethodRules:
+    """RFC 9110 §15.4: only POST is rewritten by 301 and 302."""
+
+    def _redirect_once(self, status: int, monkeypatch: Any) -> list[httpx.Request]:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(status, headers={"Location": "/moved"})
+            return httpx.Response(200, json={})
+
+        guarded_request("PUT", "https://api.example.test/start", json={"a": 1}, client=transport(handler))
+        return seen
+
+    @pytest.mark.parametrize("status", [301, 302])
+    def test_a_put_keeps_its_method_and_body(self, status: int, monkeypatch: Any) -> None:
+        """Rewriting this to GET would make a permanently-moved endpoint receive
+        a read where the flow author wrote a write, and appear to succeed."""
+        seen = self._redirect_once(status, monkeypatch)
+        assert [request.method for request in seen] == ["PUT", "PUT"]
+        assert seen[1].read() == b'{"a":1}'
+
+    def test_a_303_still_rewrites_a_put_to_get(self, monkeypatch: Any) -> None:
+        seen = self._redirect_once(303, monkeypatch)
+        assert [request.method for request in seen] == ["PUT", "GET"]
+        assert seen[1].read() == b""
+
+    @pytest.mark.parametrize("status", [301, 302])
+    def test_a_post_is_still_rewritten(self, status: int, monkeypatch: Any) -> None:
+        """The historical quirk this rule exists for."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(status, headers={"Location": "/moved"})
+            return httpx.Response(200, json={})
+
+        guarded_request("POST", "https://api.example.test/start", json={"a": 1}, client=transport(handler))
+        assert [request.method for request in seen] == ["POST", "GET"]
+
+
+class TestCompressedBodies:
+    """The size cap is only real if a compressed body cannot get around it."""
+
+    def test_identity_encoding_is_requested(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert seen[0].headers["accept-encoding"] == "identity"
+
+    def test_a_caller_cannot_ask_for_compression(self, monkeypatch: Any) -> None:
+        """It is a size control, not a preference."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request(
+            "GET", "https://api.example.test/", headers={"Accept-Encoding": "gzip"}, client=transport(handler)
+        )
+        assert seen[0].headers["accept-encoding"] == "identity"
+
+    def test_a_compression_bomb_is_never_expanded(self, monkeypatch: Any) -> None:
+        """The measured case: 65 KB on the wire, 64 MB if anything decompresses it.
+
+        The declared ``Content-Length`` is the *compressed* size and sails under
+        the cap, so the header check is the only thing standing between this
+        response and a 64 MB allocation in a worker holding a contact's lock.
+        """
+        import gzip
+
+        bomb = gzip.compress(b"A" * (64 * 1024 * 1024))
+        assert len(bomb) < MAX_RESPONSE_BYTES, "the point is that the compressed size looks harmless"
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=bomb,
+                headers={"Content-Encoding": "gzip", "Content-Length": str(len(bomb))},
+            )
+
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+
+        assert response.content == b""
+        assert response.truncated is True
+        assert response.status_code == 200
+
+    def test_an_identity_encoded_body_is_read_normally(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"id": "x"}, headers={"Content-Encoding": "identity"})
+
+        assert guarded_request("GET", "https://api.example.test/", client=transport(handler)).json() == {"id": "x"}
+
+
+class TestHostileContentType:
+    """``Content-Type`` is written by a stranger's server and reaches a decoder."""
+
+    @pytest.mark.parametrize("charset", ["undefined", "idna", "punycode", "not-a-codec", "", '"utf-8"'])
+    def test_a_charset_that_cannot_decode_falls_back_instead_of_raising(self, charset: str, monkeypatch: Any) -> None:
+        """Each of these used to raise past every caller's ``except OutboundError``.
+
+        ``undefined`` raises unconditionally, ``idna`` rejects
+        ``errors="replace"``, and ``punycode`` raises on any non-ASCII byte —
+        all three survived a check that only proved the codec could *encode*.
+        """
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content=b'\xff\xfe{"a": 1}', headers={"Content-Type": f"text/plain; charset={charset}"}
+            )
+
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert isinstance(response.text, str)
+        assert isinstance(response.text_prefix(10), str)
+
+    def test_a_usable_charset_is_still_honoured(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content="café".encode("latin-1"), headers={"Content-Type": "text/plain; charset=latin-1"}
+            )
+
+        assert guarded_request("GET", "https://api.example.test/", client=transport(handler)).text == "café"
+
+
+class TestTextPrefix:
+    def _response(self, content: bytes) -> GuardedResponse:
+        return GuardedResponse(
+            200, httpx.Headers({}), content, False, 1, "https://api.example.test/", "api.example.test"
+        )
+
+    def test_it_returns_the_first_characters(self) -> None:
+        assert self._response(b"abcdefghij").text_prefix(4) == "abcd"
+
+    def test_a_short_body_is_returned_whole(self) -> None:
+        assert self._response(b"ab").text_prefix(100) == "ab"
+
+    def test_multibyte_characters_survive_the_byte_slice(self) -> None:
+        """Four bytes per character is UTF-8's maximum, so the slice over-reads."""
+        assert self._response(("é" * 50).encode()).text_prefix(10) == "é" * 10
+
+    def test_a_sequence_cut_in_half_does_not_raise(self) -> None:
+        assert isinstance(self._response(b"\xf0\x9f\x98").text_prefix(4), str)
+
+
+class TestHeaderHygiene:
+    def test_a_header_carrying_a_newline_is_dropped(self, monkeypatch: Any) -> None:
+        """Header splitting: "a\\r\\nX-Admin: 1" is two headers at the far end."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request(
+            "GET",
+            "https://api.example.test/",
+            headers={"X-Evil": "a\r\nX-Admin: 1", "X-Fine": "ok"},
+            client=transport(handler),
+        )
+        assert "x-evil" not in seen[0].headers
+        assert "x-admin" not in seen[0].headers
+        assert seen[0].headers["x-fine"] == "ok"
+
+    def test_a_non_ascii_header_value_is_dropped_rather_than_crashing(self, monkeypatch: Any) -> None:
+        """httpx ASCII-encodes header values when it builds the request and
+        raises ``UnicodeEncodeError`` — not an ``OutboundError``, so it escaped
+        the caller's handler. RFC 9110 §5.5 makes non-ASCII values obsolete and
+        there is no encoding to guess, so it is dropped like any other refusal."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        response = guarded_request(
+            "GET",
+            "https://api.example.test/",
+            headers={"X-Customer": "Jörg", "X-Fine": "plain"},
+            client=transport(handler),
+        )
+
+        assert response.ok
+        assert "x-customer" not in seen[0].headers
+        assert seen[0].headers["x-fine"] == "plain"
+
+    def test_a_caller_cannot_override_host(self, monkeypatch: Any) -> None:
+        """Overriding Host would point the pinned connection's virtual host elsewhere."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request(
+            "GET",
+            "https://api.example.test/",
+            headers={"Host": "admin.internal"},
+            client=transport(handler),
+        )
+        assert seen[0].headers["host"] == "api.example.test"
+
+
+class TestFailuresAndResults:
+    def test_a_timeout_is_a_transport_error_naming_only_the_host(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectTimeout("timed out", request=request)
+
+        with pytest.raises(OutboundTransportError) as caught:
+            guarded_request("GET", "https://api.example.test/v1?token=super-secret", client=transport(handler))
+        assert "super-secret" not in str(caught.value), "SECURITY-BASELINE §5: a URL's query carries credentials"
+        assert "api.example.test" in str(caught.value)
+
+    def test_a_connection_error_names_only_the_host(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no route", request=request)
+
+        with pytest.raises(OutboundTransportError):
+            guarded_request("GET", "https://api.example.test/", client=transport(handler))
+
+    def test_a_non_2xx_is_a_result_not_an_exception(self, monkeypatch: Any) -> None:
+        """The caller decides what a 404 means; the guard only refuses addresses."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        handler = lambda request: httpx.Response(404, json={"error": "nope"})  # noqa: E731
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert response.status_code == 404
+        assert response.ok is False
+
+    def test_the_response_reports_where_it_ended_up(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        response = guarded_request("GET", "https://api.example.test/v1", client=transport(ok()))
+        assert response.final_url == "https://api.example.test/v1", "the hostname, not the pinned address"
+        assert response.final_host == "api.example.test", "carried, so no caller re-parses the URL for it"
+        assert response.elapsed_ms >= 0
+
+    def test_final_host_follows_a_redirect(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC], "cdn.example.test": [PUBLIC_ALT]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == PUBLIC:
+                return httpx.Response(302, headers={"Location": "https://cdn.example.test/blob"})
+            return httpx.Response(200, json={})
+
+        assert guarded_request("GET", "https://api.example.test/", client=transport(handler)).final_host == (
+            "cdn.example.test"
+        )
+
+
+class TestGuardedResponseDecoding:
+    def _response(self, content: bytes, content_type: str) -> GuardedResponse:
+        return GuardedResponse(
+            status_code=200,
+            headers=httpx.Headers({"content-type": content_type}),
+            content=content,
+            truncated=False,
+            elapsed_ms=1,
+            final_url="https://api.example.test/",
+        )
+
+    def test_a_declared_charset_is_honoured(self) -> None:
+        assert self._response("café".encode("latin-1"), "text/plain; charset=latin-1").text == "café"
+
+    def test_an_unknown_charset_falls_back_rather_than_raising(self) -> None:
+        assert self._response(b"hi", "text/plain; charset=nonsense-9").text == "hi"
+
+    def test_undecodable_bytes_do_not_raise(self) -> None:
+        """This body is quoted into a log line and an admin column; it may not explode."""
+        assert self._response(b"\xff\xfe\x00", "application/json").text
