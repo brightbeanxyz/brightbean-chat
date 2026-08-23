@@ -232,6 +232,26 @@ MAX_TEXT_CHARS = 100_000
 MAX_ATTACHMENTS = 20
 MAX_ATTACHMENT_URL_CHARS = 2000
 
+#: Cap on a stored media identifier. As wide as an attachment URL because one
+#: platform's identifier *is* a URL (Twilio's ``MediaUrl``) while another's is a
+#: short opaque string (Telegram's ``file_id``); the cap is about bounding the
+#: row, not about recognising a shape.
+MAX_MEDIA_ID_CHARS = 2000
+
+#: How many media identifiers one message may carry. Its **own** constant rather
+#: than a second use of ``MAX_ATTACHMENTS``: the two lists are independent, so
+#: reusing one number quietly doubled the bound it expressed — a payload filling
+#: both wrote twice the jsonb the cap was chosen for. Stated separately so the
+#: worst-case row is ``MAX_ATTACHMENTS * MAX_ATTACHMENT_URL_CHARS +
+#: MAX_MEDIA_IDS * MAX_MEDIA_ID_CHARS`` and can be read off (SECURITY-BASELINE §7).
+MAX_MEDIA_IDS = 20
+
+#: The block kinds a ``media`` block may claim. An allowlist, because the value
+#: reaches the renderer's tag choice and comes from a webhook: anything else is
+#: stored as "" and treated as unknown, which is the same path an adapter that
+#: does not fill ``media_kinds`` at all takes.
+MEDIA_KINDS = frozenset({"image", "audio", "video", "file"})
+
 
 def register_processors() -> None:
     """Register persistence, then the routing tail. Called from ``ready()``.
@@ -578,9 +598,27 @@ def _inbound_body(event: NormalizedEvent) -> dict[str, Any]:
     for url in attachments[:MAX_ATTACHMENTS]:
         cleaned = _clean(url, MAX_ATTACHMENT_URL_CHARS)
         if cleaned:
-            # Recorded, never fetched: SECURITY-BASELINE §6 forbids a
-            # server-side fetch of a platform-supplied URL until #15's guard.
+            # Recorded, never fetched. ``attachments`` is the field for media a
+            # reader's own browser can reach without a credential of ours
+            # (``EventPayload`` draws the line), so there is nothing for this
+            # deployment to fetch and SECURITY-BASELINE §6 keeps it that way.
             blocks.append({"type": "file", "url": cleaned, "caption": ""})
+    # The other half of that line. A media id is not a URL and must not be
+    # rendered as one; it is resolved on demand through
+    # ``apps.channels.media``, and what goes in the body is the identifier so
+    # the row records what the platform actually gave us.
+    #
+    # ``media_kind`` is what the platform *called* it, and it decides one thing:
+    # whether the inbox bets on an <img> or offers a labelled link. It is not
+    # what the bytes are — that is sniffed at fetch time (SECURITY-BASELINE §9),
+    # because the platform's claim is exactly what the sniff exists to distrust.
+    media_ids = payload.media_ids if isinstance(payload.media_ids, list | tuple) else ()
+    for index, media_id in enumerate(media_ids[:MAX_MEDIA_IDS]):
+        cleaned = _clean(media_id, MAX_MEDIA_ID_CHARS)
+        if cleaned:
+            blocks.append(
+                {"type": "media", "media_id": cleaned, "media_kind": _media_kind(payload, index), "caption": ""}
+            )
     body: dict[str, Any] = {
         "blocks": blocks,
         "buttons": [],
@@ -594,6 +632,27 @@ def _inbound_body(event: NormalizedEvent) -> dict[str, Any]:
     if payload.ref:
         body["ref"] = _clean(payload.ref, 2000)
     return body
+
+
+def _media_kind(payload: Any, index: int) -> str:
+    """What the platform called ``media_ids[index]``, or "" if it did not say.
+
+    ``media_kinds`` is positionally aligned with ``media_ids`` **by the
+    adapter**, and this function assumes nothing about that holding.
+    ``EventPayload`` says consumers must not require the two to be the same
+    length, and this is why: an adapter that fills one and not the other, or
+    fills them out of step, is a rendering nuisance and must not be a lost
+    message — which is exactly what an ``IndexError`` here would be, since
+    ``persist_events`` swallows the failure and drops the whole row.
+
+    Unrecognised values become "" rather than being passed through: the value
+    reaches the renderer's tag choice, and it arrived over a webhook.
+    """
+    kinds = getattr(payload, "media_kinds", ())
+    if not isinstance(kinds, list | tuple) or index >= len(kinds):
+        return ""
+    kind = kinds[index]
+    return kind if isinstance(kind, str) and kind in MEDIA_KINDS else ""
 
 
 def _clean(value: Any, limit: int) -> str:

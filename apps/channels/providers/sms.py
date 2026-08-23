@@ -88,6 +88,7 @@ from apps.channels.events import (
     SendStatus,
     TextBlock,
 )
+from apps.channels.media import MediaSource
 from apps.channels.models import ChannelConnection
 from apps.channels.providers.base import BACKGROUND_TIMEOUT, Adapter, request_json
 from apps.channels.providers.exceptions import APIError
@@ -656,8 +657,34 @@ def keyword(body: str) -> str:
     return body.strip().strip(".!?,;:'\"").strip().casefold()
 
 
-def _media_urls(params: dict[str, str]) -> tuple[str, ...]:
-    """``MediaUrl0…`` for an MMS, bounded and never fetched.
+#: The one host a stored ``MediaUrl`` may name. Derived from :data:`API_ROOT`
+#: rather than written twice, so a deployment that ever repoints the API root
+#: cannot leave the credential check pointing at the old one.
+_API_HOST = (httpx.URL(API_ROOT).host or "").lower()
+
+
+def _is_account_media_url(url: Any) -> bool:
+    """Whether ``url`` is an HTTPS address under Twilio's own API host.
+
+    The gate on attaching account credentials to a webhook-supplied string.
+    Deliberately strict: exact host, HTTPS only, and no userinfo — the
+    ``https://api.twilio.com@evil.test/`` shape reads as Twilio to a human and
+    resolves to ``evil.test`` for a client, and the SSRF guard refuses it a
+    second time for the same reason.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return False
+    try:
+        parsed = httpx.URL(url)
+    except (httpx.InvalidURL, ValueError, TypeError):
+        return False
+    if parsed.userinfo:
+        return False
+    return parsed.scheme == "https" and (parsed.host or "").lower() == _API_HOST
+
+
+def _media_urls(params: dict[str, str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(MediaUrl0…, kinds)`` for an MMS, bounded and resolved on demand.
 
     ``NumMedia`` says how many there are and is attacker-supplied like the rest,
     so it bounds the loop only after being clamped: a payload claiming a
@@ -675,20 +702,44 @@ def _media_urls(params: dict[str, str]) -> tuple[str, ...]:
     picture messages behind a link we handed out. Neither is an attachment.
 
     Storing the address and resolving it on demand — through something holding
-    the credentials — is the honest shape, and it keeps this clear of
-    SECURITY-BASELINE §6, which forbids fetching a platform-supplied URL
-    server-side outside the SSRF guard.
+    the credentials — is the honest shape. That resolution is
+    :meth:`TwilioAdapter.media_source` plus :mod:`apps.channels.media`, which
+    makes the fetch under the SSRF guard as SECURITY-BASELINE §6 requires for a
+    URL that arrived in a webhook body.
     """
     try:
         count = int(params.get("NumMedia") or 0)
     except (TypeError, ValueError):
-        return ()
-    urls = []
+        return (), ()
+    urls: list[str] = []
+    kinds: list[str] = []
     for index in range(max(0, min(count, MAX_MEDIA))):
         url = _text(params.get(f"MediaUrl{index}"), MAX_MEDIA_URL_CHARS).strip()
         if url:
             urls.append(url)
-    return tuple(urls)
+            kinds.append(_media_kind(params.get(f"MediaContentType{index}")))
+    return tuple(urls), tuple(kinds)
+
+
+def _media_kind(declared: Any) -> str:
+    """``MediaContentType{n}`` as one of this project's block kinds, or "".
+
+    What Twilio *says* the part is. It decides one thing — whether the inbox
+    bets on an ``<img>`` or offers a labelled link — and it is not trusted for
+    anything else: the ``Content-Type`` served back to the browser is sniffed
+    from the bytes by ``apps.channels.media``, because a declared type on
+    attacker-adjacent bytes is exactly what SECURITY-BASELINE §9 exists to
+    distrust. Getting this wrong costs a wrong-looking tag, never an inline
+    render of something that should have been an attachment.
+
+    Anything unrecognised is "", which the renderer treats as "nothing was
+    said" and falls back to an ``<img>`` — the right bet for MMS.
+    """
+    if not isinstance(declared, str):
+        return ""
+    top, _, _ = declared.partition("/")
+    top = top.strip().lower()
+    return top if top in ("image", "audio", "video") else ""
 
 
 def _extra(params: dict[str, str]) -> dict[str, Any]:
@@ -779,7 +830,7 @@ class TwilioAdapter(Adapter):
             return []
 
         body = _text(params.get("Body"))
-        media = _media_urls(params)
+        media, media_kinds = _media_urls(params)
         if not body and not media:
             return []
 
@@ -798,7 +849,7 @@ class TwilioAdapter(Adapter):
             platform_user_id=sender,
             provider_event_id=provider_event_id,
             timestamp=now,
-            payload=EventPayload(text=body, media_ids=media, extra=_extra(params)),
+            payload=EventPayload(text=body, media_ids=media, media_kinds=media_kinds, extra=_extra(params)),
             raw=dict(params),
         )
         if keyword(body) not in OPT_OUT_KEYWORDS:
@@ -888,6 +939,44 @@ class TwilioAdapter(Adapter):
         ]
 
     # -- outbound -----------------------------------------------------------
+
+    # -- media --------------------------------------------------------------
+
+    def media_source(self, connection: ChannelConnection, media_id: str) -> MediaSource | None:
+        """A stored ``MediaUrl``, with this account's Basic auth attached.
+
+        No platform call to resolve: unlike a Telegram ``file_id``, the
+        identifier already *is* the address. What it needs is the credential,
+        which is why it was never an ``attachment`` — see :func:`_media_urls`.
+
+        **The origin is checked before the credential is attached**, and that is
+        the point of this method rather than a formality. ``media_id`` reached
+        us inside a webhook body; if it could name any host, this method would
+        hand the Account SID and Auth Token — the whole account — to whatever
+        that host was. Twilio's signature check is what makes a forged body hard,
+        and this is what makes a forged body *useless*, which is the property
+        worth having. The SSRF guard covers the other half by dropping
+        ``Authorization`` when a redirect crosses an origin, so a media URL that
+        redirects to a CDN cannot walk the credential off-site either.
+
+        Basic in a header rather than userinfo in the URL: the guard refuses
+        userinfo outright, and a credential in a URL is a credential in every
+        log that URL touches (SECURITY-BASELINE §5).
+        """
+        sid = account_sid(connection)
+        token = auth_token(connection)
+        if not sid or not token:
+            logger.info("SMS: connection %s has no credentials; media cannot be resolved.", connection.pk)
+            return None
+        if not _is_account_media_url(media_id):
+            logger.warning(
+                "SMS: refusing to attach credentials to a media URL off %s on connection %s.",
+                _API_HOST,
+                connection.pk,
+            )
+            return None
+        encoded = base64.b64encode(f"{sid}:{token}".encode()).decode("ascii")
+        return MediaSource(url=media_id, headers=(("Authorization", f"Basic {encoded}"),))
 
     def send(self, connection: ChannelConnection, identity: Any, outbound: OutboundMessage) -> SendResult:
         """Deliver one message, downgrading it first (SPEC §6.1).

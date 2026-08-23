@@ -19,11 +19,14 @@ deployment never loads it.
 """
 
 from typing import Any
-from urllib.parse import quote
 
 from django.conf import settings
 from django.core.files.storage import default_storage
 
+# Re-exported rather than defined here since apps.channels needs it too: a
+# header builder that touches no storage backend should not drag django-storages
+# into the adapter layer's import graph. See apps/common/disposition.py.
+from apps.common.disposition import content_disposition
 from apps.media_library.mimes import ALLOWED_MIMES
 
 __all__ = [
@@ -98,22 +101,6 @@ def can_presign() -> bool:
             getattr(settings, "AWS_CLOUDFRONT_KEY", "")
         )
     return True
-
-
-def content_disposition(*, inline: bool, filename: str) -> str:
-    """A ``Content-Disposition`` value that a filename cannot break out of.
-
-    Uploaded filenames reach two header-shaped places — the local response
-    header and the ``ResponseContentDisposition`` parameter of a presigned S3
-    URL — and both are injection sinks for a name containing a quote or a
-    newline. Control characters are dropped, the ASCII fallback is stripped to
-    a conservative set, and the real name rides in the RFC 5987 ``filename*``
-    form where percent-encoding makes it inert.
-    """
-    safe = "".join(char for char in filename if char.isprintable() and char not in '"\\')[:200]
-    ascii_fallback = "".join(char if 32 <= ord(char) < 127 else "_" for char in safe) or "download"
-    disposition = "inline" if inline else "attachment"
-    return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(safe or 'download')}"
 
 
 def _client_and_bucket() -> tuple[Any, str]:

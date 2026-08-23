@@ -32,16 +32,24 @@ across apps — the External Request node (#15), outbound webhooks (#25), media
 fetch-by-URL — which is the same reason ``tests/idor.py`` lives here.
 """
 
-from collections.abc import Iterator
+import ipaddress
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 from unittest import mock
 
 import httpx
 
-from apps.common.outbound import GUARD_EXTENSION
+from apps.common import outbound
+from apps.common.outbound import GUARD_EXTENSION, reset_deployment_cache
 
-__all__ = ["UnguardedRequestError", "guard_required"]
+__all__ = [
+    "FakeInternet",
+    "UnguardedRequestError",
+    "deployment_cache_cleared",
+    "guard_required",
+    "serving",
+]
 
 
 class UnguardedRequestError(AssertionError):
@@ -92,3 +100,109 @@ def guard_required() -> Iterator[list[httpx.Request]]:
         mock.patch.object(httpx.AsyncClient, "send", _async_send),
     ):
         yield seen
+
+
+# ---------------------------------------------------------------------------
+# Driving a guarded call site without a socket
+# ---------------------------------------------------------------------------
+
+
+class FakeInternet:
+    """DNS and the socket, replaced — with the guard left entirely real.
+
+    The companion to :func:`guard_required`: that one proves a call site went
+    through the guard, this one lets the guard actually run without leaving the
+    process. Together they are what "a test proving the guard is in the path"
+    means for a call site that has to *succeed* as well as be guarded.
+
+    It patches :func:`apps.common.outbound.resolve_host` and
+    ``httpx.HTTPTransport.handle_request`` rather than handing the caller an
+    ``httpx.MockTransport``, because ``guarded_request`` builds its own client
+    from a URL — a caller cannot inject a transport, and that is the shape
+    production runs in. Patching the transport class also means the guard's real
+    work happens: the scheme check, the address validation, the IP pinning, the
+    redirect re-validation and the streaming cap all run against the canned
+    response.
+
+    ``names`` maps hostname to the addresses it resolves to. The default is
+    empty, so a test that forgets to name a host gets a refusal from the guard
+    rather than a confusing miss. Use a **globally routable** address in it:
+    the documentation ranges (``192.0.2.0/24``, ``198.51.100.0/24``,
+    ``203.0.113.0/24``) are reserved, the guard refuses reserved space, and a
+    test using one fails for a reason that has nothing to do with its subject.
+
+    Lives here rather than in an app's test package because its consumers are
+    spread across apps, for the same reason :func:`guard_required` does. Three
+    private copies existed before this one and had already started to diverge.
+    """
+
+    #: A genuinely global address, for tests that just need one that resolves.
+    PUBLIC = "93.184.216.34"
+
+    def __init__(
+        self,
+        handler: Callable[[httpx.Request], httpx.Response],
+        names: Mapping[str, Sequence[str]] | None = None,
+    ) -> None:
+        self.handler = handler
+        self.names = dict(names or {})
+        #: Every request that reached the transport, in order.
+        self.requests: list[httpx.Request] = []
+
+    def install(self, monkeypatch: Any) -> "FakeInternet":
+        """Patch DNS and the transport for the duration of the test.
+
+        Returns ``self`` so the common case is one line::
+
+            internet = FakeInternet(serving(b"...")).install(monkeypatch)
+        """
+        monkeypatch.setattr(outbound, "resolve_host", self._resolve)
+        monkeypatch.setattr(httpx.HTTPTransport, "handle_request", self._handle)
+        return self
+
+    def _resolve(self, host: str) -> tuple[Any, ...]:
+        return tuple(ipaddress.ip_address(value) for value in self.names.get(host.lower(), ()))
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        # Patched onto the class as an already-bound method, so ``self`` here is
+        # the FakeInternet and the transport instance never arrives — which is
+        # fine, since a canned response does not need one. Writing this as a
+        # plain function instead is the mistake that costs an afternoon: it
+        # becomes a method of the transport and the signature no longer matches.
+        self.requests.append(request)
+        return self.handler(request)
+
+
+def serving(body: Any = None, *, status: int = 200, **kwargs: Any) -> Callable[[httpx.Request], httpx.Response]:
+    """A handler for :class:`FakeInternet` that answers everything the same way.
+
+    ``body`` is dispatched on its type, because the two kinds of call site want
+    different things and neither should have to say so: ``bytes`` is a body
+    served verbatim (a media fetch, where the *bytes* are the subject), and
+    anything else is serialised as JSON (an API call, where the shape is). None
+    serves an empty body.
+    """
+
+    def _handler(_request: httpx.Request) -> httpx.Response:
+        if body is None:
+            return httpx.Response(status, **kwargs)
+        if isinstance(body, bytes | bytearray):
+            return httpx.Response(status, content=bytes(body), **kwargs)
+        return httpx.Response(status, json=body, **kwargs)
+
+    return _handler
+
+
+@contextmanager
+def deployment_cache_cleared() -> Iterator[None]:
+    """Drop the guard's cache of this deployment's own addresses, both ways.
+
+    The guard resolves ``APP_URL``'s host once and caches it, so a test that
+    swaps the resolver has to clear the cache before *and* after: before, or the
+    real answer is still there; after, or the fake one leaks into the next test.
+    """
+    reset_deployment_cache()
+    try:
+        yield
+    finally:
+        reset_deployment_cache()

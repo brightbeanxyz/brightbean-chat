@@ -31,4 +31,9 @@ urlpatterns = [
     path("<uuid:conversation_id>/stop/", views.stop_automation, name="stop"),
     path("<uuid:conversation_id>/tags/", views.tags, name="tags"),
     path("<uuid:conversation_id>/messages/<uuid:message_id>/retry/", views.retry, name="retry"),
+    # Inbound media held as a platform identifier, resolved on demand. Under the
+    # workspace prefix and behind a session on purpose — the reader is a team
+    # member, not a platform, so membership is the credential and there is no
+    # token (apps/channels/media.py sets that out against the /m/ precedent).
+    path("<uuid:conversation_id>/messages/<uuid:message_id>/media/<int:index>/", views.media, name="media"),
 ]

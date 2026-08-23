@@ -78,7 +78,7 @@ out of scope for v1, and this is what that means concretely.
 | What the contact does | Event | Notes |
 |---|---|---|
 | Sends text | `message` | |
-| Sends a photo, audio, voice note, video, video note, animation, document or sticker | `message` | `file_id`s land in `payload.media_ids`; the caption becomes the text |
+| Sends a photo, audio, voice note, video, video note, animation, document or sticker | `message` | `file_id`s land in `payload.media_ids`, with what Telegram called each one in `payload.media_kinds`; the caption becomes the text |
 | Shares a contact or a location | `message` | Rendered as a sentence — SPEC §7.2 has no richer field |
 | Presses an inline button | `postback` | `payload.button_id` from `callback_data`; the button's spinner is cleared by a queued `answerCallbackQuery`, not inline, so it stays off the webhook's ack path |
 | Opens `t.me/<bot>?start=<ref>` | `referral` | `payload.ref` — SPEC §10's Ref URL trigger |
@@ -92,10 +92,19 @@ welcome trigger keys off a flag rather than string-matching `/start`.
 `update_id` is the deduplication key, so Telegram's own retries are recognised
 and skipped (SPEC §7.1 step 2).
 
-Media is **not** fetched server-side. A Telegram `file_id` is not a URL, and
-turning it into one requires a `getFile` call that returns a link expiring in an
-hour; storing the id and resolving it on demand is the honest shape, and it also
-keeps the adapter clear of SECURITY-BASELINE §6.
+A **sticker** is classified by its flags rather than by the field name: a
+plain one is WebP and counts as an image, `is_video` means WebM and
+`is_animated` means TGS (a gzipped Lottie document, which nothing renders
+inline). All three used to be recorded as images, which put an `<img>` in the
+thread around bytes the browser could not draw.
+
+**Inbound media is resolved on demand, not stored as a URL.** A Telegram
+`file_id` is not a URL, and turning it into one requires a `getFile` call that
+returns a link expiring in an hour — and carrying the bot token in its path. So
+the id is what gets stored, and the adapter's `media_source` turns it into a
+download URL only when a reader actually opens the thread. The fetch itself, the
+content-type sniff and the response belong to the shared path in
+`apps/channels/media.py`; see [Inbound media](media.md).
 
 ## What goes out
 

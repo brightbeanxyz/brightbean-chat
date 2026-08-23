@@ -255,14 +255,29 @@ class TestInboundMessages:
 
     def test_media_never_reaches_the_thread_as_a_browser_link(self, connection: ChannelConnection) -> None:
         """The property that matters downstream, asserted against the real
-        serialiser rather than inferred from the field name."""
+        serialiser rather than inferred from the field name.
+
+        The claim is "never handed to a browser as a link", not "never
+        recorded". This test used to assert the second, because at the time
+        ``_inbound_body`` read only ``attachments`` and dropped media ids on the
+        floor — the picture was unreachable, which is not the same as safe. Now
+        the id is stored as an *identifier*, in a field no renderer turns into
+        an href, and resolved through ``apps.channels.media`` against the
+        account's own credentials.
+        """
         from apps.messaging.ingest import _inbound_body
 
         (event,) = parse(connection, load_payload("inbound_mms"))
         body = _inbound_body(event)
 
-        assert [block["type"] for block in body["blocks"]] == ["text"]
-        assert "api.twilio.com" not in str(body)
+        assert [block["type"] for block in body["blocks"]] == ["text", "media", "media"]
+        # The Twilio URL appears only as an identifier. Every place a renderer
+        # looks for something to put in an href or a src — ``url`` on a block,
+        # ``image_url`` on a card — is where it must not be.
+        media = [block for block in body["blocks"] if block["type"] == "media"]
+        assert all(block["media_id"].startswith("https://api.twilio.com/") for block in media)
+        assert all("url" not in block for block in body["blocks"])
+        assert "api.twilio.com" not in str([block for block in body["blocks"] if block["type"] != "media"])
 
     def test_media_alone_is_still_a_message(self, connection: ChannelConnection) -> None:
         params = {**load_payload("inbound_mms"), "Body": ""}

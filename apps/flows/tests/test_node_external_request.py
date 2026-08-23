@@ -13,15 +13,12 @@ the database for the same reason ``test_runner.py`` does it — the node's outpu
 is a handle, and a handle only means something once an edge has been followed.
 """
 
-import ipaddress
-from collections.abc import Callable
 from typing import Any
 
 import httpx
 import pytest
 
 from apps.common import outbound
-from apps.common.outbound import reset_deployment_cache
 from apps.contacts.services import create_custom_field, field_values_for
 from apps.flows.engine import start_flow, synchronous_safe
 from apps.flows.engine.nodes.external_request import _timeout as node_timeout
@@ -29,7 +26,7 @@ from apps.flows.engine.nodes.external_request import parse_path, summary_key
 from apps.flows.models import ExecutionStatus, StartedBy
 from apps.flows.tests.support import contact_for, edge, graph, node, published_flow
 from apps.queueing.models import ScheduledAction
-from tests.ssrf import guard_required
+from tests.ssrf import FakeInternet, deployment_cache_cleared, guard_required, serving
 
 PUBLIC = "93.184.216.34"
 API = "api.example.test"
@@ -39,47 +36,15 @@ SINK = {"actions": [{"verb": "remove_tag", "tag": "not-a-tag-here"}]}
 @pytest.fixture(autouse=True)
 def _clear_deployment_cache() -> Any:
     """The guard caches its own host's addresses; these tests swap the resolver."""
-    reset_deployment_cache()
-    yield
-    reset_deployment_cache()
+    with deployment_cache_cleared():
+        yield
 
 
-class FakeInternet:
-    """DNS and the socket, replaced — with the guard left entirely real.
-
-    ``httpx.HTTPTransport.handle_request`` is the seam rather than a
-    ``MockTransport`` client, because the node builds its own client (it takes a
-    URL, not a transport) and that is the shape production runs in.
-    """
-
-    def __init__(self, handler: Callable[[httpx.Request], httpx.Response], names: dict[str, list[str]] | None = None):
-        self.handler = handler
-        self.names = names if names is not None else {API: [PUBLIC]}
-        self.requests: list[httpx.Request] = []
-
-    def install(self, monkeypatch: Any) -> "FakeInternet":
-        monkeypatch.setattr(outbound, "resolve_host", self._resolve)
-        monkeypatch.setattr(httpx.HTTPTransport, "handle_request", self._handle)
-        return self
-
-    def _resolve(self, host: str) -> tuple[Any, ...]:
-        return tuple(ipaddress.ip_address(value) for value in self.names.get(host.lower(), []))
-
-    def _handle(self, request: httpx.Request) -> httpx.Response:
-        # Patched onto the class as an already-bound method, so ``self`` here is
-        # the FakeInternet and the transport instance never arrives — which is
-        # fine, since a canned response does not need one.
-        self.requests.append(request)
-        return self.handler(request)
-
-
-def serving(payload: Any = None, *, status: int = 200, **kwargs: Any) -> Callable[[httpx.Request], httpx.Response]:
-    def _handler(request: httpx.Request) -> httpx.Response:
-        if payload is None:
-            return httpx.Response(status, **kwargs)
-        return httpx.Response(status, json=payload, **kwargs)
-
-    return _handler
+# ``FakeInternet``/``serving`` moved to tests/ssrf.py when the media fetch
+# (#12 follow-up) became the third call site to need them. ``names`` defaults
+# here to this module's one API host so the call sites below stay one-liners.
+def fake_internet(handler: Any, names: dict[str, list[str]] | None = None) -> FakeInternet:
+    return FakeInternet(handler, names if names is not None else {API: [PUBLIC]})
 
 
 def request_node(config: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
@@ -111,7 +76,7 @@ def run(workspace: Any, flow: Any, **fields: Any) -> Any:
 @pytest.mark.django_db
 class TestTheHappyPath:
     def test_a_2xx_continues_on_the_default_handle(self, tenancy, monkeypatch):
-        FakeInternet(serving({"id": "abc"})).install(monkeypatch)
+        fake_internet(serving({"id": "abc"})).install(monkeypatch)
         execution = run(tenancy.workspace, branching_flow(tenancy.workspace))
 
         assert execution.status == ExecutionStatus.COMPLETED
@@ -119,7 +84,7 @@ class TestTheHappyPath:
 
     def test_the_request_goes_through_the_ssrf_guard(self, tenancy, monkeypatch):
         """SECURITY-BASELINE §6's "a test proving the guard is in the path"."""
-        internet = FakeInternet(serving({"id": "abc"})).install(monkeypatch)
+        internet = fake_internet(serving({"id": "abc"})).install(monkeypatch)
         flow = branching_flow(tenancy.workspace)
 
         with guard_required() as guarded:
@@ -131,7 +96,7 @@ class TestTheHappyPath:
 
     def test_a_private_url_never_leaves_the_process(self, tenancy, monkeypatch):
         """The whole point of the node existing behind a guard."""
-        internet = FakeInternet(serving({}), names={"internal.example.test": ["169.254.169.254"]}).install(monkeypatch)
+        internet = fake_internet(serving({}), names={"internal.example.test": ["169.254.169.254"]}).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             url="https://internal.example.test/latest/meta-data/",
@@ -145,7 +110,7 @@ class TestTheHappyPath:
         assert execution.status == ExecutionStatus.COMPLETED
 
     def test_the_configured_method_and_body_are_sent(self, tenancy, monkeypatch):
-        internet = FakeInternet(serving({})).install(monkeypatch)
+        internet = fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             method="POST",
@@ -160,7 +125,7 @@ class TestTheHappyPath:
 
     def test_a_get_carries_no_body(self, tenancy, monkeypatch):
         """A GET with a JSON body is mishandled by servers and intermediaries alike."""
-        internet = FakeInternet(serving({})).install(monkeypatch)
+        internet = fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, method="GET", body={"a": 1})
 
         run(tenancy.workspace, flow)
@@ -169,7 +134,7 @@ class TestTheHappyPath:
 
     def test_a_header_configured_twice_says_so(self, tenancy, monkeypatch, caplog):
         """Last one wins, but silently losing an API key header is undebuggable."""
-        internet = FakeInternet(serving({})).install(monkeypatch)
+        internet = fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             headers=[{"name": "X-Key", "value": "first"}, {"name": "X-Key", "value": "second"}],
@@ -183,7 +148,7 @@ class TestTheHappyPath:
         assert "first" not in caplog.text and "second" not in caplog.text, "names are logged, values never"
 
     def test_a_header_whose_name_renders_empty_says_so(self, tenancy, monkeypatch, caplog):
-        internet = FakeInternet(serving({})).install(monkeypatch)
+        internet = fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             headers=[{"name": "{{nothing_here}}", "value": "x"}, {"name": "X-Fine", "value": "y"}],
@@ -198,7 +163,7 @@ class TestTheHappyPath:
     def test_a_header_rendered_from_an_accented_name_does_not_crash_the_step(self, tenancy, monkeypatch):
         """A contact called Jörg in a header value used to raise
         ``UnicodeEncodeError`` out of httpx, past ``except OutboundError``."""
-        internet = FakeInternet(serving({})).install(monkeypatch)
+        internet = fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             headers=[{"name": "X-Customer", "value": "{{first_name}}"}, {"name": "X-Fine", "value": "plain"}],
@@ -213,7 +178,7 @@ class TestTheHappyPath:
         assert not ScheduledAction.objects.for_workspace(tenancy.workspace.pk).exists()
 
     def test_headers_are_rendered_and_sent(self, tenancy, monkeypatch):
-        internet = FakeInternet(serving({})).install(monkeypatch)
+        internet = fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             headers=[{"name": "X-Customer", "value": "{{first_name}}"}, {"name": "Accept", "value": "text/json"}],
@@ -240,7 +205,7 @@ class TestErrorRouting:
         ids=["server-error", "not-found", "ssrf-denial", "dns-failure"],
     )
     def test_a_failure_routes_to_the_error_handle(self, tenancy, monkeypatch, handler, names):
-        FakeInternet(handler, names=names).install(monkeypatch)
+        fake_internet(handler, names=names).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, fallback_handle_on_error=True)
 
         execution = run(tenancy.workspace, flow)
@@ -252,7 +217,7 @@ class TestErrorRouting:
         def _timeout(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectTimeout("too slow", request=request)
 
-        FakeInternet(_timeout).install(monkeypatch)
+        fake_internet(_timeout).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, fallback_handle_on_error=True)
 
         execution = run(tenancy.workspace, flow)
@@ -271,7 +236,7 @@ class TestErrorRouting:
         def _timeout(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectTimeout("too slow", request=request)
 
-        FakeInternet(_timeout).install(monkeypatch)
+        fake_internet(_timeout).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, fallback_handle_on_error=True)
 
         run(tenancy.workspace, flow)
@@ -286,7 +251,7 @@ class TestErrorRouting:
         escapes the node, rolls the step back and lets the *remote server*
         decide when this deployment retries.
         """
-        FakeInternet(serving(status=302, headers={"Location": "javascript:alert(1)"})).install(monkeypatch)
+        fake_internet(serving(status=302, headers={"Location": "javascript:alert(1)"})).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, fallback_handle_on_error=True)
 
         execution = run(tenancy.workspace, flow)
@@ -310,7 +275,7 @@ class TestErrorRouting:
                 200, content=b'\xff\xfe{"id": "u-1"}', headers={"Content-Type": f"text/plain; charset={charset}"}
             )
 
-        FakeInternet(handler).install(monkeypatch)
+        fake_internet(handler).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             fallback_handle_on_error=True,
@@ -332,7 +297,7 @@ class TestErrorRouting:
         def handler(request):
             return httpx.Response(200, content=bomb, headers={"Content-Encoding": "gzip"})
 
-        FakeInternet(handler).install(monkeypatch)
+        fake_internet(handler).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.id", "target_type": "variable", "target": "external_id"}],
@@ -347,14 +312,14 @@ class TestErrorRouting:
 
     def test_without_the_flag_a_failure_takes_the_default_handle(self, tenancy, monkeypatch):
         """``fallback_handle_on_error`` is "Follow the error handle on failure"."""
-        FakeInternet(serving(status=500)).install(monkeypatch)
+        fake_internet(serving(status=500)).install(monkeypatch)
         flow = branching_flow(tenancy.workspace)
 
         assert run(tenancy.workspace, flow).current_node_id == "ok"
 
     def test_an_error_handle_with_no_edge_ends_the_run(self, tenancy, monkeypatch):
         """SPEC §9.2: "Missing edge for a handle -> End"."""
-        FakeInternet(serving(status=500)).install(monkeypatch)
+        fake_internet(serving(status=500)).install(monkeypatch)
         flow = published_flow(
             tenancy.workspace,
             graph(
@@ -369,7 +334,7 @@ class TestErrorRouting:
         assert execution.current_node_id == "req"
 
     def test_a_url_that_renders_empty_routes_rather_than_failing(self, tenancy, monkeypatch):
-        FakeInternet(serving({})).install(monkeypatch)
+        fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, url="{{missing_field}}", fallback_handle_on_error=True)
 
         execution = run(tenancy.workspace, flow)
@@ -379,7 +344,7 @@ class TestErrorRouting:
 
     def test_a_node_with_no_url_at_all_fails_the_run(self, tenancy, monkeypatch):
         """Static and unfixable by retrying, unlike everything else here."""
-        FakeInternet(serving({})).install(monkeypatch)
+        fake_internet(serving({})).install(monkeypatch)
         flow = published_flow(
             tenancy.workspace, graph([node("req", "external_request", {"method": "GET", "url": " "})])
         )
@@ -393,7 +358,7 @@ class TestErrorRouting:
 @pytest.mark.django_db
 class TestResponseMappings:
     def test_a_nested_path_lands_in_a_variable(self, tenancy, monkeypatch):
-        FakeInternet(serving({"data": {"user": {"id": "u-42"}}})).install(monkeypatch)
+        fake_internet(serving({"data": {"user": {"id": "u-42"}}})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.data.user.id", "target_type": "variable", "target": "user_id"}],
@@ -404,7 +369,7 @@ class TestResponseMappings:
         assert execution.variables["user_id"] == "u-42"
 
     def test_an_array_index_works(self, tenancy, monkeypatch):
-        FakeInternet(serving({"items": [{"sku": "a"}, {"sku": "b"}]})).install(monkeypatch)
+        fake_internet(serving({"items": [{"sku": "a"}, {"sku": "b"}]})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.items[1].sku", "target_type": "variable", "target": "sku"}],
@@ -414,7 +379,7 @@ class TestResponseMappings:
 
     def test_a_number_lands_in_a_number_field_typed(self, tenancy, monkeypatch):
         field = create_custom_field(tenancy.workspace, name="Order total", field_type="number")
-        FakeInternet(serving({"order": {"total": 24.5}})).install(monkeypatch)
+        fake_internet(serving({"order": {"total": 24.5}})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.order.total", "target_type": "custom_field", "target": "Order total"}],
@@ -426,7 +391,7 @@ class TestResponseMappings:
 
     def test_a_json_boolean_lands_in_a_boolean_field(self, tenancy, monkeypatch):
         field = create_custom_field(tenancy.workspace, name="VIP", field_type="boolean")
-        FakeInternet(serving({"vip": True})).install(monkeypatch)
+        fake_internet(serving({"vip": True})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.vip", "target_type": "custom_field", "target": "vip"}],
@@ -439,7 +404,7 @@ class TestResponseMappings:
     def test_a_json_number_lands_in_a_text_field(self, tenancy, monkeypatch):
         """``$.id`` is a number as often as a string, and refusing it is pedantry."""
         field = create_custom_field(tenancy.workspace, name="External id", field_type="text")
-        FakeInternet(serving({"id": 4172})).install(monkeypatch)
+        fake_internet(serving({"id": 4172})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.id", "target_type": "custom_field", "target": "External id"}],
@@ -452,7 +417,7 @@ class TestResponseMappings:
     def test_a_downstream_node_sees_the_variable(self, tenancy, monkeypatch):
         """The acceptance criterion: "downstream nodes see the variables"."""
         create_custom_field(tenancy.workspace, name="Plan", field_type="text")
-        FakeInternet(serving({"plan": "gold"})).install(monkeypatch)
+        fake_internet(serving({"plan": "gold"})).install(monkeypatch)
         flow = published_flow(
             tenancy.workspace,
             graph(
@@ -485,7 +450,7 @@ class TestResponseMappings:
         ],
     )
     def test_a_mapping_that_cannot_be_applied_is_skipped(self, tenancy, monkeypatch, payload, path, reason):
-        FakeInternet(serving(payload)).install(monkeypatch)
+        fake_internet(serving(payload)).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": path, "target_type": "variable", "target": "value"}],
@@ -507,7 +472,7 @@ class TestResponseMappings:
 
             return httpx.Response(200, content=chunks())
 
-        FakeInternet(handler).install(monkeypatch)
+        fake_internet(handler).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.id", "target_type": "variable", "target": "external_id"}],
@@ -530,7 +495,7 @@ class TestResponseMappings:
         def handler(request):
             return httpx.Response(200, content=bomb, headers={"Content-Type": "application/json"})
 
-        FakeInternet(handler).install(monkeypatch)
+        fake_internet(handler).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.a", "target_type": "variable", "target": "value"}],
@@ -544,7 +509,7 @@ class TestResponseMappings:
         assert not ScheduledAction.objects.for_workspace(tenancy.workspace.pk).exists()
 
     def test_a_non_json_body_skips_every_mapping(self, tenancy, monkeypatch):
-        FakeInternet(serving(status=200, text="<html>fine, actually</html>")).install(monkeypatch)
+        fake_internet(serving(status=200, text="<html>fine, actually</html>")).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.a", "target_type": "variable", "target": "value"}],
@@ -556,7 +521,7 @@ class TestResponseMappings:
         assert execution.current_node_id == "ok"
 
     def test_an_unknown_custom_field_is_skipped(self, tenancy, monkeypatch):
-        FakeInternet(serving({"a": "x"})).install(monkeypatch)
+        fake_internet(serving({"a": "x"})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.a", "target_type": "custom_field", "target": "Deleted last week"}],
@@ -569,7 +534,7 @@ class TestResponseMappings:
 
     def test_a_value_of_the_wrong_type_for_the_field_is_skipped(self, tenancy, monkeypatch):
         create_custom_field(tenancy.workspace, name="Signed up", field_type="date")
-        FakeInternet(serving({"when": "not a date"})).install(monkeypatch)
+        fake_internet(serving({"when": "not a date"})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.when", "target_type": "custom_field", "target": "Signed up"}],
@@ -582,7 +547,7 @@ class TestResponseMappings:
 
     def test_mappings_do_not_run_on_a_failed_request(self, tenancy, monkeypatch):
         """SPEC §11.7 maps on 2xx; an error body is not the shape the author mapped."""
-        FakeInternet(serving({"error": "nope"}, status=500)).install(monkeypatch)
+        fake_internet(serving({"error": "nope"}, status=500)).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.error", "target_type": "variable", "target": "value"}],
@@ -640,7 +605,7 @@ class TestSecrecyAndSummary:
         recognisable prefix — so this passes only because the node never formats
         a header anywhere, not because a regex happened to match it.
         """
-        FakeInternet(serving({"ok": True})).install(monkeypatch)
+        fake_internet(serving({"ok": True})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             headers=[
@@ -658,7 +623,7 @@ class TestSecrecyAndSummary:
 
     def test_a_secret_in_the_url_query_stays_out_of_the_summary(self, tenancy, monkeypatch, secret_value):
         """The summary records the host, not the URL, for exactly this reason."""
-        FakeInternet(serving(status=500)).install(monkeypatch)
+        fake_internet(serving(status=500)).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             url=f"https://{API}/orders?api_key={secret_value}",
@@ -671,7 +636,7 @@ class TestSecrecyAndSummary:
         assert execution.variables[summary_key("req")]["host"] == API
 
     def test_the_summary_records_the_status_duration_and_body(self, tenancy, monkeypatch):
-        FakeInternet(serving({"detail": "over quota"}, status=429)).install(monkeypatch)
+        fake_internet(serving({"detail": "over quota"}, status=429)).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, fallback_handle_on_error=True)
 
         summary = run(tenancy.workspace, flow).variables[summary_key("req")]
@@ -684,7 +649,7 @@ class TestSecrecyAndSummary:
     def test_the_summary_is_unreachable_from_a_placeholder(self, tenancy, monkeypatch):
         """Its key holds a ``:``, which the renderer's token grammar has no room for."""
         create_custom_field(tenancy.workspace, name="Leak", field_type="text")
-        FakeInternet(serving({"ok": True})).install(monkeypatch)
+        fake_internet(serving({"ok": True})).install(monkeypatch)
         flow = published_flow(
             tenancy.workspace,
             graph(
@@ -712,7 +677,7 @@ class TestUntrustedResponses:
 
     def test_a_mapped_value_is_stored_literally_and_never_evaluated(self, tenancy, monkeypatch):
         create_custom_field(tenancy.workspace, name="Nickname", field_type="text")
-        FakeInternet(serving({"name": "{{email}}"})).install(monkeypatch)
+        fake_internet(serving({"name": "{{email}}"})).install(monkeypatch)
         flow = published_flow(
             tenancy.workspace,
             graph(
@@ -738,7 +703,7 @@ class TestUntrustedResponses:
     def test_a_mapped_value_is_escaped_in_an_html_context(self, tenancy, monkeypatch):
         from apps.flows.rendering import context_for, render
 
-        FakeInternet(serving({"bio": "<script>alert(1)</script>"})).install(monkeypatch)
+        fake_internet(serving({"bio": "<script>alert(1)</script>"})).install(monkeypatch)
         flow = branching_flow(
             tenancy.workspace,
             response_mappings=[{"json_path": "$.bio", "target_type": "variable", "target": "bio"}],
@@ -756,7 +721,7 @@ class TestUrlEncodingAndTimeout:
     def test_a_placeholder_cannot_add_a_path_or_a_query(self, tenancy, monkeypatch):
         """A contact-supplied value is a value, not a piece of the URL's structure."""
         create_custom_field(tenancy.workspace, name="Ref", field_type="text")
-        internet = FakeInternet(serving({})).install(monkeypatch)
+        internet = fake_internet(serving({})).install(monkeypatch)
         flow = branching_flow(tenancy.workspace, url=f"https://{API}/orders/{{{{first_name}}}}")
 
         run(tenancy.workspace, flow, first_name="../../admin?token=stolen&x=1")
@@ -776,7 +741,7 @@ class TestUrlEncodingAndTimeout:
             seen.append(kwargs["timeout"])
             return real(method, url, **kwargs)
 
-        FakeInternet(serving({})).install(monkeypatch)
+        fake_internet(serving({})).install(monkeypatch)
         monkeypatch.setattr("apps.flows.engine.nodes.external_request.guarded_request", _record)
         run(tenancy.workspace, branching_flow(tenancy.workspace, timeout_s=3))
 
