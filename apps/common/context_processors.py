@@ -239,7 +239,15 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(key="org_general", label="General", icon="building", url_name="organizations:settings"),
             NavItem(key="org_workspaces", label="Workspaces", icon="grid", url_name="organizations:workspaces"),
             NavItem(key="org_members", label="Team Members", icon="users", url_name="members:list"),
-            NavItem(key="org_api_keys", label="API Keys", icon="key", url_name="settings_org_api_keys"),
+            NavItem(
+                key="org_api_keys",
+                label="API Keys",
+                icon="key",
+                url_name="settings_org_api_keys",
+                # The issuance response is its own page, so the row has to stay
+                # lit while the operator is copying the key off it.
+                url_names=frozenset({"settings_org_api_keys", "api_keys_issue"}),
+            ),
         ),
     ),
     NavGroup(
@@ -282,6 +290,18 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Tags",
                 icon="tag",
                 url_name="contacts:tag_list",
+                workspace_scoped=True,
+            ),
+            # Outbound webhooks (issue #25). Workspace-scoped, unlike the
+            # org-tier "API Keys" row above: SPEC §5 gives outbound_webhook a
+            # workspace_id, so its url, secret and subscriptions belong to one
+            # workspace's data.
+            NavItem(
+                key="ws_webhooks",
+                label="Webhooks",
+                icon="channels",
+                url_name="api_webhooks:list",
+                url_names=frozenset({"api_webhooks:list", "api_webhooks:detail"}),
                 workspace_scoped=True,
             ),
         ),

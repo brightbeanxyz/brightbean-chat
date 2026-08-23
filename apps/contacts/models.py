@@ -145,6 +145,12 @@ class Contact(WorkspaceScopedModel):
             # filter at 10k+ rows.
             models.Index(fields=["workspace", "email"], name="contact_ws_email_idx"),
             models.Index(fields=["workspace", "phone"], name="contact_ws_phone_idx"),
+            # Newest-first, which is how the public API lists contacts (#25) and
+            # how an integrator pages a whole workspace on an incremental sync.
+            # Without it that ordering is a sort of every matching row, repeated
+            # for each page; none of the indexes above can serve it, because
+            # they are all keyed on a different second column.
+            models.Index(fields=["workspace", "-created_at"], name="contact_ws_created_idx"),
         ]
 
     def __str__(self) -> str:

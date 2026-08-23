@@ -1,0 +1,62 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Webhooks · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Outbound webhooks</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    BrightBean Chat POSTs a signed JSON document to your endpoint when something
+    happens in this workspace. See the
+    <a href="{% url 'api_docs' %}">API reference</a> for the payload shape and a
+    signature-verification snippet.
+  </p>
+
+  {% if error %}<div class="alert-error"><p>{{ error }}</p></div>{% endif %}
+
+  <h2>Add an endpoint</h2>
+  <form method="post" action="{% url 'api_webhooks:create' workspace_id=request.workspace.id %}">
+    {% csrf_token %}
+    <label for="webhook-url">URL</label>
+    <input id="webhook-url" type="url" name="url" maxlength="500" required
+           value="{{ submitted_url|default:'' }}" placeholder="https://example.com/hooks/brightbean" />
+
+    <fieldset>
+      <legend>Events</legend>
+      {% for choice in event_choices %}
+        <label>
+          <input type="checkbox" name="events" value="{{ choice.value }}"
+                 {% if choice.checked %}checked{% endif %} />
+          {{ choice.label }} <code>{{ choice.value }}</code>
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <button type="submit">Add endpoint</button>
+  </form>
+
+  <h2>Endpoints</h2>
+  {% if webhooks %}
+    <table>
+      <thead><tr><th>URL</th><th>Events</th><th>Status</th><th>Last delivery</th><th></th></tr></thead>
+      <tbody>
+        {% for webhook in webhooks %}
+          <tr>
+            <td><code>{{ webhook.url }}</code></td>
+            <td>{{ webhook.events|join:", " }}</td>
+            <td>
+              {% if webhook.enabled %}Enabled
+              {% else %}Disabled{% if webhook.disabled_at %} after repeated failures{% endif %}{% endif %}
+            </td>
+            <td>{{ webhook.last_delivery_at|default:"Never" }}</td>
+            <td>
+              <a href="{% url 'api_webhooks:detail' workspace_id=request.workspace.id webhook_id=webhook.id %}">
+                Open
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No endpoints yet.</p>
+  {% endif %}
+{% endblock %}

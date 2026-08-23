@@ -467,7 +467,9 @@ Instagram never appears in the broadcast channel selector.
 
 ## 17. Public API and outbound webhooks
 
-Bearer auth with `api_key` (`Authorization: Bearer oc_...`), workspace-scoped, JSON.
+Bearer auth with `api_key` (`Authorization: Bearer bb_...`), workspace-scoped, JSON.
+OpenAPI document at `/api/v1/openapi.json`; the human reference is served at
+`/api/v1/docs` and written up in [`docs/api/v1.md`](api/v1.md).
 
 - `GET/POST /api/v1/contacts`, `GET/PATCH /api/v1/contacts/<id>`, `POST /api/v1/contacts/<id>/tags`, `DELETE .../tags/<tag>`, `PUT /api/v1/contacts/<id>/fields/<field>`
 - `POST /api/v1/contacts/<id>/flows/<flow_id>/start` (fires api trigger; respects locks and compliance)
@@ -475,7 +477,9 @@ Bearer auth with `api_key` (`Authorization: Bearer oc_...`), workspace-scoped, J
 - `GET /api/v1/flows`, `GET /api/v1/tags`, `GET /api/v1/fields`
 - Rate limit 10 req/s per key (in-Postgres sliding window is fine at this scale).
 
-Outbound webhooks: HMAC-SHA256 signature header `X-OpenChat-Signature` over raw body with the endpoint secret; retries via queue (same backoff), auto-disable after 100 consecutive failures with admin notification.
+Outbound webhooks: HMAC-SHA256 signature header `X-BrightBean-Signature` over `<timestamp>.<raw body>` with the endpoint secret, with the timestamp repeated in `X-BrightBean-Timestamp`; retries via queue (same backoff), auto-disable after 100 consecutive failures with admin notification.
+
+**Naming.** The header and the key prefix were `X-OpenChat-Signature` and `oc_` while "OpenChat" was the working title. They ship as `X-BrightBean-Signature` and `bb_`: §22 keeps internal naming grep-friendly, but a signature header and a key prefix are neither internal nor changeable — an integrator copies both into their own verifier, and a rename after v1 breaks every one of them. Decided with issue #25.
 
 ---
 
