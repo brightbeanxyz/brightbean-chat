@@ -44,7 +44,7 @@ from typing import Any
 
 from apps.contacts import conditions
 from apps.flows.triggers import keywords as keyword_matching
-from apps.flows.triggers.schema import MAX_KEYWORDS, MAX_KEYWORD_CHARS
+from apps.flows.triggers.schema import MAX_KEYWORD_CHARS, MAX_KEYWORDS
 
 __all__ = [
     "ACTION_TYPES",
@@ -132,7 +132,7 @@ class RuleInput:
         from apps.messaging.rendering import outbound_from_body
 
         blocks = outbound_from_body(message.body).blocks
-        text = " ".join(block.text for block in blocks if getattr(block, "kind", "") == "text")
+        text = " ".join(getattr(block, "text", "") for block in blocks if block.kind == "text")
         return cls(
             text=keyword_matching.normalise(text),
             platform=str(message.channel_connection.platform),
@@ -164,8 +164,10 @@ class CompiledRule:
 def compile_rule(rule: Any) -> CompiledRule:
     """Read one stored rule into the form :func:`matches` wants."""
     document = rule.condition_json if isinstance(rule.condition_json, dict) else {}
-    channel = document.get("channel") if isinstance(document.get("channel"), dict) else {}
-    contact = document.get("contact") if isinstance(document.get("contact"), dict) else None
+    raw_channel = document.get("channel")
+    channel: dict[str, Any] = raw_channel if isinstance(raw_channel, dict) else {}
+    raw_contact = document.get("contact")
+    contact: dict[str, Any] | None = raw_contact if isinstance(raw_contact, dict) else None
     return CompiledRule(
         rule_id=rule.pk,
         platforms=frozenset(_strings(channel.get("platforms"))),
@@ -187,9 +189,7 @@ def matches_shallow(compiled: CompiledRule, rule_input: RuleInput) -> bool:
         return False
     if compiled.connection_ids and rule_input.connection_id not in compiled.connection_ids:
         return False
-    if compiled.keywords and not keyword_matching.matches_any(rule_input.text, compiled.keywords):
-        return False
-    return True
+    return not compiled.keywords or keyword_matching.matches_any(rule_input.text, compiled.keywords)
 
 
 def matches(compiled: CompiledRule, rule_input: RuleInput) -> bool:
@@ -256,7 +256,9 @@ def validate_condition(workspace: Any, condition_json: Any) -> dict[str, Any]:
         # identity of AND and matches everyone, and the builder's initial state
         # is exactly that — so "label every inbound message in the workspace"
         # would otherwise be one accidental save away.
-        raise RuleValidationError("A rule needs at least one condition: a channel, a keyword or something about the contact.")
+        raise RuleValidationError(
+            "A rule needs at least one condition: a channel, a keyword or something about the contact."
+        )
     return document
 
 
@@ -361,7 +363,8 @@ def _keywords(value: Any) -> list[dict[str, str]]:
             continue
         if len(text) > MAX_KEYWORD_CHARS:
             raise RuleValidationError("That keyword is too long.")
-        mode = item.get("mode") if item.get("mode") in _KEYWORD_MODES else "contains"
+        raw_mode = item.get("mode")
+        mode = raw_mode if isinstance(raw_mode, str) and raw_mode in _KEYWORD_MODES else "contains"
         # Deduped case-insensitively, like the trigger form: two keywords
         # differing only in case match the same messages, so the second could
         # never be the one that won.

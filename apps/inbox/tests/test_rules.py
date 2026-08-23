@@ -52,9 +52,7 @@ class TestMatching:
         assert not rules.matches(compiled, _input(text="the category page"))
 
     def test_an_absent_clause_is_not_a_constraint(self, tenancy):
-        compiled = rules.compile_rule(
-            _rule(tenancy.workspace, condition_json={"channel": {"platforms": ["telegram"]}})
-        )
+        compiled = rules.compile_rule(_rule(tenancy.workspace, condition_json={"channel": {"platforms": ["telegram"]}}))
 
         assert rules.matches(compiled, _input(text="anything at all"))
 

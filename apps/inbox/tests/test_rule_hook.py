@@ -164,9 +164,7 @@ class TestWhatFires:
         _deliver(connection, event(connection, text="hi"))
 
         applied = list(
-            InboxRuleApplication.objects.for_workspace(tenancy.workspace)
-            .order_by("created_at")
-            .select_related("rule")
+            InboxRuleApplication.objects.for_workspace(tenancy.workspace).order_by("created_at").select_related("rule")
         )
         assert [row.rule.name for row in applied] == ["Early", "Late"]
 
@@ -213,9 +211,7 @@ class TestWhatItRefusesToTouch:
 
         assert _labels_on(conversation) == []
 
-    def test_it_never_takes_a_thread_off_the_person_holding_it(
-        self, tenancy, connection, identity, conversation
-    ):
+    def test_it_never_takes_a_thread_off_the_person_holding_it(self, tenancy, connection, identity, conversation):
         """The failure mode with real teeth. This stage runs *during* an agent
         takeover (it is in RUNS_WHILE_PAUSED), so an unguarded assignment hands
         the thread back to the rule the moment the contact replies."""
@@ -234,9 +230,7 @@ class TestWhatItRefusesToTouch:
         conversation.refresh_from_db()
         assert conversation.assignee_id == holder.pk
 
-    def test_a_rule_in_another_workspace_never_runs(
-        self, tenancy, other_tenancy, connection, identity, conversation
-    ):
+    def test_a_rule_in_another_workspace_never_runs(self, tenancy, other_tenancy, connection, identity, conversation):
         _rule(
             other_tenancy.workspace,
             condition={"channel": {"platforms": ["telegram"]}},
@@ -285,15 +279,11 @@ class TestItDoesNotDisturbTheChain:
             condition={"channel": {"platforms": ["telegram"]}},
             actions=[{"type": "mark_done"}],
         )
-        context = build_context(
-            connection, event(connection, text="hi"), InlineBudget.start(), mode=RoutingMode.INLINE
-        )
+        context = build_context(connection, event(connection, text="hi"), InlineBudget.start(), mode=RoutingMode.INLINE)
 
         assert apply_inbox_rules(context) is None
 
-    def test_a_rule_marking_done_does_not_block_trigger_matching(
-        self, tenancy, connection, identity, conversation
-    ):
+    def test_a_rule_marking_done_does_not_block_trigger_matching(self, tenancy, connection, identity, conversation):
         """The issue asks for this to be documented; here it is pinned.
 
         The second assertion is the half that surprises people: ``send_outbound``
@@ -326,17 +316,13 @@ class TestItDoesNotDisturbTheChain:
         conversation.refresh_from_db()
         assert conversation.state == ConversationState.OPEN
 
-    def test_one_broken_action_does_not_cost_the_others(
-        self, tenancy, connection, identity, conversation, monkeypatch
-    ):
-        """"One broken inbox rule must not cost the reply" is the registry's
+    def test_one_broken_action_does_not_cost_the_others(self, tenancy, connection, identity, conversation, monkeypatch):
+        """ "One broken inbox rule must not cost the reply" is the registry's
         backstop. This is the finer-grained promise: one broken *action* must not
         cost the other actions in the same rule."""
         from apps.inbox import routing
 
-        monkeypatch.setattr(
-            routing, "_add_labels", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
-        )
+        monkeypatch.setattr(routing, "_add_labels", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
         _rule(
             tenancy.workspace,
             condition={"channel": {"platforms": ["telegram"]}},
@@ -373,9 +359,7 @@ class TestIdempotence:
 
         assert _labels_on(conversation) == inline == ["Refunds"]
 
-    def test_a_deferral_at_this_stage_does_not_double_apply(
-        self, tenancy, connection, identity, conversation
-    ):
+    def test_a_deferral_at_this_stage_does_not_double_apply(self, tenancy, connection, identity, conversation):
         """The one real replay vector. ``run_stage`` stops at the first hook that
         defers, so every lower-priority hook has already run inline — and
         ``pipeline._route`` then hands the **whole stage** to the worker, which
@@ -388,9 +372,7 @@ class TestIdempotence:
             condition={"channel": {"platforms": ["telegram"]}},
             actions=[{"type": "add_label", "label_id": str(_label(tenancy.workspace).pk)}],
         )
-        register_hook(
-            lambda context: Deferred("probe"), stage=Stage.POST_PERSIST, name="probe_defer", priority=200
-        )
+        register_hook(lambda context: Deferred("probe"), stage=Stage.POST_PERSIST, name="probe_defer", priority=200)
         try:
             evt = event(connection, text="hi", event_id="evt-deferred")
             _deliver(connection, evt)
@@ -403,15 +385,11 @@ class TestIdempotence:
             handle_route_event(queued.payload, queued)
 
         assert (
-            ConversationLabelLink.objects.for_workspace(tenancy.workspace)
-            .filter(conversation=conversation)
-            .count()
+            ConversationLabelLink.objects.for_workspace(tenancy.workspace).filter(conversation=conversation).count()
             == 1
         )
 
-    def test_two_deliveries_of_the_same_event_claim_once(
-        self, tenancy, connection, identity, conversation
-    ):
+    def test_two_deliveries_of_the_same_event_claim_once(self, tenancy, connection, identity, conversation):
         _rule(
             tenancy.workspace,
             condition={"channel": {"platforms": ["telegram"]}},

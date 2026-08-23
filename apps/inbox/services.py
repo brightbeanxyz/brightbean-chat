@@ -196,9 +196,7 @@ def reorder_rules(workspace: Any, ordered_ids: list[str]) -> int:
     """
     wanted = [str(value) for value in ordered_ids if value]
     with transaction.atomic():
-        rows = list(
-            InboxRule.objects.for_workspace(workspace).select_for_update().order_by("priority", "name")
-        )
+        rows = list(InboxRule.objects.for_workspace(workspace).select_for_update().order_by("priority", "name"))
         by_id = {str(row.pk): row for row in rows}
         ordered = [by_id[value] for value in wanted if value in by_id]
         ordered += [row for row in rows if str(row.pk) not in set(wanted)]

@@ -108,9 +108,7 @@ def apply_inbox_rules(context: Any) -> None:
         return
 
     workspace_id = context.connection.workspace_id
-    candidates = list(
-        InboxRule.objects.for_workspace(workspace_id).filter(enabled=True).order_by("priority", "name")
-    )
+    candidates = list(InboxRule.objects.for_workspace(workspace_id).filter(enabled=True).order_by("priority", "name"))
     if not candidates:
         return
 
@@ -165,9 +163,7 @@ def _apply(context: Any, rule: Any) -> None:
     verbs = [item for item in actions if isinstance(item, dict)]
 
     label_ids = [str(item.get("label_id") or "") for item in verbs if item.get("type") == "add_label"]
-    assignee_id = next(
-        (str(item.get("user_id") or "") for item in verbs if item.get("type") == "assign_to_member"), ""
-    )
+    assignee_id = next((str(item.get("user_id") or "") for item in verbs if item.get("type") == "assign_to_member"), "")
     close = any(item.get("type") == "mark_done" for item in verbs)
 
     if label_ids:
@@ -201,9 +197,7 @@ def _add_labels(conversation: Any, label_ids: list[str]) -> None:
         # so an empty result means the label has since been deleted. Not an
         # error: the rule simply has nothing left to apply.
         return
-    existing = ConversationLabelLink.objects.for_workspace(conversation.workspace_id).filter(
-        conversation=conversation
-    )
+    existing = ConversationLabelLink.objects.for_workspace(conversation.workspace_id).filter(conversation=conversation)
     room = MAX_LABELS_PER_CONVERSATION - existing.count()
     if room <= 0:
         return
@@ -281,6 +275,4 @@ def _reload(conversation: Any) -> Any:
     """
     from apps.messaging.models import Conversation
 
-    return (
-        Conversation.objects.for_workspace(conversation.workspace_id).filter(pk=conversation.pk).first()
-    )
+    return Conversation.objects.for_workspace(conversation.workspace_id).filter(pk=conversation.pk).first()

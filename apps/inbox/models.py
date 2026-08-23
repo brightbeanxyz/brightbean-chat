@@ -122,8 +122,21 @@ class ConversationScopedModel(WorkspaceScopedModel):
     class Meta:
         abstract = True
 
+    def full_clean(self, *args: Any, **kwargs: Any) -> None:
+        """Derive the workspace *before* validating, not only before saving.
+
+        ``clean_fields()`` runs first inside ``full_clean`` and would report
+        ``workspace: This field cannot be null`` — a message about a column no
+        caller is allowed to set, on a row whose tenancy is never in doubt. The
+        services call ``full_clean`` so a constraint violation arrives as a
+        sentence rather than an ``IntegrityError``; this is what keeps that
+        worth doing.
+        """
+        self._derive_workspace()
+        super().full_clean(*args, **kwargs)
+
     def save(self, *args: Any, **kwargs: Any) -> None:
-        self.workspace_id = self.conversation.workspace_id
+        self._derive_workspace()
         if self.peer_field:
             peer = getattr(self, self.peer_field)
             if peer is not None and peer.workspace_id != self.conversation.workspace_id:
@@ -139,6 +152,9 @@ class ConversationScopedModel(WorkspaceScopedModel):
             widened = set(update_fields)
             kwargs["update_fields"] = widened | {"workspace"} if widened else widened
         super().save(*args, **kwargs)
+
+    def _derive_workspace(self) -> None:
+        self.workspace_id = self.conversation.workspace_id
 
 
 class ConversationRead(ConversationScopedModel):
@@ -401,7 +417,7 @@ class DeferredWorkModel(ConversationScopedModel):
 
 
 class InboxReminder(DeferredWorkModel):
-    """"Remind me about this thread at 4pm" (SPEC §14).
+    """ "Remind me about this thread at 4pm" (SPEC §14).
 
     Fires as an in-app notification rather than a message: the recipient is a
     team member, the notification engine (issue #7) already carries the bell,
