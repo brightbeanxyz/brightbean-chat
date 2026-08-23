@@ -529,5 +529,44 @@ jobs:
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
+      # Scoped to the commits this run is actually about, rather than to every
+      # ref that happens to be in the runner's clone.
+      #
+      # `fetch-depth: 0` above fetches EVERY branch, and `gitleaks detect` walks
+      # all refs by default, so the two combined made this job's result a fact
+      # about the *repository* rather than about the change under test: one
+      # unrelated feature branch carrying a credential-shaped test fixture
+      # turned the secret scan red on every open PR at once, and no PR could
+      # clear it by changing its own contents. `fetch-depth: 0` has to stay —
+      # the range below needs the base branch present — so the fix is to tell
+      # gitleaks which commits to walk.
+      #
+      # Note what this deliberately does NOT relax: on a push to `main` the
+      # range is the whole of `main`'s history, so a secret that reaches the
+      # default branch still fails the build, and a feature branch is still
+      # scanned in full the first time it opens a PR.
       - name: Run gitleaks
-        run: gitleaks detect --source . --redact --verbose --no-banner
+        env:
+          # Empty on `push` and `workflow_dispatch`; the base branch name on a
+          # pull request.
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ -n "${BASE_REF}" ]; then
+            RANGE="origin/${BASE_REF}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+
+          # A range that selects no commits makes gitleaks scan nothing and exit
+          # 0 — a security gate switching itself off silently, which is a worse
+          # failure than the cross-branch noise this replaces. So the count is
+          # checked and an empty range fails the job loudly.
+          COUNT="$(git rev-list --count "${RANGE}")"
+          echo "Scanning ${COUNT} commit(s) in ${RANGE}"
+          if [ "${COUNT}" -eq 0 ]; then
+            echo "::error::gitleaks range '${RANGE}' selected no commits; refusing to report a clean scan."
+            exit 1
+          fi
+
+          gitleaks detect --source . --redact --verbose --no-banner --log-opts="${RANGE}"
