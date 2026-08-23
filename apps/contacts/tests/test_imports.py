@@ -859,3 +859,127 @@ class TestTheWizardShowsProgress:
 
         run.refresh_from_db()
         assert run.processed_rows == 0
+
+
+@pytest.mark.django_db
+class TestInFileDuplicates:
+    """The dry run has to predict what the import will do, including for a file
+    that names the same person twice — which is exactly the file somebody runs a
+    preview for."""
+
+    FILE = "email,first\nada@example.test,Ada\nada@example.test,Augusta\n"
+    MAPPING = {"0": "system:email", "1": "system:first_name"}
+
+    def _pass(self, workspace, mode, dedupe, status=ImportStatus.VALIDATED):
+        run = make_run(workspace, self.FILE, mapping=self.MAPPING, dedupe=dedupe, status=status)
+        imports.enqueue(run, mode=mode)
+        drain(run, mode)
+        return run
+
+    def test_the_dry_run_predicts_the_update_the_import_performs(self, tenancy):
+        checked = self._pass(tenancy.workspace, imports.MODE_DRY_RUN, ImportDedupe.UPDATE, ImportStatus.UPLOADED)
+        assert (checked.created_count, checked.updated_count) == (1, 1)
+
+        imported = self._pass(tenancy.workspace, imports.MODE_IMPORT, ImportDedupe.UPDATE)
+        assert (imported.created_count, imported.updated_count) == (1, 1)
+        assert Contact.objects.for_workspace(tenancy.workspace).count() == 1
+
+    def test_the_dry_run_predicts_the_skip_the_import_performs(self, tenancy):
+        checked = self._pass(tenancy.workspace, imports.MODE_DRY_RUN, ImportDedupe.SKIP, ImportStatus.UPLOADED)
+        assert (checked.created_count, checked.skipped_count) == (1, 1)
+
+        imported = self._pass(tenancy.workspace, imports.MODE_IMPORT, ImportDedupe.SKIP)
+        assert (imported.created_count, imported.skipped_count) == (1, 1)
+        assert Contact.objects.for_workspace(tenancy.workspace).count() == 1
+
+    def test_create_mode_still_makes_both(self, tenancy):
+        checked = self._pass(tenancy.workspace, imports.MODE_DRY_RUN, ImportDedupe.CREATE, ImportStatus.UPLOADED)
+        assert checked.created_count == 2
+
+        imported = self._pass(tenancy.workspace, imports.MODE_IMPORT, ImportDedupe.CREATE)
+        assert imported.created_count == 2
+        assert Contact.objects.for_workspace(tenancy.workspace).count() == 2
+
+    def test_the_match_key_is_case_insensitive_like_the_lookup(self, tenancy):
+        run = make_run(
+            tenancy.workspace,
+            "email\nada@example.test\nADA@EXAMPLE.TEST\n",
+            mapping={"0": "system:email"},
+            status=ImportStatus.UPLOADED,
+        )
+        imports.enqueue(run, mode=imports.MODE_DRY_RUN)
+        drain(run, imports.MODE_DRY_RUN)
+
+        assert (run.created_count, run.updated_count) == (1, 1)
+
+
+@pytest.mark.django_db
+class TestDelimiterDetection:
+    def test_a_quoted_comma_does_not_win_the_tie(self, tenancy):
+        """`"Last, First";email` has one comma and one semicolon by raw count.
+        Counting inside quotes tied and handed it to the comma, splitting one
+        column into two and shifting every mapping after it."""
+        run = make_run(tenancy.workspace, '"Last, First";email\n"Hopper, Grace";grace@example.test\n')
+
+        assert imports.read_header(run) == ["Last, First", "email"]
+
+    def test_an_escaped_quote_keeps_the_scanner_in_phase(self, tenancy):
+        run = make_run(tenancy.workspace, '"He said ""go, now""";email\nx;y@example.test\n')
+
+        assert imports.read_header(run) == ['He said "go, now"', "email"]
+
+    def test_an_ordinary_comma_file_is_unaffected(self, tenancy):
+        run = make_run(tenancy.workspace, "first,last,email\nAda,Lovelace,ada@example.test\n")
+
+        assert imports.read_header(run) == ["first", "last", "email"]
+
+    def test_a_single_column_file_falls_back_to_comma(self, tenancy):
+        run = make_run(tenancy.workspace, "email\nada@example.test\n")
+
+        assert imports.read_header(run) == ["email"]
+
+
+@pytest.mark.django_db
+class TestDeletedContactsStandDown:
+    def test_deleting_cancels_the_contacts_pending_queue_rows(self, tenancy, client_for):
+        """A `send_retry` is a message already accepted and waiting on the
+        backoff ladder; nothing else would stop it being retried five times."""
+        from django.utils import timezone as tz
+
+        from apps.contacts import services as contact_services
+        from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
+
+        contact = contact_services.create_contact(tenancy.workspace, first_name="Doomed")
+        pending = ScheduledAction.objects.create(
+            workspace=tenancy.workspace,
+            contact_id=contact.pk,
+            run_at=tz.now(),
+            type=ActionType.SEND_RETRY,
+            status=ActionStatus.PENDING,
+        )
+
+        client_for(tenancy.owner).post(f"/w/{tenancy.workspace.id}/contacts/{contact.pk}/delete/")
+
+        pending.refresh_from_db()
+        assert pending.status == ActionStatus.CANCELLED
+
+    def test_another_contacts_rows_are_left_alone(self, tenancy, client_for):
+        from django.utils import timezone as tz
+
+        from apps.contacts import services as contact_services
+        from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
+
+        doomed = contact_services.create_contact(tenancy.workspace, first_name="Doomed")
+        spared = contact_services.create_contact(tenancy.workspace, first_name="Spared")
+        theirs = ScheduledAction.objects.create(
+            workspace=tenancy.workspace,
+            contact_id=spared.pk,
+            run_at=tz.now(),
+            type=ActionType.SEND_RETRY,
+            status=ActionStatus.PENDING,
+        )
+
+        client_for(tenancy.owner).post(f"/w/{tenancy.workspace.id}/contacts/{doomed.pk}/delete/")
+
+        theirs.refresh_from_db()
+        assert theirs.status == ActionStatus.PENDING

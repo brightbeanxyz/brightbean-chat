@@ -74,13 +74,20 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
             </td>
             <td>{{ contact.last_interaction_at|default:"—" }}</td>
             <td>
+              {% comment %}
+                Two pills, not an if/elif chain. `has_opt_in` and `has_opted_out`
+                are independent facts — a contact can have consented on Telegram
+                and opted out on SMS — and `annotate_reachability`'s docstring
+                says collapsing them "would have to pick which one to lie about".
+                An elif did exactly that: it hid a still-reachable channel behind
+                the opt-out and read as though the contact were unreachable.
+              {% endcomment %}
+              {% if contact.has_opt_in %}<span class="status-pill status-pill-active">Opted in</span>{% endif %}
               {% if contact.has_opted_out %}
-                <span class="status-pill status-pill-disabled" title="Opted out on at least one channel">Opted out</span>
-              {% elif contact.has_opt_in %}
-                <span class="status-pill status-pill-active">Opted in</span>
-              {% else %}
-                <span class="muted">—</span>
+                <span class="status-pill status-pill-disabled"
+                      title="Opted out on at least one channel{% if contact.has_opt_in %}, still opted in on another{% endif %}">Opted out</span>
               {% endif %}
+              {% if not contact.has_opt_in and not contact.has_opted_out %}<span class="muted">—</span>{% endif %}
             </td>
           </tr>
         {% endfor %}

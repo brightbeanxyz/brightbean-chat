@@ -126,6 +126,16 @@ inert — a button that looks fine and does nothing.
     {% include "contacts/_filter_bar.html" %}
   </form>
 
+  {% comment %}
+    The three segment forms, out here because a form cannot nest inside the
+    toolbar's and they all POST while it GETs. Each reads the same Alpine
+    `serialised`, so no two of them can describe different rules.
+
+    A successful update or delete reloads rather than swapping: both change what
+    the *filter builder* should be showing, and the builder is server-hydrated —
+    a toast alone would leave the page describing a segment that no longer says
+    what the panel shows, or one that is gone.
+  {% endcomment %}
   {% if can_manage_crm %}
     <form x-ref="saveSegment" class="hidden"
           hx-post="{% url 'contacts:segment_create' workspace_id=request.workspace.id %}"
@@ -133,6 +143,23 @@ inert — a button that looks fine and does nothing.
       <input type="hidden" name="name" :value="segmentName">
       <input type="hidden" name="filter" :value="serialised">
     </form>
+
+    {% if filter_config.segmentId %}
+      <form x-ref="updateSegment" class="hidden"
+            hx-post="{% url 'contacts:segment_update' workspace_id=request.workspace.id segment_id=filter_config.segmentId %}"
+            hx-swap="none"
+            hx-on::after-request="if (event.detail.successful) window.location.reload()">
+        <input type="hidden" name="name" value="{{ query.segment.name }}">
+        <input type="hidden" name="filter" :value="serialised">
+      </form>
+
+      <form x-ref="deleteSegment" class="hidden"
+            hx-post="{% url 'contacts:segment_delete' workspace_id=request.workspace.id segment_id=filter_config.segmentId %}"
+            hx-swap="none"
+            hx-confirm="Delete “{{ query.segment.name }}”? The contacts stay; any flow whose condition node references this segment stops validating."
+            hx-on::after-request="if (event.detail.successful) window.location = '{% url 'contacts:list' workspace_id=request.workspace.id %}'">
+      </form>
+    {% endif %}
   {% endif %}
   </div>
 

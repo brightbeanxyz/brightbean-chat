@@ -72,6 +72,7 @@ from django.utils import timezone
 from apps.channels.events import OutboundMessage, SendResult, SendStatus
 from apps.channels.providers.exceptions import APIError, RateLimitError
 from apps.channels.registry import adapter_for
+from apps.contacts.models import ContactStatus
 from apps.messaging import buckets
 from apps.messaging.codes import Denial, Failure
 from apps.messaging.compliance import Allowed, can_send
@@ -527,9 +528,12 @@ def _dispatch(
     *,
     blocking: bool,
 ) -> Message:
-    """Resolve the adapter, claim the attempt, take a token, send, record.
+    """Refuse a tombstone, resolve the adapter, claim, take a token, send, record.
 
     That order is load-bearing and was arrived at the wrong way round once.
+
+    The **tombstone check first**, because it is free and because everything
+    after it spends something — an adapter lookup, an attempt, a rate token.
 
     The **adapter first**, because a platform with no adapter installed can never
     send and must not spend anything finding that out. The **claim second**,
@@ -539,6 +543,16 @@ def _dispatch(
     never happened. The **token last**, so the only thing that consumes rate is
     a send that is actually about to be attempted.
     """
+    if message.conversation.contact.status != ContactStatus.ACTIVE:
+        # The last gate before a provider call, and the only one that catches a
+        # contact deleted *after* the message was queued. `send_outbound` cannot
+        # do it alone: `handle_send_retry` re-enters here directly, so a pending
+        # send_retry for somebody an operator removed an hour ago would still
+        # reach the platform. Issue #13's delete cancels those queue rows, but
+        # the invariant belongs here rather than resting on every caller of
+        # `delete_contact` remembering to tidy up.
+        return _finalize(message, status=MessageStatus.FAILED, error=Denial.CONTACT_DELETED.value)
+
     try:
         adapter = adapter_for(connection.platform)
     except LookupError:

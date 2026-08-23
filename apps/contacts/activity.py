@@ -72,6 +72,7 @@ __all__ = [
     "opt_out",
     "platforms_for",
     "recent_messages",
+    "stand_down",
     "start_flow_for",
     "startable_flow",
     "startable_flows",
@@ -429,6 +430,38 @@ def start_flow_for(contact: Contact, flow: Any, *, actor: Any = None) -> Any:
         flow,
         started_by=StartedBy.stamp(StartedBy.MANUAL, getattr(actor, "pk", None)),
     )
+
+
+def stand_down(contact: Contact) -> int:
+    """Everything queued for a contact who is being removed. Returns runs stopped.
+
+    Two halves, because deleting somebody has to reach two apps:
+
+    * the flow engine expires their live execution and cancels the rows that
+      would resume it (:func:`stop_automation`);
+    * every other pending row naming them is cancelled here — a ``send_retry``
+      in particular, which is a message already accepted and waiting on the
+      backoff ladder. ``apps.messaging.services._dispatch`` refuses a tombstone
+      outright, so nothing would actually reach the platform either way; this is
+      what stops the queue spending five attempts over six hours discovering
+      that for each one.
+
+    Deliberately **not** inside ``services.delete_contact``: that module knows
+    nothing about flows or queues, and this one exists to be the single place
+    that does.
+    """
+    stopped = stop_automation(contact)
+
+    from apps.queueing.models import ActionStatus, ScheduledAction
+
+    cancelled = (
+        ScheduledAction.objects.for_workspace(contact.workspace_id)
+        .filter(contact_id=contact.pk, status=ActionStatus.PENDING)
+        .update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
+    )
+    if cancelled:
+        logger.info("Cancelled %s pending action(s) for contact %s.", cancelled, contact.pk)
+    return stopped
 
 
 def stop_automation(contact: Contact) -> int:

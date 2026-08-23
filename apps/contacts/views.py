@@ -66,6 +66,7 @@ the bulk endpoints' ``ids``. All three are resolved through
 their own cross-tenant tests in ``tests/test_views.py``.
 """
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -568,15 +569,48 @@ def contact_field_value(request: WorkspaceRequest, workspace_id: str, contact_id
     raw = request.POST.get("value", "")
 
     try:
-        if field.type == CustomFieldType.BOOLEAN:
-            services.set_field_value(contact, field, raw in {"true", "on", "1"})
-        elif raw == "":
+        # Empty first, for every type. The boolean branch used to run ahead of
+        # it and turned the "—" option into a stored ``False``, so a boolean
+        # could be set from the UI but never removed — and a contact whose value
+        # the operator had just cleared went on matching an ``is false`` filter.
+        if raw == "":
             services.clear_field_value(contact, field)
+        elif field.type == CustomFieldType.BOOLEAN:
+            # An unticked checkbox is absent from the POST entirely, which is why
+            # the widget is a select with an explicit empty option rather than a
+            # checkbox: absence has to mean "clear", not "false".
+            services.set_field_value(contact, field, raw in {"true", "on", "1"})
+        elif field.type == CustomFieldType.DATETIME:
+            services.set_field_value(contact, field, _aware_datetime(raw, field))
         else:
             services.set_field_value(contact, field, raw)
     except ContactsError as exc:
         return _failed(exc, f"Could not save {field.name}")
     return toast_response(tone="success", title=f"{field.name} saved", events={"contactChanged": True})
+
+
+def _aware_datetime(raw: str, field: CustomField) -> Any:
+    """Turn a ``datetime-local`` value into the aware datetime the service wants.
+
+    ``<input type="datetime-local">`` submits ``2026-08-23T10:30`` with no
+    offset, and ``services.coerce_value`` refuses a naive datetime **on purpose**
+    — its docstring says localising inside the service "would make the same input
+    mean two things in two workspaces", and leaves the choice to the caller. This
+    is that caller making it: the operator typed a wall-clock time while looking
+    at a page that rendered one, so it is read in the current timezone, which is
+    the same zone ``_form_value`` used on the way out.
+
+    A value that does not parse is handed on untouched, so the service produces
+    the type error and the operator sees one message about it rather than two
+    competing ones.
+    """
+    try:
+        moment = datetime.fromisoformat(raw)
+    except ValueError:
+        return raw
+    if timezone.is_naive(moment):
+        return timezone.make_aware(moment)
+    return moment
 
 
 @login_required
@@ -759,7 +793,7 @@ def contact_delete(request: WorkspaceRequest, workspace_id: str, contact_id: str
     something the engine will accept.
     """
     contact = _contact_or_404(request, contact_id)
-    activity.stop_automation(contact)
+    activity.stand_down(contact)
     services.delete_contact(contact)
     return toast_response(
         tone="success",
@@ -857,7 +891,7 @@ def bulk_delete(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         return toast_response(tone="info", title="Nothing selected")
     deleted = 0
     for contact in contacts:
-        activity.stop_automation(contact)
+        activity.stand_down(contact)
         deleted += int(services.delete_contact(contact))
     return _bulk_result(
         f"{deleted} contact{'' if deleted == 1 else 's'} deleted",

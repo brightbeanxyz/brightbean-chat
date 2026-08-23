@@ -136,15 +136,31 @@ for free.
         Saving is its own POST, and it carries the same serialised document the
         Apply button sends — one spelling of the filter, so a segment can never
         be saved as something other than what the list is showing.
+
+        Three controls, not one, because "save" means two different things
+        depending on where the rules came from. With a segment loaded, the
+        obvious act is to update *it*; offering only "Save as segment" meant an
+        operator correcting a saved filter silently minted a second one beside
+        the original, and left the update and delete routes with no way in at
+        all.
       {% endcomment %}
       <span class="crm-filters-save" x-show="rules.length">
+        {% if filter_config.segmentId %}
+          <button type="button" class="btn-outline btn-inline"
+                  @click="$refs.updateSegment.requestSubmit()">Update “{{ query.segment.name }}”</button>
+        {% endif %}
         <label for="segment-name" class="sr-only">Segment name</label>
         <input type="text" id="segment-name" class="w-52" x-model="segmentName"
-               placeholder="Save this filter as…" maxlength="100">
+               placeholder="Save as a new segment…" maxlength="100">
         <button type="button" class="btn-outline btn-inline"
                 :disabled="!segmentName.trim()"
                 @click="$refs.saveSegment.requestSubmit()">Save as segment</button>
       </span>
+
+      {% if filter_config.segmentId %}
+        <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                @click="$refs.deleteSegment.requestSubmit()">Delete segment</button>
+      {% endif %}
     {% endif %}
 
     <span class="muted text-xs" x-show="rules.length"

@@ -880,3 +880,150 @@ class TestSegmentPickerReusesOneQuery:
         assert "segment_rows" not in response.context
         assert [row["label"] for row in response.context["filter_config"]["segments"]] == ["VIPs"]
         assert "VIPs" in response.content.decode()
+
+
+@pytest.mark.django_db
+class TestCustomFieldEditing:
+    def test_a_datetime_field_saves_from_the_datetime_local_widget(self, tenancy, client_for, crm):
+        """`<input type="datetime-local">` submits a naive value, and
+        `coerce_value` refuses a naive datetime on purpose — so every datetime
+        edit answered an error toast until the view localised it."""
+        field = services.create_custom_field(tenancy.workspace, name="Signed", field_type=CustomFieldType.DATETIME)
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, f"contacts/{crm['contact'].pk}/fields/{field.pk}/"), {"value": "2026-08-23T10:30"}
+        )
+
+        assert triggers(response)["showToast"]["tone"] == "success"
+        stored = services.field_values_for(crm["contact"])[field.pk]
+        assert timezone.localtime(stored).strftime("%Y-%m-%dT%H:%M") == "2026-08-23T10:30"
+
+    def test_it_round_trips_through_the_editor(self, tenancy, client_for, crm):
+        """What goes into the widget comes back out of it unchanged."""
+        field = services.create_custom_field(tenancy.workspace, name="Signed", field_type=CustomFieldType.DATETIME)
+        client = client_for(tenancy.owner)
+        client.post(url(tenancy, f"contacts/{crm['contact'].pk}/fields/{field.pk}/"), {"value": "2026-08-23T10:30"})
+
+        response = client.get(url(tenancy, f"contacts/{crm['contact'].pk}/"))
+        row = next(r for r in response.context["field_values"] if r["field"].pk == field.pk)
+
+        assert row["form_value"] == "2026-08-23T10:30"
+
+    def test_an_unparseable_datetime_is_one_error_not_two(self, tenancy, client_for, crm):
+        field = services.create_custom_field(tenancy.workspace, name="Signed", field_type=CustomFieldType.DATETIME)
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, f"contacts/{crm['contact'].pk}/fields/{field.pk}/"), {"value": "last Tuesday"}
+        )
+
+        assert triggers(response)["showToast"]["tone"] == "error"
+
+    def test_the_blank_option_clears_a_boolean_rather_than_storing_false(self, tenancy, client_for, crm):
+        """The boolean branch used to run ahead of the empty check, so "—" stored
+        False — a value could be set from the UI but never removed, and the
+        contact then dropped out of every `no_value` filter while looking cleared
+        on screen."""
+        from apps.contacts.models import CustomFieldValue
+
+        field = services.create_custom_field(tenancy.workspace, name="Trial", field_type=CustomFieldType.BOOLEAN)
+        services.set_field_value(crm["contact"], field, True)
+
+        client_for(tenancy.owner).post(url(tenancy, f"contacts/{crm['contact'].pk}/fields/{field.pk}/"), {"value": ""})
+
+        assert not CustomFieldValue.objects.for_workspace(tenancy.workspace).filter(field=field).exists()
+
+    def test_a_cleared_boolean_stops_matching_is_false(self, tenancy, client_for, crm):
+        """The consequence that makes the bug more than cosmetic. `is` is the
+        only operator a boolean field has (conditions.OPS_BY_TYPE), so storing
+        False on a clear did not merely look wrong — it kept the contact in a
+        segment the operator had just taken them out of."""
+        from apps.contacts import conditions
+
+        field = services.create_custom_field(tenancy.workspace, name="Trial", field_type=CustomFieldType.BOOLEAN)
+        services.set_field_value(crm["contact"], field, True)
+        client_for(tenancy.owner).post(url(tenancy, f"contacts/{crm['contact'].pk}/fields/{field.pk}/"), {"value": ""})
+
+        document = {
+            "match": "all",
+            "rules": [{"source": "custom_field", "key": str(field.pk), "op": "is", "value": False}],
+        }
+        assert not conditions.queryset(tenancy.workspace, document).filter(pk=crm["contact"].pk).exists()
+
+    def test_false_is_still_storable(self, tenancy, client_for, crm):
+        field = services.create_custom_field(tenancy.workspace, name="Trial", field_type=CustomFieldType.BOOLEAN)
+
+        client_for(tenancy.owner).post(
+            url(tenancy, f"contacts/{crm['contact'].pk}/fields/{field.pk}/"), {"value": "false"}
+        )
+
+        assert services.field_values_for(crm["contact"])[field.pk] is False
+
+
+@pytest.mark.django_db
+class TestMixedConsentState:
+    def _identity(self, contact, platform, **kwargs):
+        from apps.messaging.models import ContactChannelIdentity
+
+        row = ContactChannelIdentity(contact=contact, platform=platform, platform_user_id=f"{platform}-1", **kwargs)
+        row.save()
+        return row
+
+    def test_a_contact_opted_out_on_one_channel_still_shows_the_other(self, tenancy, client_for, crm):
+        """`annotate_reachability`'s docstring says collapsing the two facts
+        "would have to pick which one to lie about" — the elif did exactly
+        that and hid a still-reachable channel."""
+        self._identity(crm["contact"], "telegram", opt_in=True, opt_in_at=timezone.now(), opt_in_source="message_in")
+        self._identity(crm["contact"], "sms", opted_out_at=timezone.now())
+
+        body = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/")).content.decode()
+
+        assert "Opted in" in body
+        assert "Opted out" in body
+
+    def test_opted_out_everywhere_shows_only_that(self, tenancy, client_for, crm):
+        self._identity(crm["contact"], "sms", opted_out_at=timezone.now())
+
+        body = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/")).content.decode()
+
+        assert "Opted out" in body
+        assert "Opted in" not in body
+
+    def test_no_identities_shows_neither(self, tenancy, client_for, crm):
+        body = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/")).content.decode()
+
+        assert "Opted in" not in body
+        assert "Opted out" not in body
+
+
+@pytest.mark.django_db
+class TestSegmentControls:
+    DOC = {"match": "all", "rules": []}
+
+    def test_a_loaded_segment_offers_update_and_delete(self, tenancy, client_for):
+        """The routes existed with nothing pointing at them, so editing a saved
+        filter and pressing save minted a second segment beside the original."""
+        segment = services.create_segment(tenancy.workspace, name="VIPs", filter_json=self.DOC)
+
+        body = client_for(tenancy.owner).get(url(tenancy, f"contacts/?segment={segment.pk}")).content.decode()
+
+        assert f"contacts/segments/{segment.pk}/save/" in body
+        assert f"contacts/segments/{segment.pk}/delete/" in body
+        assert "Update &ldquo;VIPs&rdquo;" in body or "Update “VIPs”" in body
+
+    def test_an_unsaved_filter_offers_only_save_as(self, tenancy, client_for):
+        body = client_for(tenancy.owner).get(url(tenancy, "contacts/")).content.decode()
+
+        assert "contacts/segments/create/" in body
+        # Scoped to segment routes: the bulk bar has its own /bulk/delete/.
+        assert "contacts/segments/" in body
+        assert not any(part.startswith("contacts/segments/") and part.endswith("/delete/") for part in body.split('"'))
+        assert "Update &ldquo;" not in body and "Update “" not in body
+
+    def test_a_viewer_is_offered_none_of_them(self, tenancy, client_for):
+        segment = services.create_segment(tenancy.workspace, name="VIPs", filter_json=self.DOC)
+
+        body = (
+            client_for(tenancy.user_for("viewer")).get(url(tenancy, f"contacts/?segment={segment.pk}")).content.decode()
+        )
+
+        assert "contacts/segments/" not in body

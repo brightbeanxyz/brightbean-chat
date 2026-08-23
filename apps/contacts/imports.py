@@ -246,18 +246,39 @@ def _decoded(run: ContactImport) -> io.StringIO:
 
 
 def _delimiter(sample: str) -> str:
-    """Pick the delimiter by counting candidates in the header line.
+    """Pick the delimiter by counting candidates **outside quotes** in the header.
 
     ``csv.Sniffer`` is the obvious tool and guesses badly on the files that
     matter here: a single-column export has no delimiter to find and it raises,
-    and a header holding an address ("Smith, J") makes it confident about the
-    wrong one. Counting on the header alone is cruder and predictable, and the
-    mapping step shows the operator the columns it found before anything is
-    imported.
+    and it is confident about the wrong answer often enough to be worse than a
+    rule you can read. Counting is cruder and predictable, and the mapping step
+    shows the operator the columns it found before anything is imported.
+
+    Quote-awareness is not a refinement, it is the whole difference between right
+    and wrong on a common file. A semicolon-delimited export with a heading like
+    ``"Last, First";email`` has one comma and one semicolon by raw count, ties,
+    and loses the tie to whichever appears first in
+    :data:`CANDIDATE_DELIMITERS` — splitting one column into two and shifting
+    every mapping after it. Only separators outside quotes are separators.
     """
     line = sample.splitlines()[0] if sample else ""
-    best = max(CANDIDATE_DELIMITERS, key=line.count)
-    return best if line.count(best) else ","
+    counts = {candidate: 0 for candidate in CANDIDATE_DELIMITERS}
+    in_quotes = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == '"':
+            # A doubled quote inside a quoted field is an escaped quote, not the
+            # end of one — stepping over both keeps the state machine in phase.
+            if in_quotes and index + 1 < len(line) and line[index + 1] == '"':
+                index += 2
+                continue
+            in_quotes = not in_quotes
+        elif not in_quotes and char in counts:
+            counts[char] += 1
+        index += 1
+    best = max(CANDIDATE_DELIMITERS, key=lambda candidate: counts[candidate])
+    return best if counts[best] else ","
 
 
 def _reader(run: ContactImport) -> tuple[Any, list[str]]:
@@ -505,6 +526,12 @@ def _run_batch(run: ContactImport, *, mode: str, offset: int) -> None:
     errors: list[RowError] = []
     counts = {"created": 0, "updated": 0, "skipped": 0}
     processed = 0
+    #: Match keys this batch has already accounted for. Per batch rather than per
+    #: run: carrying it across batches would mean storing it on the row, and two
+    #: rows for the same person landing in different batches is the case the
+    #: database itself answers correctly in both modes anyway — the import has
+    #: created the contact by then, so `_match` finds it.
+    seen: set[str] = set()
     #: Set when the row cap stopped this batch early. The rest of the file is
     #: deliberately not read: the cap is what bounds the whole run's cost.
     capped = False
@@ -524,7 +551,7 @@ def _run_batch(run: ContactImport, *, mode: str, offset: int) -> None:
             errors.append(RowError(number, "", "That row is too long to import."))
             continue
         try:
-            outcome = _apply_row(run, mapping, row, number, write=mode == MODE_IMPORT)
+            outcome = _apply_row(run, mapping, row, number, write=mode == MODE_IMPORT, seen=seen)
         except ContactsError as exc:
             # A refusal from the service layer that the row checks did not
             # anticipate — a name over the column width, a NUL byte. Data, not a
@@ -654,6 +681,7 @@ def _apply_row(
     number: int,
     *,
     write: bool,
+    seen: set[str],
 ) -> str | RowError:
     """Validate one row and, when ``write``, apply it. Returns the outcome name.
 
@@ -662,6 +690,14 @@ def _apply_row(
     returns before the writes. That is the "one loop, two modes" property the
     module docstring opens with, and it is why the preview's promise is worth
     anything.
+
+    ``seen`` is what keeps that promise true for a file that contains the same
+    person twice. The dry run writes nothing, so the second such row finds
+    nothing in the database and would be predicted "created" — while the real
+    import creates on the first row and updates or skips on the second. The
+    preview would then be wrong by construction on a duplicate-laden file, which
+    is exactly the file somebody runs a preview for. Tracking the match keys this
+    pass has already accounted for makes both modes answer the same.
     """
     from apps.contacts import services
 
@@ -692,12 +728,19 @@ def _apply_row(
         if len(name) > MAX_TAG_NAME_CHARS:
             return RowError(number, TAGS_TARGET, f"A tag name is at most {MAX_TAG_NAME_CHARS} characters.")
 
+    key = _match_key(values, mapping)
     existing = _match(run.workspace_id, values, mapping) if mapping.match_field else None
+    # A row earlier in this same pass already claimed this address. During the
+    # import that row's contact is in the database and `_match` finds it; during
+    # the dry run nothing was written, so `seen` stands in for it.
+    duplicate = existing is not None or (bool(key) and key in seen)
+    if key:
+        seen.add(key)
 
-    if existing is not None and run.dedupe == ImportDedupe.SKIP:
+    if duplicate and run.dedupe == ImportDedupe.SKIP:
         return "skipped"
     if not write:
-        return "updated" if existing is not None and run.dedupe == ImportDedupe.UPDATE else "created"
+        return "updated" if duplicate and run.dedupe == ImportDedupe.UPDATE else "created"
 
     if existing is not None and run.dedupe == ImportDedupe.UPDATE:
         contact = existing
@@ -728,6 +771,21 @@ def _apply_row(
         tag, _created = services.get_or_create_tag(run.workspace, name)
         services.add_tag(contact, tag)
     return outcome
+
+
+def _match_key(values: dict[str, str], mapping: ResolvedMapping) -> str:
+    """The dedupe identity of a row, or "" when it has none.
+
+    Normalised the same way :func:`_match` normalises its lookup, so "ADA@x" and
+    "ada@x" are one person to both.
+    """
+    field = mapping.match_field
+    if not field:
+        return ""
+    value = values.get(field, "")
+    if not value:
+        return ""
+    return f"{field}:{value.lower() if field == 'email' else value}"
 
 
 def _cell(row: list[str], index: int) -> str:
