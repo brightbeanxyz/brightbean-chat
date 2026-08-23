@@ -228,6 +228,7 @@ class TestSidebarCollapse:
                                     "url": "/inbox/",
                                     "active": False,
                                     "badge": 7,
+                                    "badge_slot": True,
                                 },
                             ],
                         }
@@ -256,6 +257,7 @@ class TestSidebarCollapse:
                                     "url": "/inbox/",
                                     "active": False,
                                     "badge": 0,
+                                    "badge_slot": True,
                                 },
                             ],
                         }
@@ -265,6 +267,79 @@ class TestSidebarCollapse:
         )
 
         assert "sidebar-badge" not in html
+        assert ">0<" not in html
+
+    def test_a_zero_badge_still_renders_the_slot_an_out_of_band_swap_aims_at(self):
+        """The other half of the contract above, and the reason the badge is
+        `hidden` rather than absent: the owning app keeps its count live by id
+        — notifications polls one every 60s — and htmx logs
+        `htmx:oobErrorNoTarget` for a swap whose target is not in the document.
+        A zero badge has to show nothing while still *being* somewhere.
+        """
+        from django.template import Context, Template
+
+        html = Template('{% include "partials/_nav_groups.html" %}').render(
+            Context(
+                {
+                    "groups": [
+                        {
+                            "label": "",
+                            "items": [
+                                {
+                                    "key": "inbox",
+                                    "label": "Inbox",
+                                    "icon": "inbox",
+                                    "url": "/inbox/",
+                                    "active": False,
+                                    "badge": 0,
+                                    "badge_slot": True,
+                                },
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+
+        slot = re.search(r'<span id="nav-badge-inbox"[^>]*>(.*?)</span>', html)
+        # Scoped to the slot: _nav_icon.html gives every row an
+        # `aria-hidden="true"` svg, so `"hidden" in html` is true of any nav at
+        # all and would pass with the attribute deleted.
+        assert slot, "no slot for the swap to land on"
+        assert slot.group(1) == ""
+        assert "hidden" in slot.group(0)
+
+    def test_a_row_no_app_badges_gets_no_slot_at_all(self):
+        """An id nothing ever swaps is dead weight on every page, and
+        partials/_nav_badge_sinks.html has to mirror whatever this loop
+        renders for the layouts that replace the nav wholesale — two lists
+        worth keeping to the rows an app actually owns."""
+        from django.template import Context, Template
+
+        html = Template('{% include "partials/_nav_groups.html" %}').render(
+            Context(
+                {
+                    "groups": [
+                        {
+                            "label": "",
+                            "items": [
+                                {
+                                    "key": "contacts",
+                                    "label": "Contacts",
+                                    "icon": "contacts",
+                                    "url": "/contacts/",
+                                    "active": False,
+                                    "badge": 0,
+                                    "badge_slot": False,
+                                },
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+
+        assert "nav-badge-" not in html
 
 
 @pytest.mark.django_db

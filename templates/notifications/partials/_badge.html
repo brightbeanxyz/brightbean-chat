@@ -15,20 +15,17 @@ the sidebar nav row's badge, and the mobile bar's dot, which is the only one a
 phone reader can see. Leaving any of them stale after "mark all read" shows an
 indicator contradicting the others.
 
-The nav badge is *deleted* at zero rather than emptied, because the shell's
-contract is that a zero badge renders nothing at all (see
-apps/common/tests/test_shell.py::test_a_zero_badge_renders_nothing_rather_than_a_zero),
-so there is no element to update when it is absent. That asymmetry is fine: the
-only in-page action that changes this count is marking things read, so the
-downward direction is the one that has to be live. An arrival comes from the
-server, lights the bell dot on the next poll, and brings the number with it on
-the next navigation — which is how every other badge in this shell works.
+The nav badge is *emptied* at zero, never deleted. An earlier cut deleted it,
+on the reasoning that the shell renders no badge for a zero count so there is
+nothing left to update — but _bell.html polls this view every 60s, and a
+deleted element is one the next poll cannot find, which is `htmx:oobErrorNoTarget`
+in the console once a minute for the rest of the session. It was worse than a
+stray log line: the count could then never come *back* up in the page, because
+every later swap was aiming at an element that no longer existed. The nav row
+now renders the slot at zero too (partials/_nav_badge.html), so all three
+targets here are permanent and every swap is a plain `hx-swap-oob="true"`.
 {% endcomment %}{% spaceless %}
-<span id="notification-badge" hx-swap-oob="true">{% include "notifications/partials/_dot.html" %}</span>
-<span id="notification-badge-mobile" hx-swap-oob="true">{% include "notifications/partials/_dot.html" %}</span>
-{% if unread_notification_count %}
-<span class="sidebar-badge" id="nav-badge-notifications" hx-swap-oob="true">{{ unread_notification_count }}</span>
-{% else %}
-<span id="nav-badge-notifications" hx-swap-oob="delete"></span>
-{% endif %}
+{% include "notifications/partials/_dot_slot.html" with key="notification-badge" oob=True %}
+{% include "notifications/partials/_dot_slot.html" with key="notification-badge-mobile" oob=True %}
+{% include "partials/_nav_badge.html" with key="notifications" count=unread_notification_count oob=True only %}
 {% endspaceless %}

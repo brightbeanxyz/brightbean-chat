@@ -116,11 +116,18 @@ class TestNoDuplicateIds:
 
         assert "hx-swap-oob" not in body
 
-    def test_the_response_fragment_updates_every_place_the_count_appears(self, tenancy, client_for):
+    @pytest.mark.parametrize("unread", [0, 1])
+    def test_the_response_fragment_updates_every_place_the_count_appears(self, tenancy, client_for, unread):
         """Three: the footer bell's dot, the sidebar nav row's badge, and the
         mobile bar's dot — which is the only one a phone reader can see, and
-        which sits outside both desktop targets."""
-        Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Ping")
+        which sits outside both desktop targets.
+
+        Both counts, because the badge partial has a branch per count and the
+        zero one is the branch that regressed: it used to drop the nav target
+        entirely.
+        """
+        for i in range(unread):
+            Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title=f"Ping {i}")
 
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
@@ -128,13 +135,122 @@ class TestNoDuplicateIds:
             assert f'id="{element_id}"' in body
         assert body.count("hx-swap-oob") == 3
 
-    def test_reaching_zero_deletes_the_nav_badge_rather_than_emptying_it(self, tenancy, client_for):
-        """The shell renders no badge at all for a zero count, so there is
-        nothing to swap an empty one into."""
+
+@pytest.mark.django_db
+class TestThePolledBadgeAlwaysHasATarget:
+    """The 60s poll in _bell.html fires on every authenticated page, and an
+    out-of-band swap with no element to land on is an error htmx logs and
+    nothing else notices. Both ends of that swap are asserted here: the shell
+    renders the target, and the response keeps it.
+    """
+
+    def test_the_shell_renders_the_nav_slot_with_nothing_unread(self, shell_body):
+        assert shell_body.count('id="nav-badge-notifications"') == 1
+
+    def test_the_slot_shows_no_pill_and_no_zero(self, shell_body):
+        """Present in the document, invisible on the screen.
+
+        Every assertion is scoped to the slot element rather than to the page.
+        `sidebar-badge` as a bare substring matches base.html's pre-paint
+        <style> block on every page, and as a class attribute it would still
+        match a *different* row's badge — issue #14's inbox count will make one
+        non-zero — failing this test for something it is not about.
+        """
+        slot = re.search(r'<span id="nav-badge-notifications"[^>]*>(.*?)</span>', shell_body)
+        assert slot, "the poll has no target"
+        assert slot.group(1) == ""
+        assert "sidebar-badge" not in slot.group(0)
+        assert "hidden" in slot.group(0)
+
+    def test_reaching_zero_empties_the_nav_badge_rather_than_deleting_it(self, tenancy, client_for):
+        """Deleting it was the original bug: an element the response removes is
+        one every later poll cannot find, and the count could then never come
+        back up in the page either, because every subsequent swap was aiming at
+        something that was gone."""
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
-        assert 'hx-swap-oob="delete"' in body
+        assert 'hx-swap-oob="delete"' not in body
+        assert 'id="nav-badge-notifications"' in body
         assert "notif-dot" not in body
+
+    def test_every_target_the_response_swaps_is_one_the_shell_renders(self, tenancy, client_for):
+        """Generalised twice over: across the response's targets, so a fourth
+        surface cannot be added to _badge.html without being added to the
+        shell, and across the shell's *layouts*, because they are not
+        interchangeable. layouts/settings.html replaces {% block sidebar_nav %}
+        wholesale while base.html keeps rendering the poll outside it, so a
+        settings page carried the bell and none of the nav's badge ids — the
+        error this whole class is about, on 14 pages, missed by sampling only
+        the dashboard.
+        """
+        client = client_for(tenancy.owner)
+        response = client.get(reverse("notifications:badge")).content.decode()
+        targets = re.findall(r'id="([^"]+)"[^>]*hx-swap-oob', response)
+        assert targets
+
+        for url in self.page_archetypes(tenancy):
+            shell = client.get(url).content.decode()
+            for target in targets:
+                assert f'id="{target}"' in shell, f"{target} missing from {url}"
+
+    def test_no_archetype_carries_a_target_twice(self, tenancy, client_for):
+        """The other half: a sink that duplicates a slot the nav already
+        rendered would send every swap to whichever came first."""
+        client = client_for(tenancy.owner)
+        response = client.get(reverse("notifications:badge")).content.decode()
+        targets = re.findall(r'id="([^"]+)"[^>]*hx-swap-oob', response)
+
+        for url in self.page_archetypes(tenancy):
+            shell = client.get(url).content.decode()
+            for target in targets:
+                assert shell.count(f'id="{target}"') == 1, f"{target} in {url}"
+
+    def test_a_replaced_nav_never_shows_the_swapped_in_badge(self, tenancy, client_for):
+        """A settings page has no Notifications row, so the target it carries
+        for the poll must stay invisible whatever count lands in it — a bare
+        slot would turn into a stray pill the first time the count went
+        non-zero. The sink's wrapper is what guarantees that."""
+        Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Ping")
+
+        body = client_for(tenancy.owner).get("/accounts/settings/").content.decode()
+
+        sink = re.search(r"<span hidden>(.*?)</span>\s*</nav>", body, re.S)
+        assert sink, "the sink is not the last thing in the replaced nav"
+        assert 'id="nav-badge-notifications"' in sink.group(1)
+
+    @staticmethod
+    def page_archetypes(tenancy):
+        """One URL per sidebar_nav layout in the product. The guard test below
+        fails if a new layout appears and this list does not grow."""
+        return [
+            f"/w/{tenancy.workspace.id}/",
+            "/accounts/settings/",
+            reverse("workspaces:settings", kwargs={"workspace_id": tenancy.workspace.id}),
+        ]
+
+    def test_every_layout_that_replaces_the_nav_renders_the_sinks(self):
+        """Discovery rather than a hand-kept list: any template overriding
+        {% block sidebar_nav %} takes the nav's badge ids out of the document
+        while base.html goes on rendering the poll that aims at them. The next
+        one to do it should fail here rather than in a console nobody reads.
+        """
+        templates = BASE_HTML.parent
+        offenders = []
+        for path in sorted(templates.rglob("*.html")):
+            if path == BASE_HTML:
+                continue
+            text = path.read_text()
+            # Comments stripped first: three of these templates *describe* the
+            # override in prose, and one of them is the sink partial itself.
+            # Matching prose would make the guard fire on files that render no
+            # nav at all.
+            markup = re.sub(r"{%\s*comment\s*%}.*?{%\s*endcomment\s*%}", "", text, flags=re.S)
+            if not re.search(r"{%\s*block sidebar_nav\s*%}", markup):
+                continue
+            if "_nav_badge_sinks.html" not in markup and "block.super" not in markup:
+                offenders.append(path.relative_to(templates))
+
+        assert not offenders, f"replaces the sidebar nav without re-rendering the badge targets: {offenders}"
 
 
 @pytest.mark.django_db

@@ -227,7 +227,7 @@
                 mobile reader can see, and it sits outside both of the desktop
                 swap targets, so without one it would keep showing a dot after
                 the last notification was read.{% endcomment %}
-                <span id="notification-badge-mobile">{% include "notifications/partials/_dot.html" %}</span>
+                {% include "notifications/partials/_dot_slot.html" with key="notification-badge-mobile" %}
             </a>
             {% else %}
             <div class="w-9"></div>
