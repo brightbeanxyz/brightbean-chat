@@ -129,7 +129,13 @@ for free.
 
   <div class="crm-filters-foot">
     <input type="hidden" name="filter" :value="serialised">
-    <button type="submit" class="btn-brand btn-inline">Apply filter</button>
+    {% comment %}
+      `filter_embedded` is set by the flow builder's rule-trigger panel (issue
+      #22), which renders this same partial inside a form that already has its
+      own Save button. The hidden input above is what both surfaces actually
+      need; this button belongs only to the page that submits nothing else.
+    {% endcomment %}
+    {% if not filter_embedded %}<button type="submit" class="btn-brand btn-inline">Apply filter</button>{% endif %}
 
     {% if can_manage_crm %}
       {% comment %}

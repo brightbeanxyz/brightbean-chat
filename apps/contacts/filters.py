@@ -54,9 +54,11 @@ __all__ = [
     "SORTS",
     "ContactQuery",
     "contacts_for",
+    "filter_config",
     "parse_filter_document",
     "resolve_query",
     "search",
+    "sequence_options",
 ]
 
 #: The orderings the list offers. The request supplies a **key into this dict**,
@@ -224,3 +226,88 @@ def contacts_for(workspace: Any, query: ContactQuery) -> tuple[QuerySet[Contact]
     # Every failure above returns early, so reaching here means there is nothing
     # to report — the empty string is the answer, not a variable's last value.
     return search(rows, query.search_term).order_by(*SORTS[query.sort]), ""
+
+
+def filter_config(workspace: Any, *, document: Any = None, segment_id: str = "") -> dict[str, Any]:
+    """Everything the §11.4 filter builder needs to render, in one payload.
+
+    ``CONDITION_SCHEMA["x-brightbean"]`` already carries the operator tables, the
+    valueless-operator set, the operator labels, the system fields, the relative
+    units, which sources this deployment cannot evaluate, and the limits — that
+    extension block exists precisely so a consumer does not have to keep a second
+    copy. So the builder reads it, and an operator added to
+    :mod:`apps.contacts.conditions` shows up in the UI with no edit here.
+
+    Only the things that cannot live in a static schema are added: each source's
+    label, evaluability and owning issue from the registry, and this workspace's
+    own tags, fields, segments and sequences.
+
+    Public and in this module rather than private to a view, because two surfaces
+    render the same builder: the CRM's filter bar and — since L6-A — the rule
+    trigger's panel in the flow builder's trigger drawer. One payload shape means
+    ``templates/contacts/_filter_bar.html`` serves both.
+
+    One dict rather than six template variables, because it is one ``x-data``
+    argument, and assembling it in the template would put the payload's shape
+    somewhere Python cannot see it.
+    """
+    from apps.common.platforms import Platform
+    from apps.contacts.conditions import CONDITION_SCHEMA
+    from apps.contacts.models import CustomField, Tag
+
+    registry = conditions.sources()
+    return {
+        "sources": [
+            {
+                "name": name,
+                "label": registry[name].label,
+                "keyKind": registry[name].key_kind,
+                "evaluable": registry[name].is_evaluable,
+                # Carried so a greyed-out row can say *why* it is unavailable.
+                "owner": registry[name].owner,
+            }
+            for name in conditions.SOURCE_NAMES
+        ],
+        "vocabulary": CONDITION_SCHEMA["x-brightbean"],
+        "platforms": [{"value": value, "label": label} for value, label in Platform.choices],
+        "tags": [
+            {"value": str(row.pk), "label": row.name} for row in Tag.objects.for_workspace(workspace).order_by("name")
+        ],
+        "fields": [
+            {"value": str(row.pk), "label": row.name, "type": row.type}
+            for row in CustomField.objects.for_workspace(workspace).order_by("name")
+        ],
+        "segments": [
+            {"value": str(row.pk), "label": row.name}
+            for row in Segment.objects.for_workspace(workspace).order_by("name")
+        ],
+        "sequences": sequence_options(workspace),
+        # The document the builder hydrates from. Handed in by the caller rather
+        # than re-read from the URL, so a segment loaded off disk round-trips
+        # exactly as stored instead of through a re-serialisation that could
+        # normalise it.
+        "document": document if isinstance(document, dict) else {},
+        "segmentId": segment_id,
+    }
+
+
+def sequence_options(workspace: Any) -> list[dict[str, str]]:
+    """This workspace's sequences, for the ``sequence`` source's key picker.
+
+    Resolved through Django's app registry rather than by importing
+    ``apps.campaigns``: this app is L2-A and campaigns is L6-A, and a lower layer
+    importing a higher one is the coupling ``apps/flows/compat.py`` exists to
+    avoid on the same question. The registry is the neutral seam, and a
+    deployment without the app installed simply gets no options — which is
+    exactly the state the filter bar shipped in until #22.
+    """
+    from django.apps import apps as django_apps
+
+    try:
+        model = django_apps.get_model("campaigns", "Sequence")
+    except LookupError:
+        return []
+    return [
+        {"value": str(row["id"]), "label": row["name"]}
+        for row in model.objects.for_workspace(workspace).order_by("name").values("id", "name")
+    ]

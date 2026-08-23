@@ -182,11 +182,24 @@ inert — a button that looks fine and does nothing.
     {% endif %}
 
     {% comment %}
-      Disabled until L6-A registers the subscribe/unsubscribe verbs. The endpoint
-      behind it already exists and answers politely, so #22 enables a button
-      rather than shipping the route, the control and its tests all at once.
+      Sequences (#22). The endpoint has been here since #13 answering politely,
+      so this is a control being enabled rather than a route arriving. Two submit
+      buttons rather than a mode select, matching the tag form above it: `mode`
+      travels on whichever button was pressed.
     {% endcomment %}
-    <button type="button" disabled title="Sequences arrive with issue #22 (L6-A)">Subscribe to sequence</button>
+    {% if can_manage_crm and filter_config.sequences %}
+      <form class="mb-0"
+            hx-post="{% url 'contacts:bulk_sequence' workspace_id=request.workspace.id %}"
+            hx-swap="none">
+        <template x-for="id in ids" :key="id"><input type="hidden" name="ids" :value="id"></template>
+        <label for="bulk-sequence" class="sr-only">Sequence</label>
+        <select id="bulk-sequence" name="sequence_id" required>
+          {% for sequence in filter_config.sequences %}<option value="{{ sequence.value }}">{{ sequence.label }}</option>{% endfor %}
+        </select>
+        <button type="submit" name="mode" value="subscribe">Subscribe</button>
+        <button type="submit" name="mode" value="unsubscribe">Unsubscribe</button>
+      </form>
+    {% endif %}
 
     {% if can_manage_crm %}
       <form class="mb-0"

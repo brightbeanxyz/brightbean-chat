@@ -46,8 +46,42 @@ def config_from_post(trigger_type: str, post: Any) -> dict[str, Any]:
     if trigger_type == TriggerType.API:
         return {"key": (post.get("key") or "").strip()}
     if trigger_type == TriggerType.RULE:
-        return {"event": (post.get("event") or "").strip()}
+        return _rule(post)
     return spec.default_config()
+
+
+def _rule(post: Any) -> dict[str, Any]:
+    """SPEC §10's rule trigger: an event, two optional id filters, one filter doc.
+
+    Blank keys are **omitted rather than sent empty**. Both id filters are
+    pattern-constrained in the schema and ``filters`` is a whole condition
+    document with its own ``required``, so an empty string in either place is a
+    validation error about a field the author left alone on purpose. "Absent"
+    and "blank" are the same intent here, and only one of them validates.
+
+    ``filters`` is parsed by the condition engine's own loader rather than by
+    ``json.loads``: the byte cap does not close the nesting hole, and the
+    ``RecursionError`` a depth bomb produces is not a ``ValueError``, so a
+    hand-rolled parse here would be a 500 from a value a form controls. See
+    ``apps.contacts.filters.parse_filter_document``.
+    """
+    from apps.contacts.filters import parse_filter_document
+
+    event = (post.get("event") or "").strip()
+    config: dict[str, Any] = {"event": event}
+
+    # Each id filter belongs to the events that carry that id. Keeping a stale
+    # tag_id on a field_changed rule would be a saved setting the panel no
+    # longer shows and the matcher would still honour.
+    if event in {"tag_added", "tag_removed"} and (tag_id := (post.get("tag_id") or "").strip()):
+        config["tag_id"] = tag_id
+    if event == "field_changed" and (field_id := (post.get("field_id") or "").strip()):
+        config["field_id"] = field_id
+
+    filters = parse_filter_document(post.get("filter", ""))
+    if filters:
+        config["filters"] = filters
+    return config
 
 
 def _keywords(post: Any) -> list[dict[str, str]]:

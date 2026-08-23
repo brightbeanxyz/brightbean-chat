@@ -131,9 +131,22 @@ API = f.obj(
     description="SPEC §10 API trigger. Fired only by the public flow-start endpoint (#25).",
 )
 
+#: The id shape both event filters take. Same pattern the condition engine uses
+#: for a rule ``key``; a string rather than a format, because that is the one
+#: keyword every consumer of these schemas already implements.
+_UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
 #: SPEC §10's rule trigger. ``filters`` references the condition schema the
-#: condition node already registered into ``$defs`` (ROADMAP contract 8), so
-#: L6-A adds an event binding rather than a schema.
+#: condition node already registered into ``$defs`` (ROADMAP contract 8).
+#:
+#: ``tag_id`` and ``field_id`` are L6-A's addition and they are not the same
+#: thing as ``filters``. A condition document describes the *contact*, so the
+#: closest it can say is "somebody who now has the VIP tag" — which fires when
+#: any tag at all is added to a VIP. SPEC §10's "optional filters (tag id …)"
+#: means the tag that was **just added**, and that id lives in the event payload
+#: rather than on the contact, so it needs its own key. Both are optional and
+#: each is only consulted for the events that carry the matching id
+#: (``apps/campaigns/rules.py``).
 RULE = f.obj(
     {
         "event": f.enum(
@@ -143,6 +156,14 @@ RULE = f.obj(
             "sequence_subscribed",
             "sequence_unsubscribed",
             "contact_created",
+        ),
+        "tag_id": f.string(
+            pattern=_UUID_PATTERN,
+            description="Only fire for this tag. Blank fires for any tag. tag_added / tag_removed only.",
+        ),
+        "field_id": f.string(
+            pattern=_UUID_PATTERN,
+            description="Only fire for this custom field. Blank fires for any field. field_changed only.",
         ),
         "filters": f.ref("condition_filter"),
     },

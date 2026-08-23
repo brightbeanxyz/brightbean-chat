@@ -121,6 +121,17 @@ attacker-authored HTML.
 </div>
 {% endblock %}
 
+{% comment %}
+The §11.4 filter builder's Alpine factory, for the rule trigger's panel in the
+drawer (issue #22). It has to be defined by the *page*: base.html renders this
+block before Alpine's own deferred script tag, which is the window in which a
+global x-data factory can be declared — and the panel arrives later, as an htmx
+fragment, which is too late to define one for itself.
+{% endcomment %}
+{% block alpine_components %}
+{% include "contacts/_filter_bar_script.html" %}
+{% endblock %}
+
 {% block extra_js %}
 {% flow_builder_bundle as builder %}
 {% if builder %}

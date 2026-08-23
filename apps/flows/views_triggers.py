@@ -26,6 +26,8 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.common.htmx import toast_response
 from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
+from apps.contacts.conditions import ConditionError
+from apps.contacts.filters import filter_config
 from apps.flows.models import Flow, Trigger, TriggerType
 from apps.flows.triggers import comments, forms, links, qr, services
 from apps.flows.triggers.registry import TRIGGER_TYPES, spec_for
@@ -88,14 +90,25 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     if spec is None:
         return toast_response(tone="error", title="Unknown trigger type", body="Pick one from the list.")
 
+    config = trigger.config_json if trigger is not None else spec.default_config()
     context = _panel_context(request, flow)
     context.update(
         {
             "trigger": trigger,
             "spec": spec,
-            "config": trigger.config_json if trigger is not None else spec.default_config(),
+            "config": config,
             "connection_options": _connection_options(request, spec),
             "rule_events": _RULE_EVENTS,
+            # The §11.4 builder's payload, so the rule panel renders the same
+            # filter bar the CRM does from the same partial rather than growing
+            # a second, weaker one. Built only for the type that shows it — it
+            # costs four queries, and every other trigger type would pay them
+            # for a control it never draws.
+            "filter_config": (
+                filter_config(request.workspace, document=(config or {}).get("filters"))
+                if trigger_type == TriggerType.RULE
+                else None
+            ),
             # Both read off the comment-responder registry rather than being
             # decided here, so this view still names no platform: SPEC §10's
             # like_comment is offered when some platform the trigger can fire on
@@ -142,6 +155,11 @@ def trigger_create(request: WorkspaceRequest, workspace_id: str, flow_id: str) -
         config = forms.config_from_post(trigger_type, request.POST)
     except forms.KeywordMismatchError as exc:
         return toast_response(tone="error", title="Keywords did not save", body=str(exc))
+    except ConditionError as exc:
+        # A rule trigger's filter document, refused by the condition engine
+        # before it could be stored. Its messages name keys and never echo
+        # values, so it is safe to show verbatim.
+        return toast_response(tone="error", title="That filter is not valid", body=str(exc))
 
     refused = _refuse_duplicate_ref(flow, trigger_type, config)
     if refused is not None:
@@ -173,6 +191,11 @@ def trigger_update(request: WorkspaceRequest, workspace_id: str, flow_id: str, t
         config = forms.config_from_post(trigger.type, request.POST)
     except forms.KeywordMismatchError as exc:
         return toast_response(tone="error", title="Keywords did not save", body=str(exc))
+    except ConditionError as exc:
+        # A rule trigger's filter document, refused by the condition engine
+        # before it could be stored. Its messages name keys and never echo
+        # values, so it is safe to show verbatim.
+        return toast_response(tone="error", title="That filter is not valid", body=str(exc))
 
     refused = _refuse_duplicate_ref(flow, trigger.type, config, exclude=trigger)
     if refused is not None:
