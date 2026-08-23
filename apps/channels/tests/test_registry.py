@@ -20,9 +20,8 @@ from apps.channels.registry import (
     has_adapter,
     register_adapter,
     registered_platforms,
-    unregister_adapter,
 )
-from apps.channels.tests.fake_adapter import fake_adapter_for, registered, unregistered
+from apps.channels.tests.fake_adapter import fake_adapter_for, registered, swapped_adapter, unregistered
 from apps.common.platforms import Platform
 
 
@@ -256,9 +255,19 @@ class TestRegistry:
             register_adapter(Platform.TELEGRAM, fake_adapter_for(Platform.TELEGRAM))
 
     def test_registering_the_same_class_twice_is_idempotent(self) -> None:
-        adapter_cls = fake_adapter_for(Platform.SMS)
-        register_adapter(Platform.SMS, adapter_cls)
-        try:
-            register_adapter(Platform.SMS, adapter_cls)
-        finally:
-            unregister_adapter(Platform.SMS)
+        """Arranged rather than borrowed, which is the whole lesson here.
+
+        This test has now been rehomed twice by the platform it borrowed: SMS
+        held the role until #20 shipped an adapter, the comment moved it to
+        WhatsApp, and #19 shipped one for that. ``swapped_adapter`` is what its
+        own comment already named as the way out — it puts the fake in
+        whatever the slot currently holds and *restores* the real adapter
+        afterwards, where the previous ``finally: unregister_adapter(...)`` left
+        the slot empty for every later test in the process.
+        """
+        adapter_cls = fake_adapter_for(Platform.WHATSAPP)
+        with swapped_adapter(Platform.WHATSAPP, adapter_cls):
+            # The slot already holds this class; registering it again is the
+            # no-op under test rather than the duplicate the guard refuses.
+            register_adapter(Platform.WHATSAPP, adapter_cls)
+            assert adapter_for(Platform.WHATSAPP).__class__ is adapter_cls

@@ -51,6 +51,7 @@ __all__ = [
     "ChannelConnection",
     "ConnectionStatus",
     "FlowPreviewLink",
+    "SmsSettings",
     "WebhookEventLog",
     "WebhookEventStatus",
     "WhatsAppCostHint",
@@ -350,6 +351,91 @@ class FlowPreviewLink(WorkspaceScopedModel):
 
     def __str__(self) -> str:
         return f"preview of {self.flow_id} ({'claimed' if self.chat_id else 'unclaimed'})"
+
+
+#: SPEC §6.6's three mandated replies, as the wording a workspace gets before it
+#: writes its own. Each has to be intelligible to somebody who is annoyed and
+#: has stopped reading, which is why they are short and say the brand rather
+#: than the product.
+DEFAULT_OPT_OUT_TEXT = "You have been unsubscribed and will get no further messages. Reply START to resubscribe."
+DEFAULT_OPT_IN_TEXT = "You are resubscribed and will get messages again. Reply STOP at any time to unsubscribe."
+DEFAULT_HELP_TEXT = "Reply STOP to unsubscribe. Message and data rates may apply."
+
+
+class SmsSettings(WorkspaceScopedModel):
+    """One workspace's SMS compliance copy and cost hint (SPEC §6.6, issue #20).
+
+    Per workspace rather than per connection, and that is a compliance judgement
+    rather than a modelling shortcut: a contact who texts STOP to one of a
+    workspace's numbers is unsubscribing from *that number*, but the sentence
+    they get back is the workspace's voice, and two numbers answering HELP with
+    different descriptions of the same business is exactly what a carrier audit
+    picks up on.
+
+    Everything here is **copy and hints**. Nothing on this row can weaken the
+    compliance behaviour: the keywords are hard-coded in
+    :mod:`apps.channels.providers.sms`, the suppression happens in
+    ``apps.messaging.ingest`` whatever this says, and a workspace that blanks
+    every field gets the defaults below rather than silence. SPEC §19 puts
+    opt-out enforcement at a chokepoint precisely so it is not configurable.
+
+    ``per_segment_cost`` is a **hint**, and the same decision SPEC §6.5 makes for
+    WhatsApp: "OpenChat only warns, never meters". A self-hoster's Twilio bill is
+    theirs, prices differ per destination and per campaign, and a number in a
+    composer that pretended to be authoritative would be wrong more often than
+    it was right. It is stored without a currency for the same reason the
+    workspace already stores none — the deployment knows, the product does not.
+    """
+
+    help_text_body = models.TextField(
+        blank=True,
+        default="",
+        help_text="Sent when a contact texts HELP. Blank uses the default wording.",
+    )
+    opt_out_confirmation = models.TextField(
+        blank=True,
+        default="",
+        help_text="Sent once when a contact texts STOP. Blank uses the default wording.",
+    )
+    opt_in_confirmation = models.TextField(
+        blank=True,
+        default="",
+        help_text="Sent when a contact texts START to resubscribe. Blank uses the default wording.",
+    )
+    per_segment_cost = models.DecimalField(
+        max_digits=8,
+        decimal_places=5,
+        null=True,
+        blank=True,
+        help_text="What one segment costs on this account, for the composer's estimate. A hint, never a meter.",
+    )
+    #: SPEC §6.6: "OpenChat surfaces a settings checklist only." US A2P 10DLC
+    #: registration happens in the Twilio console and cannot be done from here,
+    #: so these are an operator's own record that they did it — read by nothing
+    #: and enforced by nothing, which the settings page says out loud.
+    a2p_brand_registered = models.BooleanField(default=False)
+    a2p_campaign_approved = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "channels_sms_settings"
+        constraints = [
+            models.UniqueConstraint(fields=["workspace"], name="smssettings_unique_workspace"),
+        ]
+
+    def __str__(self) -> str:
+        return f"SMS settings for {self.workspace_id}"
+
+    @property
+    def help_reply(self) -> str:
+        return self.help_text_body.strip() or DEFAULT_HELP_TEXT
+
+    @property
+    def opt_out_reply(self) -> str:
+        return self.opt_out_confirmation.strip() or DEFAULT_OPT_OUT_TEXT
+
+    @property
+    def opt_in_reply(self) -> str:
+        return self.opt_in_confirmation.strip() or DEFAULT_OPT_IN_TEXT
 
 
 # ---------------------------------------------------------------------------

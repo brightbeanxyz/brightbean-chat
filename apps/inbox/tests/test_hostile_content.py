@@ -118,7 +118,10 @@ class TestHostileText:
     #: remainder: '*7'"). Asserting ``"49" not in body`` therefore could not fail
     #: for the reason it named, and could only fail for one it did not: the
     #: fragment carries UUID ids in its URLs, roughly one in twenty of which
-    #: contains "49", so the test went red at random on unrelated changes.
+    #: contains "49" — and message timestamps, so any run at 16:49 failed too.
+    #: #20 found the second collision independently while #19 found the first,
+    #: which is the argument against a short numeric needle rather than against
+    #: either particular source of digits.
     #:
     #: These two would both change under evaluation, unmistakably: the filter
     #: upper-cases its argument, and the ``{% %}`` tag is consumed rather than
@@ -139,7 +142,8 @@ class TestHostileText:
         assert_escaped(self.SSTI_PROBE, body)
         # The tag survived rather than being parsed away.
         assert "{% load static %}" in body
-        # And the filter never ran. Uppercase, so it cannot match an id.
+        # And the filter never ran. Uppercase, so it cannot match a timestamp or
+        # an id.
         assert "INJECTED" not in body
 
     @pytest.mark.parametrize("payload", OVERSIZED)

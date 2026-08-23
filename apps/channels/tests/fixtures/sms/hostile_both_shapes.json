@@ -1,0 +1,10 @@
+{
+  "NumMedia": "0",
+  "SmsStatus": "received",
+  "MessageStatus": "delivered",
+  "Body": "am I a receipt or a message",
+  "To": "+15557778888",
+  "MessageSid": "SMaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "From": "+15557778888",
+  "ApiVersion": "2010-04-01"
+}

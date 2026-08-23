@@ -1,0 +1,93 @@
+{% extends "layouts/settings.html" %}
+{% block title %}API keys · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>API keys</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    A key authenticates calls to the <a href="{% url 'api_docs' %}">public API</a>
+    as one workspace. Keys are organization-level because they span every
+    workspace in the organization, but each key acts inside exactly one.
+  </p>
+
+  {% if error %}<div class="alert-error"><p>{{ error }}</p></div>{% endif %}
+
+  <h2>Issue a key</h2>
+  {% if workspaces %}
+    <form method="post" action="{% url 'api_keys_issue' %}">
+      {% csrf_token %}
+      <label for="key-name">Name</label>
+      <input id="key-name" type="text" name="name" maxlength="100" required
+             placeholder="Zapier scenario" />
+
+      <label for="key-workspace">Workspace</label>
+      <select id="key-workspace" name="workspace" required>
+        {% for workspace in workspaces %}
+          <option value="{{ workspace.id }}">{{ workspace.name }}</option>
+        {% endfor %}
+      </select>
+
+      <fieldset>
+        <legend>Scopes</legend>
+        {% for value, label in scope_choices %}
+          <label><input type="checkbox" name="scopes" value="{{ value }}" /> {{ label }}</label>
+        {% endfor %}
+        <p class="muted">
+          <strong>Read</strong> lists contacts, tags, fields and flows.
+          <strong>Write</strong> adds creating and updating contacts, tagging,
+          setting field values, starting flows and sending messages. No scope
+          grants channel, member or key management.
+        </p>
+      </fieldset>
+
+      <button type="submit">Issue key</button>
+    </form>
+  {% else %}
+    {% comment %}
+    Both gates have to pass to issue a key: organization admin (which the page
+    already required) and manage_api_keys in the target workspace. Saying so is
+    the difference between a fixable state and an empty dropdown.
+    {% endcomment %}
+    <p class="muted">
+      You are an organization admin, but you do not hold the
+      <code>manage_api_keys</code> permission in any workspace, so there is
+      nowhere to issue a key. A workspace admin can grant it.
+    </p>
+  {% endif %}
+
+  <h2>Existing keys</h2>
+  {% if rows %}
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Workspace</th><th>Key</th><th>Scopes</th><th>Last used</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.key.name }}</td>
+            <td>{{ row.workspace.name }}</td>
+            {% comment %}
+            The prefix, never the key. Nothing can render the value again — it
+            is not stored (CONTRIBUTING → Secrets), only a keyed digest of it.
+            {% endcomment %}
+            <td><code>{{ row.key.display_handle }}</code></td>
+            <td>{{ row.scopes }}</td>
+            <td>{{ row.key.last_used_at|default:"Never" }}</td>
+            <td>
+              {% if row.key.is_active %}Active{% else %}Revoked {{ row.key.revoked_at }}{% endif %}
+            </td>
+            <td>
+              {% if row.key.is_active %}
+                <form method="post" action="{% url 'api_keys_revoke' api_key_id=row.key.id %}">
+                  {% csrf_token %}
+                  <button type="submit">Revoke</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No keys yet.</p>
+  {% endif %}
+{% endblock %}

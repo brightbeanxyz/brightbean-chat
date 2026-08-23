@@ -8,8 +8,11 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+    # Renumbered from 0003 on the merge with #20, which took that number in this
+    # app. Depending on it rather than adding a merge migration keeps the graph
+    # linear; the two touch different tables, so the order between them is free.
     dependencies = [
-        ("channels", "0002_flowpreviewlink"),
+        ("channels", "0003_sms_settings"),
         ("workspaces", "0001_initial"),
     ]
 

@@ -35,9 +35,12 @@ WhatsApp joined rule 2 with L5-C (#19), which is what this docstring said it
 would: its ``wa_id`` *is* an E.164 number, so it compares like with like against
 ``contact.phone``. The half that had to wait for the adapter is the ``+``.
 ``normalize_phone`` refuses a bare string of digits — it will not guess a
-country code — so the entry below only works because
-``providers.whatsapp._wa_identity`` stores ``platform_user_id`` as ``+`` plus
-the ``wa_id`` rather than as Meta sends it.
+country code — so the entry below only works because the WhatsApp adapter
+stores ``platform_user_id`` as ``+`` plus the ``wa_id`` rather than as Meta
+sends it. (Named in prose rather than by module path on purpose:
+``test_compliance_doors.py`` proves this app imports no concrete adapter by
+scanning these files for one, and a docstring citation reads the same to that
+scan as an import would.)
 
 The three entries in :data:`ADDRESS_PLATFORMS` are the only platform names in
 this app that are not a migration's choices list or a docstring, and they are

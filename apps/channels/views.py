@@ -54,11 +54,11 @@ PLATFORM_LABELS = dict(Platform.choices)
 #: placeholder panels so an operator looking at an empty page knows whether they
 #: have misconfigured something or are simply early.
 CONNECT_FLOW_ISSUES: dict[str, str] = {
-    # Telegram, Instagram and WhatsApp are absent: #12, #17 and #19 shipped
-    # their guided flows, and the list template links to those instead of
-    # naming an issue.
+    # Telegram, Instagram, WhatsApp and SMS are absent: #12, #17, #19 and
+    # #20 shipped their guided flows, and the list template links to those
+    # instead of naming an issue. A platform leaves this table on the day
+    # its connect view lands.
     Platform.MESSENGER: "#18 (L5-B)",
-    Platform.SMS: "#20 (L5-D)",
     Platform.EMAIL: "#21 (L5-E)",
 }
 
@@ -66,13 +66,18 @@ CONNECT_FLOW_ISSUES: dict[str, str] = {
 #: BotFather token is one field and Meta's Cloud API is three plus a
 #: subscription. The list page used to carry Telegram's wording inline, which
 #: silently became wrong for the second platform that got a flow.
+#:
+#: **Every entry in ``CONNECT_ROUTES`` needs one**, and that pairing is asserted
+#: by ``test_views.py`` rather than left to whoever adds the next adapter. It
+#: has been missed twice already — Instagram's flow and SMS's each landed on
+#: main while this dict was being edited on another branch, and each merge
+#: produced a row reading "set it up — " with nothing after the dash. Neither
+#: branch could see it alone, which is exactly what a test is for.
 CONNECT_HINTS: dict[str, str] = {
     Platform.TELEGRAM: "paste a BotFather token and we do the rest.",
-    # Added on the #17/#19 merge: Instagram's guided flow landed while this dict
-    # was being introduced, so its row rendered "set it up — " with nothing
-    # after the dash. Neither branch could have seen it alone.
     Platform.INSTAGRAM: "sign in with the Instagram account and grant the messaging permissions.",
     Platform.WHATSAPP: "paste your Cloud API ids and system user token; we verify them with Meta first.",
+    Platform.SMS: "paste your Twilio account SID, auth token and number.",
 }
 
 #: Extra settings pages a platform brings with it, as ``(label, route)`` pairs.
@@ -105,10 +110,19 @@ def _webhook_url(request: WorkspaceRequest, connection: ChannelConnection) -> st
 
     Per-connection for SMS and email, one shared URL per platform for the rest.
     Absolute, because that is the form the operator has to type somewhere else.
+
+    **SMS goes through the adapter's own builder**, which reads ``APP_URL``
+    rather than this request. Twilio's signature is an HMAC over the URL it was
+    configured with, so ``verify_webhook`` recomputes that string — and a page
+    that showed ``request.build_absolute_uri`` while the adapter verified
+    ``APP_URL`` would, behind any reverse proxy, hand the operator a URL whose
+    every delivery is then rejected with nothing to say why.
     """
     if connection.platform == Platform.SMS:
-        path = reverse("webhook_sms", kwargs={"connection_id": connection.pk})
-    elif connection.platform == Platform.EMAIL:
+        from apps.channels.providers import sms
+
+        return sms.webhook_url(connection)
+    if connection.platform == Platform.EMAIL:
         path = reverse(
             "webhook_email",
             kwargs={"provider": _email_provider(connection), "connection_id": connection.pk},
@@ -157,6 +171,11 @@ def _connection_context(
     return {
         "connection": connection,
         "label": PLATFORM_LABELS.get(connection.platform, connection.platform),
+        # The per-platform settings page, where the platform has one. SMS is the
+        # first: SPEC §6.6's mandated replies and the A2P checklist belong to the
+        # workspace rather than to one number, so they are not fields on this
+        # row — but this page is where an operator looking at that number goes.
+        "settings_url": _settings_url(connection, request.workspace.pk),
         "webhook_url": _webhook_url(request, connection),
         "capabilities": capabilities_for(connection.platform),
         "policy": policy_for(connection.platform),
@@ -167,6 +186,16 @@ def _connection_context(
         # is the whole cost anyway.
         "last_event_at": _last_event_at(connection) if last_event_at is _UNFETCHED else last_event_at,
     }
+
+
+#: Platforms with a workspace-level settings page beyond the connection row.
+SETTINGS_ROUTES: dict[str, str] = {Platform.SMS.value: "channels:sms_settings"}
+
+
+def _settings_url(connection: ChannelConnection, workspace_id: Any) -> str:
+    """The platform's own settings page, or "" where it has none."""
+    route = SETTINGS_ROUTES.get(connection.platform, "")
+    return reverse(route, kwargs={"workspace_id": workspace_id}) if route else ""
 
 
 def _connect_url(platform: str, workspace_id: str) -> str:

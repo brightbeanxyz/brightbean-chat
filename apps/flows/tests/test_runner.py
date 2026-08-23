@@ -182,14 +182,22 @@ class TestRefusals:
 @pytest.mark.django_db
 class TestBrokenGraphs:
     def test_a_node_type_with_no_runtime_fails_the_run(self, tenancy):
-        """``send_sms`` has a schema (L2-D) and no runtime until L5-D."""
-        flow = published_flow(tenancy.workspace, graph([node("a", "send_sms", {"text": "hi"})]))
+        """``send_email`` has a schema (L2-D) and no runtime until L5-E.
+
+        It was ``send_sms`` until #20 shipped that runtime. The remaining
+        schema-without-runtime type is pinned in
+        ``test_engine_registry.EXPECTED_WITHOUT_RUNTIME``; when L5-E lands, this
+        test needs a type that is deliberately unregistered rather than one
+        that happens to be.
+        """
+        graph_json = graph([node("a", "send_email", {"subject": "hi", "html_body": "<p>hi</p>"})])
+        flow = published_flow(tenancy.workspace, graph_json)
         contact = contact_for(tenancy.workspace)
 
         execution = start_flow(contact, flow, started_by=StartedBy.API)
 
         assert execution.status == ExecutionStatus.FAILED
-        assert "no runtime is registered for 'send_sms'" in execution.last_error
+        assert "no runtime is registered for 'send_email'" in execution.last_error
 
     def test_an_edge_to_a_vanished_node_fails_the_run(self, tenancy):
         """Only reachable on a draft, which autosave rewrites under a preview."""
@@ -391,7 +399,8 @@ class TestCompletionEvent:
 
         events.execution_completed.connect(_receiver)
         try:
-            flow = published_flow(tenancy.workspace, graph([node("a", "send_sms", {"text": "hi"})]))
+            graph_json = graph([node("a", "send_email", {"subject": "hi", "html_body": "<p>hi</p>"})])
+            flow = published_flow(tenancy.workspace, graph_json)
             contact = contact_for(tenancy.workspace)
             start_flow(contact, flow, started_by=StartedBy.API)
         finally:

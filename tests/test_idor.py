@@ -152,6 +152,34 @@ class TestCrossTenantIsolation:
             "flows:trigger_qr",
         } <= names
 
+    def test_the_sweep_covers_the_api_management_routes(self):
+        """Issue #25's two settings surfaces, which sit at different tiers.
+
+        The webhooks pages are ordinary ``/w/<uuid>/settings/`` routes.
+        ``api_keys_revoke`` is the interesting one: the API keys page is
+        org-tier (SPEC §4.1), so it carries no ``workspace_id`` and
+        RBACMiddleware never sees it — the 404 has to come from the view's own
+        ``workspace__organization=request.org`` filter. Registering
+        ``api_key_id`` is what opts that route into the sweep at all, exactly as
+        ``notification_id`` does above.
+
+        The ``/api/v1/`` operations are deliberately absent: they authenticate
+        with a bearer token rather than a session and are waived, with
+        apps/api/tests/test_isolation.py standing in. See ``_API_V1_WAIVER``.
+        """
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "api_keys_revoke",
+            "api_webhooks:list",
+            "api_webhooks:create",
+            "api_webhooks:detail",
+            "api_webhooks:update",
+            "api_webhooks:rotate_secret",
+            "api_webhooks:test",
+            "api_webhooks:delete",
+        } <= names
+
     def test_every_waiver_states_a_reason(self):
         assert all(reason.strip() for reason in WAIVED_ROUTES.values())
 

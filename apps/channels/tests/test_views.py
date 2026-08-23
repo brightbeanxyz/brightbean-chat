@@ -208,6 +208,37 @@ class TestCreate:
         assert connection.workspace_id == tenancy.workspace.pk
 
 
+class TestGuidedFlowsAreDescribed:
+    """Every platform with a connect route has a sentence describing it.
+
+    The list page renders "set it up — {hint}", so a route without a hint is a
+    dangling dash. It has happened twice, both times on a merge: a sibling's
+    guided flow landed on main while this table was being edited on another
+    branch, and neither branch could see the gap on its own. This assertion is
+    what makes the next one a red test instead.
+    """
+
+    def test_every_connect_route_has_a_hint(self) -> None:
+        from apps.channels.registry import CONNECT_ROUTES
+        from apps.channels.views import CONNECT_HINTS
+
+        missing = sorted(platform for platform in CONNECT_ROUTES if not CONNECT_HINTS.get(platform))
+        assert missing == [], (
+            f"{missing} have a guided connect route and no CONNECT_HINTS entry, so the channels "
+            f"list renders 'set it up — ' with nothing after the dash."
+        )
+
+    def test_a_platform_with_a_flow_no_longer_names_an_issue(self) -> None:
+        """The two tables are opposites: a platform leaves CONNECT_FLOW_ISSUES on
+        the day its connect view lands, or the page offers the flow and tells the
+        operator to wait for it in the same breath."""
+        from apps.channels.registry import CONNECT_ROUTES
+        from apps.channels.views import CONNECT_FLOW_ISSUES
+
+        both = sorted(set(CONNECT_ROUTES) & set(CONNECT_FLOW_ISSUES))
+        assert both == [], f"{both} have a connect route and still name an issue as pending."
+
+
 class TestLifecycle:
     def test_disable_and_enable(self, tenancy: Any, client_for: Any, connection: ChannelConnection) -> None:
         client = client_for(tenancy.owner)

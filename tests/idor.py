@@ -78,6 +78,11 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     # would otherwise be neither swept nor reported. The per-user boundary is
     # also covered directly in apps/notifications/tests/test_views.py.
     "notification_id": lambda t: _victim_notification(t).pk,
+    # Issue #25. `api_key_id` names an org-tier row — the API keys page spans
+    # every workspace in the organization (SPEC §4.1) — but the row it names is
+    # still a workspace's, so the victim it needs is the victim's workspace's.
+    "api_key_id": lambda t: _victim_api_key(t).pk,
+    "webhook_id": lambda t: _victim_outbound_webhook(t).pk,
 }
 
 #: Kwargs that need *a* value but do not identify a tenant. A route made only of
@@ -105,11 +110,40 @@ _WEBHOOK_WAIVER = (
     "class is ever deleted, this waiver must be too."
 )
 
+#: Why the public API's routes cannot be swept from a session, and what stands
+#: in for the sweep. Shared by every /api/v1/ operation that names a tenant
+#: object, because the reasoning is identical for all of them.
+_API_V1_WAIVER = (
+    "Key-authenticated, not session-authenticated (SPEC §17). This sweep signs "
+    "in as a fully privileged member of another organization and sends no "
+    "Authorization header, so every /api/v1/ route answers 401 — which is the "
+    "correct answer to a sessionless caller and is neither the 404 nor the 405 "
+    "check_route_is_isolated accepts. Making the API answer 404 to an "
+    "unauthenticated request instead would be worse, not better: it would hide "
+    "'your key is missing' behind 'no such object' for every legitimate "
+    "integration. What stands in for the sweep is the same sweep run with the "
+    "right credential — "
+    "apps/api/tests/test_isolation.py::TestApiV1CrossWorkspaceIsolation "
+    "enumerates every registered operation from the router itself, calls each "
+    "one with a valid key for workspace A against workspace B's object ids, and "
+    "asserts 404 on all of them. That class also asserts that the set of "
+    "operations it covers is exactly the set waived here, so an endpoint added "
+    "without either a waiver or coverage turns the suite red. If it is ever "
+    "deleted, these waivers must be too."
+)
+
 #: Routes exempt from the sweep, each with the reason. A waiver is a reviewed
 #: line in this dict; there is no silent skip.
 WAIVED_ROUTES: dict[str, str] = {
     "webhook_sms": _WEBHOOK_WAIVER,
     "webhook_email": _WEBHOOK_WAIVER,
+    "api_v1:contacts_detail": _API_V1_WAIVER,
+    "api_v1:contacts_update": _API_V1_WAIVER,
+    "api_v1:contacts_tag_add": _API_V1_WAIVER,
+    "api_v1:contacts_tag_remove": _API_V1_WAIVER,
+    "api_v1:contacts_field_set": _API_V1_WAIVER,
+    "api_v1:contacts_field_list": _API_V1_WAIVER,
+    "api_v1:contacts_flow_start": _API_V1_WAIVER,
     "accept_invite": (
         "Public by design: the invitation token IS the credential, and the page "
         "renders the same 404 body for unknown, expired and accepted tokens. "
@@ -285,6 +319,46 @@ def _victim_invitation(tenancy: Tenancy) -> Any:
             expires_at=timezone.now() + timedelta(days=7),
         )
     return invitation
+
+
+def _victim_api_key(tenancy: Tenancy) -> Any:
+    """An API key owned by the victim's workspace, created on demand.
+
+    Minted through the same token helper the real issuance path uses, so the
+    row satisfies the unique digest constraint rather than carrying a
+    placeholder that a later constraint would reject.
+    """
+    from apps.api import keys as key_tokens
+    from apps.api.models import ApiKey
+
+    existing = ApiKey.objects.for_workspace(tenancy.workspace).first()
+    if existing is not None:
+        return existing
+    minted = key_tokens.mint()
+    return ApiKey.objects.create(
+        workspace=tenancy.workspace,
+        name="victim key",
+        scopes=["read"],
+        lookup_prefix=minted.lookup_prefix,
+        token_digest=minted.token_digest,
+    )
+
+
+def _victim_outbound_webhook(tenancy: Tenancy) -> Any:
+    """An outbound webhook owned by the victim, created on demand."""
+    from apps.api.models import OutboundWebhook
+
+    existing = OutboundWebhook.objects.for_workspace(tenancy.workspace).first()
+    if existing is not None:
+        return existing
+    webhook = OutboundWebhook(
+        workspace=tenancy.workspace,
+        url="https://victim.example.com/hooks",
+        events=["contact.created"],
+    )
+    webhook.rotate_secret()
+    webhook.save()
+    return webhook
 
 
 def _victim_tag(tenancy: Tenancy) -> Any:
