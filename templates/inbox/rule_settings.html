@@ -1,0 +1,94 @@
+{% extends "layouts/workspace_settings.html" %}
+{% load static %}
+{% block title %}Inbox rules · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Inbox rules</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    A rule reads each inbound message and files, assigns or closes the
+    conversation. Rules run after the message is stored and before any flow
+    replies, they keep running while an agent has paused automation, and —
+    unlike triggers — <strong>every</strong> matching rule applies, in the order
+    below.
+  </p>
+
+  <button type="button"
+          hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}"
+          hx-target="#inbox-rule-editor">New rule</button>
+
+  {% include "inbox/_rule_rows.html" %}
+
+  <div id="inbox-rule-editor"></div>
+{% endblock %}
+
+{% block extra_head %}
+  {{ block.super }}
+  {% comment %} The condition builder's date rules use flatpickr, as the contact list's do. {% endcomment %}
+  <link rel="stylesheet" href="{% static 'js/vendor/flatpickr.min.css' %}" />
+{% endblock %}
+
+{% block alpine_components %}
+  {{ block.super }}
+  {% comment %}
+    The §11.4 builder's component, defined here rather than in the editor
+    partial: x-data can only call a factory that already exists, and the partial
+    arrives by htmx swap long after Alpine booted. Same placement contacts/list.html
+    uses, for the same reason.
+  {% endcomment %}
+  {% include "contacts/_filter_bar_script.html" %}
+  <script src="{% static 'js/vendor/flatpickr.min.js' %}"></script>
+  <script src="{% static 'js/vendor/sortable.min.js' %}"></script>
+  <script nonce="{{ request.csp_nonce }}">
+    // Drag-to-reorder, with the up/down buttons doing exactly the same thing.
+    //
+    // Delegated from the document rather than bound to the list, because
+    // #inbox-rule-rows re-fetches itself on every change: a listener attached to
+    // the <ol> would be thrown away with the markup it was attached to, and
+    // rebinding after each swap is a second place to forget.
+    //
+    // The form's hidden `rule` inputs *are* the order — moving the <li> moves
+    // its input with it — so submitting posts whatever the DOM currently shows,
+    // and the server renumbers to 0, 10, 20… from that list alone.
+    (function () {
+      var live = null;
+
+      function attach() {
+        var list = document.querySelector('[data-rule-list]');
+        if (!list || list === live) return;
+        live = list;
+        Sortable.create(list, {
+          handle: '[data-rule-handle]',
+          animation: 120,
+          onEnd: function () { submitOrder(list); },
+        });
+      }
+
+      function submitOrder(list) {
+        var form = list.closest('form');
+        if (form) htmx.trigger(form, 'rule-order-changed');
+      }
+
+      document.addEventListener('click', function (event) {
+        var button = event.target.closest('[data-rule-move]');
+        if (!button) return;
+        var row = button.closest('[data-rule-id]');
+        var sibling = button.getAttribute('data-rule-move') === 'up'
+          ? row.previousElementSibling
+          : row.nextElementSibling;
+        if (!sibling) return;
+        if (button.getAttribute('data-rule-move') === 'up') {
+          row.parentNode.insertBefore(row, sibling);
+        } else {
+          row.parentNode.insertBefore(sibling, row);
+        }
+        // Keyboard focus follows the row, or the operator loses their place on
+        // every press and has to hunt for the button they just used.
+        button.focus();
+        submitOrder(row.closest('[data-rule-list]'));
+      });
+
+      document.addEventListener('DOMContentLoaded', attach);
+      document.body.addEventListener('htmx:afterSwap', attach);
+    })();
+  </script>
+{% endblock %}

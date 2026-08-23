@@ -36,8 +36,16 @@ from django.db.models.functions import Coalesce
 from django.utils.timesince import timesince
 
 from apps.contacts.models import Contact
-from apps.inbox.models import ConversationRead
+from apps.inbox.models import (
+    ConversationLabel,
+    ConversationLabelLink,
+    ConversationRead,
+    DeferredStatus,
+    InboxReminder,
+    ScheduledReply,
+)
 from apps.messaging.models import Conversation, ConversationState, Message, MessageDirection
+from apps.queueing.models import ActionStatus
 
 __all__ = [
     "ASSIGNEE_ME",
@@ -48,8 +56,18 @@ __all__ = [
     "UNREAD_BADGE_CAP",
     "conversation_version",
     "conversations_for",
+    "conversations_with_pending",
+    "DRY_RUN_SAMPLE",
+    "deferred_version",
+    "dry_run",
+    "failed_replies_for",
+    "label_usage",
+    "labels_by_conversation",
+    "labels_for",
     "last_messages_by_conversation",
     "list_version",
+    "pending_reminders_for",
+    "pending_replies_for",
     "live_execution_for",
     "thread_messages",
     "unread_count_for",
@@ -92,6 +110,7 @@ def conversations_for(
     state: str = "",
     connection_id: Any = None,
     assignee: str = "",
+    label: str = "",
 ) -> QuerySet[Conversation]:
     """The conversation list, filtered and ordered by recency (SPEC §14).
 
@@ -122,6 +141,23 @@ def conversations_for(
     elif assignee:
         parsed = _as_uuid(assignee)
         rows = rows.filter(assignee_id=parsed) if parsed else rows.none()
+    if label:
+        parsed = _as_uuid(label)
+        # ``Exists`` rather than a join: a join to the link table multiplies the
+        # row out once per label and would need a ``distinct()`` that then has to
+        # agree with the ``order_by`` above. The correlated probe is also what
+        # ``labellink_ws_label_idx`` is shaped for.
+        rows = (
+            rows.filter(
+                Exists(
+                    ConversationLabelLink.objects.for_workspace(workspace).filter(
+                        conversation=OuterRef("pk"), label_id=parsed
+                    )
+                )
+            )
+            if parsed
+            else rows.none()
+        )
     return with_unread(rows, workspace=workspace, viewer=viewer)
 
 
@@ -274,6 +310,15 @@ def list_version(rendered: list[dict[str, Any]]) -> tuple[Any, ...]:
             row["preview"],
             row["last_internal"],
             row["unread"],
+            # The chips as they print — names and colours, not ids. A rename or a
+            # recolour changes the markup while every id holds still, which is
+            # the same argument the assignee line above makes.
+            tuple((chip.name, chip.color) for chip in row.get("labels", ())),
+            # A boolean, deliberately. The row prints a glyph, not a countdown:
+            # a due time in here would re-derive from the clock and churn the
+            # whole list every minute, for every open tab, over markup that does
+            # not show it. The thread token is where the countdown belongs.
+            row.get("has_pending", False),
         )
         for row in rendered
     )
@@ -309,3 +354,194 @@ def live_execution_for(workspace: Any, contact: Contact) -> Any:
         .select_related("flow")
         .first()
     )
+
+
+# ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+
+
+def labels_for(workspace: Any) -> QuerySet[ConversationLabel]:
+    """This workspace's label palette, for the filter bar and the pickers."""
+    return ConversationLabel.objects.for_workspace(workspace).order_by("name")
+
+
+def labels_by_conversation(workspace: Any, conversations: list[Conversation]) -> dict[Any, list[Any]]:
+    """The labels on each of these threads, in one query.
+
+    Shaped like :func:`last_messages_by_conversation` and for the same reason:
+    the caller has already sliced the page to ``LIST_LIMIT``, and
+    ``prefetch_related`` on a sliced queryset re-runs the slice as a subquery
+    rather than reusing the rows in hand. One ``IN`` over a hundred ids, ordered
+    so the chips print alphabetically without the caller sorting.
+    """
+    if not conversations:
+        return {}
+    rows = (
+        ConversationLabelLink.objects.for_workspace(workspace)
+        .filter(conversation_id__in=[conversation.pk for conversation in conversations])
+        .select_related("label")
+        .order_by("conversation_id", "label__name")
+    )
+    grouped: dict[Any, list[Any]] = {}
+    for link in rows:
+        grouped.setdefault(link.conversation_id, []).append(link.label)
+    return grouped
+
+
+def conversations_with_pending(workspace: Any, conversations: list[Conversation]) -> set[Any]:
+    """Which of these threads have deferred work still waiting, in one query.
+
+    "Waiting" is the queue's answer, not this app's column: a pending row whose
+    action was cancelled by ``contacts.activity.stand_down`` is not going to
+    fire, and advertising it would be a promise the thread cannot keep.
+    """
+    if not conversations:
+        return set()
+    ids = [conversation.pk for conversation in conversations]
+    found: set[Any] = set()
+    for model in (InboxReminder, ScheduledReply):
+        found.update(
+            model.objects.for_workspace(workspace)
+            .filter(conversation_id__in=ids, status=DeferredStatus.PENDING, action__status=ActionStatus.PENDING)
+            .values_list("conversation_id", flat=True)
+        )
+    return found
+
+
+# ---------------------------------------------------------------------------
+# Deferred work on one thread
+# ---------------------------------------------------------------------------
+
+
+def pending_reminders_for(workspace: Any, conversation: Conversation) -> list[InboxReminder]:
+    """Reminders on this thread that the queue will actually fire."""
+    return list(
+        InboxReminder.objects.for_workspace(workspace)
+        .filter(conversation=conversation, status=DeferredStatus.PENDING, action__status=ActionStatus.PENDING)
+        .select_related("recipient")
+        .order_by("remind_at")
+    )
+
+
+def pending_replies_for(workspace: Any, conversation: Conversation) -> list[ScheduledReply]:
+    """Replies queued on this thread that the queue will actually send."""
+    return list(
+        ScheduledReply.objects.for_workspace(workspace)
+        .filter(conversation=conversation, status=DeferredStatus.PENDING, action__status=ActionStatus.PENDING)
+        .order_by("send_at")
+    )
+
+
+def failed_replies_for(workspace: Any, conversation: Conversation) -> list[ScheduledReply]:
+    """Replies that came due and were refused.
+
+    Shown until an operator dismisses them, because "never a silent drop" means
+    the thread has to carry the failure, not just the notification that a
+    logged-out agent may never see.
+    """
+    return list(
+        ScheduledReply.objects.for_workspace(workspace)
+        .filter(conversation=conversation, status=DeferredStatus.FAILED)
+        .order_by("-send_at")
+    )
+
+
+def deferred_version(workspace: Any, conversation: Conversation) -> tuple[Any, ...]:
+    """The thread token's half for reminders and scheduled replies.
+
+    ``Max("updated_at")`` **and** ``Count("id")``, the delete-safe pair this
+    module's docstring argues for: cancelling moves ``updated_at``, and the count
+    catches the case a ``Max`` cannot see. It is also why cancelling sets a
+    status rather than deleting the row.
+
+    Deliberately not folded into :func:`conversation_version`: the conversation
+    list does not print any of this, and a token that moved with it would refresh
+    every row in the inbox because one thread's countdown ticked.
+    """
+    reminders = (
+        InboxReminder.objects.for_workspace(workspace)
+        .filter(conversation=conversation)
+        .aggregate(latest=Max("updated_at"), total=Count("id"))
+    )
+    replies = (
+        ScheduledReply.objects.for_workspace(workspace)
+        .filter(conversation=conversation)
+        .aggregate(latest=Max("updated_at"), total=Count("id"))
+    )
+    return (reminders["latest"], reminders["total"], replies["latest"], replies["total"])
+
+
+def label_usage(workspace: Any) -> dict[Any, int]:
+    """How many threads carry each label, in one grouped query.
+
+    The settings list shows it because "delete" is destructive and the number is
+    the only thing that says how destructive: a label on four hundred threads and
+    a label on none look identical without it.
+    """
+    rows = ConversationLabelLink.objects.for_workspace(workspace).values("label_id").annotate(total=Count("id"))
+    return {row["label_id"]: row["total"] for row in rows}
+
+
+#: How many recent messages the rule dry-run scores. SPEC's "test against last 50
+#: messages", spelled once.
+DRY_RUN_SAMPLE = 50
+
+
+def dry_run(workspace: Any, condition: dict[str, Any]) -> tuple[list[Message], int]:
+    """Score a condition against the messages this workspace last received.
+
+    Two properties the settings page's claim rests on.
+
+    **It is the same matcher.** :func:`apps.inbox.rules.matches_shallow` and
+    :class:`~apps.inbox.rules.RuleInput` are what the ``post_persist`` hook runs;
+    the only difference here is which of ``RuleInput``'s two constructors built
+    the input. Anything less and "the dry-run matches live behaviour" would be a
+    claim rather than a property.
+
+    **It asks the condition engine once, not once per message.** The contact half
+    goes through :func:`apps.contacts.conditions.evaluate_many`, so fifty
+    messages cost one query rather than fifty. That is also why the halves are
+    split: ``matches()`` would fold the contact clause into the per-message loop.
+
+    The sample is inbound, non-internal and recent, because that is the only
+    traffic the hook ever sees — scoring the team's own replies would look
+    broken. It is **not** a replay: today's contact state is evaluated against
+    old messages, and the page says so rather than implying otherwise.
+    """
+    from apps.contacts.conditions import evaluate_many
+    from apps.inbox.rules import RuleInput, compile_rule, matches_shallow
+
+    sample = list(
+        Message.objects.for_workspace(workspace)
+        .filter(direction=MessageDirection.IN, internal=False)
+        .select_related("conversation", "conversation__contact", "channel_connection")
+        .order_by("-created_at")[:DRY_RUN_SAMPLE]
+    )
+    if not sample:
+        return [], 0
+
+    compiled = compile_rule(_LooseRule(condition))
+    shallow = [message for message in sample if matches_shallow(compiled, RuleInput.from_message(message))]
+    if not shallow or compiled.contact_filter is None:
+        return shallow, len(sample)
+
+    contacts = {message.conversation.contact for message in shallow}
+    allowed = evaluate_many(workspace, contacts, compiled.contact_filter)
+    return [message for message in shallow if message.conversation.contact_id in allowed], len(sample)
+
+
+class _LooseRule:
+    """An unsaved condition, shaped like the row ``compile_rule`` expects.
+
+    The dry-run scores a document that has been typed but not stored — that is
+    the point of it — and building an unsaved ``InboxRule`` just to read two
+    attributes off it would put a model instance in a path that never touches
+    the database.
+    """
+
+    pk = None
+    actions_json: list[Any] = []
+
+    def __init__(self, condition: dict[str, Any]) -> None:
+        self.condition_json = condition

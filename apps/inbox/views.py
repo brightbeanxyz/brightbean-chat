@@ -32,18 +32,43 @@ from django.http import Http404, HttpResponse, HttpResponseNotModified
 from django.shortcuts import render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.channels.events import OutboundMessage, TextBlock
+from apps.channels.capabilities import capabilities_for
+from apps.channels.events import MediaBlock, OutboundMessage, TextBlock
 from apps.channels.media import MEDIA_CACHE_CONTROL, MediaUnavailableError, fetch_media, media_response
 from apps.channels.models import ChannelConnection
 from apps.common.htmx import toast_response
+from apps.common.platforms import Platform
 from apps.common.polling import conditional, if_none_match, version_etag
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.contacts import services as contact_services
+from apps.contacts.builder import builder_config
+from apps.contacts.conditions import ConditionValidationError
 from apps.contacts.models import CustomField, Tag
+from apps.inbox import rules as rules_engine
 from apps.inbox import selectors, services
-from apps.inbox.rendering import is_redacted, preview_of, render_message
+from apps.inbox.models import (
+    DEFAULT_LABEL_COLOR,
+    MAX_REMINDER_NOTE_CHARS,
+    ConversationLabel,
+    InboxReminder,
+    InboxRule,
+    ScheduledReply,
+)
+from apps.inbox.rendering import (
+    failed_scheduled_reply,
+    is_redacted,
+    label_chip,
+    label_chips,
+    pending_reminder,
+    pending_scheduled_reply,
+    preview_of,
+    render_message,
+    rule_summary,
+)
+from apps.media_library.resolution import MediaNotFoundError, resolve
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.members.requests import WorkspaceRequest
@@ -117,6 +142,7 @@ def _filters(request: WorkspaceRequest) -> dict[str, str]:
         "state": state if state in ConversationState.values else "",
         "connection": (request.GET.get("connection") or "").strip(),
         "assignee": (request.GET.get("assignee") or "").strip(),
+        "label": (request.GET.get("label") or "").strip(),
     }
 
 
@@ -133,13 +159,27 @@ def _rows_context(request: WorkspaceRequest) -> tuple[dict[str, Any], Any]:
         state=filters["state"],
         connection_id=filters["connection"] or None,
         assignee=filters["assignee"],
+        label=filters["label"],
     )
     return filters, rows
+
+
+#: How many chips one row prints before it says "+2".
+#:
+#: A layout number with a payload consequence: ``test_hostile_content`` caps the
+#: whole rendered list at 20 kB, and a hundred rows carrying twenty chips each is
+#: the shape that trips it.
+LIST_CHIPS = 3
 
 
 def _rendered_rows(request: WorkspaceRequest, rows: Any) -> dict[str, Any]:
     conversations = list(rows[: selectors.LIST_LIMIT])
     latest = selectors.last_messages_by_conversation(request.workspace, conversations)
+    # Two more bounded queries for the whole page, in the shape of the one above.
+    # Not prefetch_related: these rows are already sliced and materialised, and a
+    # prefetch on a sliced queryset re-runs the slice as a subquery.
+    labels = selectors.labels_by_conversation(request.workspace, conversations)
+    pending = selectors.conversations_with_pending(request.workspace, conversations)
     return {
         "conversations": [
             {
@@ -147,6 +187,9 @@ def _rendered_rows(request: WorkspaceRequest, rows: Any) -> dict[str, Any]:
                 "preview": preview_of(latest[conversation.pk]) if conversation.pk in latest else "",
                 "last_internal": bool(latest[conversation.pk].internal) if conversation.pk in latest else False,
                 "unread": bool(getattr(conversation, "unread", False)),
+                "labels": label_chips(labels.get(conversation.pk, [])[:LIST_CHIPS]),
+                "extra_labels": max(0, len(labels.get(conversation.pk, [])) - LIST_CHIPS),
+                "has_pending": conversation.pk in pending,
             }
             for conversation in conversations
         ],
@@ -174,6 +217,36 @@ def _assignee_options(request: WorkspaceRequest) -> list[dict[str, str]]:
         {"value": selectors.ASSIGNEE_UNASSIGNED, "label": "Unassigned"},
         *({"value": str(m.user_id), "label": m.user.display_name} for m in members),
     ]
+
+
+def _label_context_for(request: WorkspaceRequest, conversation: Conversation) -> dict[str, Any]:
+    """The header's chips and its picker.
+
+    One query for the thread's own labels, plus the palette the picker offers.
+    Not folded into ``_thread_body_context``: the picker is a ``<select>``, and
+    the header exists precisely because a three-second swap would close one under
+    the reader — the same argument its docstring makes about the assignee
+    control.
+    """
+    carried = selectors.labels_by_conversation(request.workspace, [conversation]).get(conversation.pk, [])
+    return {
+        "thread_labels": label_chips(carried),
+        "label_options": [
+            {"value": str(row.pk), "label": row.name}
+            for row in selectors.labels_for(request.workspace)
+            if row.pk not in {label.pk for label in carried}
+        ],
+    }
+
+
+def _label_options(request: WorkspaceRequest) -> list[dict[str, str]]:
+    """The filter bar's label picker.
+
+    ``ui_select`` renders a fixed option list at template-render time, so this is
+    the whole palette rather than only the labels currently in use — filtering to
+    a label nothing carries yet should show an empty list, not hide the option.
+    """
+    return [{"value": str(row.pk), "label": row.name} for row in selectors.labels_for(request.workspace)]
 
 
 def _membership(request: WorkspaceRequest, user_id: str) -> WorkspaceMembership | None:
@@ -264,12 +337,14 @@ def _thread_body_context(
     *,
     compliance: dict[str, Any],
     limit: int,
+    deferred: dict[str, Any],
 ) -> dict[str, Any]:
-    """``compliance`` and ``limit`` are passed in, not derived.
+    """``compliance``, ``limit`` and ``deferred`` are passed in, not derived.
 
-    Both are part of the ETag :func:`messages` computes before deciding whether
-    to render at all, and a value that decides the ETag must be the same value
-    the render uses — recomputing here would be a second chance to disagree.
+    All three are part of the ETag :func:`messages` computes before deciding
+    whether to render at all, and a value that decides the ETag must be the same
+    value the render uses — recomputing here would be a second chance to
+    disagree, and for ``deferred`` it would also be three more queries per poll.
     """
     page, has_more = selectors.thread_messages(request.workspace, conversation, limit=limit)
     return {
@@ -283,7 +358,41 @@ def _thread_body_context(
         "compliance": compliance,
         "can_reply": _can_reply(request),
         "retry_token": uuid.uuid4().hex,
+        **deferred,
     }
+
+
+def _deferred_context(request: WorkspaceRequest, conversation: Conversation) -> dict[str, Any]:
+    """Reminders and scheduled replies, as the thread shows them.
+
+    Inside the polled region on purpose, unlike the compose box: these carry a
+    countdown, and the whole reason the thread token folds in their rendered
+    strings is so the countdown moves. Nothing here holds unsaved work.
+    """
+    return {
+        "pending_reminders": [
+            pending_reminder(row, viewer=request.user)
+            for row in selectors.pending_reminders_for(request.workspace, conversation)
+        ],
+        "pending_replies": [
+            pending_scheduled_reply(row) for row in selectors.pending_replies_for(request.workspace, conversation)
+        ],
+        "failed_replies": [
+            failed_scheduled_reply(row) for row in selectors.failed_replies_for(request.workspace, conversation)
+        ],
+    }
+
+
+def _countdowns(deferred: dict[str, Any]) -> tuple[str, ...]:
+    """The relative strings the thread prints for its deferred work.
+
+    Hashed rather than the timestamps behind them, deliberately: "in 20 minutes"
+    changes about once a minute while ``remind_at`` never moves at all, so this
+    refreshes the pane when the text would actually differ instead of on every
+    three-second poll. It is the same trade ``selectors.list_version`` makes with
+    ``timesince`` for the row's own timestamp.
+    """
+    return tuple(row.due_in for row in (*deferred["pending_reminders"], *deferred["pending_replies"]))
 
 
 def _window_limit(request: WorkspaceRequest) -> int:
@@ -310,11 +419,27 @@ def _composer_context(conversation: Conversation) -> dict[str, Any]:
     ws-configurable later", and the day it becomes configurable the sentence
     under the send button should not be the one place still claiming thirty.
     """
+    capabilities = _capabilities_for(conversation)
     return {
         "conversation": conversation,
         "compose_token": uuid.uuid4().hex,
         "max_chars": MAX_REPLY_CHARS,
         "pause_minutes": int(messaging.AGENT_AUTOMATION_PAUSE.total_seconds() // 60),
+        # SPEC §14's attachment button, offered only where the platform can
+        # carry one — read from the capability table rather than branched on the
+        # platform, so a channel added later needs no edit here or in the
+        # template. An unknown platform (no table entry) offers nothing rather
+        # than everything.
+        "media_kinds": sorted(
+            kind
+            for kind in ("image", "audio", "video", "file")
+            if capabilities is not None and capabilities.supports_block(kind)
+        ),
+        # The picker's own endpoint (#16). Gated on workspace membership rather
+        # than ``manage_media``, deliberately, so an Agent who cannot upload can
+        # still attach something already in the library.
+        "media_picker_url": reverse("media:picker", kwargs={"workspace_id": conversation.workspace_id}),
+        "max_attachments": MAX_ATTACHMENTS,
     }
 
 
@@ -387,6 +512,7 @@ def inbox(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "connections": _connections(request),
         "state_options": list(ConversationState.choices),
         "assignee_options": _assignee_options(request),
+        "label_options": _label_options(request),
         "can_reply": _can_reply(request),
     }
     return render(request, "inbox/list.html", context)
@@ -409,6 +535,7 @@ def rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         filters["state"],
         filters["connection"],
         filters["assignee"],
+        filters["label"],
         context["open_conversation_id"],
         *selectors.list_version(context["conversations"]),
     )
@@ -434,9 +561,13 @@ def thread(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
             conversation,
             compliance=_compliance(request, conversation),
             limit=_window_limit(request),
+            deferred=_deferred_context(request, conversation),
         ),
         **_sidebar_context(request, conversation),
         **_composer_context(conversation),
+        # ``_sidebar_context`` above already carries ``members``, which the
+        # header's assignee <select> reads too.
+        **_label_context_for(request, conversation),
     }
     if _is_htmx(request):
         return render(request, "inbox/_thread.html", context)
@@ -449,6 +580,7 @@ def thread(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
             "connections": _connections(request),
             "state_options": list(ConversationState.choices),
             "assignee_options": _assignee_options(request),
+            "label_options": _label_options(request),
         }
     )
     return render(request, "inbox/list.html", context)
@@ -479,6 +611,7 @@ def messages(request: WorkspaceRequest, workspace_id: str, conversation_id: str)
     # identity read per poll and is exact — the tag changes on the tick the
     # answer does, rather than on a timer that guesses.
     compliance = _compliance(request, conversation)
+    deferred = _deferred_context(request, conversation)
     etag = version_etag(
         "inbox-thread",
         request.user.pk,
@@ -487,11 +620,20 @@ def messages(request: WorkspaceRequest, workspace_id: str, conversation_id: str)
         _is_paused(conversation),
         compliance["code"],
         *selectors.conversation_version(request.workspace, conversation),
+        # The deferred-work half. Two aggregates rather than a Max alone, for the
+        # reason selectors' docstring gives: cancelling moves updated_at, and the
+        # count catches what a Max cannot see.
+        *selectors.deferred_version(request.workspace, conversation),
+        # ...and the countdowns *as rendered*. They re-derive from the clock and
+        # write nothing when they change, which is the same class of state the
+        # pause banner above is in — a token built from rows alone would answer
+        # 304 for ever while the thread went on saying "in 20 minutes".
+        *_countdowns(deferred),
     )
 
     def build() -> HttpResponse:
         services.mark_read(conversation, request.user, at=timezone.now())
-        context = _thread_body_context(request, conversation, compliance=compliance, limit=limit)
+        context = _thread_body_context(request, conversation, compliance=compliance, limit=limit, deferred=deferred)
         return render(request, "inbox/_thread_body.html", context)
 
     return conditional(request, etag, build)
@@ -506,7 +648,12 @@ def composer(request: WorkspaceRequest, workspace_id: str, conversation_id: str)
     return render(
         request,
         "inbox/_composer.html",
-        {"can_reply": _can_reply(request), **_composer_context(conversation)},
+        {
+            "can_reply": _can_reply(request),
+            # The reminder form's recipient picker lives in this partial.
+            "members": _members(request),
+            **_composer_context(conversation),
+        },
     )
 
 
@@ -519,7 +666,12 @@ def header(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
     return render(
         request,
         "inbox/_thread_header.html",
-        {"conversation": conversation, "can_reply": _can_reply(request), "members": _members(request)},
+        {
+            "conversation": conversation,
+            "can_reply": _can_reply(request),
+            "members": _members(request),
+            **_label_context_for(request, conversation),
+        },
     )
 
 
@@ -561,21 +713,19 @@ def note(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> 
 
 def _deliver(request: WorkspaceRequest, conversation_id: Any, *, internal: bool) -> HttpResponse:
     conversation = _conversation(request, conversation_id)
-    text = (request.POST.get("body") or "").strip()
-    if not text:
-        return toast_response(tone="error", title="Nothing to send", body="Write something first.")
-    if len(text) > MAX_REPLY_CHARS:
-        return toast_response(
-            tone="error",
-            title="Too long",
-            body=f"Replies are limited to {MAX_REPLY_CHARS:,} characters.",
-        )
+    try:
+        # The same assembler a scheduled reply uses, so a message composed now
+        # and one composed for later are built by one piece of code — including
+        # what happens to an attachment the platform cannot carry.
+        body = _outbound_body(request, conversation, allow_media=not internal)
+    except _ComposeError as exc:
+        return toast_response(tone="error", title="Nothing to send", body=str(exc))
 
     message = messaging.send_as_agent(
         workspace=request.workspace,
         contact=conversation.contact,
         connection=conversation.channel_connection,
-        outbound=OutboundMessage(blocks=(TextBlock(text=text),)),
+        outbound=outbound_from_body(body),
         idempotency_key=_idempotency_key(request, prefix="note" if internal else "reply"),
         internal=internal,
     )
@@ -864,3 +1014,638 @@ def tags(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> 
         return toast_response(tone="success", title="Tag removed", events={"inboxContactChanged": True})
     contact_services.add_tag(conversation.contact, tag)
     return toast_response(tone="success", title="Tag added", events={"inboxContactChanged": True})
+
+
+# ---------------------------------------------------------------------------
+# Labels on a thread (issue #24)
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def add_label(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> HttpResponse:
+    """Put a label on this thread.
+
+    Gated on ``reply_in_inbox`` rather than ``edit_contact_fields`` — the split
+    the neighbouring ``tags`` view documents. A conversation label is a property
+    of the *thread*, so labelling one is inbox work; a contact tag follows the
+    person across every channel they use, which is CRM work.
+    """
+    conversation = _conversation(request, conversation_id)
+    label = _label_or_404(request, request.POST.get("label") or "")
+    try:
+        services.apply_label(conversation, label, by=request.user)
+    except services.InboxError as exc:
+        return toast_response(tone="error", title="Not labelled", body=str(exc), events=_refresh())
+    return toast_response(tone="success", title="Labelled", events=_refresh())
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def remove_label(request: WorkspaceRequest, workspace_id: str, conversation_id: str, label_id: str) -> HttpResponse:
+    """Take a label off this thread."""
+    conversation = _conversation(request, conversation_id)
+    label = _label_or_404(request, label_id)
+    services.remove_label(conversation, label)
+    return toast_response(tone="success", title="Label removed", events=_refresh())
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def bulk_label(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Apply or remove one label across the threads selected in the list.
+
+    Every conversation id is resolved **inside this workspace** and anything
+    else is skipped silently rather than refused: a bulk action is issued
+    against a list that was rendered seconds ago, so an id that has since become
+    unreachable is ordinary rather than an attack — and the count that comes back
+    tells the operator what actually happened either way.
+    """
+    label = _label_or_404(request, request.POST.get("label") or "")
+    wanted = request.POST.getlist("conversation")[:LIST_LIMIT_BULK]
+    conversations = list(
+        Conversation.objects.for_workspace(request.workspace).filter(pk__in=[_uuid(v) for v in wanted if _uuid(v)])
+    )
+    removing = (request.POST.get("action") or "").strip() == "remove"
+
+    changed = 0
+    for conversation in conversations:
+        try:
+            if removing:
+                changed += 1 if services.remove_label(conversation, label) else 0
+            else:
+                changed += 1 if services.apply_label(conversation, label, by=request.user) else 0
+        except services.InboxError:
+            # One thread already carrying its maximum must not stop the rest.
+            continue
+
+    verb = "removed from" if removing else "added to"
+    return toast_response(
+        tone="success",
+        title=f"Label {verb} {changed} conversation{'' if changed == 1 else 's'}",
+        events=_refresh(),
+    )
+
+
+#: How many conversations one bulk action may touch. The list itself never shows
+#: more than ``selectors.LIST_LIMIT``, so this is the same bound stated where the
+#: form post arrives rather than trusted from the DOM.
+LIST_LIMIT_BULK = selectors.LIST_LIMIT
+
+
+# ---------------------------------------------------------------------------
+# Reminders and scheduled replies (issue #24)
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def create_reminder(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> HttpResponse:
+    """ "Remind me/somebody about this thread at ..." (SPEC §14)."""
+    conversation = _conversation(request, conversation_id)
+    when = _when(request.POST.get("remind_at"))
+    if when is None:
+        return toast_response(tone="error", title="No reminder set", body="Pick a date and time.")
+    recipient = _membership(request, (request.POST.get("recipient") or "").strip())
+    try:
+        services.schedule_reminder(
+            conversation,
+            recipient=recipient.user if recipient else request.user,
+            remind_at=when,
+            note=(request.POST.get("note") or "")[:MAX_REMINDER_NOTE_CHARS],
+            created_by=request.user,
+        )
+    except services.InboxError as exc:
+        return toast_response(tone="error", title="No reminder set", body=str(exc))
+    return toast_response(tone="success", title="Reminder set", events=_refresh())
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def cancel_reminder(
+    request: WorkspaceRequest, workspace_id: str, conversation_id: str, reminder_id: str
+) -> HttpResponse:
+    conversation = _conversation(request, conversation_id)
+    reminder = get_scoped_object_or_404(InboxReminder, request.workspace, pk=reminder_id, conversation=conversation)
+    if not services.cancel_reminder(reminder):
+        return toast_response(tone="info", title="Already gone", events=_refresh())
+    return toast_response(tone="success", title="Reminder cancelled", events=_refresh())
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def create_scheduled_reply(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> HttpResponse:
+    """Compose now, send later (SPEC §14).
+
+    Compliance is **not** checked here. The composer shows the current verdict as
+    a courtesy, but a window can close in the hours before this goes out, so the
+    decision that counts is the one ``send_as_agent`` makes when the queue row
+    fires — and a refusal then is surfaced rather than dropped.
+    """
+    conversation = _conversation(request, conversation_id)
+    when = _when(request.POST.get("send_at"))
+    if when is None:
+        return toast_response(tone="error", title="Not scheduled", body="Pick a date and time.")
+    try:
+        body = _outbound_body(request, conversation)
+    except _ComposeError as exc:
+        return toast_response(tone="error", title="Not scheduled", body=str(exc))
+    try:
+        services.schedule_reply(conversation, body=body, send_at=when, created_by=request.user)
+    except services.InboxError as exc:
+        return toast_response(tone="error", title="Not scheduled", body=str(exc))
+    return toast_response(tone="success", title="Reply scheduled", events=_refresh(inboxSent=True))
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def update_scheduled_reply(
+    request: WorkspaceRequest, workspace_id: str, conversation_id: str, scheduled_reply_id: str
+) -> HttpResponse:
+    conversation = _conversation(request, conversation_id)
+    reply = get_scoped_object_or_404(
+        ScheduledReply, request.workspace, pk=scheduled_reply_id, conversation=conversation
+    )
+    when = _when(request.POST.get("send_at")) or reply.send_at
+    try:
+        body = _outbound_body(request, conversation)
+    except _ComposeError as exc:
+        return toast_response(tone="error", title="Not changed", body=str(exc))
+    try:
+        services.reschedule_reply(reply, body=body, send_at=when)
+    except services.InboxError as exc:
+        return toast_response(tone="error", title="Not changed", body=str(exc))
+    return toast_response(tone="success", title="Scheduled reply updated", events=_refresh())
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def cancel_scheduled_reply(
+    request: WorkspaceRequest, workspace_id: str, conversation_id: str, scheduled_reply_id: str
+) -> HttpResponse:
+    conversation = _conversation(request, conversation_id)
+    reply = get_scoped_object_or_404(
+        ScheduledReply, request.workspace, pk=scheduled_reply_id, conversation=conversation
+    )
+    if not services.cancel_scheduled_reply(reply):
+        return toast_response(tone="info", title="Already gone", events=_refresh())
+    return toast_response(tone="success", title="Scheduled reply cancelled", events=_refresh())
+
+
+# ---------------------------------------------------------------------------
+# Helpers for the above
+# ---------------------------------------------------------------------------
+
+
+class _ComposeError(ValueError):
+    """A composed message this view will not build."""
+
+
+def _label_or_404(request: WorkspaceRequest, label_id: str) -> ConversationLabel:
+    return get_scoped_object_or_404(ConversationLabel, request.workspace, pk=label_id)
+
+
+def _uuid(value: str) -> Any:
+    try:
+        return uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _when(raw: Any) -> Any:
+    """Parse a ``datetime-local`` value into an aware datetime, or None.
+
+    The picker posts a naive local string. Interpreted in the **current
+    timezone** rather than UTC: an agent typing 4pm means four in the afternoon
+    where they are, and ``TIME_ZONE`` is what the rest of the app already renders
+    timestamps in.
+    """
+    text = (raw or "").strip() if isinstance(raw, str) else ""
+    if not text:
+        return None
+    parsed = parse_datetime(text)
+    if parsed is None:
+        return None
+    return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+
+
+def _outbound_body(
+    request: WorkspaceRequest, conversation: Conversation, *, allow_media: bool = True
+) -> dict[str, Any]:
+    """Turn the compose form into the stored body shape.
+
+    ``allow_media`` is False for an internal note: a note is never sent, so a
+    library attachment on one would be a delivery URL minted for nobody, sitting
+    in a body the adapter will never see.
+
+    ``OutboundMessage.to_body()`` and nothing else — the same shape
+    ``Message.body`` carries, which its own docstring calls "a persisted
+    contract". Storing anything else here would be a second serialisation of the
+    same thing, and this one already knows how to carry media.
+    """
+    text = (request.POST.get("body") or "").strip()
+    if len(text) > MAX_REPLY_CHARS:
+        raise _ComposeError("That message is too long.")
+    blocks: list[Any] = []
+    if text:
+        blocks.append(TextBlock(text=text))
+    if allow_media:
+        blocks.extend(_attachments(request, conversation))
+    if not blocks:
+        raise _ComposeError("Write something first.")
+    return OutboundMessage(blocks=tuple(blocks)).to_body()
+
+
+def _attachments(request: WorkspaceRequest, conversation: Conversation) -> list[Any]:
+    """Media blocks for the library assets the composer picked.
+
+    Ids, never URLs. ``apps.media_library.picker``'s contract is explicit —
+    "Store ``id``. Never store ``url`` — it is minted per request" — so the
+    delivery URL is resolved here, at compose time, from an id checked against
+    this workspace.
+
+    What the platform cannot carry is dropped rather than refused, which is the
+    same call ``apps.channels.downgrade`` makes for the automation path: an
+    operator who attaches a PDF to a channel that takes only images should get
+    their message, with a note, rather than a wall.
+    """
+    ids = [value for value in request.POST.getlist("media")[:MAX_ATTACHMENTS] if value]
+    if not ids:
+        return []
+    capabilities = _capabilities_for(conversation)
+    blocks: list[Any] = []
+    for media_id in ids:
+        try:
+            asset = resolve(media_id, workspace=request.workspace)
+        except MediaNotFoundError:
+            raise _ComposeError("One of those attachments is no longer in the library.") from None
+        kind = str(asset["kind"])
+        if capabilities is not None and not capabilities.supports_block(kind):
+            continue
+        blocks.append(MediaBlock(kind=kind, url=str(asset["url"])))
+    return blocks
+
+
+def _capabilities_for(conversation: Conversation) -> Any:
+    """This thread's platform capabilities, or None when it has no table entry.
+
+    ``capabilities_for`` raises for an unknown platform rather than returning a
+    permissive default, which is right for it and wrong here: the compose box
+    must still work on a deployment carrying a platform this build does not know
+    about.
+    """
+    try:
+        return capabilities_for(conversation.channel_connection.platform)
+    except KeyError:  # pragma: no cover - every platform is in the table
+        return None
+
+
+#: How many library assets one message may carry. ``apps.messaging.ingest`` caps
+#: what a *platform* may send us at ``MAX_ATTACHMENTS``; this is the same
+#: question asked of our own compose box.
+MAX_ATTACHMENTS = 10
+
+
+# ---------------------------------------------------------------------------
+# Settings: the label palette (issue #24)
+# ---------------------------------------------------------------------------
+#
+# Two views per surface, sharing one context builder — the shape
+# ``apps/contacts/views.py``'s tag manager established: a page view, and a rows
+# partial the mutations re-fetch through an ``HX-Trigger`` event. The mutations
+# answer 2xx even when they refuse, because htmx drops ``HX-Trigger`` on a
+# non-2xx and a refusal has to be able to say so in a toast.
+
+
+def _label_context(request: WorkspaceRequest) -> dict[str, Any]:
+    labels = list(selectors.labels_for(request.workspace))
+    counts = selectors.label_usage(request.workspace)
+    return {
+        "labels": [{"label": label, "chip": label_chip(label), "used": counts.get(label.pk, 0)} for label in labels],
+        "default_color": DEFAULT_LABEL_COLOR,
+    }
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_GET
+def label_settings(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """The label manager.
+
+    ``reply_in_inbox``, not ``manage_workspace_settings``: a label is the inbox's
+    own filing system and an Agent who cannot create one has to ask an Admin
+    before they can file anything. The rule manager next door is the other
+    call — rules act on other people's conversations.
+    """
+    return render(request, "inbox/label_settings.html", _label_context(request))
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_GET
+def label_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Just the rows, for the re-fetch after a mutation."""
+    return render(request, "inbox/_label_rows.html", _label_context(request))
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def label_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    try:
+        services.create_label(
+            request.workspace,
+            name=request.POST.get("name") or "",
+            color=request.POST.get("color") or "",
+        )
+    except services.InboxError as exc:
+        return toast_response(tone="error", title="Not created", body=str(exc))
+    return toast_response(tone="success", title="Label created", events={"inboxLabelsChanged": True})
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def label_update(request: WorkspaceRequest, workspace_id: str, label_id: str) -> HttpResponse:
+    label = _label_or_404(request, label_id)
+    try:
+        services.update_label(label, name=request.POST.get("name") or "", color=request.POST.get("color") or "")
+    except services.InboxError as exc:
+        return toast_response(tone="error", title="Not saved", body=str(exc))
+    return toast_response(tone="success", title="Label saved", events=_refresh(inboxLabelsChanged=True))
+
+
+@login_required
+@require_permission("reply_in_inbox")
+@require_POST
+def label_delete(request: WorkspaceRequest, workspace_id: str, label_id: str) -> HttpResponse:
+    """Delete a label and every link to it.
+
+    A real delete, and the cascade is the point: a label that is gone should be
+    gone from the threads carrying it too. Rules naming it keep working — the
+    action resolves nothing and applies nothing, and the settings list shows
+    "(deleted)" where the name was, rather than the rule silently doing less
+    than it says.
+    """
+    label = _label_or_404(request, label_id)
+    label.delete()
+    return toast_response(tone="success", title="Label deleted", events=_refresh(inboxLabelsChanged=True))
+
+
+# ---------------------------------------------------------------------------
+# Settings: the rules engine (issue #24)
+# ---------------------------------------------------------------------------
+
+
+def _rule_vocabulary(request: WorkspaceRequest) -> dict[str, dict[str, str]]:
+    """The id → name maps a rule summary is written from, built once per page."""
+    return {
+        "labels": {str(row.pk): row.name for row in selectors.labels_for(request.workspace)},
+        "members": {str(m.user_id): m.user.display_name for m in _members(request)},
+        "connections": {str(row.pk): row.display_name for row in _connections(request)},
+    }
+
+
+def _rule_context(request: WorkspaceRequest) -> dict[str, Any]:
+    vocabulary = _rule_vocabulary(request)
+    rules = list(InboxRule.objects.for_workspace(request.workspace).order_by("priority", "name"))
+    return {
+        "rules": [rule_summary(rule, **vocabulary) for rule in rules],
+        "rule_count": len(rules),
+    }
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_GET
+def rule_settings(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """The inbox-rules manager.
+
+    ``manage_workspace_settings``, unlike the label manager: a rule reassigns and
+    closes conversations across the whole workspace without anybody watching, and
+    every other settings CRUD in this product sits above Agent for the same
+    reason (contacts' tag editor is ``manage_crm``, triggers are ``edit_flows``,
+    webhooks are this key). ``PERMISSION_KEYS`` is the whole vocabulary and this
+    invents nothing.
+    """
+    return render(request, "inbox/rule_settings.html", _rule_context(request))
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_GET
+def rule_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    return render(request, "inbox/_rule_rows.html", _rule_context(request))
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_GET
+def rule_form(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """The editor for one rule, new or existing.
+
+    The contact half of the condition is rendered by
+    ``templates/contacts/_filter_bar.html`` — the same builder the segment editor
+    uses, driven by the same payload from
+    :func:`apps.contacts.views.builder_config`. Reimplementing it here would mean
+    a second operator table that drifts the day somebody adds an operator to the
+    condition engine.
+    """
+    rule = None
+    raw = (request.GET.get("rule") or "").strip()
+    if raw:
+        rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=raw)
+    document = rule.condition_json if rule and isinstance(rule.condition_json, dict) else {}
+    contact_half = document.get("contact") if isinstance(document.get("contact"), dict) else {}
+    return render(
+        request,
+        "inbox/_rule_form.html",
+        {
+            "rule": rule,
+            "condition": document,
+            "actions": rule.actions_json if rule and isinstance(rule.actions_json, list) else [],
+            "filter_config": builder_config(request.workspace, document=contact_half),
+            "connections": _connections(request),
+            "platform_options": list(Platform.choices),
+            "labels": list(selectors.labels_for(request.workspace)),
+            "members": _members(request),
+        },
+    )
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_POST
+def rule_save(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Create or update one rule.
+
+    One endpoint for both, because the whole document is posted either way and
+    a second view would be the same forty lines with one lookup changed.
+    """
+    raw = (request.POST.get("rule") or "").strip()
+    rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=raw) if raw else None
+    name = (request.POST.get("name") or "").strip()
+    if not name:
+        return toast_response(tone="error", title="Not saved", body="A rule needs a name.")
+    try:
+        condition = rules_engine.validate_condition(request.workspace, _posted_condition(request))
+        actions = rules_engine.validate_actions(request.workspace, _posted_actions(request))
+    except (rules_engine.RuleValidationError, ConditionValidationError) as exc:
+        return toast_response(tone="error", title="Not saved", body=str(exc))
+
+    if rule is None:
+        rule = InboxRule(workspace=request.workspace, priority=_next_priority(request))
+    rule.name = name[:120]
+    rule.condition_json = condition
+    rule.actions_json = actions
+    rule.enabled = bool(request.POST.get("enabled"))
+    rule.save()
+    return toast_response(tone="success", title="Rule saved", events={"inboxRulesChanged": True})
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_POST
+def rule_toggle(request: WorkspaceRequest, workspace_id: str, rule_id: str) -> HttpResponse:
+    rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=rule_id)
+    rule.enabled = not rule.enabled
+    rule.save(update_fields=["enabled", "updated_at"])
+    title = "Rule enabled" if rule.enabled else "Rule disabled"
+    return toast_response(tone="success", title=title, events={"inboxRulesChanged": True})
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_POST
+def rule_delete(request: WorkspaceRequest, workspace_id: str, rule_id: str) -> HttpResponse:
+    rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=rule_id)
+    rule.delete()
+    return toast_response(tone="success", title="Rule deleted", events={"inboxRulesChanged": True})
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_POST
+def rule_reorder(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Renumber the rules from the order the list posts.
+
+    Serves both affordances: the drag handle posts the whole order it ended up
+    with, and the up/down buttons post the same list with two entries swapped.
+    One endpoint means the keyboard path and the pointer path cannot disagree
+    about what happened.
+    """
+    services.reorder_rules(request.workspace, request.POST.getlist("rule"))
+    return toast_response(tone="success", title="Order updated", events={"inboxRulesChanged": True})
+
+
+@login_required
+@require_permission("manage_workspace_settings")
+@require_POST
+def rule_test(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Dry-run the posted condition against the last messages received.
+
+    Deliberately scored with the same :func:`apps.inbox.rules.matches_shallow`
+    the live hook calls, over the same :class:`~apps.inbox.rules.RuleInput` — the
+    only difference is which constructor built it. Anything less than that and
+    "the dry-run matches live behaviour" is a claim rather than a property.
+
+    It writes nothing, and that is structural rather than careful: this view
+    never reaches :mod:`apps.inbox.routing`, which is where applying lives.
+    """
+    try:
+        condition = rules_engine.validate_condition(request.workspace, _posted_condition(request))
+    except (rules_engine.RuleValidationError, ConditionValidationError) as exc:
+        return render(request, "inbox/_rule_test.html", {"error": str(exc), "sample": 0}, status=200)
+    matched, sample = selectors.dry_run(request.workspace, condition)
+    return render(
+        request,
+        "inbox/_rule_test.html",
+        {
+            "matches": [
+                {"message": message, "preview": preview_of(message), "conversation": message.conversation}
+                for message in matched
+            ],
+            "sample": sample,
+        },
+    )
+
+
+def _next_priority(request: WorkspaceRequest) -> int:
+    """New rules go last. ``reorder_rules`` renumbers everything anyway."""
+    last = InboxRule.objects.for_workspace(request.workspace).order_by("-priority").values_list("priority", flat=True)
+    return (last[0] + services.PRIORITY_STEP) if last else 0
+
+
+def _posted_condition(request: WorkspaceRequest) -> dict[str, Any]:
+    """Assemble the three condition halves from the form.
+
+    The contact half arrives as one ``filter`` json string, because that is what
+    ``templates/contacts/_filter_bar.html`` posts — it serialises the builder's
+    Alpine state into a single hidden input so the server hands the document
+    straight to the condition engine rather than re-assembling it from separate
+    fields, which would be a second parser for a language that already has one.
+    """
+    document: dict[str, Any] = {}
+    channel: dict[str, Any] = {}
+    if platforms := request.POST.getlist("platform"):
+        channel["platforms"] = platforms
+    if connections := request.POST.getlist("connection"):
+        channel["connection_ids"] = connections
+    if channel:
+        document["channel"] = channel
+    if keywords := _posted_keywords(request):
+        document["keywords"] = keywords
+    contact = _posted_json(request.POST.get("filter"))
+    if isinstance(contact, dict) and contact.get("rules"):
+        document["contact"] = contact
+    return document
+
+
+def _posted_keywords(request: WorkspaceRequest) -> list[dict[str, str]]:
+    """Zip the two parallel lists the repeatable keyword rows post.
+
+    A length mismatch drops the tail rather than raising, unlike
+    ``apps.flows.triggers.forms``: that one is protecting a *trigger*, where a
+    keyword matching words nobody configured starts a flow at a stranger. Here
+    the validator that follows reports what was stored, and the rule list shows
+    every keyword back, so a truncated submission is visible rather than silent.
+    """
+    texts = request.POST.getlist("keyword_text")
+    modes = request.POST.getlist("keyword_mode")
+    return [{"text": text, "mode": mode} for text, mode in zip(texts, modes, strict=False) if (text or "").strip()]
+
+
+def _posted_actions(request: WorkspaceRequest) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = [
+        {"type": "add_label", "label_id": value} for value in request.POST.getlist("action_label") if value
+    ]
+    if assignee := (request.POST.get("action_assignee") or "").strip():
+        actions.append({"type": "assign_to_member", "user_id": assignee})
+    if request.POST.get("action_done"):
+        actions.append({"type": "mark_done"})
+    return actions
+
+
+def _posted_json(raw: Any) -> Any:
+    """A json field from a form, or ``{}``.
+
+    Malformed json is an empty document rather than a 500: the value is written
+    by a browser and a half-serialised one is a bug report, not an exception the
+    operator can act on.
+    """
+    import json
+
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return {}

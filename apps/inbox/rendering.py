@@ -60,8 +60,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from django.urls import NoReverseMatch, reverse
+from django.utils.timesince import timeuntil
 
-from apps.common.validators import is_renderable_url
+from apps.common.validators import is_renderable_url, is_valid_hex_color
+from apps.inbox.models import DEFAULT_LABEL_COLOR
 from apps.messaging.codes import describe
 from apps.messaging.models import Message, MessageDirection, MessageStatus
 
@@ -70,15 +72,23 @@ __all__ = [
     "DELETED_REASON",
     "Button",
     "Card",
+    "FailedScheduledReply",
     "Gallery",
     "Image",
+    "LabelChip",
     "is_redacted",
     "Link",
     "Media",
+    "PendingReminder",
+    "PendingScheduledReply",
     "RenderedMessage",
+    "RuleSummary",
     "Text",
     "Tombstone",
+    "label_chip",
+    "label_chips",
     "preview_of",
+    "preview_of_body",
     "render_message",
 ]
 
@@ -200,6 +210,93 @@ class Tombstone:
     kind: str = "tombstone"
 
 
+@dataclass(frozen=True)
+class LabelChip:
+    """One label as the reader sees it.
+
+    ``color`` is the reason this is a view model rather than the row itself.
+    ``style-src`` carries ``'unsafe-inline'`` (``config/settings/base.py``) and
+    the conversation list already uses inline ``style`` attributes, and Django's
+    ``escape()`` covers ``& < > " '`` and **not** ``;``, ``:`` or ``(`` — so a
+    stored value of ``#fff;background-image:url(https://…`` would be a CSS
+    beacon that never leaves the quotes, on a page where ``img-src`` allows
+    ``https:``.
+
+    So the hex is vetted **again** here, at render time, and an unrecognised one
+    becomes the default rather than reaching the DOM.
+    :func:`apps.common.validators.validate_hex_color` on the model is the write
+    half; a row can still arrive through a migration, a data import or a shell.
+    That is the same two-sided discipline :func:`_media` applies to a URL, and
+    the fallback is the same idea as a :class:`Tombstone`: show something
+    honest rather than nothing.
+    """
+
+    name: str
+    color: str
+    id: str = ""
+
+
+@dataclass(frozen=True)
+class PendingReminder:
+    """A reminder waiting to fire, as the thread shows it.
+
+    ``due_in`` is a rendered relative string ("in 20 minutes"), and it is in
+    here rather than computed in the template because the thread's ETag hashes
+    it — a countdown the token could not see would freeze on an open tab.
+    """
+
+    id: str
+    who: str
+    note: str
+    due_at: Any
+    due_in: str
+    is_mine: bool = False
+
+
+@dataclass(frozen=True)
+class PendingScheduledReply:
+    """A reply waiting to go out, as the thread shows it."""
+
+    id: str
+    preview: str
+    due_at: Any
+    due_in: str
+
+
+@dataclass(frozen=True)
+class FailedScheduledReply:
+    """One that came due and was refused.
+
+    ``reason`` is ``apps.messaging.codes.describe``'s sentence for a
+    machine-readable code, never a provider's own text: those quote the request
+    that caused them, credentials included (SECURITY-BASELINE §5).
+    """
+
+    id: str
+    preview: str
+    due_at: Any
+    reason: str
+
+
+@dataclass(frozen=True)
+class RuleSummary:
+    """A rule as the settings list describes it.
+
+    Both tuples are **assembled from this workspace's own vocabulary** — label
+    names, member names, platform labels — rather than serialised from the
+    stored document. A rule's condition json is operator-authored and can name
+    ids that no longer resolve; printing it raw would put unvetted text on the
+    page and would also be unreadable.
+    """
+
+    id: str
+    name: str
+    enabled: bool
+    priority: int
+    conditions: tuple[str, ...] = ()
+    actions: tuple[str, ...] = ()
+
+
 #: Anything :func:`render_message` can put in ``parts``.
 type Part = Text | Image | Link | Media | Card | Gallery | Tombstone
 
@@ -310,12 +407,30 @@ def is_redacted(message: Message, body: dict[str, Any]) -> bool:
 def preview_of(message: Message) -> str:
     """One line for the conversation list.
 
-    Text if there is any, otherwise a description of what the message is. Both
-    are escaped by the template like everything else; the truncation is about
-    payload size and layout, not safety.
+    The redaction check needs the row — ``is_redacted`` reads the status as well
+    as the body marker — so it stays here, and the body walk below is shared.
     """
     body = message.body if isinstance(message.body, dict) else {}
     if is_redacted(message, body):
+        return DELETED_PREVIEW
+    return preview_of_body(body)
+
+
+def preview_of_body(raw: Any) -> str:
+    """One line for any stored message body.
+
+    Text if there is any, otherwise a description of what the message is. Both
+    are escaped by the template like everything else; the truncation is about
+    payload size and layout, not safety.
+
+    Split out from :func:`preview_of` for the scheduled-reply card, which has a
+    body but no ``Message`` row yet — the alternative was a second walker over
+    the same shape, and there are already two in this file with different
+    contracts (:func:`render_message` accounts for what it cannot show;
+    ``apps.messaging.rendering.outbound_from_body`` drops it).
+    """
+    body = raw if isinstance(raw, dict) else {}
+    if body.get("deleted") is True:
         return DELETED_PREVIEW
     raw_blocks = body.get("blocks")
     # One pass, remembering the best non-text answer seen. Text wins wherever it
@@ -444,3 +559,135 @@ def _buttons(value: Any) -> tuple[Button, ...]:
 
 def _text(value: Any) -> str:
     return value if isinstance(value, str) else ""
+
+
+# ---------------------------------------------------------------------------
+# Labels and deferred work
+# ---------------------------------------------------------------------------
+
+
+def label_chip(label: Any) -> LabelChip:
+    """One label, with its colour vetted. See :class:`LabelChip`."""
+    color = getattr(label, "color", "") or ""
+    return LabelChip(
+        id=str(getattr(label, "pk", "") or ""),
+        name=getattr(label, "name", "") or "",
+        # Not ``or DEFAULT`` on the raw value: an empty string and "#nope" must
+        # take the same path, and only one of them is falsy.
+        color=color if is_valid_hex_color(color) and color else DEFAULT_LABEL_COLOR,
+    )
+
+
+def label_chips(labels: Any) -> tuple[LabelChip, ...]:
+    """A row's chips, in the order they will print."""
+    return tuple(label_chip(label) for label in labels)
+
+
+def pending_reminder(reminder: Any, *, viewer: Any = None) -> PendingReminder:
+    """A waiting reminder, with its countdown already rendered."""
+    recipient = getattr(reminder, "recipient", None)
+    return PendingReminder(
+        id=str(reminder.pk),
+        who=_display_name(recipient),
+        note=reminder.note or "",
+        due_at=reminder.remind_at,
+        due_in=timeuntil(reminder.remind_at),
+        is_mine=bool(viewer is not None and recipient is not None and recipient.pk == viewer.pk),
+    )
+
+
+def pending_scheduled_reply(reply: Any) -> PendingScheduledReply:
+    """A queued reply, previewed with the same one-liner the list uses."""
+    return PendingScheduledReply(
+        id=str(reply.pk),
+        preview=preview_of_body(reply.body),
+        due_at=reply.send_at,
+        due_in=timeuntil(reply.send_at),
+    )
+
+
+def failed_scheduled_reply(reply: Any) -> FailedScheduledReply:
+    """One that was refused when it came due."""
+    return FailedScheduledReply(
+        id=str(reply.pk),
+        preview=preview_of_body(reply.body),
+        due_at=reply.send_at,
+        reason=describe(reply.error) if reply.error else "It could not be sent.",
+    )
+
+
+def rule_summary(rule: Any, *, labels: Any, members: Any, connections: Any) -> RuleSummary:
+    """Describe a rule in words, from names this workspace owns.
+
+    ``labels``, ``members`` and ``connections`` are id → name maps the caller
+    built once for the whole page; resolving them per rule would be three
+    queries per row on a list that exists to be scanned.
+
+    An id that no longer resolves becomes a visible placeholder rather than
+    disappearing — the :class:`Tombstone` argument again. A rule quietly
+    describing itself as doing less than it does is how an operator ends up
+    debugging automation that is not in front of them.
+    """
+    from apps.common.platforms import Platform
+
+    document = rule.condition_json if isinstance(rule.condition_json, dict) else {}
+    raw_channel = document.get("channel")
+    channel: dict[str, Any] = raw_channel if isinstance(raw_channel, dict) else {}
+    conditions: list[str] = []
+
+    platform_labels = dict(Platform.choices)
+    platforms = [str(platform_labels.get(value, value)) for value in channel.get("platforms") or []]
+    if platforms:
+        conditions.append("Channel is " + _joined(platforms))
+    names = [connections.get(str(value), _MISSING) for value in channel.get("connection_ids") or []]
+    if names:
+        conditions.append("Connection is " + _joined(names))
+
+    words = [str(item.get("text", "")) for item in document.get("keywords") or [] if isinstance(item, dict)]
+    if words:
+        conditions.append("Message mentions " + _joined(words))
+
+    contact = document.get("contact")
+    if isinstance(contact, dict) and contact.get("rules"):
+        count = len(contact["rules"])
+        mode = "all" if contact.get("match", "all") == "all" else "any"
+        conditions.append(f"Contact matches {mode} of {count} condition{'' if count == 1 else 's'}")
+
+    actions: list[str] = []
+    for item in rule.actions_json if isinstance(rule.actions_json, list) else []:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if kind == "add_label":
+            actions.append("Add label " + labels.get(str(item.get("label_id")), _MISSING))
+        elif kind == "assign_to_member":
+            actions.append("Assign to " + members.get(str(item.get("user_id")), _MISSING))
+        elif kind == "mark_done":
+            actions.append("Mark done")
+
+    return RuleSummary(
+        id=str(rule.pk),
+        name=rule.name,
+        enabled=rule.enabled,
+        priority=rule.priority,
+        conditions=tuple(conditions),
+        actions=tuple(actions),
+    )
+
+
+#: What a rule prints for an id that no longer resolves. Copy, like
+#: :attr:`Tombstone.reason`, and never the id itself.
+_MISSING = "(deleted)"
+
+
+def _joined(values: list[str]) -> str:
+    """ "a, b or c" — the reader's conjunction, since every list here is an OR."""
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values[:-1]) + " or " + values[-1]
+
+
+def _display_name(user: Any) -> str:
+    if user is None:
+        return "someone who has left"
+    return getattr(user, "display_name", "") or getattr(user, "email", "") or "a teammate"

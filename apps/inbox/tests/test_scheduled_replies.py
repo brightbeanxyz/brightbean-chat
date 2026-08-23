@@ -232,3 +232,25 @@ class TestCancellation:
 
         with pytest.raises(services.InboxError):
             services.reschedule_reply(reply, body=BODY, send_at=timezone.now() + timedelta(hours=1))
+
+
+class TestDismissingAFailure:
+    def test_dismissing_takes_the_card_off_the_thread_and_keeps_the_reason(self, tenancy, conversation, identity):
+        """`DISMISSED`, not `CANCELLED`: "I called it off" and "the platform
+        refused it, and I have seen that" are different facts, and the second is
+        the one an audit wants back."""
+        from apps.inbox.selectors import failed_replies_for
+
+        reply = _due_now(_schedule(conversation, tenancy.user_for("agent")))
+        record_opt_out(identity, source="test")
+        with registered(Platform.TELEGRAM):
+            _fire(reply)
+        reply.refresh_from_db()
+        assert failed_replies_for(tenancy.workspace, conversation) == [reply]
+
+        assert services.cancel_scheduled_reply(reply) is True
+
+        reply.refresh_from_db()
+        assert reply.status == DeferredStatus.DISMISSED
+        assert reply.error
+        assert failed_replies_for(tenancy.workspace, conversation) == []

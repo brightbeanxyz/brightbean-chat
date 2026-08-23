@@ -28,6 +28,25 @@ could flip by hand.
               data-shortcut="reply"
               class="form-input-styled"
               placeholder="Write a reply…"></textarea>
+    {% comment %}
+      Attachments picked from the library (#16). Ids only — the picker's contract
+      says "Store `id`. Never store `url` — it is minted per request" — so the
+      chips below carry ids and the view resolves each to a signed delivery URL
+      at send time, scoped to this workspace.
+
+      The button is offered only where the platform can carry media, read from
+      apps.channels.capabilities in the view. No {% templatetag openblock %} if platform == … {% templatetag closeblock %} here, ever.
+    {% endcomment %}
+    <div class="ib-attachments" x-data="inboxAttachments()" x-show="items.length" x-cloak>
+      <template x-for="item in items" :key="item.id">
+        <span class="ib-chip">
+          <span x-text="item.name"></span>
+          <input type="hidden" name="media" :value="item.id">
+          <button type="button" class="btn-icon-hover" @click="drop(item.id)"
+                  :aria-label="'Remove attachment ' + item.name">×</button>
+        </span>
+      </template>
+    </div>
     <div class="flex items-center gap-2 mt-2">
       <button type="submit" class="btn-brand btn-inline">Send</button>
       {% comment %}
@@ -39,8 +58,55 @@ could flip by hand.
               hx-post="{% url 'inbox:note' workspace_id=request.workspace.id conversation_id=conversation.id %}"
               hx-include="closest form"
               hx-swap="none">Add note</button>
+      {% if media_kinds %}
+        <button type="button" class="btn-outline btn-inline"
+                data-media-picker
+                data-picker-url="{{ media_picker_url }}"
+                data-kinds="{{ media_kinds|join:"," }}"
+                data-platform="{{ conversation.channel_connection.platform }}"
+                data-max="{{ max_attachments }}">Attach</button>
+      {% endif %}
+      {% comment %}
+        Compose now, send later (SPEC §14). The same fields, a different endpoint
+        — the shape "Add note" already uses beside it — so the scheduled body is
+        built by exactly the code that builds a live one.
+      {% endcomment %}
+      <button type="button" class="btn-outline btn-inline" data-schedule-toggle
+              aria-expanded="false" aria-controls="inbox-schedule-{{ conversation.id }}">Send later</button>
       <span class="ml-auto text-xs" style="color: var(--text-ghost);">A reply pauses automation for {{ pause_minutes }} minutes.</span>
     </div>
+
+    <div id="inbox-schedule-{{ conversation.id }}" class="ib-schedule" hidden>
+      <label for="send-at-{{ conversation.id }}">Send at</label>
+      <input id="send-at-{{ conversation.id }}" class="form-datetime" type="datetime-local" name="send_at">
+      <button type="submit" class="btn-outline btn-inline"
+              hx-post="{% url 'inbox:create_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+              hx-include="closest form"
+              hx-swap="none">Schedule</button>
+    </div>
+  </form>
+
+  {% comment %}
+    Reminders. Its own form, not a third button on the composer's: a reminder
+    carries no message body, and hx-include="closest form" would post the
+    half-written reply with it.
+  {% endcomment %}
+  <form class="ib-remind"
+        hx-post="{% url 'inbox:create_reminder' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+        hx-swap="none">
+    {% csrf_token %}
+    <label class="sr-only" for="remind-at-{{ conversation.id }}">Remind at</label>
+    <input id="remind-at-{{ conversation.id }}" class="form-datetime" type="datetime-local" name="remind_at">
+    <label class="sr-only" for="remind-who-{{ conversation.id }}">Remind</label>
+    <select id="remind-who-{{ conversation.id }}" class="bb-select" name="recipient">
+      <option value="">Me</option>
+      {% for membership in members %}
+        <option value="{{ membership.user_id }}">{{ membership.user.display_name }}</option>
+      {% endfor %}
+    </select>
+    <label class="sr-only" for="remind-note-{{ conversation.id }}">Note</label>
+    <input id="remind-note-{{ conversation.id }}" type="text" name="note" maxlength="500" placeholder="Chase the refund">
+    <button type="submit" class="btn-outline btn-inline">Remind</button>
   </form>
 {% else %}
   <div class="ib-composer text-xs" style="color: var(--text-tertiary);">

@@ -300,7 +300,21 @@ def reschedule_reply(reply: ScheduledReply, *, body: dict[str, Any], send_at: da
 
 
 def cancel_scheduled_reply(reply: ScheduledReply) -> bool:
-    """Call it off. False when it had already been sent, failed or cancelled."""
+    """Take a scheduled reply off the thread. False when there was nothing to do.
+
+    Two meanings behind one button, because the operator's intent is the same
+    either way — "I am done with this" — while the record must not be:
+
+    * ``PENDING`` → ``CANCELLED``, and the queue row is cancelled with it.
+    * ``FAILED`` → ``DISMISSED``. The ``error`` column stays, so why it never
+      went out survives being acknowledged; only the card leaves the thread.
+
+    A sent one is not dismissable: it is in the history like any other message.
+    """
+    if reply.status == DeferredStatus.FAILED:
+        reply.status = DeferredStatus.DISMISSED
+        reply.save(update_fields=["status", "updated_at"])
+        return True
     return _stand_down(reply)
 
 

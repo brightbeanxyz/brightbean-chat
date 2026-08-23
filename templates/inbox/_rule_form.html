@@ -1,0 +1,134 @@
+{% comment %}
+The rule editor. Three condition halves and three actions, in one form.
+
+The contact half is templates/contacts/_filter_bar.html — the same builder the
+segment editor uses, driven by the same payload from
+apps.contacts.builder.builder_config. It serialises its Alpine state into one
+hidden `filter` input, so the server hands the document straight to the condition
+engine instead of re-assembling it from separate fields; a second parser for a
+language that already has one is exactly what ROADMAP contract 8 exists to
+prevent. Its script half has to come with it — see the include at the bottom.
+{% endcomment %}
+{% load common_extras %}
+<div id="inbox-rule-editor" x-data="contactFilters({{ filter_config|json_attr }})">
+  <form hx-post="{% url 'inbox:rule_save' workspace_id=request.workspace.id %}">
+    {% if rule %}<input type="hidden" name="rule" value="{{ rule.id }}" />{% endif %}
+
+    <label for="rule-name">Name</label>
+    <input id="rule-name" type="text" name="name" maxlength="120" required
+           value="{{ rule.name|default:'' }}" placeholder="Refund requests to the billing team" />
+
+    <label>
+      <input type="checkbox" name="enabled" {% if not rule or rule.enabled %}checked{% endif %} />
+      Enabled
+    </label>
+
+    <fieldset>
+      <legend>When a message arrives</legend>
+      <p class="muted">
+        A rule needs at least one condition. Every condition it carries has to
+        match; a condition it leaves empty is not a filter.
+      </p>
+
+      <label for="rule-platforms">On these channels</label>
+      <select id="rule-platforms" name="platform" multiple size="4">
+        {% for value, label in platform_options %}
+          <option value="{{ value }}"
+                  {% if value in condition.channel.platforms %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+
+      <label for="rule-connections">On these connections</label>
+      <select id="rule-connections" name="connection" multiple size="4">
+        {% for connection in connections %}
+          <option value="{{ connection.id }}"
+                  {% if connection.id|stringformat:'s' in condition.channel.connection_ids %}selected{% endif %}>
+            {{ connection.display_name }}
+          </option>
+        {% endfor %}
+      </select>
+
+      <fieldset>
+        <legend>Containing any of these words</legend>
+        {% comment %}
+          Two parallel lists, the shape apps/flows/triggers/forms.py already
+          parses for keyword triggers — and the same three modes, matched by
+          apps.flows.triggers.keywords, so a rule and a trigger agree about what
+          "any_word" means.
+        {% endcomment %}
+        {% for keyword in condition.keywords %}
+          <div class="ib-keyword">
+            <label class="sr-only" for="rule-kw-{{ forloop.counter }}">Keyword</label>
+            <input id="rule-kw-{{ forloop.counter }}" type="text" name="keyword_text"
+                   value="{{ keyword.text }}" maxlength="200" />
+            <label class="sr-only" for="rule-kwmode-{{ forloop.counter }}">Match mode</label>
+            <select id="rule-kwmode-{{ forloop.counter }}" name="keyword_mode">
+              <option value="contains" {% if keyword.mode == 'contains' %}selected{% endif %}>contains</option>
+              <option value="exact" {% if keyword.mode == 'exact' %}selected{% endif %}>is exactly</option>
+              <option value="any_word" {% if keyword.mode == 'any_word' %}selected{% endif %}>as a whole word</option>
+            </select>
+          </div>
+        {% endfor %}
+        <div class="ib-keyword">
+          <label class="sr-only" for="rule-kw-new">Keyword</label>
+          <input id="rule-kw-new" type="text" name="keyword_text" maxlength="200" placeholder="refund" />
+          <label class="sr-only" for="rule-kwmode-new">Match mode</label>
+          <select id="rule-kwmode-new" name="keyword_mode">
+            <option value="contains">contains</option>
+            <option value="exact">is exactly</option>
+            <option value="any_word">as a whole word</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>And the contact matches</legend>
+        {% comment %}
+          The partial carries its own hidden `filter` input (line 131 there), so
+          there is nothing to add here — and adding a second one would post the
+          document twice.
+        {% endcomment %}
+        {% include "contacts/_filter_bar.html" %}
+      </fieldset>
+    </fieldset>
+
+    <fieldset>
+      <legend>Then</legend>
+      <label for="rule-labels">Add these labels</label>
+      <select id="rule-labels" name="action_label" multiple size="4">
+        {% for label in labels %}<option value="{{ label.id }}">{{ label.name }}</option>{% endfor %}
+      </select>
+
+      <label for="rule-assignee">Assign to</label>
+      <select id="rule-assignee" name="action_assignee">
+        <option value="">Nobody</option>
+        {% for member in members %}<option value="{{ member.user_id }}">{{ member.user.display_name }}</option>{% endfor %}
+      </select>
+      <p class="muted">Only when nobody has the conversation already — a rule never takes a thread off a colleague.</p>
+
+      <label>
+        <input type="checkbox" name="action_done" />
+        Mark done
+      </label>
+      <p class="muted">
+        An automated reply reopens a conversation, so “mark done” means done
+        unless a flow answers it.
+      </p>
+    </fieldset>
+
+    <button type="submit">Save rule</button>
+    <button type="button"
+            hx-post="{% url 'inbox:rule_test' workspace_id=request.workspace.id %}"
+            hx-include="closest form"
+            hx-target="#inbox-rule-test"
+            hx-swap="outerHTML">Test against recent messages</button>
+  </form>
+
+  <div id="inbox-rule-test"></div>
+</div>
+{% comment %}
+The builder's script is NOT included here. `contactFilters` has to be defined
+before Alpine initialises this markup, and this partial arrives by htmx swap
+long after Alpine booted — so rule_settings.html defines it in its
+alpine_components block, exactly as contacts/list.html does for its own copy.
+{% endcomment %}

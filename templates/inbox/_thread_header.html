@@ -60,3 +60,38 @@ it under the reader mid-choice.
     <span class="ib-chip">Read only</span>
   {% endif %}
 </header>
+
+{% comment %}
+  Labels, in the header rather than the polled body: the picker is a <select>,
+  and a three-second swap would close it under the reader mid-choice — the same
+  reason the assignee control lives up here.
+
+  `chip.color` is the vetted value from apps.inbox.rendering; the stored column
+  never reaches a style attribute. See LabelChip.
+{% endcomment %}
+<div class="ib-thread-labels">
+  {% for chip in thread_labels %}
+    <span class="ib-label-chip" style="--chip-ink: {{ chip.color }};">
+      {{ chip.name }}
+      {% if can_reply %}
+        <form hx-post="{% url 'inbox:remove_label' workspace_id=request.workspace.id conversation_id=conversation.id label_id=chip.id %}"
+              hx-swap="none">
+          {% csrf_token %}
+          <button type="submit" class="btn-icon-hover" aria-label="Remove label {{ chip.name }}">×</button>
+        </form>
+      {% endif %}
+    </span>
+  {% endfor %}
+  {% if can_reply and label_options %}
+    <form hx-post="{% url 'inbox:add_label' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+          hx-swap="none"
+          hx-trigger="change">
+      {% csrf_token %}
+      <label class="sr-only" for="label-picker-{{ conversation.id }}">Add a label</label>
+      <select class="bb-select" id="label-picker-{{ conversation.id }}" name="label">
+        <option value="">Add a label…</option>
+        {% for option in label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
+      </select>
+    </form>
+  {% endif %}
+</div>

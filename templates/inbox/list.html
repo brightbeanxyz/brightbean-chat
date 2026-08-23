@@ -49,6 +49,7 @@ inert.
         state: '{{ state|escapejs }}',
         connection: '{{ connection|escapejs }}',
         assignee: '{{ assignee|escapejs }}',
+        label: '{{ label|escapejs }}',
         reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
         move(step) {
           const rows = Array.from(document.querySelectorAll('#inbox-list [data-conversation]'));
@@ -79,10 +80,12 @@ inert.
     <input type="hidden" name="state" x-model="state">
     <input type="hidden" name="connection" x-model="connection">
     <input type="hidden" name="assignee" x-model="assignee">
+    <input type="hidden" name="label" x-model="label">
     <input type="hidden" name="open" value="{{ open_conversation_id }}">
     {% ui_select model="state" options=state_options placeholder="All states" icon="status" onchange="reload()" %}
     {% ui_select model="connection" options=connections placeholder="All channels" icon="channel" value_field="id" label_field="display_name" icon_field="platform" onchange="reload()" %}
     {% ui_select model="assignee" options=assignee_options placeholder="Anyone" icon="tag" onchange="reload()" %}
+    {% ui_select model="label" options=label_options placeholder="Any label" icon="tag" onchange="reload()" %}
   </form>
 
   <div class="ib-shell">
@@ -215,6 +218,87 @@ inert.
     // And the first render, which no swap covers — a deep link to a thread
     // would otherwise open on the oldest message in its history.
     toBottom();
+  })();
+</script>
+
+<script nonce="{{ request.csp_nonce }}">
+  // The compose box's two issue-#24 affordances: attachments and "send later".
+  //
+  // Defined here rather than in inbox/_composer.html because that partial is
+  // re-fetched after every send, and a script inside it would be re-evaluated
+  // each time. Alpine needs the x-data factory to already exist when the swapped
+  // markup arrives, which this block — rendered before Alpine's own deferred
+  // tag — is exactly the window for.
+  function inboxAttachments() {
+    return {
+      items: [],
+      add(item) {
+        if (this.items.some((existing) => existing.id === item.id)) return;
+        this.items.push(item);
+      },
+      drop(id) {
+        this.items = this.items.filter((item) => item.id !== id);
+      },
+    };
+  }
+</script>
+
+<script nonce="{{ request.csp_nonce }}">
+  // Delegated from the document, not bound to the buttons: the composer is
+  // replaced wholesale on every send, and a listener attached to a button
+  // inside it would be thrown away with the markup.
+  (function () {
+    document.addEventListener('click', function (event) {
+      var toggle = event.target.closest('[data-schedule-toggle]');
+      if (toggle) {
+        var panel = document.getElementById(toggle.getAttribute('aria-controls'));
+        if (!panel) return;
+        var open = panel.hasAttribute('hidden');
+        panel.toggleAttribute('hidden', !open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        return;
+      }
+
+      var picker = event.target.closest('[data-media-picker]');
+      if (picker) openPicker(picker);
+    });
+
+    // The library picker (#16). Its payload is documented in
+    // apps/media_library/picker.py; two rules from that contract are load-bearing
+    // here. Store `id`, never `url` — the URL is minted per request. And
+    // `platform_warnings` is advisory: the target platform is not fixed until
+    // send time, so an asset too large for one channel is still fine on another.
+    function openPicker(button) {
+      var url = new URL(button.getAttribute('data-picker-url'), window.location.origin);
+      url.searchParams.set('platform', button.getAttribute('data-platform') || '');
+      fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' })
+        .then(function (response) { return response.ok ? response.json() : null; })
+        .then(function (payload) {
+          if (!payload) return;
+          var kinds = (button.getAttribute('data-kinds') || '').split(',').filter(Boolean);
+          var choices = (payload.results || []).filter(function (asset) {
+            return kinds.indexOf(asset.kind) !== -1;
+          });
+          if (!choices.length) {
+            window.dispatchEvent(new CustomEvent('showToast', {
+              detail: { tone: 'info', title: 'Nothing to attach', body: 'This channel takes ' + kinds.join(', ') + '.' },
+            }));
+            return;
+          }
+          var box = button.closest('form').querySelector('.ib-attachments');
+          var state = box && window.Alpine ? window.Alpine.$data(box) : null;
+          if (!state) return;
+          var max = parseInt(button.getAttribute('data-max'), 10) || 1;
+          choices.slice(0, max - state.items.length).forEach(function (asset) {
+            state.add({ id: asset.id, name: asset.title || asset.filename });
+          });
+        })
+        .catch(function () {
+          window.dispatchEvent(new CustomEvent('showToast', {
+            detail: { tone: 'error', title: 'Library unavailable', body: 'Could not load the media library.' },
+          }));
+        });
+    }
   })();
 </script>
 {% endblock %}

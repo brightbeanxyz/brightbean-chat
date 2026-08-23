@@ -86,6 +86,11 @@ class DeferredStatus(models.TextChoices):
     SENT = "sent", "Sent"
     FAILED = "failed", "Failed"
     CANCELLED = "cancelled", "Cancelled"
+    #: A failure an operator has read and taken off the thread. Distinct from
+    #: ``CANCELLED`` because "it never went out because I called it off" and "it
+    #: never went out because the platform refused it, and I have seen that" are
+    #: different facts, and the second one is the one an audit wants back.
+    DISMISSED = "dismissed", "Dismissed"
 
 
 class ConversationScopedModel(WorkspaceScopedModel):
