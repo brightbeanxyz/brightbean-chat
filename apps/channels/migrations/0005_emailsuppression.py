@@ -9,12 +9,12 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        # Re-parented onto 0003 when L5-D's sms_settings landed there first.
-        # Two migrations sharing 0002 as a parent is two leaf nodes, which Django
-        # refuses to migrate at all — and this one had never been applied
-        # anywhere outside its own branch, so moving it is honest where a merge
-        # migration would just record the collision.
-        ('channels', '0003_sms_settings'),
+        # Re-parented twice, as L5-D's sms_settings and then L5-C's WhatsApp
+        # tables reached main ahead of this one. Two migrations sharing a parent
+        # is two leaf nodes, which Django refuses to migrate at all — and this
+        # one has never been applied anywhere outside its own branch, so moving
+        # it is honest where a merge migration would just record the collision.
+        ('channels', '0004_whatsappcosthint_whatsapptemplate'),
         ('workspaces', '0001_initial'),
     ]
 

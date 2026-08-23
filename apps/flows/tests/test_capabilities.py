@@ -125,6 +125,44 @@ class TestLimits:
         assert [issue.code for issue in result.warnings] == ["capability_limit_exceeded"]
 
 
+class TestExclusiveInteraction:
+    """A platform that shows buttons *or* quick replies has to say so.
+
+    Without the warning the panel reports "WhatsApp allows 10 quick replies" and
+    falls silent, while every one of them actually reaches the contact as
+    numbered text — the buttons took the only control set the message has.
+    """
+
+    @staticmethod
+    def both_graph():
+        graph = empty_graph()
+        node = node_fixture("send_message", node_id="both")
+        node["config"] = {
+            "blocks": [{"type": "text", "text": "Pick"}],
+            "buttons": [{"id": "a", "label": "A", "action": "postback"}],
+            "quick_replies": [{"id": "q", "label": "Q"}],
+        }
+        graph["nodes"] = [node]
+        return graph
+
+    def test_whatsapp_warns_when_a_node_declares_both(self):
+        result = validate_graph(self.both_graph(), platforms=[Platform.WHATSAPP])
+
+        assert any("not both" in issue.message for issue in result.warnings)
+        assert result.errors == []
+
+    def test_telegram_shows_both_and_says_nothing(self):
+        result = validate_graph(self.both_graph(), platforms=[Platform.TELEGRAM])
+
+        assert result.warnings == []
+
+    def test_neither_kind_alone_warns_on_whatsapp(self):
+        graph = self.both_graph()
+        graph["nodes"][0]["config"].pop("quick_replies")
+
+        assert validate_graph(graph, platforms=[Platform.WHATSAPP]).warnings == []
+
+
 class TestMissingConnections:
     def test_an_sms_node_with_no_sms_channel_warns(self):
         result = validate_graph(graph_for("send_sms"), platforms=[Platform.TELEGRAM])

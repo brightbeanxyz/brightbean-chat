@@ -905,8 +905,15 @@ class TestDispatchSeam:
 
 class TestNoAdapter:
     def test_a_platform_with_no_adapter_answers_503(self, client: Client, secret: str) -> None:
-        """The shipped state for every platform. Retryable, and not a 403."""
-        response = post(client, "/webhooks/whatsapp/", body_for("e1"), secret=secret)
+        """A platform whose adapter has not shipped. Retryable, and not a 403.
+
+        The empty slot is now something a test has to arrange: WhatsApp got its
+        adapter with issue #19, and every remaining Layer-5 issue fills another.
+        ``unregistered`` says so out loud instead of the assertion depending on
+        which platform happens to be next.
+        """
+        with unregistered(Platform.WHATSAPP):
+            response = post(client, "/webhooks/whatsapp/", body_for("e1"), secret=secret)
         assert response.status_code == 503
 
     def test_an_unknown_platform_is_404(self, client: Client) -> None:

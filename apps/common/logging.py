@@ -119,6 +119,21 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
+    # Meta access tokens, which every Graph-based adapter carries: an "EAA"
+    # prefix followed by a long base64url body. The Cloud API adapter (#19)
+    # keeps its token in an Authorization header, which the scheme rule above
+    # already covers — this catches the other ways one reaches a log: an
+    # operator pasting a token into a support thread, a form error rendering the
+    # submitted value, a traceback from the credential form.
+    #
+    # The character class has to include ``-`` and ``_``, and that is not a
+    # detail. base64url uses both, so a real token has one within the first few
+    # characters more often than not — and an alphanumeric-only class does not
+    # merely truncate the match there, it fails to reach the ``{20,}`` minimum
+    # and does not fire at all, leaving the whole credential in the log. The
+    # first version of this rule had that bug, and the fixture it was tested
+    # against was all-alphanumeric, so the test could not have caught it.
+    (re.compile(r"\bEAA[A-Za-z0-9_\-]{20,}"), REDACTED),
     # Twilio account SIDs and API keys: a two-letter prefix plus 32 hex.
     #
     # The account SID is not itself a secret, but it identifies the account and

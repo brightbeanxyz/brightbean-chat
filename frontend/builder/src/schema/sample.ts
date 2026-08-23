@@ -45,10 +45,15 @@ export interface SampleOptions {
 /**
  * A string that satisfies `pattern`.
  *
- * Only the three patterns the artefact actually uses are handled. An unknown one
+ * Only the patterns the artefact actually uses are handled. An unknown one
  * throws rather than returning something invalid: this function's whole job is
  * producing configs that pass, and a silent near-miss would surface as a 422
  * from a node the user never edited.
+ *
+ * A pattern added on the server side lands here as a failing test rather than a
+ * broken panel, which is ROADMAP contract 2 working: the schema module is the
+ * single source of truth and "changing entries requires touching both
+ * consumers" is enforced by this throw.
  */
 function stringForPattern(pattern: string, hint: string): string {
   switch (pattern) {
@@ -63,6 +68,16 @@ function stringForPattern(pattern: string, hint: string): string {
       return "00000000-0000-0000-0000-000000000000";
     case "^(?:default|timeout|error|cond:(?:true|false)|(?:btn|qr|rand):[A-Za-z0-9_-]{1,64})$":
       return "default";
+    case "^[a-z0-9_]{1,512}/[A-Za-z_]{2,10}$":
+      // A WhatsApp template reference, `<name>/<language>` (issue #19). Like
+      // the uuid above, a placed node starts pointing at nothing real and the
+      // panel's template picker is how it gets filled in — so the placeholder
+      // only has to be well-formed, not resolvable.
+      return "template_name/en_US";
+    case "^(header|body|button\\.[0-9]{1,2})\\.[0-9]{1,3}$":
+      // Which of a template's numbered slots this value fills. The first body
+      // slot is the one every template with variables has.
+      return "body.1";
     default:
       throw new Error(`No sample value known for pattern ${pattern} — teach schema/sample.ts about it.`);
   }

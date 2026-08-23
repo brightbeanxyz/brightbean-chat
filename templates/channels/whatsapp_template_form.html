@@ -1,0 +1,49 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}WhatsApp template · BrightBean Chat{% endblock %}
+{% block page_header %}
+  <h1>{% if template %}Edit template{% else %}New template{% endif %}</h1>
+{% endblock %}
+
+{% block content %}
+  {% if not editable %}
+    <div class="alert-warn">
+      <p>
+        This template is with Meta, or already approved, so it cannot be edited —
+        the copy under review is the one Meta holds. Delete it and write a new one
+        if it needs to change.
+      </p>
+    </div>
+  {% endif %}
+
+  <p class="muted">
+    Write the message once and mark the parts that change with
+    <code>{{ open_brace }}1{{ close_brace }}</code>,
+    <code>{{ open_brace }}2{{ close_brace }}</code> and so on. Meta numbers
+    variables per section, so a header's first variable and a body's first
+    variable are two different values.
+  </p>
+
+  {% comment %}
+  The preview posts the form as it is typed and swaps the rendered result back
+  into a div *inside* the form. That placement is load-bearing: the fragment
+  renders one input per variable, and HTMX serialises the whole form on the next
+  keystroke — so the sample values an operator types are part of the next
+  preview. It renders through the same substitution the send path uses, so what
+  is shown here and what a contact receives cannot drift.
+  {% endcomment %}
+  <form method="post"
+        hx-post="{{ preview_url }}"
+        hx-trigger="input changed delay:300ms, load"
+        hx-target="#template-preview"
+        hx-swap="innerHTML">
+    {% csrf_token %}
+    {{ form.as_p }}
+
+    <h2>Preview</h2>
+    <div id="template-preview" class="muted"><p>Start typing to see the message.</p></div>
+
+    {% if editable %}<button type="submit">Save draft</button>{% endif %}
+  </form>
+
+  <p><a href="{{ list_url }}">Back to templates</a></p>
+{% endblock %}

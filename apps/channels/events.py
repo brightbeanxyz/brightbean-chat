@@ -237,6 +237,26 @@ class OutboundMessage:
     quick_replies: tuple[QuickReply, ...] = ()
     tag: str | None = None
     template_ref: str | None = None
+    #: The values that fill an approved template's ``{{1}}``-style slots, as
+    #: ordered ``(slot, value)`` pairs — ``("body.1", "Ada")``, ``("header.1",
+    #: "March")``, ``("button.0.1", "order/42")``.
+    #:
+    #: A tuple of pairs rather than a dict for the reason this whole module is
+    #: frozen dataclasses with tuple collections: these objects are handed to a
+    #: chain of processors that must not be able to mutate each other's input.
+    #: The slot strings are the platform-neutral half — an adapter groups them
+    #: into whatever its own template payload looks like — so nothing here
+    #: knows what a WhatsApp component is.
+    #:
+    #: **Already rendered.** Substitution happens in the flow engine, where the
+    #: contact and the variable bag are, through the one shared renderer
+    #: (SECURITY-BASELINE §3). An adapter receives finished strings and must
+    #: never render them again.
+    #:
+    #: Additive to the SPEC §7.2 shape, like ``node_id`` before it: readers that
+    #: do not know the key ignore it, and an older row without it reads back as
+    #: empty.
+    template_variables: tuple[tuple[str, str], ...] = ()
     #: The flow node this message came from, where one did (issue #12).
     #:
     #: SPEC §6.2 requires Telegram's ``callback_data`` to carry
@@ -302,6 +322,9 @@ class OutboundMessage:
             "quick_replies": [{"id": qr.id, "label": qr.label} for qr in self.quick_replies],
             "tag": self.tag,
             "template_ref": self.template_ref,
+            # As a list of two-element lists: json has no tuples, and a dict
+            # keyed by slot would lose the order the components are built in.
+            "template_variables": [[slot, value] for slot, value in self.template_variables],
             "node_id": self.node_id,
             "subject": self.subject,
             "from_override": self.from_override,

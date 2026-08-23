@@ -272,12 +272,14 @@ class TestTheGenericFormRefusesTelegram:
     on Telegram" link.
     """
 
-    def test_telegram_is_not_offered(self, client: Client, tenancy: Tenancy) -> None:
+    def test_telegram_is_not_offered(self, client: Client, tenancy: Tenancy, ungated_platform: str) -> None:
         url = reverse("channels:create", kwargs={"workspace_id": tenancy.workspace.pk})
         body = as_admin(client, tenancy).get(url).content.decode()
         assert 'value="telegram"' not in body
-        # And the platforms that have no guided flow yet are still offered.
-        assert 'value="whatsapp"' in body
+        # And a platform that has no guided flow yet is still offered. Asked of
+        # CONNECT_ROUTES rather than named: WhatsApp used to stand here and
+        # stopped being a valid example the moment #19 gave it a flow.
+        assert f'value="{ungated_platform}"' in body
 
     def test_a_hand_crafted_post_is_refused(self, client: Client, tenancy: Tenancy) -> None:
         """The rendered choices are the visible half; a POST need not come from

@@ -1132,6 +1132,14 @@ span.flatpickr-weekday {
 .status-pill-needs_reauth { background: var(--warning-50); color: var(--warning-700); }
 .status-pill-disabled     { background: var(--neutral-100); color: var(--text-secondary); }
 
+/* WhatsApp template review states (issue #19). Same vocabulary, same fallback:
+   a value with no rule here renders as the neutral base rather than unstyled.
+   `draft` deliberately has no rule of its own — the neutral base is exactly
+   what "not submitted yet" should look like. */
+.status-pill-pending      { background: var(--warning-50); color: var(--warning-700); }
+.status-pill-approved     { background: var(--success-50); color: var(--success-700); }
+.status-pill-rejected     { background: var(--error-50); color: var(--error-700); }
+
 /* Tint the glyph itself rather than the chip behind it. */
 .pi-ink-telegram  { color: var(--platform-telegram); }
 .pi-ink-instagram { color: var(--platform-instagram); }
