@@ -530,4 +530,16 @@ jobs:
           gitleaks version
 
       - name: Run gitleaks
-        run: gitleaks detect --source . --redact --verbose --no-banner
+        # --log-opts=HEAD restricts the scan to the commits reachable from what
+        # was checked out: on a pull request that is the merge of the branch
+        # into its base, and on a push to main it is main. Without it gitleaks
+        # scans *every* ref, and `fetch-depth: 0` above puts every branch in the
+        # runner's clone — so one open branch carrying a credential-shaped test
+        # fixture turned this check red on every other open PR at the same time,
+        # with nothing the other authors could do about it.
+        #
+        # No coverage is lost. A secret committed on branch B still fails B's
+        # own pull request, which is the run that can actually do something
+        # about it, and still fails the push to main if it ever merges. What
+        # goes is only the cross-contamination.
+        run: gitleaks detect --source . --log-opts=HEAD --redact --verbose --no-banner
