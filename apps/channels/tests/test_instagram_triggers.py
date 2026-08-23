@@ -9,6 +9,7 @@ event type and reaches the right trigger through the production pipeline.
 
 import json
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -221,6 +222,29 @@ class TestPostPicker:
         assert client_for(other_tenancy.owner).get(self.url(tenancy)).status_code == 404
 
 
+@contextmanager
+def _only_instagram_responds() -> Iterator[None]:
+    """Narrow the responder registry to Instagram for the duration.
+
+    Both tests below are about what the form does when **nothing registered can
+    like a comment**, which stopped being the same thing as "Instagram" the moment
+    a second platform shipped comment automation (#18's Messenger can like a Page
+    comment). Restores whatever was there, rather than clearing the slot — the
+    lesson ``fake_adapter.swapped_adapter`` records.
+    """
+    from apps.flows.triggers import comments as comment_registry
+
+    saved = dict(comment_registry._RESPONDERS)
+    for platform in list(comment_registry._RESPONDERS):
+        if platform != "instagram":
+            comment_registry._RESPONDERS.pop(platform)
+    try:
+        yield
+    finally:
+        comment_registry._RESPONDERS.clear()
+        comment_registry._RESPONDERS.update(saved)
+
+
 class TestTheTriggerForm:
     """The two things the form reads off the comment-responder registry."""
 
@@ -230,12 +254,22 @@ class TestTheTriggerForm:
             kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk},
         )
 
-    def test_the_like_checkbox_is_absent_for_instagram(
+    def test_the_like_checkbox_is_absent_when_no_platform_can_like(
         self, client_for: Any, tenancy: Tenancy, thanks_flow: Flow
     ) -> None:
         """Meta publishes no way to like an Instagram comment, so offering the
-        option would be offering something that silently never happens."""
-        response = client_for(tenancy.owner).get(self.form_url(tenancy, thanks_flow), {"type": "comment"})
+        option would be offering something that silently never happens.
+
+        Asserted against the *rule* rather than against Instagram alone.
+        ``comments.like_supported_on`` is a disjunction over every platform SPEC
+        §10 lists for the type — its own docstring says the option "appears while
+        at least one of them could honour it" — so once #18 registered Messenger,
+        which can like a Page comment, the control legitimately appears for an
+        unbound trigger. What has to stay true is that it disappears when nothing
+        registered can like.
+        """
+        with _only_instagram_responds():
+            response = client_for(tenancy.owner).get(self.form_url(tenancy, thanks_flow), {"type": "comment"})
         assert response.status_code == 200
         assert b'name="like_comment"' not in response.content
 
@@ -258,5 +292,6 @@ class TestTheTriggerForm:
             TriggerType.COMMENT,
             {"post_scope": "all", "like_comment": True, "public_reply": {"mode": "none", "texts": []}},
         )
-        response = client_for(tenancy.owner).get(self.form_url(tenancy, thanks_flow), {"trigger": str(trigger.pk)})
+        with _only_instagram_responds():
+            response = client_for(tenancy.owner).get(self.form_url(tenancy, thanks_flow), {"trigger": str(trigger.pk)})
         assert b'type="hidden" name="like_comment"' in response.content

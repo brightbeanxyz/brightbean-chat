@@ -1,0 +1,623 @@
+"""Comment to DM, end to end — SPEC §10's comment trigger on Messenger.
+
+    public reply and like are executed via the platform API, the private reply
+    (the flow's first message) counts against the one-private-reply-per-comment
+    rule; store handled comment ids to enforce once_per_contact_per_post and the
+    7-day private-reply deadline.
+
+L4-A built every platform-agnostic part of that: ``TriggerType.COMMENT``, the
+matcher, ``HandledComment`` and the two guards. What #18 adds is a parser, a
+registration on ``apps.flows.triggers.comments``, and the worker that answers.
+
+--------------------------------------------------------------------------
+The one subtle thing, and why it is a test rather than a comment
+--------------------------------------------------------------------------
+
+A comment creates **no contact** — ``apps.messaging.ingest`` says so at length,
+because one viral post would otherwise be a contact-spam amplifier. So before the
+trigger's flow can run there has to be an identity, and before its first message
+can go out there has to be an open messaging window. Both of those are written by
+exactly one place in the project (ROADMAP contract 3, enforced by an AST scan),
+and that place is ``persist_events`` applying an inbound event.
+
+So the comment→DM transition is expressed as the event it actually is: this
+person has started a conversation. ``TestTheWindowIsOpenedByTheOneWriteSite``
+below is what holds that — if a future change opens the window some other way,
+this is the test that should stop it.
+"""
+
+from datetime import timedelta
+from typing import Any
+
+import pytest
+from django.test import Client
+from django.utils import timezone
+
+from apps.channels.models import ChannelConnection
+from apps.channels.providers import messenger as messenger_adapter
+from apps.channels.tests.messenger_support import PSID, fake_graph, load_delivery, post_webhook
+from apps.flows.models import Flow, FlowExecution, HandledComment, Trigger, TriggerType
+from apps.flows.tests.support import graph, node, published_flow
+from apps.flows.triggers.services import create_trigger
+from apps.messaging.models import ContactChannelIdentity, Message, MessageDirection
+from apps.queueing.models import ScheduledAction
+from apps.queueing.worker import process_action
+from tests.support import Tenancy
+
+pytestmark = pytest.mark.django_db
+
+PRIVATE_REPLY = "Thanks for asking! It is £40 — shall I send you the link?"
+
+
+@pytest.fixture(autouse=True)
+def real_pipeline() -> None:
+    """The real contract-6 processors. See ``test_messenger_e2e.real_pipeline``."""
+    from apps.channels import ingest as channels_ingest
+    from apps.flows.triggers.pipeline import ROUTING_PROCESSOR, route_events
+    from apps.messaging.ingest import PERSISTENCE_PROCESSOR, persist_events
+
+    channels_ingest.register_processor(persist_events, name=PERSISTENCE_PROCESSOR)
+    channels_ingest.register_processor(route_events, name=ROUTING_PROCESSOR)
+
+
+@pytest.fixture
+def comment_flow(tenancy: Tenancy) -> Flow:
+    return published_flow(
+        tenancy.workspace,
+        graph([node("start", "send_message", {"blocks": [{"type": "text", "text": PRIVATE_REPLY}]})]),
+        name="Comment to DM",
+    )
+
+
+@pytest.fixture
+def comment_trigger(comment_flow: Flow, page: ChannelConnection) -> Trigger:
+    return create_trigger(
+        comment_flow,
+        trigger_type=TriggerType.COMMENT,
+        config={
+            "post_scope": "all",
+            "post_ids": [],
+            "include_keywords": [],
+            "exclude_keywords": [],
+            "top_level_only": True,
+            "once_per_contact_per_post": True,
+            "like_comment": True,
+            "public_reply": {"mode": "static", "texts": ["Sent you a DM!"]},
+        },
+        connection=page,
+    )
+
+
+def deliver_comment(client: Client, *, comment_id: str = "", message: str = "") -> Any:
+    """POST the recorded comment delivery, stamped with a current ``created_time``.
+
+    The fixture holds a fixed moment so its *shape* is a real one, but SPEC §10's
+    private-reply deadline is measured from that field — so a recorded payload
+    replayed a year later is, correctly, a comment too old to answer. Restamping
+    is what keeps these tests about the comment path rather than about the clock;
+    the deadline itself has its own test, which sets the timestamp deliberately.
+    """
+    payload = load_delivery("feed_comment")
+    value = payload["entry"][0]["changes"][0]["value"]
+    value["created_time"] = int(timezone.now().timestamp())
+    if comment_id:
+        value["comment_id"] = comment_id
+    if message:
+        value["message"] = message
+    with fake_graph() as calls:
+        response = post_webhook(client, payload)
+    return response, calls
+
+
+#: Both halves of the follow-up, in the order the worker would reach them.
+COMMENT_ACTIONS = (messenger_adapter.COMMENT_ACTION, messenger_adapter.COMMENT_DM_ACTION)
+
+
+def queued(*types: str) -> Any:
+    return ScheduledAction.objects.unscoped().filter(type__in=types or COMMENT_ACTIONS).order_by("type")
+
+
+def run_queued_actions(*types: str) -> Any:
+    """Drain the comment follow-up the webhook enqueued.
+
+    Through ``apps.queueing.worker.process_action`` rather than by calling the
+    handler, so the queue's own claiming, retry and idempotency behaviour is in
+    the path — the same reasoning ``apps/flows/tests/test_handlers.py`` gives.
+    """
+    with fake_graph() as calls:
+        for action in queued(*types):
+            process_action(action)
+    return calls
+
+
+class TestTheClaim:
+    def test_a_comment_is_claimed_and_a_follow_up_is_enqueued(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        response, inline = deliver_comment(client)
+        assert response.status_code == 200
+
+        row = HandledComment.objects.unscoped().get()
+        assert row.trigger_id == comment_trigger.pk
+        assert row.commenter_ref == PSID
+        assert row.contact_id is None  # no contact until the DM opens one
+
+        # Two actions, not one: the public reply and the DM have opposite retry
+        # policies, so they cannot share a queue row (see ``COMMENT_ACTION``).
+        assert sorted(row.type for row in queued()) == sorted(COMMENT_ACTIONS)
+        # Nothing was called inline: three Graph round trips would blow SPEC
+        # §7.1's 1.5 s budget for the whole webhook path.
+        assert inline.calls == []
+
+    def test_a_redelivery_claims_nothing_further(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        deliver_comment(client)
+        deliver_comment(client)
+        assert HandledComment.objects.unscoped().count() == 1
+        assert queued().count() == len(COMMENT_ACTIONS)
+
+    def test_a_comment_that_does_not_match_the_keywords_claims_nothing(
+        self, client: Client, tenancy: Tenancy, comment_flow: Flow, page: ChannelConnection
+    ) -> None:
+        create_trigger(
+            comment_flow,
+            trigger_type=TriggerType.COMMENT,
+            config={"post_scope": "all", "include_keywords": ["price"], "top_level_only": True},
+            connection=page,
+        )
+        deliver_comment(client, message="lovely photo")
+        assert not HandledComment.objects.unscoped().exists()
+
+    def test_a_comment_past_the_seven_day_deadline_is_never_claimed(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """Claiming would spend the once-per-post guard on a reply Meta refuses."""
+        payload = load_delivery("feed_comment")
+        eight_days_ago = timezone.now() - timedelta(days=8)
+        payload["entry"][0]["changes"][0]["value"]["created_time"] = int(eight_days_ago.timestamp())
+        with fake_graph():
+            post_webhook(client, payload)
+        assert not HandledComment.objects.unscoped().exists()
+
+    def test_a_comment_with_no_trigger_claims_nothing(self, client: Client, page: ChannelConnection) -> None:
+        deliver_comment(client)
+        assert not HandledComment.objects.unscoped().exists()
+        assert not queued().exists()
+
+
+class TestTheFollowUp:
+    def test_the_public_reply_and_the_like_go_out(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        deliver_comment(client)
+        calls = run_queued_actions()
+        row = HandledComment.objects.unscoped().get()
+
+        assert calls.bodies(f"/{row.comment_id}/comments") == [{"message": "Sent you a DM!"}]
+        assert any(call.matches(f"/{row.comment_id}/likes") for call in calls.calls)
+
+    def test_neither_is_sent_when_the_trigger_does_not_ask_for_them(
+        self, client: Client, tenancy: Tenancy, comment_flow: Flow, page: ChannelConnection
+    ) -> None:
+        create_trigger(
+            comment_flow,
+            trigger_type=TriggerType.COMMENT,
+            config={"post_scope": "all", "top_level_only": True, "public_reply": {"mode": "none"}},
+            connection=page,
+        )
+        deliver_comment(client)
+        calls = run_queued_actions()
+        assert not any("/comments" in call.path or "/likes" in call.path for call in calls.calls)
+
+    def test_a_failed_public_reply_does_not_cost_the_private_one(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The private reply is the half that actually starts the conversation."""
+        from apps.channels.tests.messenger_support import Reply
+
+        deliver_comment(client)
+        with fake_graph() as calls:
+            calls.reply("/comments", Reply(status=500))
+            for action in queued():
+                process_action(action)
+        assert calls.bodies("/messages")
+
+
+class TestThePrivateReplyIsTheFlowsFirstMessage:
+    def test_it_is_addressed_by_comment_id_and_carries_the_flows_text(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """SPEC §10, literally: Meta allows exactly one message in reply to a comment.
+
+        So an opener followed by the flow's real first message would have the
+        second one refused — the flow's first message has to *be* the private
+        reply, and the adapter addresses it that way.
+        """
+        deliver_comment(client)
+        calls = run_queued_actions()
+        row = HandledComment.objects.unscoped().get()
+
+        (body,) = calls.bodies("/messages")
+        assert body["recipient"] == {"comment_id": row.comment_id}
+        assert body["message"]["text"] == PRIVATE_REPLY
+
+    def test_the_flow_really_ran(self, client: Client, page: ChannelConnection, comment_trigger: Trigger) -> None:
+        deliver_comment(client)
+        run_queued_actions()
+        execution = FlowExecution.objects.unscoped().get()
+        assert execution.flow_version.flow_id == comment_trigger.flow_id
+
+    def test_the_guard_is_spent_and_the_contact_recorded(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        deliver_comment(client)
+        run_queued_actions()
+        row = HandledComment.objects.unscoped().get()
+        assert row.private_reply_sent_at is not None
+        assert row.contact_id is not None
+
+    def test_a_second_comment_from_the_same_person_on_the_same_post_sends_no_second_reply(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """``once_per_contact_per_post``, arbitrated by the database rather than a read."""
+        deliver_comment(client)
+        run_queued_actions()
+        first_count = Message.objects.unscoped().filter(direction=MessageDirection.OUT).count()
+
+        deliver_comment(client, comment_id="111111111111111_9099", message="still interested?")
+        calls = run_queued_actions()
+        assert calls.bodies("/messages") == []
+        assert Message.objects.unscoped().filter(direction=MessageDirection.OUT).count() == first_count
+
+    def test_running_the_action_twice_sends_one_private_reply(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """A retried queue row must not answer the same comment twice."""
+        deliver_comment(client)
+        run_queued_actions()
+        again = run_queued_actions()
+        assert again.bodies("/messages") == []
+
+
+class TestTheWindowIsOpenedByTheOneWriteSite:
+    def test_the_dm_thread_gets_an_identity_with_an_open_window(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """Contract 3 gives ``window_expires_at`` exactly one writer.
+
+        The comment→DM transition therefore goes through it, as the inbound event
+        it genuinely is, rather than by assigning the column from the worker.
+        """
+        deliver_comment(client)
+        run_queued_actions()
+
+        identity = ContactChannelIdentity.objects.unscoped().get(platform_user_id=PSID)
+        assert identity.opt_in is True
+        assert identity.window_expires_at is not None
+        assert identity.window_expires_at > timezone.now()
+
+    def test_the_comment_itself_writes_no_thread_row(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """A comment is public, not a DM.
+
+        The only inbound-side row this whole path creates is the identity: the
+        opener is a ``referral``, which ``apps.messaging.ingest``'s own table says
+        creates an identity and a window and no message.
+        """
+        deliver_comment(client)
+        run_queued_actions()
+        assert not Message.objects.unscoped().filter(direction=MessageDirection.IN).exists()
+
+    def test_the_comments_own_text_never_fires_a_keyword_trigger(
+        self, client: Client, tenancy: Tenancy, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The reason the opener is persisted rather than routed.
+
+        ``persist_events`` rather than ``process_events``: pushing the synthetic
+        opener round the routing stages would let the comment's text match a
+        keyword trigger on top of the comment trigger that already matched it, and
+        the person would get two flows for one comment.
+        """
+        keyword_flow = published_flow(
+            tenancy.workspace,
+            graph([node("start", "send_message", {"blocks": [{"type": "text", "text": "Keyword flow!"}]})]),
+            name="Keyword",
+        )
+        create_trigger(
+            keyword_flow,
+            trigger_type=TriggerType.KEYWORD,
+            config={"keywords": [{"text": "how much", "mode": "contains"}]},
+            connection=page,
+        )
+
+        deliver_comment(client)
+        calls = run_queued_actions()
+        texts = [body["message"].get("text") for body in calls.bodies("/messages")]
+        assert texts == [PRIVATE_REPLY]
+
+
+class TestTheTwoHalvesFailIndependently:
+    """Why the follow-up is two queue rows rather than one."""
+
+    def test_the_public_half_is_scheduled_at_most_once(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """Meta gives no way to make a comment or a like idempotent.
+
+        So a retry would put a second public reply under a customer's comment,
+        which is worse than the missing one a transient failure costs.
+        """
+        deliver_comment(client)
+        public = queued(messenger_adapter.COMMENT_ACTION).get()
+        assert public.max_attempts == 1
+
+    def test_the_dm_half_is_retryable(self, client: Client, page: ChannelConnection, comment_trigger: Trigger) -> None:
+        """Every step of it is idempotent, and it is the half the reply promised."""
+        deliver_comment(client)
+        dm = queued(messenger_adapter.COMMENT_DM_ACTION).get()
+        assert dm.max_attempts > 1
+
+    def test_a_failing_dm_never_re_posts_the_public_reply(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger, monkeypatch: Any
+    ) -> None:
+        """The regression this split exists for.
+
+        With one action, anything raised by the DM half put the whole handler back
+        on the queue — and the public reply, which had already succeeded, was
+        posted again on every attempt.
+        """
+        deliver_comment(client)
+        run_queued_actions(messenger_adapter.COMMENT_ACTION)
+
+        def explode(connection: Any, row: Any) -> None:
+            raise RuntimeError("the database blinked")
+
+        monkeypatch.setattr(messenger_adapter, "_start_comment_flow", explode)
+        with fake_graph() as calls:
+            for _ in range(3):
+                for action in queued(messenger_adapter.COMMENT_DM_ACTION):
+                    with pytest.raises(RuntimeError):
+                        messenger_adapter._run_comment_dm(action.payload, action)
+        assert calls.bodies(f"/{HandledComment.objects.unscoped().get().comment_id}/comments") == []
+
+    def test_a_thread_that_never_materialises_raises_so_the_dm_retries(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger, monkeypatch: Any
+    ) -> None:
+        """``persist_events`` swallows its own per-event failures.
+
+        The only way to learn it did not write the identity is to look — and the
+        answer has to be raised, not logged, or the action is marked done and the
+        customer never gets the DM they were just promised in public.
+        """
+        from apps.messaging import ingest as messaging_ingest
+
+        deliver_comment(client)
+        monkeypatch.setattr(messaging_ingest, "persist_events", lambda connection, events: None)
+        (action,) = list(queued(messenger_adapter.COMMENT_DM_ACTION))
+        with fake_graph(), pytest.raises(RuntimeError, match="produced no contact"):
+            messenger_adapter._run_comment_dm(action.payload, action)
+
+
+class TestThePrivateReplyHandoffIsBounded:
+    """The claim is answered by whatever sends first, so the window is short."""
+
+    def test_a_send_long_after_the_claim_is_an_ordinary_dm(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """An agent reply days later must not become a reply to a stale comment.
+
+        SPEC §10 allows the platform seven days, but the adapter cannot see *which*
+        send it is making — so an open claim would otherwise let any later message
+        spend the one private reply Meta permits.
+        """
+
+        deliver_comment(client)
+        run_queued_actions()
+        row = HandledComment.objects.unscoped().get()
+        # Undo the flow's own reply so a genuinely open claim is under test.
+        row.private_reply_sent_at = None
+        row.save(update_fields=["private_reply_sent_at"])
+
+        stale = timezone.now() + messenger_adapter.PRIVATE_REPLY_HANDOFF + timedelta(minutes=1)
+        assert messenger_adapter.pending_private_reply(page, PSID, now=stale) is None
+        # Still inside the platform's own seven days — this is our narrower bound.
+        from apps.flows.triggers.guards import may_private_reply
+
+        assert may_private_reply(row, now=stale) is True
+
+    def test_a_send_inside_the_window_still_gets_the_private_reply(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+
+        deliver_comment(client)
+        assert messenger_adapter.pending_private_reply(page, PSID) is not None
+
+    def test_an_answerable_claim_is_never_hidden_behind_older_ones(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The fixed slice this replaced could bury a live claim behind expired ones."""
+
+        for index in range(8):
+            deliver_comment(client, comment_id=f"111111111111111_92{index:02d}", message=f"question {index}")
+        assert HandledComment.objects.unscoped().count() == 1  # once per person per post
+        assert messenger_adapter.pending_private_reply(page, PSID) is not None
+
+
+class TestOnlyOneMessageAnswersAComment:
+    """Meta permits exactly one message in reply to a comment."""
+
+    @pytest.fixture
+    def multipart_flow(self, tenancy: Tenancy) -> Flow:
+        """A first node that renders to two Send API calls: image, then caption."""
+        return published_flow(
+            tenancy.workspace,
+            graph(
+                [
+                    node(
+                        "start",
+                        "send_message",
+                        {"blocks": [{"type": "image", "url": "https://cdn.test/a.jpg", "caption": PRIVATE_REPLY}]},
+                    )
+                ]
+            ),
+            name="Multipart",
+        )
+
+    def test_only_the_first_call_goes_out(
+        self, client: Client, tenancy: Tenancy, multipart_flow: Flow, page: ChannelConnection, caplog: Any
+    ) -> None:
+        """The rest cannot: addressed to the comment they exceed the allowance,
+        addressed to the PSID they land outside a window the person has not opened.
+
+        Attempting them raised, the pipeline retried the whole row, and the retry
+        found the claim spent — so everything went to the PSID, everything was
+        refused, and the row ended ``failed`` with one bubble already delivered.
+        """
+        import logging
+
+        create_trigger(
+            multipart_flow,
+            trigger_type=TriggerType.COMMENT,
+            config={"post_scope": "all", "top_level_only": True},
+            connection=page,
+        )
+        caplog.set_level(logging.WARNING)
+        deliver_comment(client)
+        calls = run_queued_actions()
+
+        bodies = calls.bodies("/messages")
+        assert len(bodies) == 1
+        assert bodies[0]["recipient"] == {"comment_id": HandledComment.objects.unscoped().get().comment_id}
+        assert "only the first was sent" in caplog.text
+
+    def test_the_message_row_is_not_left_failed(
+        self, client: Client, tenancy: Tenancy, multipart_flow: Flow, page: ChannelConnection
+    ) -> None:
+        create_trigger(
+            multipart_flow,
+            trigger_type=TriggerType.COMMENT,
+            config={"post_scope": "all", "top_level_only": True},
+            connection=page,
+        )
+        deliver_comment(client)
+        run_queued_actions()
+        message = Message.objects.unscoped().filter(direction=MessageDirection.OUT).get()
+        assert message.status != "failed"
+
+    def test_an_ordinary_dm_still_sends_every_part(
+        self, client: Client, tenancy: Tenancy, page: ChannelConnection
+    ) -> None:
+        """The cap is the private reply's, not the adapter's. With no claim
+        pending a captioned image is still two calls."""
+        from apps.channels.events import MediaBlock, OutboundMessage
+        from apps.channels.providers.messenger import MessengerAdapter
+
+        class Identity:
+            platform_user_id = PSID
+            contact = None
+
+        message = OutboundMessage(blocks=(MediaBlock(kind="image", url="https://cdn.test/a.jpg", caption="Look"),))
+        with fake_graph() as calls:
+            MessengerAdapter().send(page, Identity(), message)
+        assert len(calls.bodies("/messages")) == 2
+
+
+class TestThePublicHalfDoesNotDependOnTheDm:
+    def test_the_public_reply_still_posts_after_the_dm_has_gone(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The two halves are separate queue rows and run concurrently.
+
+        Gating both on ``may_private_reply`` meant that on a deployment with more
+        than one worker the DM could finish first, stamp ``private_reply_sent_at``,
+        and silently cancel the public reply the trigger was configured to post.
+        """
+        deliver_comment(client)
+        # DM first — the ordering a second worker can produce.
+        run_queued_actions(messenger_adapter.COMMENT_DM_ACTION)
+        row = HandledComment.objects.unscoped().get()
+        assert row.private_reply_sent_at is not None
+
+        calls = run_queued_actions(messenger_adapter.COMMENT_ACTION)
+        assert calls.bodies(f"/{row.comment_id}/comments") == [{"message": "Sent you a DM!"}]
+        assert any(call.matches(f"/{row.comment_id}/likes") for call in calls.calls)
+
+    def test_neither_half_answers_a_comment_past_the_deadline(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """A public reply with no conversation behind it is not an improvement."""
+        deliver_comment(client)
+        row = HandledComment.objects.unscoped().get()
+        row.commented_at = timezone.now() - timedelta(days=8)
+        row.save(update_fields=["commented_at"])
+
+        calls = run_queued_actions()
+        assert calls.calls == []
+
+
+class TestTheSeamIsPlatformAgnostic:
+    def test_the_registry_is_what_dispatches(self) -> None:
+        """L5-A adds one ``register_comment_actions`` line, not an edit to stages."""
+        from apps.flows.triggers import comments
+
+        responder = comments.responder_for("messenger")
+        assert responder is not None
+        assert responder.respond is messenger_adapter.respond_to_comment
+        assert responder.supports_like is True
+        assert responder.picker_route == "channels:messenger_posts"
+
+    def test_a_platform_with_nothing_registered_still_claims_the_comment(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The behaviour before any Layer-5 adapter shipped: claimed, unanswered."""
+        from apps.flows.triggers import comments
+
+        registered = comments._RESPONDERS.pop("messenger")
+        try:
+            deliver_comment(client)
+        finally:
+            comments._RESPONDERS["messenger"] = registered
+
+        assert HandledComment.objects.unscoped().count() == 1
+        assert not queued().exists()
+
+    def test_a_failing_actions_callable_never_rolls_back_the_claim(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The failure mode ``run_actions`` swallows exceptions to prevent.
+
+        A raise here would be caught by ``hooks._run_one``, reported as a failed
+        hook and rolled back with the savepoint — un-recording the comment, so the
+        next redelivery would claim it again and the guard would never hold.
+        """
+        from apps.flows.triggers import comments
+
+        def explode(context: Any, trigger: Any, row: Any) -> None:
+            raise RuntimeError("Meta is on fire")
+
+        registered = comments._RESPONDERS["messenger"]
+        comments._RESPONDERS["messenger"] = comments.CommentResponder(respond=explode)
+        try:
+            response, _calls = deliver_comment(client)
+        finally:
+            comments._RESPONDERS["messenger"] = registered
+
+        assert response.status_code == 200
+        assert HandledComment.objects.unscoped().count() == 1
+
+    def test_the_extra_keys_this_adapter_writes_are_the_ones_l4a_fixed(self) -> None:
+        """The literals in ``providers.messenger`` against their source of truth.
+
+        They are duplicated rather than imported so ``apps.channels`` keeps no
+        module-scope dependency on ``apps.flows`` — the same trade
+        ``apps.flows.triggers.pipeline.ROUTING_PROCESSOR`` makes in the other
+        direction. This is the test that keeps the duplication honest.
+        """
+        from apps.flows.triggers import types
+
+        assert messenger_adapter.COMMENT_POST_ID_KEY == types.COMMENT_POST_ID_KEY
+        assert messenger_adapter.COMMENT_PARENT_ID_KEY == types.COMMENT_PARENT_ID_KEY
+        assert messenger_adapter.COMMENT_TEXT_KEY == types.COMMENT_TEXT_KEY
+        assert messenger_adapter.MAX_REF_CHARS == types.MAX_REF_CHARS

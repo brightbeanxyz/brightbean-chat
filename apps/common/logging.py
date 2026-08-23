@@ -154,6 +154,17 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # this credential to reach a log was the one form the pattern missed
     # (found by apps/channels/tests/test_telegram_scrubbing.py, issue #12).
     (re.compile(r"(?:(?<=/bot)|(?<![A-Za-z0-9_]))\d{6,12}:[A-Za-z0-9_\-]{30,}"), REDACTED),
+    # Meta access tokens: page, user and app tokens all begin ``EAA`` followed by
+    # a long base64url run. Added by issue #18 (Messenger), per the Layer-5 rule
+    # that a platform whose token has a recognisable shape adds it here.
+    #
+    # Belt and braces rather than the only defence: the Meta adapters send the
+    # token in an ``Authorization: Bearer`` header, which the first pattern above
+    # already covers, and never in a URL — precisely so there is nothing here to
+    # catch. This exists for the paths nobody planned: an operator pasting a token
+    # into a form that logs its input, a Graph error body quoted into an
+    # exception, a fixture that ends up in CI output.
+    (re.compile(r"\bEAA[A-Za-z0-9_\-]{20,}"), REDACTED),
     # Bearer credentials carried in a URL path. An invitation link is a
     # capability — anyone holding it joins the organization — and it reaches
     # logs through the request line rather than through any key=value pair:

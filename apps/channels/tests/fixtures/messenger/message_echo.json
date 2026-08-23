@@ -1,0 +1,26 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "111111111111111",
+      "time": 1712345678000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "111111111111111"
+          },
+          "recipient": {
+            "id": "222222222222222"
+          },
+          "timestamp": 1712345679000,
+          "message": {
+            "mid": "m_echo1",
+            "is_echo": true,
+            "app_id": 1234,
+            "text": "our own reply"
+          }
+        }
+      ]
+    }
+  ]
+}

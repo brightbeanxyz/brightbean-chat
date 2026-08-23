@@ -1,0 +1,29 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "111111111111111",
+      "time": 1712345678000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "222222222222222"
+          },
+          "recipient": {
+            "id": "111111111111111"
+          },
+          "timestamp": 1712345684000,
+          "postback": {
+            "title": "Get Started",
+            "payload": "GET_STARTED",
+            "referral": {
+              "ref": "spring-sale",
+              "source": "SHORTLINK",
+              "type": "OPEN_THREAD"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

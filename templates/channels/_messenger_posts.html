@@ -1,0 +1,45 @@
+{% comment %}
+The comment trigger's post picker (issue #18, SPEC §10). The Messenger sibling of
+`_instagram_posts.html`, deliberately the same shape so a reader of one
+recognises the other.
+
+Everything here came off the Graph API, so every value is escaped by Django's
+default autoescaping and nothing is marked safe — a post's message is whatever
+somebody typed into Facebook.
+
+The permalink is a plain link, and `providers.messenger.recent_posts` has already
+checked its *scheme* before it got here: escaping alone would leave
+`javascript:alert(1)` live when somebody clicks View, because there the scheme is
+the payload rather than the characters (SECURITY-BASELINE §2). A refused URL
+arrives empty and the post simply lists without a link.
+
+`pick()` is defined by the enclosing x-data in flows/triggers/_form_comment.html,
+which this fragment is swapped into. An inline `onclick` would be blocked: the
+CSP has no 'unsafe-inline' in script-src (config/settings/base.py).
+{% endcomment %}
+<div class="rounded-lg border p-2" style="border-color: var(--border);" data-testid="messenger-post-picker">
+  {% if reason %}
+    <p class="text-xs" style="color: var(--text-secondary);">
+      {{ reason }}
+      {% if connect_url %}<a href="{{ connect_url }}">Connect a page</a>.{% endif %}
+    </p>
+  {% else %}
+    <ul class="grid grid-cols-1 gap-2">
+      {% for post in posts %}
+        <li class="flex items-center gap-2">
+          <button type="button" class="flex items-center gap-2 text-left text-xs"
+                  data-post-id="{{ post.id }}"
+                  @click="pick($el.dataset.postId)">
+            <span>
+              <span class="block">{{ post.message|default:"(no text)"|truncatechars:64 }}</span>
+              <span style="color: var(--text-tertiary);">{{ post.created_time }}</span>
+            </span>
+          </button>
+          {% if post.permalink %}
+            <a class="text-xs" href="{{ post.permalink }}" target="_blank" rel="noopener noreferrer">View</a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>
