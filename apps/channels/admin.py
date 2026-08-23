@@ -15,7 +15,7 @@ from typing import Any
 from django.contrib import admin
 from django.http import HttpRequest
 
-from apps.channels.models import ChannelConnection, WebhookEventLog
+from apps.channels.models import ChannelConnection, WebhookEventLog, WhatsAppCostHint, WhatsAppTemplate
 
 
 @admin.register(ChannelConnection)
@@ -40,3 +40,28 @@ class WebhookEventLogAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request: HttpRequest, obj: Any = None) -> bool:
         return False
+
+
+@admin.register(WhatsAppTemplate)
+class WhatsAppTemplateAdmin(admin.ModelAdmin):
+    """Read-mostly, like the rest of this module (issue #19).
+
+    ``status`` and ``rejected_reason`` are **read-only**, and that is the point
+    rather than caution: they are Meta's verdict, written by the hourly poll,
+    and a template a superuser marked approved by hand would be one the
+    compliance engine lets out and Meta then refuses. The place to change a
+    template's state is Meta.
+    """
+
+    list_display = ("name", "language", "category", "status", "workspace", "updated_at")
+    list_filter = ("status", "category")
+    search_fields = ("name", "meta_template_id")
+    readonly_fields = ("status", "rejected_reason", "meta_template_id", "created_at", "updated_at")
+
+
+@admin.register(WhatsAppCostHint)
+class WhatsAppCostHintAdmin(admin.ModelAdmin):
+    """Per-workspace price estimates. Display only — nothing meters (SPEC §22)."""
+
+    list_display = ("workspace", "currency", "marketing", "utility", "authentication", "updated_at")
+    readonly_fields = ("created_at", "updated_at")

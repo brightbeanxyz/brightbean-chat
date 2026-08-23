@@ -78,7 +78,7 @@ _AUTH_SCHEMES = r"Bearer|Basic|Token|Digest"
 # URL path prefixes whose next segment is a bearer credential. Extend this when
 # a new unauthenticated token route lands; the shared signer's docstring
 # (apps/common/signing.py) lists the ones still to come.
-_TOKEN_PATH_PREFIXES = r"invite"  # noqa: S105 - URL prefixes, not a credential
+_TOKEN_PATH_PREFIXES = r"invite|u"  # noqa: S105 - URL prefixes, not a credential
 
 # Ordered: the first pattern that matches a region wins.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -119,6 +119,52 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
+    # Meta access tokens, which every Graph-based adapter carries: an "EAA"
+    # prefix followed by a long base64url body. The Cloud API adapter (#19)
+    # keeps its token in an Authorization header, which the scheme rule above
+    # already covers — this catches the other ways one reaches a log: an
+    # operator pasting a token into a support thread, a form error rendering the
+    # submitted value, a traceback from the credential form.
+    #
+    # The character class has to include ``-`` and ``_``, and that is not a
+    # detail. base64url uses both, so a real token has one within the first few
+    # characters more often than not — and an alphanumeric-only class does not
+    # merely truncate the match there, it fails to reach the ``{20,}`` minimum
+    # and does not fire at all, leaving the whole credential in the log. The
+    # first version of this rule had that bug, and the fixture it was tested
+    # against was all-alphanumeric, so the test could not have caught it.
+    (re.compile(r"\bEAA[A-Za-z0-9_\-]{20,}"), REDACTED),
+    # Twilio account SIDs and API keys: a two-letter prefix plus 32 hex.
+    #
+    # The account SID is not itself a secret, but it identifies the account and
+    # it is the one Twilio credential that ends up in a URL path
+    # (``/2010-04-01/Accounts/AC…/Messages.json``), which httpx logs at INFO —
+    # the same route by which a Telegram bot token used to reach a log
+    # (SECURITY-BASELINE §5). ``SK`` API-key SIDs take the identical shape and
+    # are used as a username, so both are covered by one pattern.
+    #
+    # The **auth token** is deliberately not here, and this is the honest
+    # reason: it is 32 hex characters with no prefix, which is also the shape of
+    # an MD5 digest, a UUID without its dashes and half the ids in a webhook
+    # payload. A pattern that matched it would redact all of those. What keeps
+    # it out of logs instead is that it never appears in a URL — Twilio
+    # authenticates with HTTP Basic, and the ``Authorization`` header is already
+    # covered by the auth-scheme rule at the top of this table.
+    (re.compile(r"\b(?:AC|SK)[0-9a-fA-F]{32}\b"), REDACTED),
+    # BrightBean Chat's own public-API keys (issue #25, SPEC §17):
+    # ``bb_<43 url-safe chars>_<8 hex>``. Registered as its own shape rather
+    # than left to the key=value rule above, because the one place this
+    # credential predictably reaches a log is an ``Authorization`` header echoed
+    # into an exception or a request dump, where there is no ``key=`` to anchor
+    # on. The trailing group is deliberately not anchored to exactly 8 hex
+    # characters: a truncated key in a log line is still key material.
+    (re.compile(r"\bbb_[A-Za-z0-9_\-]{20,}"), REDACTED),
+    # Resend API keys and Svix webhook signing secrets (issue #21). Both reach a
+    # log the same way an AWS key does — pasted into a support ticket, or echoed
+    # by a provider's own error text — and neither is caught by the key=value
+    # rule when it appears bare.
+    (re.compile(r"\bre_[A-Za-z0-9_\-]{16,}"), REDACTED),
+    (re.compile(r"\bwhsec_[A-Za-z0-9+/=_\-]{16,}"), REDACTED),
     # Telegram bot tokens: <bot_id>:<35-char secret>.
     #
     # The `/bot` alternative is not decoration. A bot token's one appearance at
@@ -129,13 +175,26 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # this credential to reach a log was the one form the pattern missed
     # (found by apps/channels/tests/test_telegram_scrubbing.py, issue #12).
     (re.compile(r"(?:(?<=/bot)|(?<![A-Za-z0-9_]))\d{6,12}:[A-Za-z0-9_\-]{30,}"), REDACTED),
+    # Meta access tokens: page, user and app tokens all begin ``EAA`` followed by
+    # a long base64url run. Added by issue #18 (Messenger), per the Layer-5 rule
+    # that a platform whose token has a recognisable shape adds it here.
+    #
+    # Belt and braces rather than the only defence: the Meta adapters send the
+    # token in an ``Authorization: Bearer`` header, which the first pattern above
+    # already covers, and never in a URL — precisely so there is nothing here to
+    # catch. This exists for the paths nobody planned: an operator pasting a token
+    # into a form that logs its input, a Graph error body quoted into an
+    # exception, a fixture that ends up in CI output.
+    (re.compile(r"\bEAA[A-Za-z0-9_\-]{20,}"), REDACTED),
     # Bearer credentials carried in a URL path. An invitation link is a
     # capability — anyone holding it joins the organization — and it reaches
     # logs through the request line rather than through any key=value pair:
     # runserver's access log prints every path at INFO, and django.request logs
     # the path on a 500. Neither is a place a live credential belongs
     # (SECURITY-BASELINE §5). Registered here rather than in the members app so
-    # every later token route (/u/, /c/, /o/) can add its prefix in one place.
+    # every later token route can add its prefix in one place; `/u/` joined it
+    # with issue #21, and an unsubscribe token is the same kind of capability —
+    # anyone holding it can withdraw somebody else's consent.
     (re.compile(rf"(?i)(/(?:{_TOKEN_PATH_PREFIXES})/)[A-Za-z0-9._~+/=\-]{{8,}}"), rf"\1{REDACTED}"),
 )
 

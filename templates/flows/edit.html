@@ -67,7 +67,17 @@ trigger.
      x-data="{ triggersOpen: false }"
      @toggle-triggers.window="triggersOpen = !triggersOpen; if (triggersOpen) $dispatch('triggers-opened')"
      @keydown.escape.window="triggersOpen = false">
+{% comment %}
+x-ignore keeps Alpine out of the React island entirely. Alpine 3 observes the
+whole document and initializes any added element carrying x-* directives, and
+the CSP grants 'unsafe-eval' for Alpine's own evaluator — so without this, any
+markup React writes into the DOM is markup Alpine would happily execute. React
+owns everything below this node and needs none of Alpine's behaviour, so the
+two are kept apart rather than trusting every future component not to render
+attacker-authored HTML.
+{% endcomment %}
 <div id="flow-builder"
+     x-ignore
      class="fb-mount h-full rounded-xl border overflow-hidden"
      style="border-color: var(--border); background: var(--surface-1); height: 100%;"
      data-flow-id="{{ flow.id }}"

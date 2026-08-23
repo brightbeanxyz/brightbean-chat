@@ -54,7 +54,14 @@ __all__ = [
 #: one the generic "add a channel" form must **refuse**, since that form creates
 #: a row with no credentials and every send on it fails. Each Layer-5 adapter
 #: adds its entry with its connect view.
-CONNECT_ROUTES: dict[str, str] = {Platform.TELEGRAM.value: "channels:telegram_connect"}
+CONNECT_ROUTES: dict[str, str] = {
+    Platform.TELEGRAM.value: "channels:telegram_connect",
+    Platform.INSTAGRAM.value: "channels:instagram_connect",
+    Platform.MESSENGER.value: "channels:messenger_connect",
+    Platform.WHATSAPP.value: "channels:whatsapp_connect",
+    Platform.SMS.value: "channels:sms_connect",
+    Platform.EMAIL.value: "channels:email_connect",
+}
 
 
 def connect_route_for(platform: str) -> str:

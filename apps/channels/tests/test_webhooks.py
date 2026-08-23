@@ -22,7 +22,7 @@ from django.urls import NoReverseMatch, reverse
 
 from apps.channels import ingest
 from apps.channels.models import ChannelConnection, WebhookEventLog, WebhookEventStatus
-from apps.channels.tests.fake_adapter import SECRET_HEADER, SIGNATURE_HEADER, registered, sign
+from apps.channels.tests.fake_adapter import SECRET_HEADER, SIGNATURE_HEADER, registered, sign, unregistered
 from apps.common.platforms import Platform
 
 pytestmark = pytest.mark.django_db
@@ -305,7 +305,15 @@ class TestIdIndistinguishability:
     def test_a_real_and_an_unknown_id_look_identical_without_an_adapter(
         self, client: Client, connection: ChannelConnection, platform: str
     ) -> None:
-        """The state this layer ships in: no adapter exists for any platform."""
+        """The other half: 503 to every id while the platform has no adapter.
+
+        Neither of these is in that state any more — SMS got an adapter in #20
+        and email in #21, as Telegram did in #12 — so the empty slot is now
+        something the test arranges rather than inherits. That is better anyway:
+        "this assertion depends on there being no adapter" used to be invisible.
+        ``unregistered`` restores whatever was there, so the rest of the run
+        still has its adapter.
+        """
         real = ChannelConnection(
             workspace=connection.workspace,
             platform=platform,
@@ -315,12 +323,13 @@ class TestIdIndistinguishability:
         secret = real.rotate_webhook_secret()
         real.save()
 
-        real_response, unknown_response = self._pair(
-            client,
-            _route_for(platform, real.pk),
-            _route_for(platform, "11111111-1111-1111-1111-111111111111"),
-            secret,
-        )
+        with unregistered(platform):
+            real_response, unknown_response = self._pair(
+                client,
+                _route_for(platform, real.pk),
+                _route_for(platform, "11111111-1111-1111-1111-111111111111"),
+                secret,
+            )
 
         assert real_response.status_code == unknown_response.status_code == 503
         assert real_response.content == unknown_response.content
@@ -896,8 +905,15 @@ class TestDispatchSeam:
 
 class TestNoAdapter:
     def test_a_platform_with_no_adapter_answers_503(self, client: Client, secret: str) -> None:
-        """The shipped state for every platform. Retryable, and not a 403."""
-        response = post(client, "/webhooks/whatsapp/", body_for("e1"), secret=secret)
+        """A platform whose adapter has not shipped. Retryable, and not a 403.
+
+        The empty slot is now something a test has to arrange: WhatsApp got its
+        adapter with issue #19, and every remaining Layer-5 issue fills another.
+        ``unregistered`` says so out loud instead of the assertion depending on
+        which platform happens to be next.
+        """
+        with unregistered(Platform.WHATSAPP):
+            response = post(client, "/webhooks/whatsapp/", body_for("e1"), secret=secret)
         assert response.status_code == 503
 
     def test_an_unknown_platform_is_404(self, client: Client) -> None:

@@ -1,0 +1,20 @@
+{
+  "notificationType": "Bounce",
+  "bounce": {
+    "bounceType": "Permanent",
+    "bounceSubType": "General",
+    "bouncedRecipients": [
+      {"emailAddress": "one@example.test", "status": "5.1.1"},
+      {"emailAddress": "two@example.test", "status": "5.1.1"},
+      {"emailAddress": "three@example.test", "status": "5.1.1"}
+    ],
+    "timestamp": "2026-08-20T10:00:00.000Z",
+    "feedbackId": "0100-bounce-multi"
+  },
+  "mail": {
+    "messageId": "ses-msg-multi",
+    "source": "hello@sender.test",
+    "destination": ["one@example.test", "two@example.test", "three@example.test"],
+    "timestamp": "2026-08-20T09:59:00.000Z"
+  }
+}

@@ -1,0 +1,40 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Choose a page · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Choose a page to connect</h1>{% endblock %}
+
+{% block content %}
+  {% if error %}
+    <div class="alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  {% if pages %}
+    <p class="muted">
+      These are the Facebook pages you just granted access to. Connecting one
+      subscribes it to this deployment's webhook and sets its Get Started button.
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <ul class="list-reset">
+        {% for page in pages %}
+          <li>
+            <label>
+              <input type="radio" name="page_id" value="{{ page.id }}"
+                     {% if forloop.first %}checked{% endif %} />
+              {{ page.name }} <span class="muted"><code>{{ page.id }}</code></span>
+            </label>
+          </li>
+        {% endfor %}
+      </ul>
+      <button type="submit">Connect this page</button>
+    </form>
+  {% else %}
+    <p class="muted">
+      That Facebook account granted no pages. Facebook Login for Business asks
+      which pages to share during sign-in — start again and pick at least one,
+      or check that you are an admin of the page you meant.
+    </p>
+    <p><a href="{{ connect_url }}">Start again</a></p>
+  {% endif %}
+
+  <p><a href="{{ list_url }}">Back to channels</a></p>
+{% endblock %}

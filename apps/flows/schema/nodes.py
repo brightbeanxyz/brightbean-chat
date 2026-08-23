@@ -82,6 +82,20 @@ class NodeSpec:
     #: Extra ``$defs`` this node contributes to the exported document.
     defs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    #: Config keys whose value is **author-written HTML** rather than text.
+    #:
+    #: Declared here because storing markup changes who has to be careful about
+    #: it. Every other config string is escaped wherever it is rendered; a field
+    #: named here is markup by design, so it is normalised through an allowlist
+    #: on the way *in* (``apps.flows.schema.sanitize.sanitize_graph``, called by
+    #: ``services.save_draft``) instead. Anything that then reads it — the email
+    #: adapter, the builder's editor — is reading a document that has already
+    #: been through the allowlist.
+    #:
+    #: Empty for every node but ``send_email``, and it should stay that way
+    #: unless a node genuinely needs to store markup.
+    html_fields: tuple[str, ...] = ()
+
 
 #: The palette drawers, in the order the builder shows them (issue #10). Both
 #: the order and the labels are exported, so the frontend reads one file rather
@@ -277,6 +291,42 @@ register_defs(
         },
         required=["enabled"],
     ),
+    # SPEC §6.5, added by issue #19. One value for one of an approved
+    # template's {{n}} slots. ``value`` is authored text and may itself contain
+    # {{placeholders}} — the flow engine renders it through the shared,
+    # engine-free substitution before the adapter ever sees it
+    # (SECURITY-BASELINE §3).
+    whatsapp_template_variable=f.obj(
+        {
+            "slot": {
+                **f.string(min_length=1, max_length=32, description="header.1, body.2, button.0.1 …"),
+                "pattern": r"^(header|body|button\.[0-9]{1,2})\.[0-9]{1,3}$",
+            },
+            "value": f.string(max_length=1024),
+        },
+        required=["slot", "value"],
+    ),
+    # The template-picker variant of send_message (SPEC §6.5). Present only on
+    # nodes an author pointed at a WhatsApp channel; every other platform's
+    # adapter ignores it, which is why this is one optional key rather than a
+    # second node type.
+    #
+    # ``reference`` rather than the picked row's id is what reaches the wire:
+    # ``<name>/<language>`` is the Cloud API's own key for a template, so a
+    # queued message retried after somebody deleted the row still says what it
+    # was sending. ``template_id`` is carried alongside so the builder can
+    # re-open the picker on the right row and re-derive the slot list.
+    whatsapp_template=f.obj(
+        {
+            "template_id": f.string(min_length=1, max_length=64),
+            "reference": {
+                **f.string(min_length=3, max_length=600, description="<name>/<language>, e.g. order_shipped/en_US."),
+                "pattern": r"^[a-z0-9_]{1,512}/[A-Za-z_]{2,10}$",
+            },
+            "variables": f.array(f.ref("whatsapp_template_variable"), max_items=20),
+        },
+        required=["reference"],
+    ),
     condition_filter=CONDITION_SCHEMA,
     continue_window=f.obj(
         {
@@ -412,6 +462,12 @@ register_node_type(
                 "quick_replies": f.array(f.ref("quick_reply"), max_items=20),
                 "followup": f.ref("followup"),
                 "retry_unmatched": f.ref("retry_unmatched"),
+                # Additive, from issue #19. Outside WhatsApp's 24-hour window a
+                # send needs an approved template and nothing else will do
+                # (SPEC §6.5); this is where a flow author picks one. The
+                # compliance engine still decides whether it is *needed* — this
+                # only supplies it.
+                "whatsapp_template": f.ref("whatsapp_template"),
             },
             required=["blocks"],
         ),
@@ -585,6 +641,8 @@ register_node_type(
             required=["subject", "html_body"],
         ),
         handles=("default", "error"),
+        # The one field in the product that stores markup. See `html_fields`.
+        html_fields=("html_body",),
     )
 )
 

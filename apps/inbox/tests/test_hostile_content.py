@@ -111,17 +111,40 @@ class TestHostileText:
 
         assert_escaped(handle, panel)
 
+    #: A payload whose evaluation would be *visible*, which the obvious choice is
+    #: not. ``{{ 7*7 }}`` is the idiom everyone reaches for and it proves nothing
+    #: here: Django does no arithmetic, so that expression does not render as 49
+    #: — it raises ``TemplateSyntaxError`` at compile time ("Could not parse the
+    #: remainder: '*7'"). Asserting ``"49" not in body`` therefore could not fail
+    #: for the reason it named, and could only fail for one it did not: the
+    #: fragment carries UUID ids in its URLs, roughly one in twenty of which
+    #: contains "49" — and message timestamps, so any run at 16:49 failed too.
+    #: #20 found the second collision independently while #19 found the first,
+    #: which is the argument against a short numeric needle rather than against
+    #: either particular source of digits.
+    #:
+    #: These two would both change under evaluation, unmistakably: the filter
+    #: upper-cases its argument, and the ``{% %}`` tag is consumed rather than
+    #: printed. Neither result can collide with a lowercase-hex id.
+    SSTI_PROBE = '{{ "injected"|upper }} and {% load static %}'
+
     def test_template_syntax_in_a_message_is_never_evaluated(
         self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
     ) -> None:
         """SECURITY-BASELINE §3's SSTI ban, from the reader's side: a contact who
         types a template tag sees a template tag."""
-        inbound("{{ 7*7 }} and {% load static %}")
+        inbound(self.SSTI_PROBE)
 
         body = _thread(agent_client, url_for, conversation)
 
-        assert "49" not in body
-        assert "{{ 7*7 }}" in body
+        # Present, escaped, and not present raw — the same property every other
+        # hostile payload in this file is held to.
+        assert_escaped(self.SSTI_PROBE, body)
+        # The tag survived rather than being parsed away.
+        assert "{% load static %}" in body
+        # And the filter never ran. Uppercase, so it cannot match a timestamp or
+        # an id.
+        assert "INJECTED" not in body
 
     @pytest.mark.parametrize("payload", OVERSIZED)
     def test_an_oversized_message_renders_without_blowing_up(

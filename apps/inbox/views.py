@@ -43,7 +43,7 @@ from apps.common.shortcuts import get_scoped_object_or_404
 from apps.contacts import services as contact_services
 from apps.contacts.models import CustomField, Tag
 from apps.inbox import selectors, services
-from apps.inbox.rendering import preview_of, render_message
+from apps.inbox.rendering import is_redacted, preview_of, render_message
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
 from apps.members.requests import WorkspaceRequest
@@ -689,6 +689,15 @@ def media(
     message = get_scoped_object_or_404(Message, request.workspace, pk=message_id, conversation=conversation)
 
     body = message.body if isinstance(message.body, dict) else {}
+    # SPEC §6.3: a message the platform asked us to retract. ``redacted_body()``
+    # empties ``blocks``, so the ordinary deletion path would 404 below anyway —
+    # but ``is_redacted`` deliberately accepts *either* signal, and a row that
+    # kept its body while gaining the status is a state its docstring says to
+    # expect. For that row the thread already says "This message was deleted",
+    # and serving its picture from a URL somebody still has in their history
+    # would make the retraction cosmetic.
+    if is_redacted(message, body):
+        raise Http404("That message was deleted.")
     blocks = body.get("blocks")
     if not isinstance(blocks, list) or not 0 <= index < len(blocks):
         raise Http404("No such block on this message.")

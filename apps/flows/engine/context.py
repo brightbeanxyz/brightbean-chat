@@ -74,15 +74,20 @@ class NodeContext:
             self._render_context = context_for(self.contact, self.variables)
         return self._render_context
 
-    def render(self, template: Any, *, mode: str = "text") -> str:
+    def render(self, template: Any, *, mode: str = "text", max_chars: int | None = None) -> str:
         """Substitute placeholders in author text (SECURITY-BASELINE §3).
 
         The only rendering entry point a node may use. Nodes do not import
         :mod:`apps.flows.rendering` directly and never touch a template engine;
         routing every node through one method is what makes "is any user content
         evaluated anywhere?" a question with one place to look.
+
+        ``max_chars`` overrides the default cap on the *result*, for a node
+        whose destination genuinely accepts more than a chat message does. The
+        email body (SPEC §11.10) is the only such caller; see
+        :data:`apps.flows.rendering.MAX_RENDERED_CHARS`.
         """
-        return render(template, self.render_context, mode=mode)
+        return render(template, self.render_context, mode=mode, max_chars=max_chars)
 
     def render_json(self, template: Any, *, mode: str = "text") -> Any:
         """Substitute placeholders throughout a JSON document, structure kept.

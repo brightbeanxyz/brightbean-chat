@@ -268,7 +268,7 @@ def _ingest(
         return HttpResponse("Bad request", status=400)
 
     events = _parse_events(adapter, request, connection)
-    _record(connection, events)
+    _record(connection, events, adapter)
     return JsonResponse({"status": "ok"})
 
 
@@ -381,7 +381,7 @@ class _LogOutcome(StrEnum):
     REJECTED = "rejected"
 
 
-def _record(connection: ChannelConnection, events: list[NormalizedEvent]) -> None:
+def _record(connection: ChannelConnection, events: list[NormalizedEvent], adapter: Adapter) -> None:
     """Dedup, persist, dispatch, and mark the outcome (SPEC §7.1 steps 2-4).
 
     Events are grouped by the connection they name rather than all being
@@ -400,7 +400,7 @@ def _record(connection: ChannelConnection, events: list[NormalizedEvent]) -> Non
     grouped: dict[Any, list[NormalizedEvent]] = {}
     owners: dict[Any, ChannelConnection] = {}
     for event in events:
-        owner = _event_connection(event, connection)
+        owner = _event_connection(event, connection, adapter)
         if owner is None:
             continue
         grouped.setdefault(owner.pk, []).append(event)
@@ -410,7 +410,11 @@ def _record(connection: ChannelConnection, events: list[NormalizedEvent]) -> Non
         _record_for(owners[pk], group)
 
 
-def _event_connection(event: NormalizedEvent, verified: ChannelConnection) -> ChannelConnection | None:
+def _event_connection(
+    event: NormalizedEvent,
+    verified: ChannelConnection,
+    adapter: Adapter,
+) -> ChannelConnection | None:
     """Which connection an event belongs to, or None to drop it.
 
     Only the delivery-level connection was actually authenticated. Everything a
@@ -435,11 +439,15 @@ def _event_connection(event: NormalizedEvent, verified: ChannelConnection) -> Ch
     The conservative direction costs something worth naming: a deployment whose
     Meta app is configured at the environment level, serving pages that several
     workspaces connected, would have one delivery legitimately spanning
-    workspaces, and the other workspaces' events are dropped here. Making that
-    case work needs per-entry verification against the resolved app credentials,
-    which belongs to the adapter that knows how those entries are shaped (#17,
-    #18) — not to a framework that would have to guess. Until then this fails
-    closed and says so in the log.
+    workspaces, and the other workspaces' events would be dropped — acknowledged
+    with a 200 and never persisted.
+
+    That case is now answerable, by the adapter rather than by this function:
+    :meth:`Adapter.shares_credential` says whether the signature that
+    authenticated ``verified`` also authenticates ``owner``, which for the Meta
+    platforms means both resolve to the same app secret. It defaults to False, so
+    an adapter that cannot answer keeps the conservative behaviour, and it is asked
+    **after** ``_usable`` rather than instead of it.
     """
     owner = getattr(event, "connection", None)
     if owner is None or owner.pk == verified.pk:
@@ -451,7 +459,7 @@ def _event_connection(event: NormalizedEvent, verified: ChannelConnection) -> Ch
             verified.platform,
         )
         return None
-    if owner.workspace_id != verified.workspace_id:
+    if owner.workspace_id != verified.workspace_id and not _shares_credential(adapter, verified, owner):
         logger.warning(
             "Dropped an event naming connection %s: another workspace than the verified connection %s",
             owner.pk,
@@ -459,6 +467,19 @@ def _event_connection(event: NormalizedEvent, verified: ChannelConnection) -> Ch
         )
         return None
     return owner
+
+
+def _shares_credential(adapter: Adapter, verified: ChannelConnection, owner: ChannelConnection) -> bool:
+    """Ask the adapter whether one signature authenticates both, tolerating a bug.
+
+    A raising hook must not become a cross-tenant *allow*, so the failure answer
+    is False — the same conservative direction this whole function takes.
+    """
+    try:
+        return bool(adapter.shares_credential(verified, owner))
+    except Exception:
+        logger.exception("Adapter %s failed answering shares_credential; refusing the event", adapter.platform)
+        return False
 
 
 def _record_for(connection: ChannelConnection, events: list[NormalizedEvent]) -> None:

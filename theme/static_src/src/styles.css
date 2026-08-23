@@ -1132,6 +1132,14 @@ span.flatpickr-weekday {
 .status-pill-needs_reauth { background: var(--warning-50); color: var(--warning-700); }
 .status-pill-disabled     { background: var(--neutral-100); color: var(--text-secondary); }
 
+/* WhatsApp template review states (issue #19). Same vocabulary, same fallback:
+   a value with no rule here renders as the neutral base rather than unstyled.
+   `draft` deliberately has no rule of its own — the neutral base is exactly
+   what "not submitted yet" should look like. */
+.status-pill-pending      { background: var(--warning-50); color: var(--warning-700); }
+.status-pill-approved     { background: var(--success-50); color: var(--success-700); }
+.status-pill-rejected     { background: var(--error-50); color: var(--error-700); }
+
 /* Tint the glyph itself rather than the chip behind it. */
 .pi-ink-telegram  { color: var(--platform-telegram); }
 .pi-ink-instagram { color: var(--platform-instagram); }
@@ -1688,6 +1696,36 @@ span.flatpickr-weekday {
 }
 
 .fb-empty { font-size: 0.75rem; color: var(--text-tertiary); }
+
+/* The email body editor's contenteditable surface (issue #21).
+   A component class rather than utilities at the call site: .form-input-styled
+   is unlayered and would win over any Tailwind height or overflow utility
+   anyway (ROADMAP conventions), silently. */
+.fb-rich-text {
+  min-height: 12rem;
+  max-height: 28rem;
+  overflow-y: auto;
+  text-align: left;
+  white-space: normal;
+}
+.fb-rich-text:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 1px; }
+/* An empty editor is otherwise a zero-height line the author cannot click into. */
+.fb-rich-text > :first-child { margin-top: 0; }
+.fb-rich-text img { max-width: 100%; height: auto; }
+.fb-rich-text blockquote {
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+}
+.fb-rich-text ul, .fb-rich-text ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+.fb-rich-text ul { list-style: disc; }
+.fb-rich-text ol { list-style: decimal; }
+.fb-rich-text h1, .fb-rich-text h2, .fb-rich-text h3, .fb-rich-text h4 {
+  margin: 0.5rem 0;
+  font-weight: 600;
+}
+.fb-rich-text a { color: var(--primary); text-decoration: underline; }
 
 /* ── Problems rail ───────────────────────────────────────────── */
 

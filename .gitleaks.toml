@@ -43,3 +43,49 @@ paths = [
     '''apps/credentials/tests/.*\.py''',
     '''tests/support\.py''',
 ]
+
+# Issue #25's two credential-shaped strings, neither of which is a credential.
+#
+# apps/api/tests/test_delivery.py holds a *receiver's* error body,
+# "token=… is invalid", as the input to the assertion that a delivery row never
+# stores a response body — a receiver's error page can echo back the URL it was
+# called with, and a URL can carry a token. Removing the token shape would leave
+# the test asserting nothing.
+#
+# docs/api/v1.md shows a worked POST /api/v1/messages call whose
+# `idempotency_key` is "order-4711-shipped". The generic rule fires on the field
+# *name*; the value is a caller-chosen label with no secrecy of any kind, and
+# `idempotency_key` is the published field name so it cannot be spelled around.
+#
+# Scoped to these two files and to the one rule they trip, so a real secret
+# committed anywhere else — or a differently-shaped one here — still fails.
+[[allowlists]]
+description = "Public API worked examples and a synthetic receiver error body"
+targetRules = ["generic-api-key"]
+paths = [
+    '''apps/api/tests/test_delivery\.py''',
+    '''docs/api/v1\.md''',
+]
+
+# The email channel's credential-shaped fixtures (issue #21).
+#
+# `test_email_scrubbing.py` holds a Resend key, a Svix signing secret and an SES
+# key pair shaped like the real things, because that file exists to prove the log
+# scrubber's patterns fire — and a pattern written for a token shaped like a token
+# proves nothing against a string shaped like "secret". It is the same argument
+# `test_logging.py` is allowlisted under, one app over.
+#
+# The SNS fixture carries the confirmation `Token` AWS puts in a
+# SubscriptionConfirmation payload: a long opaque string, and a recorded shape
+# rather than a live one. It authorises confirming a subscription to a topic in
+# an AWS account nobody owns.
+#
+# Both are literals in test files, never read from an environment, and grant
+# access to nothing.
+[[allowlists]]
+description = "Synthetic email-provider test fixtures"
+targetRules = ["generic-api-key"]
+paths = [
+    '''apps/channels/tests/test_email_scrubbing\.py''',
+    '''apps/channels/tests/fixtures/email/.*\.json''',
+]

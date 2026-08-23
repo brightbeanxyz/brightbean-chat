@@ -27,6 +27,7 @@ import { ConditionKeySelect } from "./widgets/ConditionKeySelect";
 import { MediaBlockEditor } from "./widgets/MediaBlockEditor";
 import { PlaceholderInput } from "./widgets/PlaceholderInput";
 import { MemberMultiSelect, picklistSelect } from "./widgets/PicklistSelect";
+import { RichTextEditor } from "./widgets/RichTextEditor";
 import { WeightEditor } from "./widgets/WeightEditor";
 
 type Widget = ComponentType<FieldProps>;
@@ -59,6 +60,10 @@ export const OVERRIDES: Record<string, Widget> = {
   "start_flow:flow_id": FlowSelect,
   "external_request:body": JsonField,
   "data_collection:target.key": FieldSelect,
+  // SPEC §6.7 asks for a rich text editor rather than a plain box. It is still
+  // a `{{token}}`-aware control — the editor carries the same picker — so this
+  // is a swap of the widget, not of what the field holds: an HTML string.
+  "send_email:html_body": RichTextEditor,
 
   // ── shape specific ────────────────────────────────────────────────────────
   // The rules themselves need no override: contract 8's schema is an untagged
@@ -89,7 +94,8 @@ export const OVERRIDES: Record<string, Widget> = {
 const PLACEHOLDER_PATHS = new Set([
   "send_sms:text",
   "send_email:subject",
-  "send_email:html_body",
+  // `send_email:html_body` is deliberately absent: it gets RichTextEditor
+  // above, which subsumes this widget's token picker.
   "data_collection:question",
   "data_collection:retry.invalid_text",
   "note:text",

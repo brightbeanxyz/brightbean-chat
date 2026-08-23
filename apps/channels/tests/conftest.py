@@ -1,13 +1,35 @@
 """Fixtures shared by the channels test modules."""
 
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Any
 
 import pytest
 
 from apps.channels.models import ChannelConnection
+from apps.channels.providers import messenger as messenger_module
 from apps.channels.tests.fake_adapter import FakeAdapter, registered
+from apps.channels.tests.messenger_support import APP_SECRET, PAGE_ID, PAGE_TOKEN
 from apps.common.platforms import Platform
+
+
+@pytest.fixture
+def ungated_platform() -> str:
+    """A platform the generic "Add a channel" form still offers.
+
+    Every Layer-5 issue adds a guided connect flow, and a platform with one is
+    refused by that form (``apps.channels.forms``) — so a test that hard-coded a
+    platform to exercise the generic path started failing the moment that
+    platform got its flow, which is what happened to six of them when #19
+    landed. Asking ``CONNECT_ROUTES`` keeps the test about the form rather than
+    about which adapters happen to exist.
+    """
+    from apps.channels.registry import CONNECT_ROUTES
+
+    for value in Platform.values:
+        if value not in CONNECT_ROUTES:
+            return value
+    pytest.skip("Every platform has a guided connect flow; the generic form has nothing left to offer.")
 
 
 @pytest.fixture
@@ -28,6 +50,41 @@ def connection(tenancy: Any) -> ChannelConnection:
 def secret(connection: ChannelConnection) -> str:
     """The connection's webhook secret, in plaintext."""
     return connection.webhook_secret
+
+
+@pytest.fixture
+def app_secret(settings: Any) -> str:
+    """Configure the deployment-level Meta app — the bottom of SPEC §4's chain.
+
+    The environment level rather than a credential row, because it is the level
+    every test can set without building an organization's settings, and because
+    it is the one a self-hoster actually uses. A test that needs the *chain*
+    exercised (a workspace override beating this) says so and builds the rows.
+    """
+    settings.PLATFORM_CREDENTIALS_FROM_ENV = {
+        **getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {}),
+        Platform.MESSENGER.value: {
+            "client_id": "1234567890",
+            "client_secret": APP_SECRET,
+            "verify_token": "fake-verify-token",
+        },
+    }
+    return APP_SECRET
+
+
+@pytest.fixture
+def page(tenancy: Any, app_secret: str) -> ChannelConnection:
+    """An active Messenger connection for the fixtures' page, token already stored."""
+    connection = ChannelConnection(
+        workspace=tenancy.workspace,
+        platform=Platform.MESSENGER.value,
+        display_name="Acme Page",
+        external_id=PAGE_ID,
+    )
+    messenger_module.store_page_token(connection, PAGE_TOKEN)
+    connection.rotate_webhook_secret()
+    connection.save()
+    return connection
 
 
 @pytest.fixture
@@ -71,3 +128,52 @@ def _clean_processors() -> Iterator[None]:
             ingest.unregister_processor(name)
         for name, processor in before.items():
             ingest.register_processor(processor, name=name)
+
+
+@pytest.fixture
+def instagram_app(settings: Any) -> dict[str, str]:
+    """Deployment-level Instagram app credentials, the bottom of SPEC §4's chain.
+
+    The env level rather than a workspace override, because that is the shape a
+    self-hoster uses and because it exercises ``env_credentials`` — which is also
+    what the ``hub.challenge`` verification reads.
+    """
+    from apps.channels.tests.instagram_support import APP_SECRET
+
+    settings.PLATFORM_CREDENTIALS_FROM_ENV = {
+        Platform.INSTAGRAM.value: {
+            "client_id": "1122334455",
+            "client_secret": APP_SECRET,
+            "verify_token": "hub-verify-token",
+        }
+    }
+    return settings.PLATFORM_CREDENTIALS_FROM_ENV[Platform.INSTAGRAM.value]
+
+
+@pytest.fixture
+def instagram_connection(tenancy: Any) -> ChannelConnection:
+    """An active Instagram connection with a long-lived token on it.
+
+    ``external_id`` is the Instagram professional account id, because that is
+    what arrives as ``entry[].id`` and is the only thing
+    ``InstagramAdapter.resolve_connection`` has to find the row by.
+    """
+    from django.utils import timezone
+
+    from apps.channels import instagram_oauth
+    from apps.channels.tests.instagram_support import ACCESS_TOKEN, IG_ACCOUNT_ID
+
+    connection = ChannelConnection(
+        workspace=tenancy.workspace,
+        platform=Platform.INSTAGRAM,
+        display_name="@brightbean",
+        external_id=IG_ACCOUNT_ID,
+    )
+    instagram_oauth.store_credentials(
+        connection,
+        token=ACCESS_TOKEN,
+        expires_at=timezone.now() + timedelta(days=59),
+        user_id=IG_ACCOUNT_ID,
+    )
+    connection.save()
+    return connection

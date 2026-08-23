@@ -108,6 +108,7 @@ __all__ = [
     "OutboundError",
     "OutboundTransportError",
     "allow_private",
+    "refusal_for",
     "guarded_request",
     "max_response_bytes",
     "reset_deployment_cache",
@@ -401,8 +402,13 @@ def _unwrap(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress
     return address
 
 
-def _refusal(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+def refusal_for(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
     """Why this address is not allowed, or ``""``.
+
+    Public because HTTP is not the only protocol that connects to a host a user
+    supplied: ``apps.channels.providers.email_backends`` runs an operator's SMTP
+    host through the same policy before opening a socket to it. The rule set
+    belongs in one place, so a category added here is denied everywhere.
 
     **Order matters.** ``127.0.0.1`` and ``169.254.169.254`` are both *also*
     ``is_private``, so the categories that stay denied whatever
@@ -574,7 +580,7 @@ def _validate(url: httpx.URL, *, own_hosts: frozenset[str], own_addresses: froze
         raise BlockedURLError(f"{lowered} does not resolve.")
 
     for address in addresses:
-        refusal = _refusal(address)
+        refusal = refusal_for(address)
         if refusal:
             raise BlockedURLError(f"{lowered} resolves to {refusal}.")
         if str(_unwrap(address)) in own_addresses:

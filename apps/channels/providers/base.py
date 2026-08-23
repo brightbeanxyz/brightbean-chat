@@ -183,9 +183,16 @@ def _seconds(raw: Any) -> float | None:
 def _error_code(response: httpx.Response) -> str:
     """The platform's machine-readable error code, best effort.
 
-    Meta nests it at ``error.code``; Telegram uses ``error_code``. Anything
-    unparseable yields an empty string — this is decoration on an error path and
-    must never raise on top of the failure it is describing.
+    Meta nests it at ``error.code``; Telegram uses ``error_code``; Twilio puts a
+    bare ``code`` at the top level (``21610`` is "unsubscribed recipient",
+    ``21408`` "not permitted to this region"). Anything unparseable yields an
+    empty string — this is decoration on an error path and must never raise on
+    top of the failure it is describing.
+
+    The bare ``code`` is read **last**, after both nested spellings, because it
+    is the least specific key of the three: a platform that happens to put
+    something else under ``code`` alongside a real ``error.code`` should still
+    have the real one win.
     """
     try:
         body = response.json()
@@ -198,6 +205,8 @@ def _error_code(response: httpx.Response) -> str:
         return str(error["code"])[:64]
     if body.get("error_code") is not None:
         return str(body["error_code"])[:64]
+    if body.get("code") is not None:
+        return str(body["code"])[:64]
     return ""
 
 
@@ -340,6 +349,34 @@ class Adapter(ABC):
         broken until it is rotated again, and it has to say so rather than
         report success.
         """
+
+    def shares_credential(self, verified: "ChannelConnection", other: "ChannelConnection") -> bool:
+        """Does one verified signature also authenticate ``other``?
+
+        **Default False, and that default is the safe one.** ``views_webhooks``
+        drops any event naming a connection in another workspace, because on a
+        deployment where each tenant supplies its own app credentials the
+        signature proves only that the sender holds *that* tenant's secret — so a
+        batch could otherwise staple another tenant's page onto a genuine delivery
+        (SECURITY-BASELINE §1).
+
+        The cost of that default is real and ``_event_connection`` names it: a
+        deployment whose Meta app is configured once in the environment, serving
+        pages that several workspaces connected, gets one delivery that legitimately
+        spans workspaces — and the others' events are dropped. Their messages are
+        acknowledged with a 200 and never persisted.
+
+        This is the seam that lets an adapter say when that is not a boundary at
+        all: if both connections resolve to the **same signing key**, whoever
+        produced a valid signature holds the key for both, and the delivery
+        authenticates both. An adapter that cannot answer the question leaves it
+        False and keeps the conservative behaviour.
+
+        No adapter may weaken this by returning True on anything other than
+        credential identity. It is asked once per foreign-workspace event, after
+        ``_usable`` and never instead of it.
+        """
+        return False
 
     def on_disconnect(self, connection: "ChannelConnection") -> None:  # noqa: B027
         """Tell the platform to stop sending, just before the row is deleted.

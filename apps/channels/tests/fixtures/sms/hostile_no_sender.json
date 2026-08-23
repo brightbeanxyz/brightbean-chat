@@ -1,0 +1,8 @@
+{
+  "NumMedia": "0",
+  "SmsStatus": "received",
+  "Body": "nobody sent me",
+  "To": "+15550001111",
+  "MessageSid": "SM99999999999999999999999999999999",
+  "ApiVersion": "2010-04-01"
+}

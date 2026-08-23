@@ -23,10 +23,20 @@ silently matches nothing (see ``apps.common.encryption``). Telegram presents its
 secret in a header and the connection has to be found *by* it, which is exactly
 the case ``apps/credentials/models.py`` predicted this issue would be the first
 to hit.
+
+**WhatsApp's two tables live here too** (issue #19). SPEC §5 files
+``whatsapp_template`` under "messaging", but ``apps.messaging`` is the one app
+ROADMAP contract 4 keeps free of platform names — the compliance engine's whole
+design is that a platform costs a policy row and never a branch — and the table
+hangs off a :class:`ChannelConnection` rather than off a conversation. The
+*behaviour* is not here: submitting, polling and rendering a template is
+:mod:`apps.channels.whatsapp_templates`, so this module stays what it says it
+is.
 """
 
 import secrets
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
@@ -40,9 +50,16 @@ from apps.common.scoping import WorkspaceScopedModel
 __all__ = [
     "ChannelConnection",
     "ConnectionStatus",
+    "EmailSuppression",
+    "SuppressionReason",
     "FlowPreviewLink",
+    "SmsSettings",
     "WebhookEventLog",
     "WebhookEventStatus",
+    "WhatsAppCostHint",
+    "WhatsAppTemplate",
+    "WhatsAppTemplateCategory",
+    "WhatsAppTemplateStatus",
     "generate_webhook_secret",
     "generate_preview_handle",
 ]
@@ -251,6 +268,100 @@ class WebhookEventLog(BaseModel):
         return f"{self.platform}:{self.provider_event_id} ({self.status})"
 
 
+class SuppressionReason(models.TextChoices):
+    """Why an address stopped being mailable.
+
+    Kept apart from ``OptInSource`` on the identity: that column records how
+    consent was *obtained*, and overwriting it at the moment consent stopped
+    applying would destroy the pair a regulator asks to see together
+    (``apps.messaging.services.record_opt_out`` makes the same argument).
+    """
+
+    HARD_BOUNCE = "hard_bounce", "Hard bounce"
+    SOFT_BOUNCE = "soft_bounce", "Repeated soft bounce"
+    COMPLAINT = "complaint", "Spam complaint"
+    UNSUBSCRIBE = "unsubscribe", "Unsubscribed"
+    MANUAL = "manual", "Added by hand"
+
+
+class EmailSuppression(WorkspaceScopedModel):
+    """One mailbox this workspace must not write to again (SPEC §6.7).
+
+    --------------------------------------------------------------------------
+    Why this is not a column on the identity
+    --------------------------------------------------------------------------
+
+    ``ContactChannelIdentity.opted_out_at`` already answers "did this identity
+    withdraw consent?", and for an unsubscribe it is set too. It cannot be the
+    whole answer, because of a decision made two apps away:
+    ``apps/contacts/imports.py`` **never fabricates an identity** — "a spreadsheet
+    column is not consent" — and ``imports._match`` deliberately skips deleted
+    contacts. So a contact that goes away and comes back is a brand-new
+    ``Contact`` row, and the opt-out is out of its reach two different ways:
+
+    * ``delete_contact`` is a *soft* delete, so the old identity survives — but
+      it belongs to a tombstone, and identities resolve **by contact**, so the
+      re-imported contact has none and cannot be given one (the
+      ``(connection, address)`` unique constraint is already taken).
+    * A **hard** delete — issue #29's GDPR erasure, or a merge — takes the
+      identity with it, and every trace of the opt-out goes too.
+
+    A bounce is not a fact about a contact row. It is a fact about a **mailbox**:
+    that address rejected mail, or its owner marked us as spam, and neither
+    stops being true because somebody re-uploaded a spreadsheet. So the key is
+    the normalised address and there is deliberately no foreign key to
+    ``Contact`` — a cascade from one would delete exactly the record that has to
+    survive.
+
+    Workspace-scoped rather than deployment-wide, for the reason
+    ``messaging.models``' pending-identity constraint gives for the same choice:
+    two workspaces may legitimately both hold the same address, they send from
+    different domains, and one tenant's bounce is not evidence about another's
+    relationship with that mailbox.
+
+    **Enforcement** is in ``apps.channels.providers.email``, immediately before
+    the wire, and a hit there also opts the identity out through the messaging
+    facade — so the *second* send to a re-imported suppressed address is refused
+    by the compliance engine (SPEC §19's chokepoint) rather than by the adapter,
+    and every set-wise consumer sees it too.
+    """
+
+    #: The mailbox, through ``apps.common.addresses.normalize_email``. Plain text
+    #: rather than encrypted for the reason CONTRIBUTING gives: this column is
+    #: looked up by value on every send, and an encrypted column cannot be
+    #: filtered. It is the same exposure ``contact.email`` already carries.
+    address = models.CharField(max_length=320)
+    reason = models.CharField(max_length=20, choices=SuppressionReason.choices)
+    #: The provider's own code or bounce subtype, for an operator working out
+    #: why. A code, never the provider's prose: a diagnostic string routinely
+    #: quotes the message that bounced (SECURITY-BASELINE §5).
+    detail = models.CharField(max_length=200, blank=True, default="")
+    #: The connection that was sending when this was recorded, for support. Kept
+    #: nullable and ``SET_NULL``: disconnecting a channel must not delete the
+    #: suppression list it produced.
+    connection = models.ForeignKey(
+        ChannelConnection,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="email_suppressions",
+    )
+
+    class Meta:
+        db_table = "channels_email_suppression"
+        ordering = ["address"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "address"],
+                name="emailsuppression_unique_workspace_address",
+            ),
+        ]
+        indexes = [models.Index(fields=["workspace", "address"], name="emailsuppress_ws_addr_idx")]
+
+    def __str__(self) -> str:
+        return f"{self.address} ({self.reason})"
+
+
 class FlowPreviewLink(WorkspaceScopedModel):
     """One "test on Telegram" link: a tester's chat bound to a draft flow (SPEC §16).
 
@@ -336,3 +447,306 @@ class FlowPreviewLink(WorkspaceScopedModel):
 
     def __str__(self) -> str:
         return f"preview of {self.flow_id} ({'claimed' if self.chat_id else 'unclaimed'})"
+
+
+#: SPEC §6.6's three mandated replies, as the wording a workspace gets before it
+#: writes its own. Each has to be intelligible to somebody who is annoyed and
+#: has stopped reading, which is why they are short and say the brand rather
+#: than the product.
+DEFAULT_OPT_OUT_TEXT = "You have been unsubscribed and will get no further messages. Reply START to resubscribe."
+DEFAULT_OPT_IN_TEXT = "You are resubscribed and will get messages again. Reply STOP at any time to unsubscribe."
+DEFAULT_HELP_TEXT = "Reply STOP to unsubscribe. Message and data rates may apply."
+
+
+class SmsSettings(WorkspaceScopedModel):
+    """One workspace's SMS compliance copy and cost hint (SPEC §6.6, issue #20).
+
+    Per workspace rather than per connection, and that is a compliance judgement
+    rather than a modelling shortcut: a contact who texts STOP to one of a
+    workspace's numbers is unsubscribing from *that number*, but the sentence
+    they get back is the workspace's voice, and two numbers answering HELP with
+    different descriptions of the same business is exactly what a carrier audit
+    picks up on.
+
+    Everything here is **copy and hints**. Nothing on this row can weaken the
+    compliance behaviour: the keywords are hard-coded in
+    :mod:`apps.channels.providers.sms`, the suppression happens in
+    ``apps.messaging.ingest`` whatever this says, and a workspace that blanks
+    every field gets the defaults below rather than silence. SPEC §19 puts
+    opt-out enforcement at a chokepoint precisely so it is not configurable.
+
+    ``per_segment_cost`` is a **hint**, and the same decision SPEC §6.5 makes for
+    WhatsApp: "OpenChat only warns, never meters". A self-hoster's Twilio bill is
+    theirs, prices differ per destination and per campaign, and a number in a
+    composer that pretended to be authoritative would be wrong more often than
+    it was right. It is stored without a currency for the same reason the
+    workspace already stores none — the deployment knows, the product does not.
+    """
+
+    help_text_body = models.TextField(
+        blank=True,
+        default="",
+        help_text="Sent when a contact texts HELP. Blank uses the default wording.",
+    )
+    opt_out_confirmation = models.TextField(
+        blank=True,
+        default="",
+        help_text="Sent once when a contact texts STOP. Blank uses the default wording.",
+    )
+    opt_in_confirmation = models.TextField(
+        blank=True,
+        default="",
+        help_text="Sent when a contact texts START to resubscribe. Blank uses the default wording.",
+    )
+    per_segment_cost = models.DecimalField(
+        max_digits=8,
+        decimal_places=5,
+        null=True,
+        blank=True,
+        help_text="What one segment costs on this account, for the composer's estimate. A hint, never a meter.",
+    )
+    #: SPEC §6.6: "OpenChat surfaces a settings checklist only." US A2P 10DLC
+    #: registration happens in the Twilio console and cannot be done from here,
+    #: so these are an operator's own record that they did it — read by nothing
+    #: and enforced by nothing, which the settings page says out loud.
+    a2p_brand_registered = models.BooleanField(default=False)
+    a2p_campaign_approved = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "channels_sms_settings"
+        constraints = [
+            models.UniqueConstraint(fields=["workspace"], name="smssettings_unique_workspace"),
+        ]
+
+    def __str__(self) -> str:
+        return f"SMS settings for {self.workspace_id}"
+
+    @property
+    def help_reply(self) -> str:
+        return self.help_text_body.strip() or DEFAULT_HELP_TEXT
+
+    @property
+    def opt_out_reply(self) -> str:
+        return self.opt_out_confirmation.strip() or DEFAULT_OPT_OUT_TEXT
+
+    @property
+    def opt_in_reply(self) -> str:
+        return self.opt_in_confirmation.strip() or DEFAULT_OPT_IN_TEXT
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp templates (SPEC §5's whatsapp_template, §6.5) — issue #19
+# ---------------------------------------------------------------------------
+
+
+class WhatsAppTemplateCategory(models.TextChoices):
+    """The three categories Meta will review a template under (SPEC §6.5).
+
+    Category is not decoration: it decides the price of every send and it
+    decides how the template is reviewed. Marketing is the expensive,
+    strictly-reviewed one; authentication is one-time-passcode traffic and has
+    its own rules Meta enforces at submission.
+    """
+
+    MARKETING = "marketing", "Marketing"
+    UTILITY = "utility", "Utility"
+    AUTHENTICATION = "authentication", "Authentication"
+
+
+class WhatsAppTemplateStatus(models.TextChoices):
+    """Where a template is in its life (SPEC §5).
+
+    ``DRAFT`` is ours alone — Meta has never seen it. The other three mirror
+    what the Graph API reports back, and the transition between them is made by
+    the hourly poll rather than by anything a person does here
+    (:mod:`apps.channels.whatsapp_templates`).
+    """
+
+    DRAFT = "draft", "Draft"
+    PENDING = "pending", "In review"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+
+
+class WhatsAppTemplate(WorkspaceScopedModel):
+    """One WhatsApp message template, ours and Meta's copy of it (SPEC §6.5).
+
+    Outside the 24-hour window a WhatsApp send needs one of these and nothing
+    else will do — ``apps.messaging.compliance`` answers ``NeedsTemplate`` from
+    ``PlatformPolicy`` alone, with no knowledge that this table exists. That
+    separation is the point: the *decision* is policy data, and this is the
+    material that satisfies it.
+
+    **Workspace-scoped, though SPEC §5 lists only the connection FK.** Every
+    read here happens in a settings page or a composer that already knows its
+    workspace, and CONTRIBUTING makes the enforcing manager the rule for tenant
+    data rather than something each view remembers. The connection FK is still
+    the authoritative link — a template belongs to the WABA it was submitted to.
+
+    **What keeps the two from disagreeing is the write path, not a ``clean``.**
+    An earlier version of this docstring promised one, and a ``clean`` here
+    could not have delivered it anyway: ``workspace`` is not a form field and is
+    assigned after ``form.is_valid()``, so ``ModelForm._post_clean`` would run
+    the model's validation before the value it was meant to check exists. What
+    holds instead is that both sides are forced to the same workspace on every
+    write — ``views_whatsapp._edit`` loads through ``get_scoped_object_or_404``,
+    ``WhatsAppTemplateForm`` narrows the ``channel_connection`` choices to that
+    workspace, and the view then assigns ``workspace`` itself. Every reader
+    fails closed regardless: ``whatsapp_templates.sendable`` and
+    ``approved_templates_for`` both filter on workspace *and* connection, so a
+    row that ever did disagree would be unsendable and invisible rather than
+    reachable from the wrong tenant.
+
+    ``body_structure`` is the authored template, in the shape
+    :mod:`apps.channels.whatsapp_templates` translates into Graph components::
+
+        {
+          "header": {"format": "text", "text": "Order {{1}}"},   # optional
+          "body":   {"text": "Hi {{1}}, your order shipped."},
+          "footer": {"text": "Reply STOP to opt out."},           # optional
+          "buttons": [{"type": "quick_reply", "text": "Track"},
+                      {"type": "url", "text": "Open", "url": "https://x.test/{{1}}"}]
+        }
+
+    The ``{{n}}`` placeholders are Meta's own numbering, and they are filled by
+    the one shared renderer (SECURITY-BASELINE §3) — never by a template engine.
+    """
+
+    channel_connection = models.ForeignKey(
+        ChannelConnection,
+        on_delete=models.CASCADE,
+        related_name="whatsapp_templates",
+        help_text="The WhatsApp connection whose WABA this template was submitted to.",
+    )
+    name = models.CharField(
+        max_length=512,
+        help_text="Meta's template name: lowercase letters, digits and underscores.",
+    )
+    language = models.CharField(
+        max_length=10,
+        default="en_US",
+        help_text="Meta's language code, e.g. en_US or de.",
+    )
+    category = models.CharField(max_length=20, choices=WhatsAppTemplateCategory.choices)
+    body_structure = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Header/body/footer/buttons with {{n}} placeholders. See the class docstring.",
+    )
+    meta_template_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Meta's id for this template. Empty until it has been submitted.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=WhatsAppTemplateStatus.choices,
+        default=WhatsAppTemplateStatus.DRAFT,
+    )
+    rejected_reason = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Meta's stated reason, shown to the operator. Provider-supplied: escape on render.",
+    )
+
+    class Meta:
+        db_table = "channels_whatsapp_template"
+        ordering = ["name", "language"]
+        constraints = [
+            # Meta's own key for a template is (name, language) inside one
+            # WABA, so two rows agreeing on all three would be one template
+            # with two local states — and the poll would flip it back and
+            # forth. Per connection rather than per workspace: two numbers on
+            # different WABAs legitimately have a template of the same name.
+            models.UniqueConstraint(
+                fields=["channel_connection", "name", "language"],
+                name="whatsapptemplate_unique_name_language",
+            ),
+        ]
+        indexes = [
+            # The hourly poll reads exactly this shape.
+            models.Index(fields=["status"], name="whatsapptemplate_status_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.language})"
+
+    @property
+    def reference(self) -> str:
+        """``<name>/<language>`` — what ``OutboundMessage.template_ref`` carries.
+
+        Deliberately not the primary key. A queued message is retried minutes or
+        hours later from its stored body alone, and a template deleted in the
+        meantime would leave that retry unable to say what it was sending. Name
+        and language are also what the Cloud API itself keys on, so the value
+        that survives is the value the platform understands.
+        """
+        return f"{self.name}/{self.language}"
+
+    @property
+    def is_usable(self) -> bool:
+        """True when a send may reference this template."""
+        return self.status == WhatsAppTemplateStatus.APPROVED
+
+
+class WhatsAppCostHint(WorkspaceScopedModel):
+    """A workspace's own per-category price estimates (SPEC §6.5, §22).
+
+        Surface per-send cost hint in broadcast composer (static table per
+        category, editable in settings; do not attempt live pricing).
+
+    SPEC §22 settles what this is for: "WhatsApp costs are the self-hoster's
+    Meta bill; OpenChat only warns, never meters." So these numbers are shown
+    beside a template and multiplied by a recipient count in a composer, and
+    nothing in the product ever adds them up, stores them per message, or
+    refuses a send because of them.
+
+    They are per workspace and hand-entered because Meta prices per country,
+    per category and per agreement, and revises all three. A number this
+    product fetched would be wrong in a way that looked authoritative; a number
+    the operator typed from their own rate card is wrong in a way they can see.
+
+    Explicit columns rather than a JSON blob of categories: config authored by
+    a user gets schema validation that rejects unknown keys
+    (SECURITY-BASELINE §7), and three decimals do not need a document to hold
+    them.
+    """
+
+    #: What a category costs when the workspace has entered nothing. Zero, not a
+    #: guess: a made-up price shown as a hint is worse than an absent one, and
+    #: the settings page says so where an operator will read it.
+    DEFAULT_AMOUNT = Decimal("0")
+
+    currency = models.CharField(
+        max_length=3,
+        default="USD",
+        help_text="ISO 4217 code, for display only. Nothing converts between currencies.",
+    )
+    marketing = models.DecimalField(max_digits=8, decimal_places=4, default=DEFAULT_AMOUNT)
+    utility = models.DecimalField(max_digits=8, decimal_places=4, default=DEFAULT_AMOUNT)
+    authentication = models.DecimalField(max_digits=8, decimal_places=4, default=DEFAULT_AMOUNT)
+
+    class Meta:
+        db_table = "channels_whatsapp_cost_hint"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace"], name="whatsappcosthint_unique_workspace"),
+        ]
+
+    def __str__(self) -> str:
+        return f"WhatsApp cost hints ({self.currency})"
+
+    def amount_for(self, category: str) -> Decimal:
+        """The per-send estimate for one category, or the default.
+
+        Looked up against the choices rather than by bare ``getattr``, for the
+        reason ``Capabilities.max_bytes_for`` gives: the field names are the
+        category values, and an unconstrained lookup would happily return
+        ``currency``.
+        """
+        if category not in WhatsAppTemplateCategory.values:
+            return self.DEFAULT_AMOUNT
+        value = getattr(self, category, None)
+        return value if isinstance(value, Decimal) else self.DEFAULT_AMOUNT

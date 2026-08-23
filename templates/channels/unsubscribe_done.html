@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Unsubscribed · BrightBean Chat{% endblock %}
+
+{% comment %}
+Both blocks, like members/accept_invite.html: base.html renders `auth_content`
+for an anonymous visitor and `content` inside the app shell for a signed-in one,
+and a link in an email can be opened by either.
+{% endcomment %}
+{% block auth_content %}
+<div class="auth-card text-center">{% include "channels/_unsubscribe_body.html" %}</div>
+{% endblock %}
+
+{% block content %}{% include "channels/_unsubscribe_body.html" %}{% endblock %}

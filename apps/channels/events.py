@@ -55,10 +55,22 @@ __all__ = [
 
 
 class EventType(StrEnum):
-    """SPEC §7.2's event types, exactly.
+    """SPEC §7.2's event types, plus one the spec's own §6.3 forces.
 
     A ``StrEnum`` so ``event.type == "message"`` reads true and the value
     serialises into the event log without a conversion step.
+
+    ``MESSAGE_DELETED`` is the addition, and it is deliberate rather than
+    incidental. SPEC §7.2 lists nine types; SPEC §6.3 separately requires
+    Instagram's ``message_deletions`` webhook field to be handled ("redact
+    message body, keep row with status deleted") and §19 repeats it, so the
+    signal has to arrive as *something*. The alternative considered was a
+    ``DELIVERY_STATUS`` event carrying ``status="deleted"``, which would mean
+    widening ``apps.messaging.ingest.RECEIPT_STATUSES`` and the pure
+    ``_next_status`` ladder — both deliberately narrow, and neither is about
+    deletion. A deletion is not a rung on the delivery ladder; it is the row
+    being retracted. So it gets its own type, and this enum is shared, so the
+    addition is called out in the PR that made it (#17, L5-A).
     """
 
     MESSAGE = "message"
@@ -69,6 +81,8 @@ class EventType(StrEnum):
     REFERRAL = "referral"
     FOLLOW = "follow"
     DELIVERY_STATUS = "delivery_status"
+    #: The platform says a message it delivered no longer exists. SPEC §6.3.
+    MESSAGE_DELETED = "message_deleted"
     OPT_OUT = "opt_out"
 
 
@@ -266,6 +280,26 @@ class OutboundMessage:
     quick_replies: tuple[QuickReply, ...] = ()
     tag: str | None = None
     template_ref: str | None = None
+    #: The values that fill an approved template's ``{{1}}``-style slots, as
+    #: ordered ``(slot, value)`` pairs — ``("body.1", "Ada")``, ``("header.1",
+    #: "March")``, ``("button.0.1", "order/42")``.
+    #:
+    #: A tuple of pairs rather than a dict for the reason this whole module is
+    #: frozen dataclasses with tuple collections: these objects are handed to a
+    #: chain of processors that must not be able to mutate each other's input.
+    #: The slot strings are the platform-neutral half — an adapter groups them
+    #: into whatever its own template payload looks like — so nothing here
+    #: knows what a WhatsApp component is.
+    #:
+    #: **Already rendered.** Substitution happens in the flow engine, where the
+    #: contact and the variable bag are, through the one shared renderer
+    #: (SECURITY-BASELINE §3). An adapter receives finished strings and must
+    #: never render them again.
+    #:
+    #: Additive to the SPEC §7.2 shape, like ``node_id`` before it: readers that
+    #: do not know the key ignore it, and an older row without it reads back as
+    #: empty.
+    template_variables: tuple[tuple[str, str], ...] = ()
     #: The flow node this message came from, where one did (issue #12).
     #:
     #: SPEC §6.2 requires Telegram's ``callback_data`` to carry
@@ -285,6 +319,34 @@ class OutboundMessage:
     #: chat. Additive to the SPEC §7.2 shape: readers that do not know the key
     #: ignore it, and an older row without it reads back as "".
     node_id: str = ""
+    #: The subject line, for platforms that have one. Email is the only such
+    #: platform in v1 (SPEC §6.7, §11.10); every other adapter ignores it.
+    #:
+    #: A field rather than a block kind, for the reason ``node_id`` is one: the
+    #: block vocabulary is walked by ``apps.channels.downgrade`` for every
+    #: platform, and a subject is not a thing that can be downgraded into text
+    #: — it is an envelope property. Empty means "the adapter picks", which for
+    #: email means the connection's configured default.
+    subject: str = ""
+    #: A per-message From address, overriding the connection's (SPEC §11.10's
+    #: ``from_override``). Empty means the connection's own from-address, which
+    #: is the case for every send that did not ask for something else. Like
+    #: ``subject``, envelope rather than content.
+    from_override: str = ""
+    #: An authored HTML body, for a platform that renders one. Email is the only
+    #: such platform in v1 (SPEC §11.10's ``html_body``).
+    #:
+    #: **This is the only field in this class whose contents are markup**, and
+    #: that is exactly why it is separate. ``TextBlock.text`` is plain text on
+    #: every path that produces one — a flow's ``send_message``, an inbox reply,
+    #: an API send — so an adapter building HTML has to escape it. Carrying the
+    #: author's markup in a block instead would make "is this string HTML?"
+    #: depend on which node happened to create it, and the answer would be wrong
+    #: for a contact whose name is ``<img src=…>``.
+    #:
+    #: Set it *and* a ``TextBlock`` holding the plain-text equivalent: the blocks
+    #: are what the inbox thread renders, and they should not be raw markup.
+    html_body: str = ""
 
     def to_body(self) -> dict[str, Any]:
         """The SPEC §7.2 ``message.body`` json.
@@ -292,8 +354,9 @@ class OutboundMessage:
         L3-A stores this on the message row, so the shape is a persisted
         contract: blocks carry their own ``type`` discriminator and every
         top-level key is always present, even when empty. Keys are added
-        additively (``node_id`` arrived with issue #12) and never removed or
-        renamed — rows written by an older release stay readable, which is what
+        additively (``node_id`` arrived with issue #12; ``subject`` and
+        ``from_override`` with #21) and never removed or renamed — rows written
+        by an older release stay readable, which is what
         ``apps.messaging.rendering`` depends on to retry them.
         """
         return {
@@ -302,7 +365,13 @@ class OutboundMessage:
             "quick_replies": [{"id": qr.id, "label": qr.label} for qr in self.quick_replies],
             "tag": self.tag,
             "template_ref": self.template_ref,
+            # As a list of two-element lists: json has no tuples, and a dict
+            # keyed by slot would lose the order the components are built in.
+            "template_variables": [[slot, value] for slot, value in self.template_variables],
             "node_id": self.node_id,
+            "subject": self.subject,
+            "from_override": self.from_override,
+            "html_body": self.html_body,
         }
 
 

@@ -31,7 +31,6 @@ _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = [
 # Not workspace-scoped, so login is the whole gate.
 _GLOBAL_STUBS: list[tuple[str, str, str, str, str]] = [
     ("accounts/preferences/", "settings_preferences", "Preferences", "#31 follow-up", _SETTINGS_LAYOUT),
-    ("organization/api-keys/", "settings_org_api_keys", "API Keys", "#25 (L5-F)", _SETTINGS_LAYOUT),
 ]
 
 
@@ -69,12 +68,21 @@ urlpatterns = [
     # Org-scoped management. One org per user in v1, so no id in the URL.
     path("organization/", include("apps.organizations.urls")),
     path("organization/members/", include("apps.members.urls")),
+    # API keys are org-tier (SPEC §4.1: they span every workspace in the org).
+    # This replaces the placeholder that used to sit in _GLOBAL_STUBS above and
+    # keeps its URL name, `settings_org_api_keys`, which the settings nav
+    # reverses — the owning issue swaps the view, not the nav registry.
+    path("organization/api-keys/", include("apps.api.urls_keys")),
     # Invite acceptance is unauthenticated — the recipient has no org yet.
     path("", include("apps.members.urls_public")),
     # Public, token-bearing media delivery (#16). The fetcher is a messaging
     # platform with no session; the signed token is the whole credential. Joins
     # the /u/, /c/ and /o/ family documented in apps/common/signing.py.
     path("", include("apps.media_library.urls_public")),
+    # The hosted unsubscribe page (#21). Same family, same reasoning: the
+    # recipient of an email has no account here, and SPEC §6.7 puts this link in
+    # every message the product sends.
+    path("", include("apps.channels.urls_public")),
     # Per-user, so no workspace prefix: the bell shows every workspace at once
     # (issue #7).
     path("notifications/", include("apps.notifications.urls")),
@@ -83,6 +91,9 @@ urlpatterns = [
     path("w/<uuid:workspace_id>/", include("apps.workspaces.urls")),
     path("w/<uuid:workspace_id>/settings/credentials/", include("apps.credentials.urls")),
     path("w/<uuid:workspace_id>/settings/channels/", include("apps.channels.urls")),
+    # Outbound webhooks are workspace-scoped (SPEC §5), unlike the API keys
+    # above: their url, secret and subscriptions belong to one workspace's data.
+    path("w/<uuid:workspace_id>/settings/webhooks/", include("apps.api.urls_webhooks")),
     path("w/<uuid:workspace_id>/media/", include("apps.media_library.urls")),
     # The inbox (issue #14) replaces the placeholder that used to sit in
     # _WORKSPACE_STUBS above. A deep prefix, so it joins this group rather than
@@ -102,11 +113,23 @@ urlpatterns = [
     # specific includes.
     path("w/<uuid:workspace_id>/", include("apps.flows.urls")),
     *[_ws_stub(*stub) for stub in _WORKSPACE_STUBS],
+    # Platform OAuth callbacks (SPEC §§6.3, 6.4). Session-authenticated but *not*
+    # workspace-scoped: Meta matches one exact redirect URI per app, so a
+    # per-workspace path would need one whitelist entry per tenant. The workspace
+    # travels in a signed ``state`` instead. See apps/channels/urls_oauth.py.
+    path("channels/", include("apps.channels.urls_oauth")),
     # Inbound webhooks (SPEC §7.1). Unauthenticated and deliberately NOT under
     # /w/<workspace_id>/: a platform posting an event has no session, and
     # RBACMiddleware would try to resolve a membership for it. The signature is
     # the credential; see apps/channels/views_webhooks.py.
     path("webhooks/", include("apps.channels.urls_webhooks")),
+    # The public REST API (SPEC §17). Like the inbound webhooks above it is not
+    # under /w/<workspace_id>/: an API key names its own workspace, so there is
+    # no URL kwarg for RBACMiddleware to resolve and no session for it to
+    # resolve one against. The bearer token is the whole credential; see
+    # apps/api/auth.py. Note apps.flows already owns w/<uuid>/api/flows/ — that
+    # is the session-authenticated builder API and does not collide with this.
+    path("api/v1/", include("apps.api.urls")),
     path("", account_views.root, name="index"),
 ]
 

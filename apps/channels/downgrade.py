@@ -107,7 +107,12 @@ def downgrade(outbound: OutboundMessage, capabilities: Capabilities) -> Downgrad
 
     # 3. Text: numbering appended, then the length cap — in that order, because
     #    the numbering is text too.
-    return state.finish(tag=outbound.tag, template_ref=outbound.template_ref, node_id=outbound.node_id)
+    return state.finish(
+        tag=outbound.tag,
+        template_ref=outbound.template_ref,
+        template_variables=outbound.template_variables,
+        node_id=outbound.node_id,
+    )
 
 
 class _State:
@@ -215,11 +220,24 @@ class _State:
                 target.trailer.append(self.number(button.id, button.label))
 
     def resolve_quick_replies(self, quick_replies: tuple[QuickReply, ...], target: _Pending) -> None:
-        """Same rule for quick replies: keep what fits, number the rest."""
+        """Same rule for quick replies: keep what fits, number the rest.
+
+        **A platform whose interaction is exclusive gives them no room at all
+        once the message has buttons.** WhatsApp's `interactive` message is a
+        reply-button set *or* a list and never both, so a message declaring
+        both kinds can show only one of them. Filling the two budgets
+        independently there produced a message the adapter could not represent,
+        and its only remaining option was to drop the quick replies — silently,
+        because this renderer had already decided they were native and so never
+        numbered them. Numbering them here is visible, reaches the contact, and
+        keeps the reply mapping in ``numeric_replies`` where the waiting node
+        can match it.
+        """
         if not quick_replies:
             return
 
-        supports = self.caps.quick_replies and self.caps.max_quick_replies > 0
+        exclusive = self.caps.interaction_is_exclusive and bool(target.buttons)
+        supports = self.caps.quick_replies and self.caps.max_quick_replies > 0 and not exclusive
         # Symmetric with resolve_buttons: count what this message already holds.
         # Only one call per message reaches this today, but resolve_buttons is
         # already called twice against one target (once per downgraded card,
@@ -231,7 +249,12 @@ class _State:
 
         if not overflow:
             return
-        reason = "not supported" if not supports else f"over the {room}-reply limit"
+        if exclusive:
+            reason = "cannot share a message with buttons on this platform"
+        elif not supports:
+            reason = "not supported"
+        else:
+            reason = f"over the {room}-reply limit"
         self.notes.append(f"quick replies: {len(overflow)} {reason}, appended to the text")
         for quick_reply in overflow:
             target.trailer.append(self.number(quick_reply.id, quick_reply.label))
@@ -244,7 +267,14 @@ class _State:
 
     # -- assembly -----------------------------------------------------------
 
-    def finish(self, *, tag: str | None, template_ref: str | None, node_id: str = "") -> DowngradeResult:
+    def finish(
+        self,
+        *,
+        tag: str | None,
+        template_ref: str | None,
+        template_variables: tuple[tuple[str, str], ...] = (),
+        node_id: str = "",
+    ) -> DowngradeResult:
         """Append trailers, apply the length cap, and freeze into messages.
 
         Every field of the input that is not itself a downgrade decision has to
@@ -266,6 +296,7 @@ class _State:
                     quick_replies=tuple(pending.quick_replies),
                     tag=tag,
                     template_ref=template_ref,
+                    template_variables=template_variables,
                     node_id=node_id,
                 )
             )

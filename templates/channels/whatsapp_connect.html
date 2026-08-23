@@ -1,0 +1,52 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Connect WhatsApp · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Connect a WhatsApp number</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    BrightBean Chat talks to Meta's Cloud API directly — there is no messaging
+    provider in between. What you need is a WhatsApp Business Account, a phone
+    number registered on it, and a permanent system user token. The token is the
+    whole credential, so it is stored encrypted and never shown again.
+  </p>
+
+  <h2>Before you paste</h2>
+  <ol>
+    <li>In Business Manager, open <strong>WhatsApp Accounts</strong> and copy the
+      <strong>WhatsApp Business Account ID</strong>.</li>
+    <li>Open the account's <strong>Phone numbers</strong> tab and copy the
+      <strong>phone number ID</strong> — the numeric API id, not the number itself.</li>
+    <li>Create a <strong>system user</strong> with access to the account, and generate a
+      permanent token with <code>whatsapp_business_messaging</code> and
+      <code>whatsapp_business_management</code>.</li>
+  </ol>
+
+  {% if error %}
+    <div class="alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Connect</button>
+  </form>
+
+  <h2>What happens next</h2>
+  <p class="muted">
+    We read the phone number back from Meta to check the token and learn how the
+    number displays, then subscribe this app to the account's webhooks. Nothing
+    is stored until that first call succeeds, and the connection is removed again
+    if the subscription fails — a number Meta will not deliver for is not a
+    connection.
+  </p>
+  <p class="muted">Meta delivers every WhatsApp event in this deployment to:</p>
+  <p><code>{{ webhook_url }}</code></p>
+  <p class="muted">
+    Set that URL, and a verify token matching <code>PLATFORM_WHATSAPP_VERIFY_TOKEN</code>,
+    on your Meta app's <strong>WhatsApp → Configuration</strong> page, and subscribe to the
+    <code>messages</code> field. The URL has to be reachable over public HTTPS with a valid
+    certificate. Full setup notes are in <code>docs/channels/whatsapp.md</code>.
+  </p>
+
+  <p><a href="{{ list_url }}">Back to channels</a></p>
+{% endblock %}

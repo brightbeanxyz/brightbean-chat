@@ -31,10 +31,23 @@ The linking rules, in order
    rule 3 creates a new contact. Contact rows are compared on both the raw and
    the normalised form so an operator who typed E.164 gets the link they expect.
 
-WhatsApp is a deliberate omission from rule 2. Its ``wa_id`` *is* an E.164
-number without the ``+``, which would make it linkable — but the code that knows
-that is the adapter's, and the adapter is L5-C's. Adding ``Platform.WHATSAPP``
-to :data:`ADDRESS_PLATFORMS` there is the whole change.
+WhatsApp joined rule 2 with L5-C (#19), which is what this docstring said it
+would: its ``wa_id`` *is* an E.164 number, so it compares like with like against
+``contact.phone``. The half that had to wait for the adapter is the ``+``.
+``normalize_phone`` refuses a bare string of digits — it will not guess a
+country code — so the entry below only works because the WhatsApp adapter
+stores ``platform_user_id`` as ``+`` plus the ``wa_id`` rather than as Meta
+sends it. (Named in prose rather than by module path on purpose:
+``test_compliance_doors.py`` proves this app imports no concrete adapter by
+scanning these files for one, and a docstring citation reads the same to that
+scan as an import would.)
+
+The three entries in :data:`ADDRESS_PLATFORMS` are the only platform names in
+this app that are not a migration's choices list or a docstring, and they are
+*data* in the same sense ``apps.channels.policy.POLICIES`` is: a table saying
+which platforms carry a real-world address. ROADMAP contract 4's rule is about
+**branches** — no ``if platform == …`` deciding a compliance outcome — and there
+are none here or anywhere else in this app.
 """
 
 import hashlib
@@ -66,6 +79,9 @@ __all__ = [
 ADDRESS_PLATFORMS: dict[str, str] = {
     Platform.SMS.value: "phone",
     Platform.EMAIL.value: "email",
+    # Issue #19. A WhatsApp platform_user_id is "+" plus the wa_id, which is
+    # E.164 — see the module docstring for why the plus is the whole story.
+    Platform.WHATSAPP.value: "phone",
 }
 
 #: Longest ``platform_user_id`` the column holds.
