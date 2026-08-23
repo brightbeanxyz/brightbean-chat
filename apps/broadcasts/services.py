@@ -67,10 +67,12 @@ from apps.broadcasts.models import (
 )
 from apps.broadcasts.notifications import EVENT_BROADCAST_FINISHED
 from apps.channels import policy as channel_policy
+from apps.channels import whatsapp_templates
 from apps.contacts import conditions
 from apps.flows import services as flow_services
 from apps.flows.models import Flow, FlowStatus, FlowVersion
 from apps.messaging.codes import Denial
+from apps.messaging.models import MessageStatus
 from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
 from apps.queueing.registry import schedule
 
@@ -265,9 +267,19 @@ def save_template(broadcast: Broadcast, template: Any, variables: dict[str, str]
     if template.channel_connection_id != broadcast.channel_connection_id:
         raise BroadcastError("That template was approved on a different channel.")
 
+    # Every slot the approved copy declares needs a value. Meta rejects a
+    # template message whose parameter count does not match the one it reviewed,
+    # so the alternative to checking here is discovering it once per recipient —
+    # and the slots come from ``slots_for``, the same reading of
+    # ``body_structure`` the composer built its form from.
+    values = {str(k): str(v) for k, v in (variables or {}).items()}
+    missing = [slot for slot in whatsapp_templates.slots_for(template) if not values.get(slot, "").strip()]
+    if missing:
+        raise BroadcastError(f"This template needs a value for {', '.join(missing)}.")
+
     with transaction.atomic():
         broadcast.whatsapp_template = template
-        broadcast.template_variables = {str(k): str(v) for k, v in (variables or {}).items()}
+        broadcast.template_variables = values
         broadcast.flow = None
         broadcast.flow_version = None
         broadcast.save(update_fields=["whatsapp_template", "template_variables", "flow", "flow_version", "updated_at"])
@@ -521,10 +533,57 @@ def cancel_broadcast(broadcast: Broadcast) -> Broadcast:
             broadcast=locked, status=RecipientStatus.PENDING
         ).update(status=RecipientStatus.CANCELLED, updated_at=timezone.now())
 
+        _cancel_deferred_sends(locked)
         release_stats(locked)
         _retire_flow(locked)
     broadcast.refresh_from_db()
     return broadcast
+
+
+def _cancel_deferred_sends(broadcast: Broadcast) -> int:
+    """Stop the sends the facade accepted but the token bucket never released.
+
+    The gap this closes is small and real. A ``broadcast_send`` that ran while
+    the connection's bucket was empty does not fail: SPEC §8 has the facade queue
+    the message and arm a ``send_retry`` instead. The recipient is recorded as
+    sent — it is on its way — and the queue row that cancellation flips is
+    ``broadcast_send``, which has already run. So without this, a broadcast
+    cancelled at that moment would still deliver a handful of messages minutes
+    later, when the retry fired.
+
+    So the retries are cancelled too, matched by the message ids this broadcast
+    owns. A message row left ``queued`` with nothing scheduled to move it is
+    exactly what its ``error`` says it is — deferred, and then stopped — and it
+    stays visible in the thread as a message that never went out. Marking it
+    ``failed`` would be truer still, and needs a door contract 1 does not have:
+    :mod:`apps.messaging.services` exposes no way to withdraw a send, and adding
+    one is that app's change to make, not this one's.
+
+    Returns how many retries were stopped.
+    """
+    stalled = list(
+        BroadcastRecipient.objects.for_workspace(broadcast.workspace_id)
+        .filter(broadcast=broadcast, status=RecipientStatus.SENT, message__status=MessageStatus.QUEUED)
+        .values_list("pk", "message_id")
+    )
+    if not stalled:
+        return 0
+
+    cancelled = (
+        ScheduledAction.objects.for_workspace(broadcast.workspace_id)
+        .filter(
+            type=ActionType.SEND_RETRY,
+            status=ActionStatus.PENDING,
+            payload__message_id__in=[str(message_id) for _, message_id in stalled],
+        )
+        .update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
+    )
+    BroadcastRecipient.objects.for_workspace(broadcast.workspace_id).filter(pk__in=[pk for pk, _ in stalled]).update(
+        status=RecipientStatus.CANCELLED, updated_at=timezone.now()
+    )
+
+    logger.info("Broadcast %s: stopped %s deferred send(s) on cancellation", broadcast.pk, cancelled)
+    return int(cancelled)
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +617,16 @@ class Counters:
 
     @property
     def is_finished(self) -> bool:
-        """Whether every recipient has reached a terminal state."""
-        return self.queued > 0 and self.pending == 0
+        """Whether every recipient has reached a terminal state.
+
+        An **empty** broadcast counts as finished, and that is not a corner case
+        to shrug at: ``schedule_broadcast`` refuses an audience nobody matches,
+        but the audience is resolved again at fanout, and a workspace can delete
+        every one of those contacts in between. Requiring ``queued > 0`` here left
+        that broadcast at ``sending`` with nothing pending — and the housekeeping
+        sweep could not rescue it either, because it asks this same question.
+        """
+        return self.pending == 0
 
     @property
     def percent(self) -> int:

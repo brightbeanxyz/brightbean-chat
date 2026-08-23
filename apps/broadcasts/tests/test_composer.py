@@ -253,6 +253,56 @@ class TestScheduleGates:
         with pytest.raises(services.BroadcastError, match="approved template"):
             services.schedule_broadcast(broadcast)
 
+    def test_a_template_with_an_unfilled_slot_is_refused(self, tenancy, whatsapp_connection, make_contacts):
+        """Meta rejects a template message whose parameter count does not match.
+
+        Checked once, here, rather than discovered once per recipient — and the
+        slot list comes from ``slots_for``, the same reading of ``body_structure``
+        the composer built its form from.
+        """
+        from apps.broadcasts.tests.conftest import EVERYONE
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        template = WhatsAppTemplate.objects.create(
+            workspace=tenancy.workspace,
+            channel_connection=whatsapp_connection,
+            name="two_slots",
+            language="en_US",
+            category="utility",
+            status=WhatsAppTemplateStatus.APPROVED,
+            body_structure={"body": {"text": "Hi {{1}}, your order {{2}} shipped."}},
+        )
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Shipping", connection=whatsapp_connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+
+        with pytest.raises(services.BroadcastError, match="body.2"):
+            services.save_template(broadcast, template, {"body.1": "Ada"})
+
+    def test_a_template_from_another_channel_is_refused(self, tenancy, whatsapp_connection, connection):
+        """A template name is scoped to the WABA, so a reference picked against
+        one number means nothing on another — and can silently mean something
+        *else*. ``sendable`` says the same at send time; this is the composer's
+        half."""
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        template = WhatsAppTemplate.objects.create(
+            workspace=tenancy.workspace,
+            channel_connection=connection,
+            name="elsewhere",
+            language="en_US",
+            category="utility",
+            status=WhatsAppTemplateStatus.APPROVED,
+            body_structure={"body": {"text": "Hi"}},
+        )
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Wrong number", connection=whatsapp_connection, user=tenancy.owner
+        )
+
+        with pytest.raises(services.BroadcastError, match="different channel"):
+            services.save_template(broadcast, template, {})
+
     def test_a_tag_the_platform_does_not_accept_is_refused_on_the_way_in(self, make_broadcast, messenger_connection):
         """Checked here as well as by the compliance engine, deliberately.
 

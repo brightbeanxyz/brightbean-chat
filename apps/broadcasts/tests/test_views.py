@@ -60,9 +60,7 @@ class TestList:
 
         broadcast = Broadcast.objects.for_workspace(tenancy.workspace).get()
         assert response.status_code == 204
-        assert response.headers["HX-Redirect"] == _url(
-            "broadcasts:compose", tenancy, broadcast_id=broadcast.pk
-        )
+        assert response.headers["HX-Redirect"] == _url("broadcasts:compose", tenancy, broadcast_id=broadcast.pk)
 
 
 @pytest.mark.django_db
@@ -77,16 +75,16 @@ class TestWizard:
 
         assert response.status_code == 200
 
-    def test_the_composer_page_renders_the_step_the_draft_has_reached(
-        self, tenancy, client_for, connection
-    ):
+    def test_the_composer_page_renders_the_step_the_draft_has_reached(self, tenancy, client_for, connection):
         broadcast = services.create_broadcast(
             workspace=tenancy.workspace, name="Fresh", connection=connection, user=tenancy.owner
         )
 
-        body = client_for(tenancy.owner).get(
-            _url("broadcasts:compose", tenancy, broadcast_id=broadcast.pk)
-        ).content.decode()
+        body = (
+            client_for(tenancy.owner)
+            .get(_url("broadcasts:compose", tenancy, broadcast_id=broadcast.pk))
+            .content.decode()
+        )
 
         # No audience yet, so the audience step is where it opens.
         assert "Who receives this?" in body
@@ -115,9 +113,7 @@ class TestWizard:
 
         assert b"Who receives this?" in response.content
 
-    def test_saving_the_audience_stores_the_document_and_moves_on(
-        self, tenancy, client_for, connection, make_contacts
-    ):
+    def test_saving_the_audience_stores_the_document_and_moves_on(self, tenancy, client_for, connection, make_contacts):
         make_contacts(2, connection=connection)
         broadcast = services.create_broadcast(
             workspace=tenancy.workspace, name="Fresh", connection=connection, user=tenancy.owner
@@ -138,9 +134,7 @@ class TestWizard:
         from apps.contacts.models import Segment
 
         make_contacts(1, connection=connection)
-        segment = Segment.objects.create(
-            workspace=tenancy.workspace, name="Everyone", filter_json=EVERYONE
-        )
+        segment = Segment.objects.create(workspace=tenancy.workspace, name="Everyone", filter_json=EVERYONE)
         broadcast = services.create_broadcast(
             workspace=tenancy.workspace, name="Fresh", connection=connection, user=tenancy.owner
         )
@@ -174,9 +168,9 @@ class TestWizard:
         broadcast.refresh_from_db()
         assert broadcast.status == BroadcastStatus.SCHEDULED
         assert response.headers["HX-Redirect"] == _url("broadcasts:detail", tenancy, broadcast_id=broadcast.pk)
-        assert ScheduledAction.objects.for_workspace(tenancy.workspace).filter(
-            type=ActionType.BROADCAST_FANOUT
-        ).exists()
+        assert (
+            ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).exists()
+        )
 
     def test_scheduling_later_reads_the_time_in_the_workspaces_timezone(
         self, tenancy, client_for, connection, make_contacts, make_broadcast
@@ -250,9 +244,7 @@ class TestDuplicateAndDelete:
         assert not Broadcast.objects.for_workspace(tenancy.workspace).exists()
         assert not Flow.objects.for_workspace(tenancy.workspace).filter(pk=flow_id).exists()
 
-    def test_a_flow_moved_out_of_the_reserved_folder_survives(
-        self, tenancy, client_for, connection, make_broadcast
-    ):
+    def test_a_flow_moved_out_of_the_reserved_folder_survives(self, tenancy, client_for, connection, make_broadcast):
         """Moving it out of the Broadcasts folder is how an operator adopts it."""
         from apps.flows.models import Flow
         from apps.flows.services import set_folder

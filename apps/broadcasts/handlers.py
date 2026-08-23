@@ -300,25 +300,61 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
 def _send_template(broadcast: Broadcast, contact: Any, connection: Any, probe: OutboundMessage) -> Message | None:
     """Template content goes straight through contract 1's facade.
 
+    Three things happen here that a flow's ``send_message`` node also does, in
+    the same order and through the same functions.
+
+    **The pairing is re-checked.** ``whatsapp_templates.sendable`` refuses a
+    template that is no longer approved, or that belongs to another connection —
+    and its docstring explains why the second case is the dangerous one: a
+    template name is scoped to the WhatsApp Business Account, so if the other
+    number happens to hold one with the same name and language, Meta sends *that*
+    one. The right shape, approved, the wrong words, to a real contact, with
+    nothing reporting a problem. Hours can pass between scheduling and this send.
+
+    **The slot values are rendered per contact**, through
+    ``apps.flows.rendering`` — the one shared, engine-free substitution
+    (SECURITY-BASELINE §3). That is what lets an operator map a slot to
+    ``{{first_name}}``, and it is the reason the adapter receives finished
+    strings and its docstring tells it never to render them again.
+
+    **The readable copy is stored on the message row.** The adapter puts only the
+    template reference on the wire — Meta holds the approved words — so a row
+    carrying nothing would leave the inbox showing a blank message the contact
+    demonstrably received. ``rendered_text`` is the same substitution the
+    composer's preview uses, so the two cannot disagree.
+
     ``blocking=True`` is the worker path SPEC §8 describes — "the worker respects
-    buckets" — and it is bounded by ``SEND_BUCKET_MAX_WAIT_SECONDS``, past which
-    the facade turns the wait into a ``send_retry`` rather than sleeping with a
-    transaction open.
+    buckets" — bounded by ``SEND_BUCKET_MAX_WAIT_SECONDS``, past which the facade
+    turns the wait into a ``send_retry`` rather than sleeping with a transaction
+    open.
 
     Nothing here writes a ``Message``: the facade is the only send site, which is
     what ``apps/messaging/tests/test_write_sites.py`` asserts over the AST.
     """
+    from apps.channels import whatsapp_templates
+    from apps.channels.events import TextBlock
+    from apps.flows.rendering import context_for, render
     from apps.messaging.services import send_outbound
 
-    template = broadcast.whatsapp_template
+    template = whatsapp_templates.sendable(broadcast.whatsapp_template_id, connection)
+    if template is None:
+        logger.warning(
+            "Broadcast %s names a template that is no longer sendable on connection %s.",
+            broadcast.pk,
+            connection.pk,
+        )
+        return None
+
+    context = context_for(contact)
+    values = {str(slot): render(str(value), context) for slot, value in (broadcast.template_variables or {}).items()}
+    text = whatsapp_templates.rendered_text(template, values)
     outbound = OutboundMessage(
+        blocks=(TextBlock(text=text),) if text else (),
         tag=probe.tag,
-        template_ref=template.reference if template is not None else None,
-        # Already-rendered strings, as the field's contract requires: an adapter
-        # never renders anything a second time (SECURITY-BASELINE §3).
-        template_variables=tuple(
-            sorted((str(slot), str(value)) for slot, value in (broadcast.template_variables or {}).items())
-        ),
+        # The row's reference, not the composer's: a template renamed since it was
+        # picked resolves to what it is now rather than to what it was.
+        template_ref=template.reference,
+        template_variables=tuple(sorted(values.items())),
     )
     return send_outbound(
         workspace=broadcast.workspace,

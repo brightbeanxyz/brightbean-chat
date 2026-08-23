@@ -233,3 +233,56 @@ def test_cancelling_retires_the_private_mini_flow(tenancy, make_contacts, make_b
 
     broadcast.refresh_from_db()
     assert broadcast.flow.status == FlowStatus.ARCHIVED
+
+
+@pytest.mark.django_db
+def test_cancelling_stops_a_send_the_token_bucket_had_deferred(
+    tenancy, make_contacts, make_broadcast, connection, adapter_for, settings
+):
+    """The narrowest window in cancellation, and it is a real one.
+
+    A ``broadcast_send`` that runs while the connection's bucket is empty does
+    not fail: SPEC §8 has the facade queue the message and arm a ``send_retry``.
+    That row is not a ``broadcast_send``, so the bulk flip does not reach it —
+    and without cancelling it too, a broadcast stopped at that moment would still
+    deliver minutes later, when the retry fired.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone as tz
+
+    from apps.messaging.buckets import rate_for
+    from apps.messaging.models import MessageStatus, SendBucket
+
+    settings.SEND_BUCKET_MAX_WAIT_SECONDS = 0
+    # Two recipients, one send run: the second keeps the broadcast at ``sending``,
+    # which is the state a cancel is for. With only one, the deferred send would
+    # settle it — a queued message is recorded as on its way — and there would be
+    # nothing left to cancel.
+    make_contacts(2, connection=connection)
+    broadcast = make_broadcast(connection=connection)
+
+    with adapter_for(connection.platform) as adapter:
+        actions = _fan_out(tenancy.workspace, broadcast)
+        SendBucket.objects.create(
+            connection=connection,
+            tokens=0.0,
+            capacity=1.0,
+            refill_rate=rate_for(connection.platform),
+            refilled_at=tz.now() + timedelta(hours=1),
+        )
+        handlers.handle_broadcast_send(actions[0].payload, actions[0])
+
+        assert adapter.sends == []
+
+    recipient = broadcast.recipients.get(pk=actions[0].payload["recipient_id"])
+    assert recipient.status == RecipientStatus.SENT
+    assert recipient.message.status == MessageStatus.QUEUED
+    retry = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.SEND_RETRY)
+    assert retry.filter(status=ActionStatus.PENDING).exists()
+
+    services.cancel_broadcast(broadcast)
+
+    assert not retry.filter(status=ActionStatus.PENDING).exists()
+    recipient.refresh_from_db()
+    assert recipient.status == RecipientStatus.CANCELLED

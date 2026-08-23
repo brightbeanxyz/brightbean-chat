@@ -230,19 +230,30 @@ class TestTenThousandContactBroadcast:
                     status=ActionStatus.DONE
                 )
 
+            # Not "exactly a hundred". This drains as fast as the test can,
+            # ignoring the ``run_at`` spread a worker obeys, so the connection's
+            # token bucket legitimately defers a few — those messages are queued
+            # with a ``send_retry`` armed rather than on the wire. What the
+            # criterion asks is that nothing more goes out *after* the cancel, so
+            # that is what is measured.
+            before = len(adapter.sends)
+            assert before <= 100
+
             services.cancel_broadcast(broadcast)
 
             for action in sends[100:]:
                 action.refresh_from_db()
                 handlers.handle_broadcast_send(action.payload, action)
 
-            assert len(adapter.sends) == 100
+            assert len(adapter.sends) == before
 
         counts = services.counters(broadcast)
-        assert counts.sent == 100
-        assert counts.cancelled == AUDIENCE - 100
+        assert counts.sent <= 100
         assert counts.pending == 0
+        assert counts.queued == counts.sent + counts.failed + counts.cancelled + counts.skipped
         assert _actions(tenancy.workspace, ActionType.BROADCAST_SEND, status=ActionStatus.PENDING).count() == 0
+        # And a deferred send cannot come back: its retry was cancelled too.
+        assert _actions(tenancy.workspace, ActionType.SEND_RETRY, status=ActionStatus.PENDING).count() == 0
 
 
 @pytest.mark.django_db

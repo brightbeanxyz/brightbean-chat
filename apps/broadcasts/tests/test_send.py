@@ -171,6 +171,87 @@ class TestTemplateContent:
         assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
         assert Message.objects.for_workspace(tenancy.workspace).first().source == MessageSource.BROADCAST
 
+    def test_a_slot_value_is_rendered_per_contact_through_the_shared_renderer(
+        self, tenancy, make_contacts, whatsapp_connection, adapter_for
+    ):
+        """An operator maps a slot to ``{{first_name}}`` and each contact gets theirs.
+
+        Through ``apps.flows.rendering`` — the one shared, engine-free
+        substitution (SECURITY-BASELINE §3) — so a value containing ``{% ... %}``
+        is equally inert, and the adapter receives finished strings.
+        """
+        from apps.broadcasts.tests.conftest import EVERYONE
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        template = WhatsAppTemplate.objects.create(
+            workspace=tenancy.workspace,
+            channel_connection=whatsapp_connection,
+            name="greeting",
+            language="en_US",
+            category="utility",
+            status=WhatsAppTemplateStatus.APPROVED,
+            body_structure={"body": {"text": "Hello {{1}}."}},
+        )
+        make_contacts(2, connection=whatsapp_connection, prefix="Ada")
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Greeting", connection=whatsapp_connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+        services.save_template(broadcast, template, {"body.1": "{{first_name}}"})
+
+        with adapter_for(whatsapp_connection.platform) as adapter:
+            for action in _fan_out(tenancy.workspace, broadcast):
+                _send(action)
+
+            filled = sorted(dict(send.template_variables)["body.1"] for send in adapter.sends)
+            assert filled == ["Ada0", "Ada1"]
+
+        # And the thread shows what the contact actually read, not the raw slot.
+        bodies = [message.body["blocks"][0]["text"] for message in Message.objects.for_workspace(tenancy.workspace)]
+        assert sorted(bodies) == ["Hello Ada0.", "Hello Ada1."]
+
+    def test_a_template_that_stopped_being_sendable_is_not_sent(
+        self, tenancy, make_contacts, whatsapp_connection, adapter_for
+    ):
+        """Hours pass between scheduling and sending, and Meta can reject in between.
+
+        ``whatsapp_templates.sendable`` is the re-check, and its docstring names
+        the dangerous half: a template name is scoped to the WABA, so the wrong
+        connection can send approved-looking words that are not the ones anybody
+        reviewed.
+        """
+        from apps.broadcasts.models import RecipientStatus
+        from apps.broadcasts.tests.conftest import EVERYONE
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        template = WhatsAppTemplate.objects.create(
+            workspace=tenancy.workspace,
+            channel_connection=whatsapp_connection,
+            name="withdrawn",
+            language="en_US",
+            category="utility",
+            status=WhatsAppTemplateStatus.APPROVED,
+            body_structure={"body": {"text": "Hi"}},
+        )
+        make_contacts(1, connection=whatsapp_connection)
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Withdrawn", connection=whatsapp_connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+        services.save_template(broadcast, template, {})
+
+        with adapter_for(whatsapp_connection.platform) as adapter:
+            actions = _fan_out(tenancy.workspace, broadcast)
+            WhatsAppTemplate.objects.for_workspace(tenancy.workspace).filter(pk=template.pk).update(
+                status=WhatsAppTemplateStatus.REJECTED
+            )
+            for action in actions:
+                _send(action)
+
+            assert adapter.sends == []
+
+        assert broadcast.recipients.get().status == RecipientStatus.FAILED
+
     def test_the_send_key_is_the_one_the_spec_fixes(self, tenancy, make_contacts, whatsapp_connection, adapter_for):
         """``broadcast:<id>:contact:<id>`` on the message as well as the action.
 

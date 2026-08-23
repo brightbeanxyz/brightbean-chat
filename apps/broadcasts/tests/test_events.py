@@ -241,3 +241,34 @@ class TestSettle:
 
         broadcast.refresh_from_db()
         assert broadcast.status == BroadcastStatus.SENDING
+
+
+@pytest.mark.django_db
+class TestEmptyFanout:
+    def test_an_audience_that_vanished_between_scheduling_and_fanout_still_finishes(
+        self, tenancy, make_contacts, make_broadcast, connection
+    ):
+        """The narrow case that used to leave a broadcast stuck at ``sending``.
+
+        Scheduling refuses an audience nobody matches, but the audience is
+        resolved *again* at fanout — and a workspace can delete every one of
+        those contacts in between. With nothing queued and nothing pending, a
+        counter definition that required ``queued > 0`` never called it finished,
+        and the housekeeping sweep asked the same question and agreed.
+        """
+        from apps.contacts.models import Contact, ContactStatus
+
+        contacts = make_contacts(3, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+        services.schedule_broadcast(broadcast)
+
+        Contact.objects.for_workspace(tenancy.workspace).filter(pk__in=[contact.pk for contact in contacts]).update(
+            status=ContactStatus.DELETED
+        )
+
+        fanout = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
+        handlers.handle_broadcast_fanout(fanout.payload, fanout)
+
+        broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.SENT
+        assert broadcast.recipients.count() == 0
