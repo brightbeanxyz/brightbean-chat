@@ -41,7 +41,7 @@ Rule of thumb: an issue may depend on anything in **lower** layers (assume it me
 | **[L5-F](https://github.com/brightbeanxyz/brightbean-chat/issues/25)** Public API + webhooks | L4 | django-ninja API v1, api_key auth + rate limit, outbound webhooks (event-catalog consumers, contract 7) with HMAC + retries |
 | **[L6-A](https://github.com/brightbeanxyz/brightbean-chat/issues/22)** Sequences + rule triggers | L5 | sequences models/worker/UI, rule trigger type (event-catalog consumer), sequence condition-source + action verbs registered |
 | **[L6-B](https://github.com/brightbeanxyz/brightbean-chat/issues/23)** Broadcasts | L5 | HTMX composer (single-node graph_json — no React embed), eligibility filter, fanout, live counters, cancellation |
-| **[L6-C](https://github.com/brightbeanxyz/brightbean-chat/issues/24)** Inbox v2 | L5 | labels, inbox rules (pre_trigger hook), reminders, scheduled replies, notes |
+| **[L6-C](https://github.com/brightbeanxyz/brightbean-chat/issues/24)** Inbox v2 | L5 | labels, inbox rules (`post_persist` hook), reminders, scheduled replies, notes |
 | **[L7-A](https://github.com/brightbeanxyz/brightbean-chat/issues/26)** Analytics | L6 | node_stat_daily, `/c/` click + `/o/` pixel routes for all channels, builder stats overlay, broadcast stats page |
 | **[L7-B](https://github.com/brightbeanxyz/brightbean-chat/issues/27)** Flow export/import | L6 | flow JSON export/import incl. triggers, template sharing |
 | **[L7-C](https://github.com/brightbeanxyz/brightbean-chat/issues/28)** Deployment & docs | L6 (infra half may land after L2) | secure-by-default docker-compose.prod, Heroku/Render/Railway, healthz, hardening checklist, self-hosting + per-platform docs |
