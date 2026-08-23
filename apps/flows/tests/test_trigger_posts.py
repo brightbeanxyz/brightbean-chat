@@ -240,3 +240,42 @@ class TestTheSeam:
         assert clean_post(post_id="", title="x", permalink="", created_time="") is None
         assert clean_post(post_id=None, title="x", permalink="", created_time="") is None
         assert isinstance(clean_post(post_id="1_2", title=42, permalink=[], created_time=None), Post)
+
+    @pytest.mark.parametrize(
+        "permalink",
+        ["javascript:alert(1)", "data:text/html,<script>alert(1)</script>", "vbscript:x", "//evil.test/x"],
+    )
+    def test_a_permalink_that_would_execute_is_dropped(self, permalink: str) -> None:
+        """Escaping does not help here: the scheme is the payload.
+
+        Django escaping ``javascript:alert(1)`` leaves a link that still runs when
+        somebody clicks *View*, so the check has to be on the scheme
+        (``apps.common.validators.is_renderable_url``, SECURITY-BASELINE §2). The
+        post still appears in the picker — it just has no link.
+        """
+        from apps.channels.posts import clean_post
+
+        post = clean_post(post_id="1_2", title="A post", permalink=permalink, created_time="")
+        assert post is not None
+        assert post.permalink == ""
+        assert post.id == "1_2"
+
+    def test_an_ordinary_permalink_survives(self) -> None:
+        from apps.channels.posts import clean_post
+
+        post = clean_post(post_id="1_2", title="A post", permalink="https://facebook.test/p/1", created_time="")
+        assert post is not None
+        assert post.permalink == "https://facebook.test/p/1"
+
+    def test_a_hostile_permalink_never_reaches_the_rendered_page(
+        self, tenancy: Tenancy, client_for: Any, flow: Flow
+    ) -> None:
+        connection = messenger_page(tenancy.workspace)
+        hostile = [
+            {"id": "1_2", "message": "Click me", "permalink_url": "javascript:alert(1)", "created_time": ""},
+        ]
+        with fake_graph(listing(hostile)):
+            response = client_for(tenancy.owner).get(picker_url(tenancy, flow, connection))
+        body = response.content.decode()
+        assert "javascript:" not in body
+        assert "Click me" in body

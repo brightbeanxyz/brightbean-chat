@@ -305,6 +305,34 @@ class Adapter(ABC):
         report success.
         """
 
+    def shares_credential(self, verified: "ChannelConnection", other: "ChannelConnection") -> bool:
+        """Does one verified signature also authenticate ``other``?
+
+        **Default False, and that default is the safe one.** ``views_webhooks``
+        drops any event naming a connection in another workspace, because on a
+        deployment where each tenant supplies its own app credentials the
+        signature proves only that the sender holds *that* tenant's secret — so a
+        batch could otherwise staple another tenant's page onto a genuine delivery
+        (SECURITY-BASELINE §1).
+
+        The cost of that default is real and ``_event_connection`` names it: a
+        deployment whose Meta app is configured once in the environment, serving
+        pages that several workspaces connected, gets one delivery that legitimately
+        spans workspaces — and the others' events are dropped. Their messages are
+        acknowledged with a 200 and never persisted.
+
+        This is the seam that lets an adapter say when that is not a boundary at
+        all: if both connections resolve to the **same signing key**, whoever
+        produced a valid signature holds the key for both, and the delivery
+        authenticates both. An adapter that cannot answer the question leaves it
+        False and keeps the conservative behaviour.
+
+        No adapter may weaken this by returning True on anything other than
+        credential identity. It is asked once per foreign-workspace event, after
+        ``_usable`` and never instead of it.
+        """
+        return False
+
     def on_disconnect(self, connection: "ChannelConnection") -> None:  # noqa: B027
         """Tell the platform to stop sending, just before the row is deleted.
 

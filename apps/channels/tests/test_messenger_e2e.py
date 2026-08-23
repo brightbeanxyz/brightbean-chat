@@ -22,11 +22,12 @@ from django.utils import timezone
 
 from apps.channels.models import ChannelConnection
 from apps.channels.tests.messenger_support import fake_graph, load_delivery, post_webhook
+from apps.common.platforms import Platform
 from apps.flows.models import LIVE_STATUSES, Flow, FlowExecution, Trigger, TriggerType
 from apps.flows.tests.support import edge, graph, node, published_flow
 from apps.flows.triggers.services import create_trigger
 from apps.messaging.models import Message, MessageDirection, MessageStatus
-from tests.support import Tenancy
+from tests.support import Tenancy, create_tenancy
 
 pytestmark = pytest.mark.django_db
 
@@ -400,6 +401,100 @@ class TestTheSignatureIsTheCredential:
             post_webhook(client, load_delivery("postback_get_started"))
         assert sent_texts(first) == ["Welcome to Acme."]
         assert sent_texts(second) == []
+
+
+class TestABatchSpanningWorkspaces:
+    """The cost of failing closed, and the seam that answers it.
+
+    ``views_webhooks._event_connection`` drops any event naming a connection in
+    another workspace, because with per-workspace app credentials a signature
+    proves authority over one tenant only. On a deployment that configures **one**
+    Meta app in the environment, though, several workspaces connect pages under it
+    and Meta batches their entries together — so that rule was acknowledging real
+    customer messages with a 200 and never storing them.
+    """
+
+    def _page_for(self, workspace: Any, external_id: str) -> ChannelConnection:
+        from apps.channels.providers import meta_common
+
+        connection = ChannelConnection(
+            workspace=workspace,
+            platform=Platform.MESSENGER.value,
+            display_name=f"Page {external_id}",
+            external_id=external_id,
+        )
+        meta_common.store_page_token(connection, "EAA" + "pagetoken0123" * 3)
+        connection.rotate_webhook_secret()
+        connection.save()
+        return connection
+
+    def _two_page_delivery(self, first: ChannelConnection, second: ChannelConnection) -> dict[str, Any]:
+        payload = load_delivery("message_text")
+        extra = json.loads(json.dumps(payload["entry"][0]))
+        payload["entry"][0]["id"] = first.external_id
+        extra["id"] = second.external_id
+        extra["messaging"][0]["message"]["mid"] = "m_second_workspace"
+        payload["entry"].append(extra)
+        return payload
+
+    def test_both_workspaces_messages_are_stored_under_one_app(
+        self, client: Client, tenancy: Tenancy, page: ChannelConnection, app_secret: str
+    ) -> None:
+        """One app secret in the environment means one authority over both pages."""
+        from apps.channels.models import WebhookEventLog
+
+        other = create_tenancy("neighbour")
+        theirs = self._page_for(other.workspace, "777777777777777")
+
+        with fake_graph():
+            response = post_webhook(client, self._two_page_delivery(page, theirs))
+        assert response.status_code == 200
+
+        logged = {row.connection_id for row in WebhookEventLog.objects.all()}
+        assert logged == {page.pk, theirs.pk}
+
+    def test_a_workspace_with_its_own_app_is_still_a_boundary(
+        self, client: Client, tenancy: Tenancy, page: ChannelConnection, app_secret: str
+    ) -> None:
+        """SPEC §4's override has to stay a real tenant boundary.
+
+        The neighbour supplies its own Meta app, so the signature over this body
+        proves nothing about their page — and their entry is dropped exactly as
+        before.
+        """
+        from apps.channels.models import WebhookEventLog
+        from apps.credentials.models import WorkspaceCredentialOverride
+
+        other = create_tenancy("neighbour")
+        theirs = self._page_for(other.workspace, "888888888888888")
+        override = WorkspaceCredentialOverride(
+            workspace=other.workspace,
+            platform=Platform.MESSENGER.value,
+        )
+        # ``EncryptedJSONField`` subclasses ``TextField``, so django-stubs types
+        # the attribute as ``str`` even though the column holds JSON — the same
+        # suppression ``meta_common.store_page_token`` explains.
+        override.credentials = {  # type: ignore[assignment]
+            "client_id": "9999",
+            "client_secret": "their-own-secret",
+        }
+        override.save()
+
+        with fake_graph():
+            response = post_webhook(client, self._two_page_delivery(page, theirs))
+        assert response.status_code == 200
+
+        logged = {row.connection_id for row in WebhookEventLog.objects.all()}
+        assert logged == {page.pk}
+
+    def test_the_hook_defaults_to_refusing(self) -> None:
+        """An adapter that cannot answer keeps the conservative behaviour."""
+        from apps.channels.providers.base import Adapter
+        from apps.channels.tests.fake_adapter import fake_adapter_for
+
+        adapter = fake_adapter_for(Platform.MESSENGER.value)()
+        assert isinstance(adapter, Adapter)
+        assert adapter.shares_credential(None, None) is False  # type: ignore[arg-type]
 
 
 class TestHubChallenge:

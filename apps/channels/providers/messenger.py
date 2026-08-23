@@ -789,6 +789,39 @@ class MessengerAdapter(Adapter):
         """
         return meta_common.verify_signature(request, connection)
 
+    def shares_credential(self, verified: ChannelConnection, other: ChannelConnection) -> bool:
+        """True when both pages are signed for by the **same** Meta app secret.
+
+        The case this exists for: a self-hosted deployment configures one Meta app
+        in the environment, several workspaces connect pages under it, and Meta
+        batches their entries into one delivery. Without this the framework drops
+        every entry but the first workspace's — a 200 to Meta and no message to the
+        customer, which is the outcome ``_event_connection`` documented as the cost
+        of failing closed.
+
+        The rule is credential identity and nothing looser. If both connections
+        resolve to the same app secret then whoever produced a valid signature over
+        this body holds the key for both, so the delivery genuinely authenticates
+        both. If either workspace has overridden the app with its own credentials
+        the secrets differ and the answer is False, which is what keeps SPEC §4's
+        per-workspace override a real tenant boundary.
+
+        It grants nothing new to an attacker: a workspace that could set its
+        override *to another tenant's secret* would have to know that secret
+        already, and knowing it is enough to forge a delivery for that tenant
+        directly. Compared with ``compare_digest`` out of habit rather than need —
+        both values are ours, and neither is attacker-supplied.
+        """
+        if verified.platform != other.platform:
+            return False
+        ours = meta_common.app_secret_for(verified)
+        theirs = meta_common.app_secret_for(other)
+        if not ours or not theirs:
+            # No secret configured on one side means nothing is authenticated
+            # there, and "both unconfigured" must never read as "both match".
+            return False
+        return secrets.compare_digest(ours, theirs)
+
     def parse_events(self, request: "HttpRequest", connection: ChannelConnection) -> list[NormalizedEvent]:
         """One ``page`` delivery becomes zero or more normalized events.
 
@@ -1352,13 +1385,33 @@ class MessengerAdapter(Adapter):
             # sent, so contract 1's message row says what happened.
             return SendResult(status=SendStatus.FAILED, error="empty_message")
 
+        if claim is not None and len(calls) > 1:
+            # **Meta allows exactly one message in reply to a comment**, and the
+            # 24-hour window opens when the *person* answers — a private reply is
+            # not a person answering. So the calls after the first cannot go out:
+            # addressed to the comment they exceed the allowance, and addressed to
+            # the PSID they land outside the window.
+            #
+            # Attempting them anyway was worse than dropping them. The first
+            # failure raised, the send pipeline retried the whole message row, and
+            # the retry found the claim already spent — so every part went to the
+            # PSID, every part was refused, and the customer kept the one bubble
+            # that had already arrived while the row ended up ``failed``.
+            #
+            # A comment-triggered flow's first node should therefore be a single
+            # message; ``docs/channels/messenger.md`` says so. When it is not, the
+            # first part is delivered and the rest are dropped **loudly** — the
+            # operator can see it in the log and fix the flow, which is not true of
+            # a message that silently fails at the platform.
+            logger.warning(
+                "Messenger: a comment's private reply rendered to %s calls; only the first was sent. "
+                "Meta permits one message in reply to a comment — make the flow's first node a single message.",
+                len(calls),
+            )
+            calls = calls[:1]
+
         provider_message_id = ""
         for index, body in enumerate(calls):
-            if index and claim is not None:
-                # Meta's private reply spends exactly one message. Everything
-                # after it goes to the person, through the window the comment
-                # opened.
-                body = {**body, "recipient": {"id": psid}}
             try:
                 result = send_body(connection, body)
             except APIError as exc:
@@ -1536,13 +1589,25 @@ def enqueue_comment_actions(claim: Any) -> None:
             logger.warning("Messenger: could not enqueue %s for %s.", action_type, row.pk)
 
 
-def _claimed_comment(payload: dict[str, Any]) -> tuple[Any, Any] | None:
+def _claimed_comment(payload: dict[str, Any], *, needs_private_reply: bool) -> tuple[Any, Any] | None:
     """``(connection, row)`` for a queued comment action, or None to stop.
 
     Reads everything back by id rather than trusting the payload — the queue row
     is ours, but the ids in it were derived from an inbound webhook, and a handler
     that took a comment id or a page from a payload would be a way to make the
     worker post as an arbitrary page.
+
+    ``needs_private_reply`` is the difference between the two handlers, and it has
+    to be, because they run **concurrently**. The DM half genuinely depends on the
+    private reply still being owed. The public half does not: a public reply and a
+    like are about the comment, not about the DM. Gating both on
+    ``may_private_reply`` meant that on a deployment with more than one worker the
+    DM could finish first, stamp ``private_reply_sent_at``, and silently cancel the
+    public reply the trigger was configured to post.
+
+    Both halves still refuse a comment past SPEC §10's seven-day deadline: past it
+    the claim should never have been taken, and answering publicly on its own would
+    be a reply with no conversation behind it.
     """
     from apps.flows.models import HandledComment
     from apps.flows.triggers import guards
@@ -1563,9 +1628,13 @@ def _claimed_comment(payload: dict[str, Any]) -> tuple[Any, Any] | None:
         .select_related("trigger", "trigger__flow")
         .first()
     )
-    if row is None or not guards.may_private_reply(row):
-        # Already answered, or past SPEC §10's seven-day deadline. Both are
-        # ordinary outcomes for a retry rather than failures.
+    if row is None:
+        return None
+    if not guards.may_claim_comment(row.commented_at):
+        # Past the seven-day deadline. An ordinary outcome for a retry.
+        return None
+    if needs_private_reply and not guards.may_private_reply(row):
+        # Already answered — which for the DM half is the whole point of the guard.
         return None
     return connection, row
 
@@ -1578,7 +1647,7 @@ def _run_comment_actions(payload: dict[str, Any], action: Any) -> None:
     idempotent — and nothing here can be. Each step swallows its own failure, so a
     refused like does not cost the reply.
     """
-    found = _claimed_comment(payload)
+    found = _claimed_comment(payload, needs_private_reply=False)
     if found is None:
         return
     connection, row = found
@@ -1595,7 +1664,7 @@ def _run_comment_dm(payload: dict[str, Any], action: Any) -> None:
     wrong — that is the difference the split buys. Before it, a failure here put
     the whole handler back on the queue and the public reply was posted again.
     """
-    found = _claimed_comment(payload)
+    found = _claimed_comment(payload, needs_private_reply=True)
     if found is None:
         return
     connection, row = found

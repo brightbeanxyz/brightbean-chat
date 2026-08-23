@@ -157,9 +157,32 @@ def clean_post(
     return Post(
         id=identifier,
         title=_clean(title, MAX_POST_TITLE_CHARS),
-        permalink=_clean(permalink, MAX_POST_URL_CHARS),
+        permalink=_renderable_url(permalink),
         created_time=_clean(created_time, 40),
     )
+
+
+def _renderable_url(value: Any) -> str:
+    """A permalink safe to put in an ``href``, or "".
+
+    Escaping is not enough here and this is the one field where that matters. A
+    lister's permalink comes back from a platform API, and Django escaping
+    ``javascript:alert(1)`` leaves a link that still executes when somebody clicks
+    it — the scheme is the payload, not the characters (SECURITY-BASELINE §2).
+
+    ``apps.common.validators.is_renderable_url`` is the project's one answer to
+    "may this become an href", and it is deliberately **not** an SSRF guard: this
+    permalink is rendered for a person to click, never fetched. A URL it refuses
+    is dropped rather than shown, so the post still appears in the picker with its
+    id and text and simply has no *View* link.
+    """
+    from apps.common.validators import is_renderable_url
+
+    url = _clean(value, MAX_POST_URL_CHARS)
+    if url and not is_renderable_url(url):
+        logger.info("Dropped a post permalink whose scheme is not safe to render.")
+        return ""
+    return url
 
 
 def _clean(value: Any, limit: int) -> str:

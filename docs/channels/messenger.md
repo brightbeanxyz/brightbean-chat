@@ -124,7 +124,14 @@ One URL per deployment, `/webhooks/messenger/`, shared by every workspace's page
 (SPEC §7.1). The connection is resolved from the page id inside the payload —
 `entry[].id` — and each entry resolves its own, so a delivery legitimately
 spanning two pages is filed against both rather than attributed to whichever one
-carried it.
+carried it. The whole batch costs one connection query, not one per entry.
+
+A delivery can span **workspaces** too, when one Meta app is configured in the
+environment and several workspaces connect pages under it. Those entries are kept,
+because both pages are signed for by the same app secret — so whoever produced a
+valid signature holds the authority for both. If either workspace overrides the
+app with its own credentials the secrets differ, and its entries are dropped:
+SPEC §4's per-workspace override is a real tenant boundary and stays one.
 
 Every delivery is signed: `X-Hub-Signature-256`, HMAC-SHA256 of the **raw body**
 under the **app secret**, compared in constant time before the JSON is parsed.
@@ -261,6 +268,15 @@ one** message in reply to a comment, and only within **7 days** of it. An opener
 followed by the flow's real first message would have the second one refused. Past
 the seven days nothing is claimed at all, because claiming would spend the
 once-per-person-per-post guard on a reply the platform will not accept.
+
+**So a comment trigger's flow should open with a single message.** "One message"
+is Meta's count of Send API calls, not of blocks — a captioned image is two calls,
+and so is text past 2000 characters or a gallery of more than ten cards. Only the
+first can carry the private reply: addressed to the comment the rest exceed the
+allowance, and addressed to the person they land outside a 24-hour window that
+only opens when *they* reply. When the first node renders to more than one call
+the adapter sends the first and drops the rest with a warning naming the count, so
+it shows up in the log rather than as a message that quietly fails at the platform.
 
 The adapter cannot see *which* send it is about to make, so the claim is offered
 only to a send in the **ten minutes** after it is recorded, not for the platform's

@@ -448,6 +448,118 @@ class TestThePrivateReplyHandoffIsBounded:
         assert comments.pending_private_reply(page, PSID) is not None
 
 
+class TestOnlyOneMessageAnswersAComment:
+    """Meta permits exactly one message in reply to a comment."""
+
+    @pytest.fixture
+    def multipart_flow(self, tenancy: Tenancy) -> Flow:
+        """A first node that renders to two Send API calls: image, then caption."""
+        return published_flow(
+            tenancy.workspace,
+            graph(
+                [
+                    node(
+                        "start",
+                        "send_message",
+                        {"blocks": [{"type": "image", "url": "https://cdn.test/a.jpg", "caption": PRIVATE_REPLY}]},
+                    )
+                ]
+            ),
+            name="Multipart",
+        )
+
+    def test_only_the_first_call_goes_out(
+        self, client: Client, tenancy: Tenancy, multipart_flow: Flow, page: ChannelConnection, caplog: Any
+    ) -> None:
+        """The rest cannot: addressed to the comment they exceed the allowance,
+        addressed to the PSID they land outside a window the person has not opened.
+
+        Attempting them raised, the pipeline retried the whole row, and the retry
+        found the claim spent — so everything went to the PSID, everything was
+        refused, and the row ended ``failed`` with one bubble already delivered.
+        """
+        import logging
+
+        create_trigger(
+            multipart_flow,
+            trigger_type=TriggerType.COMMENT,
+            config={"post_scope": "all", "top_level_only": True},
+            connection=page,
+        )
+        caplog.set_level(logging.WARNING)
+        deliver_comment(client)
+        calls = run_queued_actions()
+
+        bodies = calls.bodies("/messages")
+        assert len(bodies) == 1
+        assert bodies[0]["recipient"] == {"comment_id": HandledComment.objects.unscoped().get().comment_id}
+        assert "only the first was sent" in caplog.text
+
+    def test_the_message_row_is_not_left_failed(
+        self, client: Client, tenancy: Tenancy, multipart_flow: Flow, page: ChannelConnection
+    ) -> None:
+        create_trigger(
+            multipart_flow,
+            trigger_type=TriggerType.COMMENT,
+            config={"post_scope": "all", "top_level_only": True},
+            connection=page,
+        )
+        deliver_comment(client)
+        run_queued_actions()
+        message = Message.objects.unscoped().filter(direction=MessageDirection.OUT).get()
+        assert message.status != "failed"
+
+    def test_an_ordinary_dm_still_sends_every_part(
+        self, client: Client, tenancy: Tenancy, page: ChannelConnection
+    ) -> None:
+        """The cap is the private reply's, not the adapter's. With no claim
+        pending a captioned image is still two calls."""
+        from apps.channels.events import MediaBlock, OutboundMessage
+        from apps.channels.providers.messenger import MessengerAdapter
+
+        class Identity:
+            platform_user_id = PSID
+            contact = None
+
+        message = OutboundMessage(blocks=(MediaBlock(kind="image", url="https://cdn.test/a.jpg", caption="Look"),))
+        with fake_graph() as calls:
+            MessengerAdapter().send(page, Identity(), message)
+        assert len(calls.bodies("/messages")) == 2
+
+
+class TestThePublicHalfDoesNotDependOnTheDm:
+    def test_the_public_reply_still_posts_after_the_dm_has_gone(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The two halves are separate queue rows and run concurrently.
+
+        Gating both on ``may_private_reply`` meant that on a deployment with more
+        than one worker the DM could finish first, stamp ``private_reply_sent_at``,
+        and silently cancel the public reply the trigger was configured to post.
+        """
+        deliver_comment(client)
+        # DM first — the ordering a second worker can produce.
+        run_queued_actions(messenger_adapter.COMMENT_DM_ACTION)
+        row = HandledComment.objects.unscoped().get()
+        assert row.private_reply_sent_at is not None
+
+        calls = run_queued_actions(messenger_adapter.COMMENT_ACTION)
+        assert calls.bodies(f"/{row.comment_id}/comments") == [{"message": "Sent you a DM!"}]
+        assert any(call.matches(f"/{row.comment_id}/likes") for call in calls.calls)
+
+    def test_neither_half_answers_a_comment_past_the_deadline(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """A public reply with no conversation behind it is not an improvement."""
+        deliver_comment(client)
+        row = HandledComment.objects.unscoped().get()
+        row.commented_at = timezone.now() - timedelta(days=8)
+        row.save(update_fields=["commented_at"])
+
+        calls = run_queued_actions()
+        assert calls.calls == []
+
+
 class TestTheSeamIsPlatformAgnostic:
     def test_the_registry_is_what_dispatches(self) -> None:
         """L5-A adds one ``register_comment_actions`` line, not an edit to stages."""
