@@ -22,9 +22,11 @@ half-finished draft reopens where it was left and nothing about "where am I" is
 kept in the browser.
 
 The audience step embeds ``templates/contacts/_filter_bar.html`` and
-``apps.contacts.views.filter_config`` verbatim. A second condition builder here
-would be a second list of sources and operators, and the whole point of contract
-8 is that a broadcast audience and a saved segment agree by construction.
+``apps.contacts.builder.builder_config`` verbatim — the payload module L6-C
+extracted when the inbox-rule editor became the second page to render that
+builder. A second condition builder here would be a second list of sources and
+operators, and the whole point of contract 8 is that a broadcast audience, an
+inbox rule and a saved segment agree by construction.
 
 --------------------------------------------------------------------------
 The detail page polls, and 304s
@@ -57,10 +59,10 @@ from apps.channels.models import ChannelConnection, WhatsAppTemplate
 from apps.common.htmx import toast_response
 from apps.common.polling import conditional, version_etag
 from apps.common.shortcuts import get_scoped_object_or_404
+from apps.contacts.builder import builder_config
 from apps.contacts.conditions import ConditionError
-from apps.contacts.filters import ContactQuery, parse_filter_document
+from apps.contacts.filters import parse_filter_document
 from apps.contacts.models import Segment
-from apps.contacts.views import filter_config
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
 from apps.messaging.codes import describe
@@ -218,8 +220,15 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
         "connections": composer_module.broadcastable_connections(request.workspace),
     }
     if step == "audience":
-        query = ContactQuery(document=broadcast.target_filter_json or {}, segment=broadcast.segment)
-        context["filter_config"] = filter_config(request.workspace, query)
+        # L6-C extracted this payload into apps/contacts/builder.py when the
+        # inbox-rule editor became the second page to embed the same filter bar.
+        # Three consumers now, one payload — which is the point: an operator
+        # added to apps.contacts.conditions reaches all of them with no edit.
+        context["filter_config"] = builder_config(
+            request.workspace,
+            document=broadcast.target_filter_json or {},
+            segment_id=str(broadcast.segment_id) if broadcast.segment_id else "",
+        )
         # The same fragment the preview endpoint renders, filled server-side so
         # the count is on screen before the first poll rather than a beat later.
         # Skipped for a draft with no audience yet, where there is nothing to
