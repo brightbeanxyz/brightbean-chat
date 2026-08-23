@@ -28,6 +28,7 @@ urlpatterns = [
     path("<uuid:sequence_id>/steps/<uuid:step_id>/move/", views.step_move, name="step_move"),
     path("<uuid:sequence_id>/steps/<uuid:step_id>/delete/", views.step_delete, name="step_delete"),
     path("<uuid:sequence_id>/subscribers/", views.subscribers_panel, name="subscribers"),
+    path("<uuid:sequence_id>/subscribers/suggest/", views.subscriber_suggest, name="subscriber_suggest"),
     path("<uuid:sequence_id>/subscribers/add/", views.subscriber_add, name="subscriber_add"),
     path(
         "<uuid:sequence_id>/subscribers/<uuid:enrollment_id>/remove/",

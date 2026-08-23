@@ -84,6 +84,7 @@ class TestCrossTenantIsolation:
             "campaigns:step_move",
             "campaigns:step_delete",
             "campaigns:subscribers",
+            "campaigns:subscriber_suggest",
             "campaigns:subscriber_add",
             "campaigns:subscriber_remove",
         } <= names

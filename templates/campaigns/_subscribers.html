@@ -24,17 +24,21 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
     </div>
 
     {% if can_edit %}
-    <form class="flex flex-wrap items-center gap-2 mb-3"
-          hx-post="{% url 'campaigns:subscriber_add' workspace_id=request.workspace.id sequence_id=sequence.id %}"
-          hx-swap="none"
-          x-data
-          @htmx:after-request="$el.reset()">
-        {% csrf_token %}
-        <label for="subscriber-contact" class="sr-only">Contact id</label>
-        <input type="text" id="subscriber-contact" name="contact_id" required placeholder="Contact id"
-               class="form-input-styled" style="width: 18rem;">
-        <button type="submit" class="btn-brand btn-inline">Subscribe</button>
-    </form>
+    {% comment %}
+      A typeahead rather than a form, matching contacts/_tag_chips.html: a plain
+      htmx GET into a results list, and each result POSTs the id it names. There
+      is no submit button because there is nothing to submit — picking a name is
+      the action.
+    {% endcomment %}
+    <div class="crm-typeahead mb-3">
+        <label for="subscriber-search" class="sr-only">Find a contact</label>
+        <input type="search" id="subscriber-search" name="q" placeholder="Find a contact to subscribe" maxlength="200"
+               hx-get="{% url 'campaigns:subscriber_suggest' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+               hx-trigger="input changed delay:200ms, focus"
+               hx-target="#subscriber-suggestions"
+               hx-swap="innerHTML">
+        <div id="subscriber-suggestions"></div>
+    </div>
     <p class="text-xs mb-3" style="color: var(--text-tertiary);">
         Or subscribe people in bulk from the
         <a href="{% url 'contacts:list' workspace_id=request.workspace.id %}" class="btn-text-hover-primary">contact list</a>.

@@ -254,6 +254,47 @@ class TestSubscribers:
         assert response.status_code == 404
         assert not SequenceEnrollment.objects.for_workspace(tenancy.workspace).exists()
 
+    def test_the_typeahead_finds_a_contact_by_name(self, tenancy, client_for):
+        sequence = sequence_with(tenancy.workspace, steps=1)
+        contact_for(tenancy.workspace, first_name="Grace", last_name="Hopper")
+        contact_for(tenancy.workspace, first_name="Ada", last_name="Lovelace")
+
+        body = (
+            client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/suggest/?q=hopp")).content.decode()
+        )
+
+        assert "Grace Hopper" in body
+        assert "Ada Lovelace" not in body
+
+    def test_the_typeahead_omits_people_already_on_the_sequence(self, tenancy, client_for):
+        """Offering them would only restart them, which is a deliberate act and
+        belongs in the CRM's bulk control."""
+        sequence = sequence_with(tenancy.workspace, steps=2)
+        services.subscribe(sequence, contact_for(tenancy.workspace, first_name="Grace"))
+
+        body = client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/suggest/")).content.decode()
+
+        assert "Grace" not in body
+        assert "Everyone is already on this sequence" in body
+
+    def test_the_typeahead_omits_soft_deleted_contacts(self, tenancy, client_for):
+        from apps.contacts import services as contact_services
+
+        sequence = sequence_with(tenancy.workspace, steps=1)
+        contact_services.delete_contact(contact_for(tenancy.workspace, first_name="Grace"))
+
+        body = client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/suggest/")).content.decode()
+
+        assert "Grace" not in body
+
+    @pytest.mark.parametrize("role", READ_ONLY_ROLES)
+    def test_a_reader_is_not_handed_a_contact_search(self, tenancy, client_for, role):
+        sequence = sequence_with(tenancy.workspace, steps=1)
+
+        response = client_for(tenancy.user_for(role)).get(url(tenancy, f"{sequence.pk}/subscribers/suggest/"))
+
+        assert response.status_code == 403
+
     def test_a_soft_deleted_contact_cannot_be_enrolled(self, tenancy, client_for):
         """Otherwise a tombstone goes back into a send path."""
         from apps.contacts import services as contact_services

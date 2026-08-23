@@ -19,6 +19,7 @@ simply appear to do nothing.
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import QuerySet
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -36,6 +37,7 @@ from apps.campaigns.models import (
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.common.windows import WEEKDAYS
+from apps.contacts.filters import MAX_SEARCH_CHARS, search
 from apps.contacts.models import Contact, ContactStatus
 from apps.flows.models import Flow, FlowStatus
 from apps.members.decorators import require_permission, require_workspace_role
@@ -55,12 +57,17 @@ __all__ = [
     "step_update",
     "steps_panel",
     "subscriber_add",
+    "subscriber_suggest",
     "subscriber_remove",
     "subscribers_panel",
 ]
 
 # Viewer is the floor of the role ladder, so this is "any member".
 require_workspace_member = require_workspace_role(WorkspaceRole.VIEWER)
+
+#: How many contacts the subscriber typeahead offers. Short enough to read at a
+#: glance; the CRM's bulk action is the answer to "I want fifty of them".
+SUGGESTIONS = 8
 
 
 def _sequence(request: WorkspaceRequest, sequence_id: str) -> Sequence:
@@ -314,6 +321,41 @@ def subscribers_panel(request: WorkspaceRequest, workspace_id: str, sequence_id:
             "status": status,
             "status_options": list(EnrollmentStatus.choices),
             "can_edit": _can_edit(request),
+        },
+    )
+
+
+@login_required
+@require_permission("edit_flows")
+@require_GET
+def subscriber_suggest(request: WorkspaceRequest, workspace_id: str, sequence_id: str) -> HttpResponse:
+    """Contacts matching the panel's typeahead, minus the ones already on it.
+
+    The same shape ``contacts:tag_suggest`` uses: a plain htmx GET into a
+    results list, each row POSTing the id it names. Asking an operator to paste
+    a UUID would be the alternative, and "manual enrollment from the contact
+    view" (SPEC §12) is not that.
+
+    Gated on ``edit_flows`` rather than on membership: it is the input half of a
+    control only an editor can use, and a reader who cannot subscribe anybody has
+    no reason to be handed a contact search.
+    """
+    sequence = _sequence(request, sequence_id)
+    term = (request.GET.get("q") or "").strip()[:MAX_SEARCH_CHARS]
+    rows: QuerySet[Contact] = (
+        Contact.objects.for_workspace(request.workspace)
+        .filter(status=ContactStatus.ACTIVE)
+        .exclude(sequence_enrollments__sequence=sequence, sequence_enrollments__status=EnrollmentStatus.ACTIVE)
+    )
+    if term:
+        rows = search(rows, term)
+    return render(
+        request,
+        "campaigns/_subscriber_suggestions.html",
+        {
+            "sequence": sequence,
+            "suggestions": list(rows.order_by("first_name", "last_name", "-id")[:SUGGESTIONS]),
+            "term": term,
         },
     )
 
