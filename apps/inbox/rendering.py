@@ -32,7 +32,7 @@ because the answer comes from the Content-Security-Policy in
 render as a broken control. Those become labelled links.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from apps.common.validators import is_renderable_url
@@ -145,7 +145,6 @@ class RenderedMessage:
     button_id: str = ""
     ref: str = ""
     reason: str = ""
-    extras: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_inbound(self) -> bool:
@@ -204,19 +203,21 @@ def preview_of(message: Message) -> str:
     """
     body = message.body if isinstance(message.body, dict) else {}
     raw_blocks = body.get("blocks")
+    # One pass, remembering the best non-text answer seen. Text wins wherever it
+    # appears in the block list, so a second full traversal would only be there
+    # to find what this one already walked past.
+    fallback = ""
     for item in raw_blocks if isinstance(raw_blocks, list) else []:
-        if isinstance(item, dict) and _text(item.get("type")) == "text":
+        if not isinstance(item, dict):
+            continue
+        kind = _text(item.get("type"))
+        if kind == "text":
             text = " ".join(_text(item.get("text")).split())
             if text:
                 return text[:PREVIEW_CHARS]
-    for item in raw_blocks if isinstance(raw_blocks, list) else []:
-        if isinstance(item, dict):
-            kind = _text(item.get("type"))
-            if kind in _MEDIA_KINDS:
-                return f"[{kind}]"
-            if kind in ("card", "gallery"):
-                return f"[{kind}]"
-    return ""
+        elif not fallback and (kind in _MEDIA_KINDS or kind in ("card", "gallery")):
+            fallback = f"[{kind}]"
+    return fallback
 
 
 def _part(item: Any) -> Part:

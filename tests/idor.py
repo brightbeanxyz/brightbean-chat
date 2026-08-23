@@ -175,7 +175,22 @@ def _victim_message(tenancy: Tenancy) -> Any:
     from apps.messaging.models import Message, MessageDirection, MessageSource, MessageStatus
 
     conversation = _victim_conversation(tenancy)
-    message = Message.objects.for_workspace(tenancy.workspace).filter(conversation=conversation).first()
+    # Narrowed to what the route accepts, not to "any message in the thread".
+    # An unfiltered .first() would hand back an inbound or a sent row the moment
+    # anything else seeded one, and inbox:retry would start answering 404
+    # because of the message's status rather than because of tenant isolation —
+    # the sweep passing for exactly the reason this docstring warns about.
+    message = (
+        Message.objects.for_workspace(tenancy.workspace)
+        .filter(
+            conversation=conversation,
+            status=MessageStatus.FAILED,
+            direction=MessageDirection.OUT,
+            source=MessageSource.AGENT,
+            internal=False,
+        )
+        .first()
+    )
     if message is not None:
         return message
     return Message.objects.create(

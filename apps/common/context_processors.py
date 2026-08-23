@@ -368,11 +368,18 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     # the permission, because a member without use_inbox never sees the row the
     # badge sits on and counting for them would be a query nobody reads.
     badges["unread_inbox"] = 0
+    user = getattr(request, "user", None)
     membership = getattr(request, "workspace_membership", None)
-    if workspace is not None and membership is not None and membership.effective_permissions.get("use_inbox", False):
+    if (
+        user is not None
+        and user.is_authenticated
+        and workspace is not None
+        and membership is not None
+        and membership.effective_permissions.get("use_inbox", False)
+    ):
         from apps.inbox.selectors import unread_count_for as inbox_unread_count
 
-        badges["unread_inbox"] = inbox_unread_count(workspace, request.user)
+        badges["unread_inbox"] = inbox_unread_count(workspace, user)
 
     # TODO(L2-B): connected channels for the sidebar's channel list, once
     # channels.ChannelConnection exists (issue #4). The credential store from

@@ -58,12 +58,29 @@ unsaved work and a poll that swapped it would delete a half-typed reply.
 </header>
 
 <div id="inbox-thread-scroll" class="ib-thread-scroll">
+  {% comment %}
+    hx-include is what makes "load earlier" survive the poll. The response
+    renders the window it used into a hidden field inside this element, and
+    every poll sends it back — so a reader who has opened more history keeps it,
+    and a message arriving still lands. Without it the poll would ask for the
+    default page three seconds later and throw them back to the bottom.
+
+    hx-disinherit is the load-bearing half. hx-include is an INHERITED
+    attribute, so without it every request from inside this element picks it up:
+    a relative `find [name=limit]` re-resolves against the descendant and logs
+    an error per request, and an id selector — which does resolve — is worse
+    still, because "load earlier" then sends the *current* window alongside the
+    wider one it is asking for and silently gets nowhere. The children here have
+    their own parameters and want none of this element's.
+  {% endcomment %}
   <div id="inbox-thread-body"
        data-poll
        hx-get="{% url 'inbox:messages' workspace_id=request.workspace.id conversation_id=conversation.id %}"
        hx-trigger="every 3s, inboxThreadChanged from:body"
        hx-target="this"
-       hx-swap="innerHTML">
+       hx-swap="innerHTML"
+       hx-include="#inbox-thread-limit"
+       hx-disinherit="hx-include">
     {% include "inbox/_thread_body.html" %}
   </div>
 </div>

@@ -23,7 +23,7 @@ conditional: a mutation's response is never cacheable and never asks.
 """
 
 import uuid
-from datetime import datetime
+from dataclasses import replace
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
@@ -54,6 +54,7 @@ from apps.messaging.models import (
     ConversationState,
     Message,
     MessageDirection,
+    MessageSource,
     MessageStatus,
 )
 from apps.messaging.rendering import outbound_from_body
@@ -251,33 +252,48 @@ def _contact_url(request: WorkspaceRequest, conversation: Conversation) -> str:
         return reverse("contacts:list", kwargs={"workspace_id": request.workspace.id})
 
 
-def _thread_body_context(request: WorkspaceRequest, conversation: Conversation) -> dict[str, Any]:
-    before = _before(request)
-    page, has_more = selectors.thread_messages(request.workspace, conversation, before=before)
+def _thread_body_context(
+    request: WorkspaceRequest,
+    conversation: Conversation,
+    *,
+    compliance: dict[str, Any],
+    limit: int,
+) -> dict[str, Any]:
+    """``compliance`` and ``limit`` are passed in, not derived.
+
+    Both are part of the ETag :func:`messages` computes before deciding whether
+    to render at all, and a value that decides the ETag must be the same value
+    the render uses — recomputing here would be a second chance to disagree.
+    """
+    page, has_more = selectors.thread_messages(request.workspace, conversation, limit=limit)
     return {
         "conversation": conversation,
         "rendered": [render_message(message) for message in page],
         "has_more": has_more,
-        "earlier_cursor": page[0].created_at.isoformat() if page and has_more else "",
+        "limit": limit,
+        "next_limit": min(limit + selectors.PAGE_SIZE, selectors.MAX_THREAD_MESSAGES),
         "paused_until": conversation.automation_paused_until,
         "is_paused": _is_paused(conversation),
-        "compliance": _compliance(request, conversation),
+        "compliance": compliance,
         "can_reply": _can_reply(request),
         "retry_token": uuid.uuid4().hex,
     }
 
 
-def _before(request: WorkspaceRequest) -> datetime | None:
-    raw = (request.GET.get("before") or "").strip()
-    if not raw:
-        return None
+def _window_limit(request: WorkspaceRequest) -> int:
+    """How much of the history to show, from the ``limit`` the last render emitted.
+
+    Clamped at both ends. The floor is one page; the ceiling bounds the response
+    a reader can ask for by clicking, and bounds what a query string can ask for
+    without clicking at all — this endpoint is polled, so an unbounded ``limit``
+    would be an unbounded render every three seconds.
+    """
+    raw = (request.GET.get("limit") or "").strip()
     try:
-        parsed = datetime.fromisoformat(raw)
+        wanted = int(raw)
     except ValueError:
-        # A cursor is our own isoformat echoed back; anything else is either a
-        # stale bookmark or somebody poking, and both mean "start at the top".
-        return None
-    return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+        return selectors.PAGE_SIZE
+    return max(selectors.PAGE_SIZE, min(wanted, selectors.MAX_THREAD_MESSAGES))
 
 
 def _composer_context(conversation: Conversation) -> dict[str, Any]:
@@ -328,7 +344,7 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
         .order_by("platform", "platform_user_id")
     )
     contact_tags = list(contact.tags.all())
-    chosen = {tag.pk for tag in contact_tags}
+    chosen = [tag.pk for tag in contact_tags]
     return {
         "conversation": conversation,
         "contact": contact,
@@ -336,7 +352,7 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
         "identities": identities,
         "custom_fields": _custom_fields(request, contact),
         "contact_tags": contact_tags,
-        "available_tags": [tag for tag in Tag.objects.for_workspace(request.workspace) if tag.pk not in chosen],
+        "available_tags": list(Tag.objects.for_workspace(request.workspace).exclude(pk__in=chosen)),
         "execution": selectors.live_execution_for(request.workspace, contact),
         "can_reply": _can_reply(request),
         "can_edit_contact": _can_edit_contact(request),
@@ -400,7 +416,12 @@ def thread(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
     conversation = _conversation(request, conversation_id)
     services.mark_read(conversation, request.user, at=timezone.now())
     context = {
-        **_thread_body_context(request, conversation),
+        **_thread_body_context(
+            request,
+            conversation,
+            compliance=_compliance(request, conversation),
+            limit=_window_limit(request),
+        ),
         **_sidebar_context(request, conversation),
         **_composer_context(conversation),
     }
@@ -435,17 +456,30 @@ def messages(request: WorkspaceRequest, workspace_id: str, conversation_id: str)
     open tab, turning a conditional GET into a change notification for itself.
     """
     conversation = _conversation(request, conversation_id)
+    limit = _window_limit(request)
+    # Both of these are derived from the clock, and neither writes anything when
+    # it changes: a pause lapses and a messaging window closes purely by time
+    # passing. A version token built only from row state would answer 304 for
+    # ever after, leaving the banner insisting automation is paused and the
+    # compliance notice telling an agent they may reply to somebody who has
+    # since opted out. Folding the *decisions* into the token costs one indexed
+    # identity read per poll and is exact — the tag changes on the tick the
+    # answer does, rather than on a timer that guesses.
+    compliance = _compliance(request, conversation)
     etag = version_etag(
         "inbox-thread",
         request.user.pk,
-        request.GET.get("before", ""),
+        limit,
         _can_reply(request),
+        _is_paused(conversation),
+        compliance["code"],
         *selectors.conversation_version(request.workspace, conversation),
     )
 
     def build() -> HttpResponse:
         services.mark_read(conversation, request.user, at=timezone.now())
-        return render(request, "inbox/_thread_body.html", _thread_body_context(request, conversation))
+        context = _thread_body_context(request, conversation, compliance=compliance, limit=limit)
+        return render(request, "inbox/_thread_body.html", context)
 
     return conditional(request, etag, build)
 
@@ -565,20 +599,46 @@ def retry(request: WorkspaceRequest, workspace_id: str, conversation_id: str, me
     """
     conversation = _conversation(request, conversation_id)
     original = get_scoped_object_or_404(Message, request.workspace, pk=message_id, conversation=conversation)
-    if original.status != MessageStatus.FAILED or original.internal or original.direction != MessageDirection.OUT:
-        raise Http404("Only a failed outbound send can be retried.")
+    if (
+        original.status != MessageStatus.FAILED
+        or original.internal
+        or original.direction != MessageDirection.OUT
+        # An agent's own send, and nothing else. Without this a failed
+        # broadcast or automation send could be pressed through here and go out
+        # as source="agent" — where the broadcast gate does not apply and the
+        # human-agent allowance does. That is not a retry, it is laundering a
+        # send compliance already refused into one it would permit.
+        or original.source != MessageSource.AGENT
+    ):
+        raise Http404("Only an agent's own failed send can be retried.")
 
     message = messaging.send_as_agent(
         workspace=request.workspace,
         contact=conversation.contact,
         connection=conversation.channel_connection,
-        outbound=outbound_from_body(original.body),
+        outbound=_recomposed(original),
         idempotency_key=_idempotency_key(request, prefix=f"retry:{original.pk}"),
     )
     events = _refresh(inboxSent=True)
     if message.status == MessageStatus.FAILED:
         return toast_response(tone="error", title="Still not sent", body=describe(message.error), events=events)
     return toast_response(tone="success", title="Sent", events=events)
+
+
+def _recomposed(original: Message) -> OutboundMessage:
+    """The original's content, with its compliance decision left behind.
+
+    ``_record`` stores the message as it went *on the wire*, so a send that
+    compliance dressed in a message tag or an approved template has that tag in
+    its body — and ``outbound_from_body`` reads it straight back. Replaying it
+    would let the retry earn ``tag_supplied`` from a tag the agent never chose
+    and that may no longer describe what they are sending, which is a Meta
+    policy problem the compose box cannot create.
+
+    Stripped rather than kept, so ``can_send`` decides the retry on what is true
+    now — the window may have reopened, or the allowance may have lapsed.
+    """
+    return replace(outbound_from_body(original.body), tag=None, template_ref=None)
 
 
 @login_required

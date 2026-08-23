@@ -15,6 +15,7 @@ import pytest
 from django.utils import timezone
 
 from apps.contacts.models import Contact
+from apps.messaging.codes import Denial, describe
 from apps.messaging.models import Conversation, Message, MessageDirection, MessageSource, MessageStatus
 from apps.messaging.services import assign_conversation, close_conversation, open_conversation
 from apps.messaging.tests.conftest import make_connection
@@ -198,6 +199,72 @@ class TestTheThread:
         message.save(update_fields=["status", "updated_at"])
 
         assert _poll(agent_client, url, etag).status_code == 200
+
+    def test_a_pause_lapsing_busts_the_tag_even_though_nothing_was_written(
+        self, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        """A pause ends by the clock, not by a write. With a token built only
+        from row state the poll answered 304 for ever afterwards, leaving the
+        banner insisting automation was paused with nothing able to clear it."""
+        from apps.messaging.services import pause_automation
+
+        url = url_for("messages", conversation_id=conversation.pk)
+        pause_automation(conversation, timezone.now() + timedelta(minutes=30))
+        etag = _poll(agent_client, url).headers["ETag"]
+        assert "ib-banner-paused" in _poll(agent_client, url).content.decode()
+
+        # Nothing writes when a pause expires, so the row is moved back in time
+        # to stand in for the clock moving forward.
+        pause_automation(conversation, timezone.now() - timedelta(seconds=1))
+        after = _poll(agent_client, url, etag)
+
+        assert after.status_code == 200
+        assert "ib-banner-paused" not in after.content.decode()
+
+    def test_an_opt_out_busts_the_tag_even_though_no_message_moved(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, identity: Any
+    ) -> None:
+        """`_apply_opt_out` writes only the identity — an opt_out event creates
+        no message row and never touches the conversation. The compliance notice
+        renders inside this region, so without the decision in the token an
+        agent went on being told they could reply to somebody who had left."""
+        url = url_for("messages", conversation_id=conversation.pk)
+        etag = _poll(agent_client, url).headers["ETag"]
+
+        identity.opted_out_at = timezone.now()
+        identity.save(update_fields=["opted_out_at", "updated_at"])
+        after = _poll(agent_client, url, etag)
+
+        assert after.status_code == 200
+        assert describe(Denial.OPTED_OUT.value) in after.content.decode()
+
+    def test_the_banner_carries_no_countdown_it_cannot_keep_current(
+        self, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        """The token tracks *whether* the pause is live, so the banner appears
+        and disappears on time — but a "29 minutes left" inside it would go
+        wrong on its own while the markup stayed byte-identical."""
+        from apps.messaging.services import pause_automation
+
+        pause_automation(conversation, timezone.now() + timedelta(minutes=30))
+
+        body = _poll(agent_client, url_for("messages", conversation_id=conversation.pk)).content.decode()
+
+        assert "ib-banner-paused" in body
+        assert "left" not in body.split("Flows will not reply")[0]
+
+    def test_the_window_is_part_of_the_tag(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """Two window sizes render different history, so they cannot share a tag
+        — otherwise widening it would answer 304 and show nothing new."""
+        inbound("hello")
+        url = url_for("messages", conversation_id=conversation.pk)
+
+        one = _poll(agent_client, url, limit=50).headers["ETag"]
+        two = _poll(agent_client, url, limit=100).headers["ETag"]
+
+        assert one != two
 
     def test_roles_never_share_a_tag(
         self, tenancy: Any, client_for: Any, url_for: Any, conversation: Conversation

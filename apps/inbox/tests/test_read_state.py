@@ -129,6 +129,39 @@ class TestTheUnreadCount:
 
         assert 'id="nav-badge-inbox"' in page
 
+    def test_it_saturates_rather_than_scanning_the_whole_workspace(self, tenancy: Any) -> None:
+        """This runs in the shell's context processor, so it is on the critical
+        path of every authenticated page in the product — and it is a correlated
+        EXISTS per open conversation, not the single indexed count() the
+        notification badge beside it does. The slice lets Postgres stop once it
+        has enough rows to fill a two-digit badge."""
+        from apps.contacts.models import Contact
+        from apps.inbox.selectors import UNREAD_BADGE_CAP
+        from apps.messaging.models import Message, MessageDirection, MessageStatus
+
+        connection = make_connection(tenancy.workspace, suffix="cap")
+        for index in range(UNREAD_BADGE_CAP + 5):
+            contact = Contact.objects.create(workspace=tenancy.workspace, first_name=f"P{index}")
+            thread = open_conversation(workspace=tenancy.workspace, contact=contact, connection=connection)
+            Message.objects.create(
+                conversation=thread,
+                direction=MessageDirection.IN,
+                status=MessageStatus.DELIVERED,
+                body={"blocks": [{"type": "text", "text": "hi"}]},
+                idempotency_key=f"in:cap:{index}",
+            )
+
+        assert unread_count_for(tenancy.workspace, tenancy.user_for("agent")) == UNREAD_BADGE_CAP
+
+    def test_an_anonymous_render_never_reaches_the_query(self, client: Any) -> None:
+        """The style guide at /ui/ calls the nav context processor directly for
+        visitors with no session, and its docstring promises it "reads no
+        database and no session" — so the badge is guarded on authentication,
+        not only on a resolved workspace."""
+        response = client.get("/ui/")
+
+        assert response.status_code == 200
+
     def test_a_member_without_use_inbox_costs_no_query(self, tenancy: Any, client_for: Any) -> None:
         """Every authenticated page render pays for this count, so it is skipped
         for somebody who cannot see the row it sits on. Owners hold every key,

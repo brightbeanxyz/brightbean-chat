@@ -243,6 +243,83 @@ class TestRetry:
 
         assert response.status_code == 404
 
+    def test_a_failed_broadcast_cannot_be_retried_as_an_agent_send(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, identity: Any
+    ) -> None:
+        """The gate is on `source`, not only on direction and status.
+
+        Without it a broadcast the compliance engine refused — on a platform
+        whose policy sets broadcast_allowed=False, say — could be pressed
+        through this button and go out as source="agent", where the broadcast
+        gate does not apply and the human-agent allowance does. That is not a
+        retry; it is laundering a refused send into a permitted one.
+        """
+        refused = Message.objects.create(
+            conversation=conversation,
+            direction=MessageDirection.OUT,
+            source=MessageSource.BROADCAST,
+            status=MessageStatus.FAILED,
+            error=Denial.BROADCAST_NOT_ALLOWED.value,
+            idempotency_key="broadcast:1",
+            body={"blocks": [{"type": "text", "text": "buy now"}]},
+        )
+
+        with registered(Platform.TELEGRAM) as adapter:
+            response = agent_client.post(url_for("retry", conversation_id=conversation.pk, message_id=refused.pk))
+
+        assert response.status_code == 404
+        assert adapter.sends == []
+
+    def test_an_automated_send_cannot_be_retried_by_hand_either(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, identity: Any
+    ) -> None:
+        failed = Message.objects.create(
+            conversation=conversation,
+            direction=MessageDirection.OUT,
+            source=MessageSource.AUTOMATION,
+            status=MessageStatus.FAILED,
+            error=Denial.OPTED_OUT.value,
+            idempotency_key="automation:1",
+            body={"blocks": [{"type": "text", "text": "from a flow"}]},
+        )
+
+        response = agent_client.post(url_for("retry", conversation_id=conversation.pk, message_id=failed.pk))
+
+        assert response.status_code == 404
+
+    def test_it_does_not_replay_the_compliance_tag_the_first_send_wore(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, identity: Any
+    ) -> None:
+        """_record stores the message as it went on the wire, so a send that
+        compliance dressed in a message tag carries that tag in its body. Read
+        straight back, the retry would earn `tag_supplied` from a tag the agent
+        never chose — so it is stripped and compliance decides again."""
+        tagged = Message.objects.create(
+            conversation=conversation,
+            direction=MessageDirection.OUT,
+            source=MessageSource.AGENT,
+            status=MessageStatus.FAILED,
+            error=Denial.OPTED_OUT.value,
+            idempotency_key="tagged:1",
+            body={
+                "blocks": [{"type": "text", "text": "an update"}],
+                "tag": "CONFIRMED_EVENT_UPDATE",
+                "template_ref": "tpl_1",
+            },
+        )
+
+        with registered(Platform.TELEGRAM) as adapter:
+            agent_client.post(
+                url_for("retry", conversation_id=conversation.pk, message_id=tagged.pk), {"token": "2" * 32}
+            )
+
+        assert len(adapter.sends) == 1
+        # Telegram's policy has no window, so the grant is `no_window` and the
+        # decision applies no tag of its own — leaving exactly what the retry
+        # handed it.
+        assert adapter.sends[0].tag is None
+        assert adapter.sends[0].template_ref is None
+
     def test_a_message_from_another_conversation_is_a_404(
         self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation
     ) -> None:

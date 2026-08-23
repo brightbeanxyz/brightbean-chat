@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from django.db.models import Count, DateTimeField, Exists, Max, OuterRef, Q, QuerySet, Subquery, Value
+from django.db.models import Count, DateTimeField, Exists, F, Max, OuterRef, Q, QuerySet, Subquery, Value
 from django.db.models.functions import Coalesce
 
 from apps.contacts.models import Contact
@@ -33,7 +33,9 @@ __all__ = [
     "ASSIGNEE_ME",
     "ASSIGNEE_UNASSIGNED",
     "LIST_LIMIT",
+    "MAX_THREAD_MESSAGES",
     "PAGE_SIZE",
+    "UNREAD_BADGE_CAP",
     "conversation_version",
     "conversations_for",
     "last_messages_by_conversation",
@@ -52,8 +54,19 @@ ASSIGNEE_UNASSIGNED = "unassigned"
 #: holding. Any real message is newer, so every thread starts unread.
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
-#: How many messages one thread page carries.
+#: How many messages one thread page carries, and how much each "load earlier"
+#: adds to the window.
 PAGE_SIZE = 50
+
+#: The largest window a thread will render. The region is polled every three
+#: seconds, so this bounds both what a reader can grow by clicking and what a
+#: hand-edited query string can ask for.
+MAX_THREAD_MESSAGES = 1000
+
+#: The most the sidebar badge will ever report. The count runs on every
+#: authenticated page render, so it is deliberately bounded rather than exact —
+#: see :func:`unread_count_for`.
+UNREAD_BADGE_CAP = 99
 
 #: How many conversations the list renders at once. The list is a working
 #: surface rather than an archive — the filters are how a hundred-plus-thread
@@ -79,7 +92,13 @@ def conversations_for(
     rows = (
         Conversation.objects.for_workspace(workspace)
         .select_related("contact", "channel_connection", "assignee")
-        .order_by("-last_message_at", "-created_at")
+        # nulls_last is not decoration. ``open_conversation`` creates a thread
+        # with ``last_message_at = None`` and only ``_touch`` ever fills it, so
+        # a conversation opened before its first message — a flow that opens one
+        # then fails to send, an API caller — has NULL. Postgres orders NULLs
+        # FIRST for DESC, which pinned every message-less thread above every
+        # real one at the top of the inbox.
+        .order_by(F("last_message_at").desc(nulls_last=True), "-created_at")
     )
     if state in (ConversationState.OPEN, ConversationState.DONE):
         rows = rows.filter(state=state)
@@ -124,45 +143,73 @@ def with_unread(rows: QuerySet[Conversation], *, workspace: Any, viewer: Any) ->
 
 
 def unread_count_for(workspace: Any, viewer: Any) -> int:
-    """How many open conversations are waiting on this member. Sidebar badge."""
+    """How many open conversations are waiting on this member, up to the cap.
+
+    **Saturates at** :data:`UNREAD_BADGE_CAP`. This runs in the shell's context
+    processor, so it is on the critical path of every authenticated page in the
+    product, not only the inbox — and unlike issue #7's notification count,
+    which is one indexed ``count()``, this one is a correlated ``EXISTS`` per
+    open conversation. An exact answer would mean scanning every open thread in
+    the workspace on every page load; the slice lets Postgres stop as soon as it
+    has enough rows to fill a two-digit badge, which is all the badge can say.
+    """
     rows = Conversation.objects.for_workspace(workspace).filter(state=ConversationState.OPEN)
     # Q() rather than a keyword argument: ``unread`` is an annotation, and
     # django-stubs resolves keyword lookups against the model's real fields.
-    return with_unread(rows, workspace=workspace, viewer=viewer).filter(Q(unread=True)).count()
+    unread = with_unread(rows, workspace=workspace, viewer=viewer).filter(Q(unread=True))
+    return len(unread.values_list("pk", flat=True)[:UNREAD_BADGE_CAP])
 
 
 def last_messages_by_conversation(workspace: Any, conversations: list[Conversation]) -> dict[Any, Message]:
-    """The newest message of each listed conversation, in one query.
+    """The newest message of each listed conversation: one query, one row each.
 
-    A per-row ``.messages.last()`` would be N queries for a hundred-row list,
-    and the preview line needs one message per row. Ordered oldest-first so the
-    dict ends up holding the newest.
+    ``DISTINCT ON`` rather than "fetch them all and keep the last per key". The
+    naive form is one query too, which is what makes it easy to ship — but it
+    materialises *every message of every listed conversation* to keep a hundred
+    preview lines. A hundred threads averaging five hundred messages is fifty
+    thousand model instances built and thrown away, on every list render, for
+    every open tab.
+
+    Postgres-only, which this project already is (SPEC §2, and CI runs Postgres
+    16). The ``order_by`` prefix has to match the ``distinct`` expression, so
+    recency is the second term and the tie-break the third.
     """
     ids = [conversation.pk for conversation in conversations]
     if not ids:
         return {}
-    rows = Message.objects.for_workspace(workspace).filter(conversation_id__in=ids).order_by("created_at")
+    rows = (
+        Message.objects.for_workspace(workspace)
+        .filter(conversation_id__in=ids)
+        .order_by("conversation_id", "-created_at", "-id")
+        .distinct("conversation_id")
+    )
     return {message.conversation_id: message for message in rows}
 
 
-def thread_messages(
-    workspace: Any, conversation: Conversation, *, before: datetime | None = None
-) -> tuple[list[Message], bool]:
-    """One page of history, oldest-first, plus whether more exists above it.
+def thread_messages(workspace: Any, conversation: Conversation, *, limit: int) -> tuple[list[Message], bool]:
+    """The newest ``limit`` messages, oldest-first, plus whether more exist above.
 
-    Paginated *upward*: the newest page is the default and ``before`` walks back
-    through it. The query is ``(conversation, created_at)`` descending, which is
-    ``message_conv_created_idx`` read backwards, then reversed in Python — a
-    page is fifty rows, so the sort is free and the alternative (ordering
-    ascending with an offset) degrades on exactly the long threads this exists
-    for.
+    A **growing window** rather than a ``before=<timestamp>`` cursor, and the
+    reason is the poll. This region refreshes every three seconds; a cursor
+    describes one page in the middle of the history, so the very next poll —
+    which knows nothing about it — would swap the newest page back and throw the
+    reader out of the history they had just opened. A window anchored at the
+    newest message is a superset of what the poll would render anyway, so
+    "load earlier" and "a message arrived" compose instead of fighting.
+
+    It also disposes of a cursor bug rather than fixing one: ``created_at__lt``
+    against an ordering that tie-breaks on ``id`` skips *both* rows when two
+    messages share a timestamp, so a message could exist in the thread and never
+    be reachable. There is no cursor here to get that wrong.
+
+    Read as ``(conversation, created_at)`` descending — ``message_conv_created_idx``
+    backwards — then reversed in Python, which is free at these sizes and beats
+    an ascending ``OFFSET`` on exactly the long threads this exists for.
     """
     rows = Message.objects.for_workspace(workspace).filter(conversation=conversation)
-    if before is not None:
-        rows = rows.filter(created_at__lt=before)
-    page = list(rows.order_by("-created_at", "-id")[: PAGE_SIZE + 1])
-    has_more = len(page) > PAGE_SIZE
-    page = page[:PAGE_SIZE]
+    page = list(rows.order_by("-created_at", "-id")[: limit + 1])
+    has_more = len(page) > limit
+    page = page[:limit]
     page.reverse()
     return page, has_more
 

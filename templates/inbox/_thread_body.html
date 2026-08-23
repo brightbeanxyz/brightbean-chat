@@ -20,9 +20,23 @@ would be blocked by the browser and render as a broken control. Non-image media
 is a link, and rendering.py is where that is decided.
 {% endcomment %}
 
+{% comment %}
+  The window this render used. The polled element hx-includes it, so the next
+  poll asks for the same amount of history rather than resetting to one page.
+{% endcomment %}
+<input type="hidden" id="inbox-thread-limit" name="limit" value="{{ limit }}">
+
 {% if is_paused %}
   <div class="ib-banner ib-banner-paused">
-    <span>Automation is paused until {{ paused_until|time:"H:i" }} ({{ paused_until|timeuntil }} left). Flows will not reply to this contact.</span>
+    {% comment %}
+      An absolute time, not "29 minutes left". A countdown is a number that goes
+      wrong on its own while the markup that carries it stays byte-identical —
+      and this region only re-renders when its ETag changes. The ETag does track
+      *whether* the pause is live (apps/inbox/views.py folds it in), so the
+      banner appears and disappears on time; what it must not do is claim a
+      precision the refresh cannot back.
+    {% endcomment %}
+    <span>Automation is paused until {{ paused_until|time:"H:i" }}. Flows will not reply to this contact.</span>
     {% if can_reply %}
       <form class="ml-auto" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
         {% csrf_token %}
@@ -37,10 +51,20 @@ is a link, and rendering.py is where that is decided.
 
 {% if has_more %}
   <div class="text-center mb-3">
-    <button type="button" class="btn-outline btn-inline"
-            hx-get="{% url 'inbox:messages' workspace_id=request.workspace.id conversation_id=conversation.id %}?before={{ earlier_cursor|urlencode }}"
-            hx-target="#inbox-thread-body"
-            hx-swap="innerHTML">Load earlier messages</button>
+    {% comment %}
+      Widens the window rather than paging to a cursor: the response is the same
+      shape the poll asks for, one page taller, so the two compose instead of
+      overwriting each other. At MAX_THREAD_MESSAGES next_limit stops growing
+      and the button stops being offered.
+    {% endcomment %}
+    {% if next_limit > limit %}
+      <button type="button" class="btn-outline btn-inline"
+              hx-get="{% url 'inbox:messages' workspace_id=request.workspace.id conversation_id=conversation.id %}?limit={{ next_limit }}"
+              hx-target="#inbox-thread-body"
+              hx-swap="innerHTML">Load earlier messages</button>
+    {% else %}
+      <p class="text-xs" style="color: var(--text-tertiary);">Showing the most recent {{ limit }} messages.</p>
+    {% endif %}
   </div>
 {% endif %}
 
