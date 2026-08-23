@@ -1,0 +1,13 @@
+{
+  "NumMedia": "0",
+  "SmsStatus": "received",
+  "Body": " Stop. ",
+  "To": "+15550001111",
+  "NumSegments": "1",
+  "MessageSid": "SM44444444444444444444444444444444",
+  "SmsSid": "SM44444444444444444444444444444444",
+  "AccountSid": "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "From": "+15557778888",
+  "OptOutType": "STOP",
+  "ApiVersion": "2010-04-01"
+}

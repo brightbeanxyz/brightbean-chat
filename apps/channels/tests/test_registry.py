@@ -174,7 +174,12 @@ class TestRegistry:
     def test_register_and_resolve(self) -> None:
         with registered(Platform.TELEGRAM) as adapter_cls:
             assert has_adapter(Platform.TELEGRAM)
-            assert registered_platforms() == (Platform.TELEGRAM,)
+            # Enum order, and it grows as Layer 5 lands: Telegram (#12) and SMS
+            # (#20) today. Asserted as a set membership plus the ordering rule
+            # rather than a frozen tuple, so the next adapter is a one-line
+            # change here instead of a puzzle.
+            assert set(registered_platforms()) >= {Platform.TELEGRAM, Platform.SMS}
+            assert list(registered_platforms()) == [p for p in Platform.values if p in registered_platforms()]
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
         # Restored, not cleared. Telegram has a real adapter since issue #12 and
@@ -198,9 +203,13 @@ class TestRegistry:
             register_adapter(Platform.TELEGRAM, fake_adapter_for(Platform.TELEGRAM))
 
     def test_registering_the_same_class_twice_is_idempotent(self) -> None:
-        adapter_cls = fake_adapter_for(Platform.SMS)
-        register_adapter(Platform.SMS, adapter_cls)
+        # WhatsApp because its slot is still empty. SMS held this role until
+        # #20 shipped a real adapter, at which point registering over it hit
+        # the duplicate guard — the exact trap fake_adapter.swapped_adapter
+        # exists to keep out of test modules.
+        adapter_cls = fake_adapter_for(Platform.WHATSAPP)
+        register_adapter(Platform.WHATSAPP, adapter_cls)
         try:
-            register_adapter(Platform.SMS, adapter_cls)
+            register_adapter(Platform.WHATSAPP, adapter_cls)
         finally:
-            unregister_adapter(Platform.SMS)
+            unregister_adapter(Platform.WHATSAPP)

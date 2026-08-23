@@ -1,0 +1,76 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Connect Twilio · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Connect a Twilio number</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    BrightBean Chat sends SMS through your own Twilio account, so the messages,
+    the number and the bill are all yours. The Auth Token is the whole
+    credential — anyone holding it can send as your number and read your
+    messages — so it is stored encrypted and never shown again.
+  </p>
+
+  <h2>Before you paste</h2>
+  <ol>
+    <li>Open the <a href="https://console.twilio.com/" rel="noopener noreferrer" target="_blank">Twilio console</a> and copy the Account SID and Auth Token from the dashboard.</li>
+    <li>Copy either a phone number you own, in E.164 form (<code>+15551234567</code>), or a Messaging Service SID (<code>MG…</code>) if you send through one.</li>
+    <li>US traffic also needs A2P 10DLC registration, which happens in Twilio and not here — there is a checklist on the SMS settings page.</li>
+  </ol>
+
+  {% if error %}
+    <div class="alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    <p>
+      <label for="account_sid">Account SID</label><br />
+      <input type="text" id="account_sid" name="account_sid" value="{{ form.account_sid }}"
+             autocomplete="off" spellcheck="false" required />
+      <span class="muted">Starts with <code>AC</code>.</span>
+    </p>
+    <p>
+      <label for="auth_token">Auth Token</label><br />
+      {% comment %}
+      autocomplete="off" and a password input: this value is a live credential
+      and must not end up in the browser's saved form data. It is also never
+      rendered back — a failed submit clears it deliberately.
+      {% endcomment %}
+      <input type="password" id="auth_token" name="auth_token" autocomplete="off"
+             spellcheck="false" required />
+      <span class="muted">Pasted once. We check it with Twilio before saving anything.</span>
+    </p>
+    <p>
+      <label for="from_number">From number</label><br />
+      <input type="text" id="from_number" name="from_number" value="{{ form.from_number }}"
+             autocomplete="off" spellcheck="false" placeholder="+15551234567" />
+    </p>
+    <p class="muted">…or, if you send through a messaging service instead:</p>
+    <p>
+      <label for="messaging_service_sid">Messaging Service SID</label><br />
+      <input type="text" id="messaging_service_sid" name="messaging_service_sid"
+             value="{{ form.messaging_service_sid }}" autocomplete="off" spellcheck="false"
+             placeholder="MG…" />
+      <span class="muted">Give one or the other, not both.</span>
+    </p>
+    <button type="submit">Connect</button>
+  </form>
+
+  <h2>What happens next</h2>
+  <p class="muted">
+    We check the credentials and confirm the sender belongs to the account, then
+    store the connection. Twilio has no way for us to configure your number
+    remotely, so the last step is yours: open the number (or the messaging
+    service) in the Twilio console and paste the webhook URL shown on the
+    connection's page into <em>A message comes in</em>, as a <code>POST</code>.
+  </p>
+  <p class="muted">
+    That URL has to match <strong>exactly</strong>, trailing slash included:
+    Twilio signs each delivery with an HMAC computed over the URL itself, so a
+    URL that differs by one character fails verification. It also has to be
+    reachable from the public internet over HTTPS. Full setup notes are in
+    <code>docs/channels/sms.md</code>.
+  </p>
+
+  <p><a href="{{ list_url }}">Back to channels</a></p>
+{% endblock %}

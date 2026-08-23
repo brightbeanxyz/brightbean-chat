@@ -116,6 +116,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "PERSISTENCE_PROCESSOR",
     "ROUTING_PROCESSOR",
+    "apply_opt_in",
     "apply_opt_out",
     "persist_events",
     "register_processors",
@@ -463,6 +464,45 @@ def apply_opt_out(identity: ContactChannelIdentity, now: Any = None) -> bool:
     identity.opt_in = False
     identity.save(update_fields=["opted_out_at", "opt_in", "updated_at"])
     logger.info("Identity %s opted out on connection %s", identity.pk, identity.channel_connection_id)
+    return True
+
+
+def apply_opt_in(identity: ContactChannelIdentity, *, source: str, now: Any = None) -> bool:
+    """Undo a hard opt-out because the contact asked. ``True`` when it changed something.
+
+    **The other half of the one write site.** ROADMAP contract 3 pins
+    ``opted_out_at`` to this module and ``tests/test_write_sites.py`` asserts it
+    over the AST, so re-consent had to arrive here or not at all — which is what
+    :func:`apps.messaging.identities.record_consent` means when it says
+    re-subscription "reaches the identity through a different door". This is that
+    door; L5-D's SMS ``START``/``UNSTOP`` keyword is its first caller.
+
+    It is deliberately **not** reachable from the operator's side.
+    :func:`apps.messaging.services.record_opt_out` has no matching toggle, and
+    for the reason its docstring gives: SPEC §19 puts opt-out at a chokepoint so
+    it cannot be bypassed, and a team member who could un-say it is a bypass with
+    a nicer name. Consent comes back the way it was given — from the contact.
+
+    The consent audit is **re-stamped**, unlike the first time round.
+    ``record_consent`` writes ``opt_in_at`` once and never refreshes it, because
+    the question it answers is "when was permission given?" and the answer does
+    not change when permission is merely exercised again. Here it does change:
+    permission was withdrawn and given afresh, so the moment that matters is this
+    one — a regulator asking why we are messaging this number after a STOP wants
+    today's date, not a date from before it.
+
+    ``source`` is an :class:`~apps.messaging.models.OptInSource` value and stays
+    the caller's. The SMS keyword passes ``message_in``, which is exactly what a
+    typed ``START`` is; a later caller with a different story records its own.
+    """
+    if identity.opted_out_at is None and identity.opt_in:
+        return False
+    identity.opted_out_at = None
+    identity.opt_in = True
+    identity.opt_in_at = now or timezone.now()
+    identity.opt_in_source = source or OptInSource.MESSAGE_IN
+    identity.save(update_fields=["opted_out_at", "opt_in", "opt_in_at", "opt_in_source", "updated_at"])
+    logger.info("Identity %s opted back in on connection %s", identity.pk, identity.channel_connection_id)
     return True
 
 
