@@ -1,0 +1,63 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Connect Instagram · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Connect an Instagram account</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    BrightBean Chat uses the <strong>Instagram API with Instagram Login</strong>, so
+    the account you connect must be a <strong>professional</strong> account —
+    Business or Creator. You will be sent to Instagram to authorise it, and we
+    never see your password.
+  </p>
+
+  <h2>Before you start</h2>
+  <ol>
+    <li>Create a Meta app with the <em>Instagram</em> product added.</li>
+    <li>
+      Add this deployment's callback URL to the app's
+      <em>Business login settings</em>, exactly as written:
+      <br /><code>{{ callback_url }}</code>
+    </li>
+    <li>
+      Put the app's Instagram app ID and secret into
+      <em>Settings → Credentials</em>, or set
+      <code>PLATFORM_INSTAGRAM_CLIENT_ID</code> and
+      <code>PLATFORM_INSTAGRAM_CLIENT_SECRET</code> on the deployment.
+    </li>
+    <li>In the account's Instagram settings, allow access to messages.</li>
+  </ol>
+
+  <p class="muted">
+    We ask for these permissions:
+    {% for scope in scopes %}<code>{{ scope }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}.
+    Reading and answering comments needs the last one, so it is requested up
+    front rather than when a comment trigger is first used.
+  </p>
+
+  {% if error %}
+    <div class="alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit">Continue to Instagram</button>
+  </form>
+
+  <h2>What happens next</h2>
+  <p class="muted">
+    Instagram sends you back here with a one-time code. We exchange it for a
+    long-lived token, store it encrypted, and refresh it automatically before it
+    expires — so you should not have to reconnect. If a token is ever revoked,
+    the channel is marked <em>Needs reconnection</em> and you get a notification.
+  </p>
+  <p class="muted">
+    One more step is not automatable: subscribe your Meta app to this account's
+    webhook fields (<code>messages</code>, <code>messaging_postbacks</code>,
+    <code>comments</code>, <code>mentions</code>,
+    <code>message_deletions</code>). Serving accounts other than your own also
+    needs Advanced Access, App Review and Business Verification from Meta. Both
+    are written up in <code>docs/channels/instagram.md</code>.
+  </p>
+
+  <p><a href="{{ list_url }}">Back to channels</a></p>
+{% endblock %}

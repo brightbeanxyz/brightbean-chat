@@ -1,0 +1,20 @@
+{
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "17841400000000001",
+      "time": 1755950000,
+      "changes": [
+        {
+          "field": "follows",
+          "value": {
+            "from": {
+              "id": "6789012345678901",
+              "username": "ada.codes"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

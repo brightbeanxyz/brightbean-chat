@@ -101,17 +101,20 @@ PLATFORMS_FOR_TYPE: dict[str, frozenset[str]] = {
 EVENT_DRIVEN_TYPES: frozenset[str] = frozenset(PLATFORMS_FOR_TYPE) - {TriggerType.RULE, TriggerType.API}
 
 #: Types whose matcher is registered but always declines, because the platform
-#: signal it needs does not exist until L5-A ships Instagram. **Pinned by a
-#: test**, the way ``engine.registry.types_without_runtime()`` is: a type
-#: leaving this set is a deliberate act with a test to update, not a silent
-#: behaviour change on some other issue's branch.
-STUB_TYPES: frozenset[str] = frozenset(
-    {
-        TriggerType.STORY_MENTION,
-        TriggerType.STORY_REPLY,
-        TriggerType.FOLLOW,
-    }
-)
+#: signal it needs does not exist yet. **Pinned by a test**, the way
+#: ``engine.registry.types_without_runtime()`` is: a type leaving this set is a
+#: deliberate act with a test to update, not a silent behaviour change on some
+#: other issue's branch.
+#:
+#: Empty since #17 (L5-A). It held ``story_mention``, ``story_reply`` and
+#: ``follow`` while Instagram was the only platform that could deliver them and
+#: no Instagram adapter existed; all three now have real matchers in
+#: :mod:`apps.flows.triggers.matching`. ``follow`` is the interesting one: its
+#: matcher is real and correct, and the Instagram API with Instagram Login
+#: publishes no follow webhook field, so it fires only if Meta ever grants one.
+#: That is SPEC §10's "degrade gracefully" rather than a stub — the difference
+#: being that a stub declines an event that arrived, and this declines nothing.
+STUB_TYPES: frozenset[str] = frozenset()
 
 #: Where a comment event carries the post it was left on.
 #:

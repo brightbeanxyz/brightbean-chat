@@ -20,12 +20,14 @@ from typing import Any
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
+from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
+from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows.models import Flow, Trigger, TriggerType
-from apps.flows.triggers import forms, links, qr, services
+from apps.flows.triggers import comments, forms, links, qr, services
 from apps.flows.triggers.registry import TRIGGER_TYPES, spec_for
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
@@ -94,9 +96,36 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             "config": trigger.config_json if trigger is not None else spec.default_config(),
             "connection_options": _connection_options(request, spec),
             "rule_events": _RULE_EVENTS,
+            # Both read off the comment-responder registry rather than being
+            # decided here, so this view still names no platform: SPEC §10's
+            # like_comment is offered when some platform the trigger can fire on
+            # has an API for it, and a post picker is offered by whichever
+            # platforms ship one. See apps.flows.triggers.comments.
+            "like_supported": comments.like_supported_on(spec.platforms),
+            "post_pickers": _post_pickers(spec, workspace_id),
         }
     )
     return render(request, "flows/_trigger_form.html", context)
+
+
+def _post_pickers(spec: Any, workspace_id: str) -> list[dict[str, str]]:
+    """The post pickers this trigger type can offer, one per platform.
+
+    A route whose reverse fails is skipped rather than raised on: a responder
+    registered by an adapter whose urls have not been mounted is a
+    misconfiguration, and it should cost the operator a missing button rather
+    than the whole trigger drawer.
+    """
+    labels = dict(Platform.choices)
+    pickers: list[dict[str, str]] = []
+    for platform, route in comments.picker_routes(spec.platforms):
+        try:
+            url = reverse(route, kwargs={"workspace_id": workspace_id})
+        except NoReverseMatch:
+            logger.warning("Comment responder for %s names an unroutable post picker %r.", platform, route)
+            continue
+        pickers.append({"platform": platform, "label": str(labels.get(platform, platform)), "url": url})
+    return pickers
 
 
 @login_required
