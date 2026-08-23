@@ -340,3 +340,48 @@ class TestTheRouteIsConditional:
         second = agent_client.get(media_url(message, 1))["ETag"]
 
         assert first != second
+
+
+@pytest.mark.django_db
+class TestTheComposerPicker:
+    """SPEC §14's attachment button (issue #24).
+
+    The picker is a list the agent chooses from. An earlier cut fetched the
+    library and bulk-added whatever came back first, which on a workspace with
+    more than one asset attaches the wrong file and makes anything past the first
+    page unreachable — so these assert that a *selection* exists.
+    """
+
+    def test_the_composer_offers_a_picker_on_a_channel_that_takes_media(
+        self, agent_client: Any, url_for: Any, conversation: Any
+    ) -> None:
+        page = agent_client.get(url_for("composer", conversation_id=conversation.pk)).content.decode()
+
+        assert "togglePicker()" in page
+        # A list bound to the fetched results, and an attach per item — not a
+        # single button that adds them all.
+        assert 'x-for="asset in picker.results"' in page
+        assert "attach(asset)" in page
+
+    def test_it_offers_only_the_kinds_the_platform_can_carry(
+        self, agent_client: Any, url_for: Any, conversation: Any
+    ) -> None:
+        """Read from apps.channels.capabilities, never branched on the platform."""
+        from apps.channels.capabilities import capabilities_for
+
+        response = agent_client.get(url_for("composer", conversation_id=conversation.pk))
+
+        offered = set(response.context["media_kinds"])
+        capabilities = capabilities_for(conversation.channel_connection.platform)
+        assert offered == {kind for kind in ("image", "audio", "video", "file") if capabilities.supports_block(kind)}
+
+    def test_the_picker_url_is_the_librarys_own_endpoint(
+        self, agent_client: Any, url_for: Any, conversation: Any
+    ) -> None:
+        from django.urls import reverse
+
+        response = agent_client.get(url_for("composer", conversation_id=conversation.pk))
+
+        assert response.context["media_picker_url"] == reverse(
+            "media:picker", kwargs={"workspace_id": conversation.workspace_id}
+        )

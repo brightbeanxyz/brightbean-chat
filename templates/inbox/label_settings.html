@@ -1,0 +1,26 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Labels · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Labels</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Labels file a conversation. They are the inbox's own filing system, and they
+    are not contact tags: a tag like “VIP” follows a person across every channel
+    they use, while a label like “waiting on shipping” is true of one thread and
+    stops being true when it is answered. Inbox rules can add labels
+    automatically. Deleting a label removes it from every conversation carrying
+    it.
+  </p>
+
+  <form hx-post="{% url 'inbox:label_create' workspace_id=request.workspace.id %}">
+    <label for="new-label-name">New label</label>
+    <input id="new-label-name" type="text" name="name" maxlength="60" required placeholder="Waiting on shipping" />
+    <label class="sr-only" for="new-label-color">Colour</label>
+    <input id="new-label-color" type="color" name="color" value="{{ default_color }}" />
+    <button type="submit">Add label</button>
+  </form>
+
+  <hr />
+
+  {% include "inbox/_label_rows.html" %}
+{% endblock %}

@@ -1,0 +1,30 @@
+{% comment %}
+The dry-run's answer. Rendered by inbox:rule_test, which scores the posted
+condition with the *same* matcher the post_persist hook runs — the only
+difference is which of RuleInput's two constructors built the input.
+
+It writes nothing, and that is structural rather than careful: the view never
+reaches apps.inbox.routing, which is where applying lives.
+{% endcomment %}
+<div id="inbox-rule-test">
+  {% if error %}
+    <p class="alert-error">{{ error }}</p>
+  {% elif not sample %}
+    <p class="muted">No inbound messages yet, so there is nothing to test against.</p>
+  {% else %}
+    <p class="muted">
+      Matched {{ matches|length }} of the last {{ sample }} inbound message{{ sample|pluralize }}.
+      This scores today's contact details against older messages, so it is a
+      preview rather than a replay of what would have happened at the time.
+    </p>
+    <ul class="ib-rule-test-results">
+      {% for row in matches %}
+        <li>
+          <strong>{{ row.conversation.contact.display_name }}</strong>
+          <span class="muted">{{ row.message.created_at }}</span>
+          <p>{{ row.preview }}</p>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>
