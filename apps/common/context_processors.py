@@ -287,6 +287,24 @@ SETTINGS_NAV: list[NavGroup] = [
                 url_name="credentials:list",
                 workspace_scoped=True,
             ),
+            # Issue #24. Two rows rather than one "Inbox" page: they answer to
+            # different permissions — a label is inbox furniture an Agent files
+            # with, a rule is workspace-wide automation — and a single page
+            # would have to hide half of itself.
+            NavItem(
+                key="ws_labels",
+                label="Labels",
+                icon="tag",
+                url_name="inbox:label_settings",
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="ws_inbox_rules",
+                label="Inbox rules",
+                icon="flows",
+                url_name="inbox:rule_settings",
+                workspace_scoped=True,
+            ),
             NavItem(
                 key="ws_fields",
                 label="Fields",

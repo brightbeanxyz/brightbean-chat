@@ -58,7 +58,8 @@ apps/channels/          adapters, channel_connection, webhook endpoints
 apps/contacts/          contact, identity, tags, fields, segments, import/export
 apps/flows/             flow, versions, triggers, engine, nodes
 apps/messaging/         conversation, message, compliance engine, send pipeline
-apps/campaigns/         sequences, broadcasts
+apps/campaigns/         sequences
+apps/broadcasts/        broadcasts
 apps/inbox/             inbox UI views
 apps/queueing/          scheduled_action, worker, tick
 apps/api/               public REST API, outbound webhooks
@@ -174,6 +175,10 @@ All PKs are UUIDv7. All tenant tables have `workspace_id` FK with index. Timesta
 ### campaigns
 - `sequence`: workspace_id, name, status. `sequence_step`: sequence_id, position, delay_value, delay_unit, send_window json (days of week, hour range, contact-timezone flag), flow_id (each step fires a flow).
 - `sequence_enrollment`: sequence_id, contact_id, current_step, next_run_at, status (active, completed, unsubscribed). Index (status, next_run_at).
+
+### broadcasts
+Its own Django app rather than a second half of `campaigns`. ROADMAP's per-PR bar says no two same-layer workstreams touch the same Django app, because that is what keeps parallel merges and migrations safe — and sequences (#22) and broadcasts (#23) are both Layer 6. Sharing one app would have given them an add/add conflict on `apps.py` and two `0001_initial` migrations for one app label. They share no model: an enrollment is sequence-only and a broadcast carries its own `target_filter_json`. What they do share — queue action types, the compliance engine, the condition engine — already lives in other apps.
+
 - `broadcast`: workspace_id, channel_connection_id, name, target_filter_json, message flow_id OR whatsapp_template_id, message_tag (nullable), scheduled_at, status (draft, scheduled, sending, sent, cancelled), stats json (queued, sent, delivered, failed, skipped_window).
 
 ### queueing

@@ -84,6 +84,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.contacts import activity, export, filters, imports, services
+from apps.contacts.builder import builder_config
 from apps.contacts.conditions import ConditionError
 from apps.contacts.errors import ContactsError
 from apps.contacts.filters import (
@@ -247,17 +248,8 @@ def _querystring(query: ContactQuery, *, page: int = 0) -> str:
 
 
 def _filter_config(workspace: Any, query: ContactQuery) -> dict[str, Any]:
-    """The filter builder's ``x-data`` payload for this request.
-
-    The payload itself is :func:`apps.contacts.filters.filter_config`, which
-    lives beside the parser because the flow builder's rule-trigger panel renders
-    the same builder from the same partial (issue #22). This wrapper is only the
-    request-shaped adaptation: the document comes from the parsed query rather
-    than from the URL, so a segment loaded off disk round-trips exactly as
-    stored instead of through a re-serialisation that could normalise it — which
-    is the acceptance criterion this page is judged on.
-    """
-    return filters.filter_config(
+    """The contact list's builder payload. See :func:`builder_config`."""
+    return builder_config(
         workspace,
         document=query.document,
         segment_id=str(query.segment.pk) if query.segment is not None else "",

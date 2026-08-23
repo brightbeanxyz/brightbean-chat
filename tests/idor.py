@@ -88,6 +88,14 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "sequence_id": lambda t: _victim_sequence(t).pk,
     "step_id": lambda t: _victim_sequence_step(t).pk,
     "enrollment_id": lambda t: _victim_enrollment(t).pk,
+    # Issue #24's inbox v2. `label_id` is registered rather than treated as
+    # neutral for a reason worth stating: `inbox:bulk_label` carries no
+    # conversation_id — it posts a *set* of them — so this kwarg is the only
+    # thing that makes iter_tenant_routes() look at that route at all.
+    "label_id": lambda t: _victim_conversation_label(t).pk,
+    "rule_id": lambda t: _victim_inbox_rule(t).pk,
+    "reminder_id": lambda t: _victim_reminder(t).pk,
+    "scheduled_reply_id": lambda t: _victim_scheduled_reply(t).pk,
 }
 
 #: Kwargs that need *a* value but do not identify a tenant. A route made only of
@@ -247,6 +255,76 @@ def _victim_conversation(tenancy: Tenancy) -> Any:
         contact=_victim_contact(tenancy),
         connection=_victim_connection(tenancy),
     )
+
+
+def _victim_conversation_label(tenancy: Tenancy) -> Any:
+    """A conversation label owned by the victim, created on demand (issue #24)."""
+    from apps.inbox.models import ConversationLabel
+
+    label = ConversationLabel.objects.for_workspace(tenancy.workspace).first()
+    if label is None:
+        label = ConversationLabel.objects.create(workspace=tenancy.workspace, name=f"{tenancy.slug} label")
+    return label
+
+
+def _victim_inbox_rule(tenancy: Tenancy) -> Any:
+    """An inbox rule owned by the victim, created on demand (issue #24)."""
+    from apps.inbox.models import InboxRule
+
+    rule = InboxRule.objects.for_workspace(tenancy.workspace).first()
+    if rule is None:
+        rule = InboxRule(
+            workspace=tenancy.workspace,
+            name=f"{tenancy.slug} rule",
+            condition_json={"keywords": [{"text": "refund", "mode": "contains"}]},
+            actions_json=[{"type": "mark_done"}],
+        )
+        rule.save()
+    return rule
+
+
+def _victim_reminder(tenancy: Tenancy) -> Any:
+    """A pending reminder on the victim's thread (issue #24).
+
+    Straight through the model rather than ``services.schedule_reminder``,
+    unlike ``_victim_conversation`` above: the service also enqueues a
+    ``ScheduledAction``, and the sweep wants a row for a route to 404 on, not a
+    queue side effect in every one of these tests.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.inbox.models import InboxReminder
+
+    reminder = InboxReminder.objects.for_workspace(tenancy.workspace).first()
+    if reminder is None:
+        reminder = InboxReminder(
+            conversation=_victim_conversation(tenancy),
+            recipient=tenancy.owner,
+            remind_at=timezone.now() + timedelta(hours=1),
+        )
+        reminder.save()
+    return reminder
+
+
+def _victim_scheduled_reply(tenancy: Tenancy) -> Any:
+    """A pending scheduled reply on the victim's thread (issue #24)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.inbox.models import ScheduledReply
+
+    reply = ScheduledReply.objects.for_workspace(tenancy.workspace).first()
+    if reply is None:
+        reply = ScheduledReply(
+            conversation=_victim_conversation(tenancy),
+            body={"blocks": [{"type": "text", "text": "later"}]},
+            send_at=timezone.now() + timedelta(hours=1),
+        )
+        reply.save()
+    return reply
 
 
 def _victim_message(tenancy: Tenancy) -> Any:

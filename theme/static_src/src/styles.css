@@ -1963,6 +1963,157 @@ span.flatpickr-weekday {
   color: var(--text-secondary);
 }
 
+/* --- Issue #24: labels, deferred work and the rules manager ---------------
+ *
+ * `--chip-ink` is set inline from a hex the server vetted twice — once by the
+ * model validator, once by apps.inbox.rendering at render time — and it is the
+ * only inline custom property this file expects. `color-mix` gives the pill a
+ * tinted background from that one value, so a label needs one colour rather
+ * than a matched pair. */
+.ib-label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  color: var(--chip-ink, var(--text-secondary));
+  border: 1px solid color-mix(in srgb, var(--chip-ink, var(--border)) 45%, transparent);
+  background: color-mix(in srgb, var(--chip-ink, var(--surface-1)) 12%, var(--surface-1));
+}
+
+.ib-label-chip form { display: inline; }
+
+.ib-thread-labels {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.ib-row-labels { font-size: 0.6875rem; }
+
+.ib-deferred {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-bottom: 0.75rem;
+}
+
+.ib-deferred-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 0.5rem;
+  background: var(--surface-2);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.ib-deferred-failed { background: var(--error-50); color: var(--error-700); }
+
+.ib-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+
+.ib-schedule {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.ib-remind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem 0.75rem;
+}
+
+.ib-row-wrap { display: flex; align-items: flex-start; gap: 0.25rem; }
+.ib-row-wrap > .ib-row { flex: 1 1 auto; min-width: 0; }
+.ib-row-select { margin: 0.75rem 0 0 0.5rem; flex-shrink: 0; }
+
+.ib-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.ib-picker {
+  margin-top: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-1);
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.ib-picker-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; }
+.ib-picker-list { list-style: none; margin: 0; padding: 0; }
+
+.ib-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  text-align: left;
+  font-size: 0.75rem;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.ib-picker-item:hover { background: var(--surface-2); }
+.ib-picker-thumb { width: 2rem; height: 2rem; object-fit: cover; border-radius: 0.25rem; }
+.ib-picker-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ib-picker-kind { color: var(--text-ghost); }
+.ib-picker-warn { color: var(--warning-700); }
+
+.ib-rule-list { list-style: none; margin: 0; padding: 0; }
+
+.ib-rule {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  margin-bottom: 0.5rem;
+  background: var(--surface-1);
+}
+
+.ib-rule-handle { cursor: grab; color: var(--text-ghost); user-select: none; }
+.ib-rule-body { flex: 1 1 auto; min-width: 0; }
+.ib-rule-controls { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+
+.ib-rule-clauses,
+.ib-rule-actions {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.ib-rule-actions { color: var(--text-tertiary); }
+
+.ib-rule-test-results { list-style: none; margin: 0.5rem 0 0; padding: 0; font-size: 0.75rem; }
+
+.ib-keyword { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.375rem; }
+
 .ib-banner {
   display: flex;
   align-items: center;

@@ -27,8 +27,8 @@ from apps.common.htmx import toast_response
 from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.contacts import conditions
+from apps.contacts.builder import builder_config
 from apps.contacts.conditions import ConditionError
-from apps.contacts.filters import filter_config
 from apps.flows.models import Flow, Trigger, TriggerType
 from apps.flows.triggers import comments, forms, links, qr, services
 from apps.flows.triggers.registry import TRIGGER_TYPES, spec_for
@@ -106,7 +106,7 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             # costs four queries, and every other trigger type would pay them
             # for a control it never draws.
             "filter_config": (
-                filter_config(request.workspace, document=(config or {}).get("filters"))
+                builder_config(request.workspace, document=(config or {}).get("filters"))
                 if trigger_type == TriggerType.RULE
                 else None
             ),
