@@ -230,3 +230,35 @@ class TestTenancy:
         broadcast = make_broadcast(connection=connection, filter_json={"match": "any", "rules": []})
 
         assert audience.preview(broadcast).total == 0
+
+
+@pytest.mark.django_db
+class TestSamplesPerReason:
+    def test_a_reason_that_sorts_late_still_gets_examples(
+        self, tenancy, make_contacts, make_broadcast, messenger_connection
+    ):
+        """A single shared slice, drawn in contact order, starves the minority.
+
+        Sixty opted-out contacts whose ids sort first and three needing a tag:
+        with one slice across all reasons the tag bucket comes back empty — and
+        that is exactly the reason an operator has to inspect, because it is the
+        one blocking the send.
+        """
+        make_contacts(60, connection=messenger_connection, opted_out=True, prefix="aaa")
+        make_contacts(3, connection=messenger_connection, window=-timedelta(hours=1), prefix="zzz")
+        broadcast = make_broadcast(connection=messenger_connection)
+
+        preview = audience.preview(broadcast)
+
+        assert preview.skipped[Denial.OPTED_OUT.value] == 60
+        assert preview.skipped[Denial.NEEDS_TAG.value] == 3
+        assert preview.samples[Denial.NEEDS_TAG.value], "the blocking reason has no examples"
+        assert all("zzz" in name for name in preview.samples[Denial.NEEDS_TAG.value])
+
+    def test_each_bucket_is_capped(self, tenancy, make_contacts, make_broadcast, connection):
+        make_contacts(20, connection=connection, opted_out=True, prefix="out")
+        broadcast = make_broadcast(connection=connection)
+
+        preview = audience.preview(broadcast)
+
+        assert len(preview.samples[Denial.OPTED_OUT.value]) == audience.PREVIEW_SAMPLE

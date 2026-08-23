@@ -34,6 +34,11 @@ def _run_to_completion(workspace, broadcast):
     services.schedule_broadcast(broadcast)
     fanout = ScheduledAction.objects.for_workspace(workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
     handlers.handle_broadcast_fanout(fanout.payload, fanout)
+    # Marked done the way the worker would. A fanout row left ``pending`` is work
+    # still owed, and ``services.fanout_outstanding`` reads it as such — which is
+    # the whole point of that guard, so a helper that skipped this would be
+    # testing against a state the product never reaches.
+    ScheduledAction.objects.for_workspace(workspace).filter(pk=fanout.pk).update(status=ActionStatus.DONE)
     for action in ScheduledAction.objects.for_workspace(workspace).filter(type=ActionType.BROADCAST_SEND):
         handlers.handle_broadcast_send(action.payload, action)
     broadcast.refresh_from_db()
@@ -177,6 +182,11 @@ class TestSettle:
                 ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
             )
             handlers.handle_broadcast_fanout(fanout.payload, fanout)
+            # Marked done the way the worker would: a fanout row left ``pending``
+            # is work still owed, and settle() refuses while any is outstanding.
+            ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=fanout.pk).update(
+                status=ActionStatus.DONE
+            )
             sends = list(
                 ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_SEND)
             )
@@ -212,6 +222,9 @@ class TestSettle:
         services.schedule_broadcast(broadcast)
         fanout = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
         handlers.handle_broadcast_fanout(fanout.payload, fanout)
+        # Marked done the way the worker would: a fanout row left ``pending``
+        # is work still owed, and settle() refuses while any is outstanding.
+        ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=fanout.pk).update(status=ActionStatus.DONE)
         ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_SEND).update(
             status=ActionStatus.FAILED
         )
@@ -236,6 +249,9 @@ class TestSettle:
         services.schedule_broadcast(broadcast)
         fanout = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
         handlers.handle_broadcast_fanout(fanout.payload, fanout)
+        # Marked done the way the worker would: a fanout row left ``pending``
+        # is work still owed, and settle() refuses while any is outstanding.
+        ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=fanout.pk).update(status=ActionStatus.DONE)
 
         settle_broadcasts()
 
@@ -268,6 +284,9 @@ class TestEmptyFanout:
 
         fanout = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
         handlers.handle_broadcast_fanout(fanout.payload, fanout)
+        # Marked done the way the worker would: a fanout row left ``pending``
+        # is work still owed, and settle() refuses while any is outstanding.
+        ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=fanout.pk).update(status=ActionStatus.DONE)
 
         broadcast.refresh_from_db()
         assert broadcast.status == BroadcastStatus.SENT

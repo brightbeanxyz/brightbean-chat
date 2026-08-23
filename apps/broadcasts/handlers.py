@@ -5,6 +5,13 @@ Both names were reserved in ``apps.queueing.models.ActionType`` before this app
 existed, and registration is an import side effect of ``BroadcastsConfig.ready()``
 — the pattern ``apps.queueing.registry``'s docstring writes out.
 
+Neither registration passes ``replace=True``. The registry raises on a second
+handler for one type on purpose — ``apps.queueing.registry``'s docstring calls it
+out: "two apps quietly claiming one type is a bug that would otherwise surface as
+work running under the wrong code" — and switching that off to buy nothing is how
+the guard stops guarding. Re-importing this module is safe without it, because
+the guard compares identity and a cached module hands back the same function.
+
 Three things the queue guarantees, so nothing here re-does them: the handler runs
 inside a transaction that already holds the contact advisory lock when the row
 names a contact; raising retries on SPEC §15's backoff ladder; returning normally
@@ -93,7 +100,7 @@ CHUNK_SIZE = 500
 # ---------------------------------------------------------------------------
 
 
-@register_handler(ActionType.BROADCAST_FANOUT, replace=True)
+@register_handler(ActionType.BROADCAST_FANOUT)
 def handle_broadcast_fanout(payload: dict[str, Any], action: ScheduledAction) -> None:
     """Resolve one chunk of the audience and arm its sends.
 
@@ -147,9 +154,11 @@ def handle_broadcast_fanout(payload: dict[str, Any], action: ScheduledAction) ->
 
     # The audience is exhausted. An audience that was entirely skipped has
     # nothing pending and finishes here rather than waiting for a send that will
-    # never run.
+    # never run — and ``exclude_action_id`` is what lets it: this handler's own
+    # row is ``running`` for the length of its transaction, and
+    # ``services.fanout_outstanding`` would otherwise read it as work still owed.
     if current.is_finished:
-        services.settle(broadcast)
+        services.settle(broadcast, exclude_action_id=action.pk)
 
 
 def _write_chunk(broadcast: Broadcast, candidates: list[Any]) -> None:
@@ -229,7 +238,7 @@ def _write_chunk(broadcast: Broadcast, candidates: list[Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@register_handler(ActionType.BROADCAST_SEND, replace=True)
+@register_handler(ActionType.BROADCAST_SEND)
 def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> None:
     """Deliver one contact's copy, re-checking everything that can have moved.
 
@@ -247,15 +256,21 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
     if recipient is None:
         return
 
+    if recipient.status != RecipientStatus.PENDING:
+        # A re-run after the handler committed but before the row was marked
+        # done. The outcome already recorded is the one that counts — and this
+        # check comes **before** the cancellation branch deliberately. A row that
+        # was already ``running`` when a cancel landed can be returned to
+        # ``pending`` by zombie recovery and re-claimed; if the cancellation
+        # branch ran first it would rewrite a recipient that had already been
+        # delivered to ``cancelled``, losing the record of a message the contact
+        # demonstrably received and contradicting "already-sent stand".
+        return
     if broadcast.status == BroadcastStatus.CANCELLED:
         # Half two of cancellation, and the one that matters most: this row was
         # already ``running`` when the cancel landed, so the bulk flip could not
         # reach it. A claimed action has to refuse itself.
         _settle_recipient(recipient, RecipientStatus.CANCELLED, "")
-        return
-    if recipient.status != RecipientStatus.PENDING:
-        # A re-run after the handler committed but before the row was marked
-        # done. The outcome already recorded is the one that counts.
         return
 
     contact = _scoped(Contact, action.workspace_id, payload.get("contact_id"))
@@ -265,7 +280,7 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
         return
 
     connection = broadcast.channel_connection
-    identity = _identity_for(broadcast, contact)
+    identity = _identity_for(broadcast, contact, recipient)
     if identity is None:
         _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.NO_IDENTITY.value)
         _maybe_settle(broadcast)
@@ -483,14 +498,33 @@ def _load_recipient(
     return recipient
 
 
-def _identity_for(broadcast: Broadcast, contact: Any) -> ContactChannelIdentity | None:
-    """The identity this send would use, resolved fresh at send time.
+def _identity_for(
+    broadcast: Broadcast, contact: Any, recipient: BroadcastRecipient | None = None
+) -> ContactChannelIdentity | None:
+    """The identity this send goes to — the one fanout chose, wherever it still exists.
 
-    Not the one fanout recorded: hours can pass, and an identity can be merged
-    away or replaced. The recipient row's ``identity`` is provenance for the
-    preview; this is the address the message actually goes to.
+    Fanout already answered this question, and answered it *better*:
+    ``audience.iter_candidates`` ranks a contact's candidate identities
+    eligible-first, then connection-bound, then by id. Re-deriving it here with a
+    different rule is how a preview and a send come apart. A contact holding two
+    addresses on one connection — two numbers, or an address re-captured after a
+    merge — could have the clean one counted as eligible by fanout and the
+    opted-out one picked here, so the send is refused for a reason nothing
+    actually changed and the operator sees an unexplained skip.
+
+    So the recorded identity wins whenever it is still usable. It is re-read
+    rather than trusted: hours can pass, and an identity can be deleted or
+    reassigned to another connection in between, in which case this falls back to
+    resolving one the way the facade would.
     """
     rows = ContactChannelIdentity.objects.for_workspace(broadcast.workspace_id).filter(contact=contact)
+    if recipient is not None and recipient.identity_id is not None:
+        recorded = rows.filter(pk=recipient.identity_id).first()
+        if recorded is not None and recorded.channel_connection_id in (
+            broadcast.channel_connection_id,
+            None,
+        ):
+            return recorded
     return (
         rows.filter(channel_connection=broadcast.channel_connection).order_by("pk").first()
         or rows.filter(channel_connection__isnull=True, platform=broadcast.platform).order_by("pk").first()

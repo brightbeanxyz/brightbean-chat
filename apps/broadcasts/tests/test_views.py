@@ -92,14 +92,20 @@ class TestWizard:
     def test_a_scheduled_broadcast_opens_its_detail_page_instead(
         self, tenancy, client_for, connection, make_contacts, make_broadcast
     ):
+        """A real 302, because this is a page and browsers reach it directly.
+
+        ``HX-Redirect`` is a header only htmx acts on. This route is bookmarked,
+        reloaded and reached with the Back button, and a 204 carrying that header
+        renders as a blank page for every one of those.
+        """
         make_contacts(1, connection=connection)
         broadcast = make_broadcast(connection=connection)
         services.schedule_broadcast(broadcast)
 
         response = client_for(tenancy.owner).get(_url("broadcasts:compose", tenancy, broadcast_id=broadcast.pk))
 
-        assert response.status_code == 204
-        assert response.headers["HX-Redirect"] == _url("broadcasts:detail", tenancy, broadcast_id=broadcast.pk)
+        assert response.status_code == 302
+        assert response.headers["Location"] == _url("broadcasts:detail", tenancy, broadcast_id=broadcast.pk)
 
     def test_saving_the_channel_moves_to_the_audience_step(self, tenancy, client_for, connection):
         broadcast = services.create_broadcast(
@@ -261,3 +267,82 @@ class TestDuplicateAndDelete:
         broadcast = make_broadcast(connection=connection)
 
         assert broadcast.flow.folder == services.BROADCAST_FOLDER
+
+
+@pytest.mark.django_db
+class TestDeletionKeepsWhatRan:
+    """Deleting a broadcast must not cascade away the runs it started.
+
+    ``FlowExecution.flow`` is ``on_delete=CASCADE``, so removing the private
+    mini-flow of a broadcast that sent would take one execution per recipient
+    with it — including the ones still parked waiting for a button press. A
+    cascade is not ``start_flow``'s supersede, either: it disarms nothing, so the
+    queue rows that would have resumed those executions outlive them.
+    """
+
+    def test_a_sent_broadcasts_flow_and_executions_survive_deletion(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast, adapter_for
+    ):
+        from apps.broadcasts import handlers
+        from apps.flows.models import Flow, FlowExecution
+        from apps.queueing.models import ActionType, ScheduledAction
+
+        make_contacts(2, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+        with adapter_for(connection.platform):
+            services.schedule_broadcast(broadcast)
+            fanout = (
+                ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
+            )
+            handlers.handle_broadcast_fanout(fanout.payload, fanout)
+            ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=fanout.pk).update(status="done")
+            for action in ScheduledAction.objects.for_workspace(tenancy.workspace).filter(
+                type=ActionType.BROADCAST_SEND
+            ):
+                handlers.handle_broadcast_send(action.payload, action)
+
+        broadcast.refresh_from_db()
+        flow_id = broadcast.flow_id
+        assert FlowExecution.objects.for_workspace(tenancy.workspace).count() == 2
+
+        client_for(tenancy.owner).post(_url("broadcasts:delete", tenancy, broadcast_id=broadcast.pk))
+
+        assert not Broadcast.objects.for_workspace(tenancy.workspace).exists()
+        assert Flow.objects.for_workspace(tenancy.workspace).filter(pk=flow_id).exists()
+        assert FlowExecution.objects.for_workspace(tenancy.workspace).count() == 2
+
+    def test_a_draft_that_never_ran_still_takes_its_flow_with_it(self, tenancy, client_for, connection, make_broadcast):
+        """Nothing ran, so there is nothing to preserve and no clutter to leave."""
+        from apps.flows.models import Flow
+
+        broadcast = make_broadcast(connection=connection)
+        flow_id = broadcast.flow_id
+
+        client_for(tenancy.owner).post(_url("broadcasts:delete", tenancy, broadcast_id=broadcast.pk))
+
+        assert not Flow.objects.for_workspace(tenancy.workspace).filter(pk=flow_id).exists()
+
+
+@pytest.mark.django_db
+class TestListTruncation:
+    """A silent cap reads as "the older ones were deleted"."""
+
+    def test_the_page_says_when_it_has_truncated(self, tenancy, client_for, connection, monkeypatch):
+        from apps.broadcasts import views
+
+        monkeypatch.setattr(views, "PAGE_SIZE", 2)
+        for index in range(3):
+            services.create_broadcast(
+                workspace=tenancy.workspace, name=f"Send {index}", connection=connection, user=tenancy.owner
+            )
+
+        body = client_for(tenancy.owner).get(_url("broadcasts:rows", tenancy)).content.decode()
+
+        assert "Showing the 2 most recent" in body
+
+    def test_it_stays_quiet_when_everything_fits(self, tenancy, client_for, connection, make_broadcast):
+        make_broadcast(connection=connection)
+
+        body = client_for(tenancy.owner).get(_url("broadcasts:rows", tenancy)).content.decode()
+
+        assert "most recent" not in body

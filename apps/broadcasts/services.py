@@ -71,6 +71,7 @@ from apps.channels import whatsapp_templates
 from apps.contacts import conditions
 from apps.flows import services as flow_services
 from apps.flows.models import Flow, FlowStatus, FlowVersion
+from apps.flows.schema import validate_graph
 from apps.messaging.codes import Denial
 from apps.messaging.models import MessageStatus
 from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
@@ -87,6 +88,7 @@ __all__ = [
     "cancel_broadcast",
     "content_graph",
     "counters",
+    "fanout_outstanding",
     "create_broadcast",
     "delete_broadcast",
     "duplicate_broadcast",
@@ -230,7 +232,11 @@ def save_content(broadcast: Broadcast, config: dict[str, Any], *, user: Any = No
     """
     _require_draft(broadcast)
     graph = content_graph(config)
-    result = flow_services.validate_for_workspace(graph, broadcast.workspace)
+    # Against **this broadcast's platform**, not every platform the workspace has
+    # connected. A broadcast runs on exactly one connection, so
+    # ``validate_for_workspace``'s wider set would collect warnings about
+    # channels this message will never touch and miss the one it will.
+    result = validate_graph(graph, platforms=(broadcast.platform,))
     if not result.is_publishable:
         raise BroadcastError(_first_error(result))
 
@@ -270,8 +276,14 @@ def save_template(broadcast: Broadcast, template: Any, variables: dict[str, str]
     this one and the platform would refuse it at the last possible moment.
     """
     _require_draft(broadcast)
-    if template.channel_connection_id != broadcast.channel_connection_id:
-        raise BroadcastError("That template was approved on a different channel.")
+    # ``sendable`` rather than a hand-rolled connection check: it answers both
+    # halves of "may this be used" — approved, and approved *on this connection*
+    # — and it is the same function the send path calls, so the composer and the
+    # send cannot disagree about which templates are usable. The composer only
+    # offers approved ones, but the endpoint takes a template id and a
+    # hand-crafted POST is not obliged to pick from the list.
+    if whatsapp_templates.sendable(template.pk, broadcast.channel_connection) is None:
+        raise BroadcastError("That template is not approved for use on this channel.")
 
     # Every slot the approved copy declares needs a value. Meta rejects a
     # template message whose parameter count does not match the one it reviewed,
@@ -324,8 +336,6 @@ def duplicate_broadcast(broadcast: Broadcast, *, user: Any = None) -> Broadcast:
             channel_connection=broadcast.channel_connection,
             target_filter_json=broadcast.target_filter_json,
             segment=broadcast.segment,
-            whatsapp_template=broadcast.whatsapp_template,
-            template_variables=broadcast.template_variables,
             message_tag=broadcast.message_tag,
             created_by=user,
         )
@@ -335,6 +345,17 @@ def duplicate_broadcast(broadcast: Broadcast, *, user: Any = None) -> Broadcast:
             latest = flow_services.latest_version(source)
             if latest is not None:
                 copy = save_content(copy, node_config(latest.graph_json), user=user)
+        elif broadcast.whatsapp_template is not None:
+            # Through save_template, not by assignment: the original may have
+            # been composed months ago against a template Meta has since rejected
+            # or an admin has moved to another number, and copying the foreign key
+            # straight across would carry that into a fresh draft with none of the
+            # checks the composer applies. A refusal leaves the copy without
+            # content, which is a draft the operator can fix.
+            try:
+                copy = save_template(copy, broadcast.whatsapp_template, broadcast.template_variables)
+            except BroadcastError as exc:
+                logger.info("Broadcast %s copy left without its template: %s", broadcast.pk, exc)
     return copy
 
 
@@ -353,21 +374,38 @@ def node_config(graph: Any) -> dict[str, Any]:
 
 
 def delete_broadcast(broadcast: Broadcast) -> None:
-    """Delete a draft or a finished broadcast, and its private mini-flow with it.
+    """Delete a broadcast, and its private mini-flow only if that flow never ran.
 
     A live broadcast is refused rather than cascaded: deleting one mid-send would
     orphan the queue rows that are about to look for it, and "cancel, then
     delete" is a sequence an operator can follow.
+
+    **The mini-flow is only deleted for a draft**, and the reason is
+    ``FlowExecution.flow``'s ``on_delete=CASCADE``. A broadcast that sent started
+    one execution per recipient, and deleting the flow would take every one of
+    them with it — including the runs still parked in ``waiting_reply`` because
+    somebody has not pressed a button yet. Worse than the lost history: a cascade
+    is not ``start_flow``'s ``_supersede``, so it disarms nothing, and the
+    ``resume_execution`` and ``followup_timer`` rows armed for those executions
+    outlive the executions they name. The contact is left with a live keyboard
+    that answers nothing, and L7-A loses every stat row for the send.
+
+    So a sent or cancelled broadcast leaves its archived flow behind. It is out
+    of the flow list (:func:`_retire_flow` archived it) and it is the only record
+    of what was sent.
     """
     if broadcast.is_live:
         raise BroadcastError("Cancel this broadcast before deleting it.")
+    # Read the status before the delete: `is_live` is False for both a draft that
+    # never ran and a broadcast that finished, and only the first may cascade.
+    never_ran = broadcast.status == BroadcastStatus.DRAFT
     flow = broadcast.flow
     with transaction.atomic():
         broadcast.delete()
-        if flow is not None and flow.folder == BROADCAST_FOLDER:
-            # Only the private copy. A flow an operator moved out of the reserved
-            # folder is theirs now — that move is the adoption — and it outlives
-            # the broadcast that made it.
+        if never_ran and flow is not None and flow.folder == BROADCAST_FOLDER:
+            # Only the private copy of a draft. A flow an operator moved out of
+            # the reserved folder is theirs now — that move is the adoption — and
+            # it outlives the broadcast that made it.
             Flow.objects.for_workspace(flow.workspace_id).filter(pk=flow.pk).delete()
 
 
@@ -376,13 +414,15 @@ def delete_broadcast(broadcast: Broadcast) -> None:
 # ---------------------------------------------------------------------------
 
 
-def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None, preview: Any = None) -> Broadcast:
+def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) -> Broadcast:
     """Validate, pin the content, and put the fanout in the queue.
 
-    ``preview`` is the :class:`apps.broadcasts.audience.AudiencePreview` the
-    composer has just shown, passed in rather than recomputed so the numbers an
-    operator agreed to are the numbers this decision is made on. Omitted, it is
-    computed here — the API path has no composer in front of it.
+    The audience is counted **here**, freshly, rather than taking the figure the
+    composer last showed. That is the right way round even though it costs a
+    second pass: minutes can separate the two, and a count carried forward from
+    the audience step would let a contact who opted out in between be messaged
+    on the strength of a number nobody re-checked. The gate has to be evaluated
+    against the audience as it is at the moment of sending.
 
     The gates are all compliance-derived, never platform-named: a Messenger
     audience with people outside the window and no valid tag is refused because
@@ -398,8 +438,9 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None, pr
     if not broadcast.target_filter_json:
         # Reachable through the API, where nothing walks the wizard's steps.
         raise BroadcastError("Choose who this broadcast goes to.")
+    _require_sendable_template(broadcast)
 
-    counts = preview if preview is not None else audience_module.preview(broadcast)
+    counts = audience_module.preview(broadcast)
     if counts.total == 0:
         raise BroadcastError("Nobody matches this audience.")
 
@@ -436,6 +477,26 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None, pr
         )
     broadcast.refresh_from_db()
     return broadcast
+
+
+def _require_sendable_template(broadcast: Broadcast) -> None:
+    """Refuse once, now, rather than discovering it ten thousand times at send.
+
+    ``save_template`` checked approval and the connection when the operator
+    picked it, but hours or days can pass before somebody presses send, and both
+    facts can change in between: Meta rejects templates on review, and the
+    housekeeping poller writes that status back. Without this the broadcast
+    schedules happily, fans out, and every single send calls
+    ``whatsapp_templates.sendable``, gets ``None``, and records a failed
+    recipient — leaving an operator with ten thousand failures and no reason.
+
+    ``sendable`` is the same function the send path uses, so the refusal here and
+    the refusal there cannot disagree about what "usable" means.
+    """
+    if broadcast.whatsapp_template_id is None:
+        return
+    if whatsapp_templates.sendable(broadcast.whatsapp_template_id, broadcast.channel_connection) is None:
+        raise BroadcastError("That template is no longer approved on this channel. Pick another one before sending.")
 
 
 def _refuse_window_gaps(broadcast: Broadcast, counts: Any) -> None:
@@ -729,7 +790,47 @@ def release_stats(broadcast: Broadcast, *, current: Counters | None = None) -> C
 # ---------------------------------------------------------------------------
 
 
-def settle(broadcast: Broadcast) -> bool:
+def fanout_outstanding(broadcast: Broadcast, *, exclude_action_id: Any = None) -> bool:
+    """Is a ``broadcast_fanout`` chunk still owed for this broadcast?
+
+    "No recipient is pending" is **not** the same question as "this broadcast is
+    finished", and conflating them truncates the audience. Fanout expands five
+    hundred contacts at a time; between two chunks the rows written so far can
+    all reach a terminal state, and a broadcast settled at that moment is marked
+    ``sent`` — after which the next chunk reads that status and returns without
+    expanding the rest. Nine thousand five hundred people never hear from it, the
+    counters read complete, and ``broadcast.finished`` has already gone out.
+
+    The window is not theoretical. A chunk that raises — a deadlock, a dropped
+    connection, an ``IntegrityError`` from ``schedule()`` — is retried on SPEC
+    §15's ladder, and thirty seconds is long enough for a chunk's worth of sends
+    to drain. ``settle_broadcasts`` walks into the same state from the other side
+    by reconciling stranded recipients and then settling.
+
+    ``failed`` counts as outstanding too, and that is the deliberate half. A
+    chunk can fail permanently — deleting a tag the audience filter names makes
+    every remaining chunk raise ``ConditionValidationError`` until the retry
+    budget is spent — and the audience is then demonstrably not fully expanded.
+    A broadcast left at ``sending`` beside a red queue row is a state an operator
+    can see and act on; one marked ``sent`` after reaching five per cent of its
+    audience is a silent lie, and ``cancelled`` is the exit that already exists.
+
+    ``exclude_action_id`` is for the fanout handler itself: the row it is running
+    under is ``running`` for the length of its own transaction, so without the
+    exclusion the last chunk could never settle an audience that was entirely
+    skipped.
+    """
+    rows = ScheduledAction.objects.for_workspace(broadcast.workspace_id).filter(
+        type=ActionType.BROADCAST_FANOUT,
+        status__in=(ActionStatus.PENDING, ActionStatus.RUNNING, ActionStatus.FAILED),
+        payload__broadcast_id=str(broadcast.pk),
+    )
+    if exclude_action_id is not None:
+        rows = rows.exclude(pk=exclude_action_id)
+    return rows.exists()
+
+
+def settle(broadcast: Broadcast, *, exclude_action_id: Any = None) -> bool:
     """Finish a broadcast whose last recipient has reached a terminal state.
 
     Returns whether this call is the one that finished it. The transition is
@@ -737,9 +838,15 @@ def settle(broadcast: Broadcast) -> bool:
     ``broadcast_send`` handlers can find the queue empty at the same instant, and
     exactly one of them may emit ``broadcast.finished``. A webhook subscriber
     receiving the event twice would double-count in somebody's CRM.
+
+    An outstanding fanout chunk blocks the transition outright — see
+    :func:`fanout_outstanding`, which is the difference between "nothing is
+    pending" and "there is nothing left to do".
     """
     current = counters(broadcast)
     if not current.is_finished or broadcast.status != BroadcastStatus.SENDING:
+        return False
+    if fanout_outstanding(broadcast, exclude_action_id=exclude_action_id):
         return False
 
     finished_at = timezone.now()

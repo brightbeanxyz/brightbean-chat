@@ -10,6 +10,7 @@ this app renders.
 """
 
 import ast
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -300,7 +301,7 @@ class TestScheduleGates:
             workspace=tenancy.workspace, name="Wrong number", connection=whatsapp_connection, user=tenancy.owner
         )
 
-        with pytest.raises(services.BroadcastError, match="different channel"):
+        with pytest.raises(services.BroadcastError, match="not approved for use on this channel"):
             services.save_template(broadcast, template, {})
 
     def test_a_tag_the_platform_does_not_accept_is_refused_on_the_way_in(self, make_broadcast, messenger_connection):
@@ -470,20 +471,27 @@ class TestNoPlatformBranches:
 
     ROOT = Path(__file__).resolve().parents[3]
 
+    #: Any comparison against a platform name, whatever the operator, whatever the
+    #: quoting, and however much whitespace sits around it. Written as one regex
+    #: rather than a tuple of literal needles: the tuple this replaced held the
+    #: same string twice and matched neither ``platform=="whatsapp"`` nor
+    #: ``platform != "sms"``, so the guard it was supposed to be had two holes in
+    #: it and one of them was a copy-paste.
+    PLATFORM_COMPARISON = re.compile(
+        r"""platform\s*[!=]=\s*['"](?:telegram|instagram|messenger|whatsapp|sms|email)['"]"""
+    )
+
     def test_no_template_branches_on_a_platform_name(self):
         offenders = []
-        for path in (self.ROOT / "templates" / "broadcasts").glob("*.html"):
-            text = path.read_text()
-            for platform in ("telegram", "instagram", "messenger", "whatsapp", "sms", "email"):
-                # `platform|platform_class` is a *style* lookup and is fine; a
-                # comparison is what decides an affordance.
-                for needle in (f'platform == "{platform}"', f"platform == '{platform}'", f'platform == "{platform}"'):
-                    if needle in text:
-                        offenders.append(f"{path.name}: {needle}")
+        for path in sorted((self.ROOT / "templates" / "broadcasts").glob("*.html")):
+            # `platform|platform_class` is a *style* lookup and is fine; a
+            # comparison is what decides an affordance.
+            for match in self.PLATFORM_COMPARISON.finditer(path.read_text()):
+                offenders.append(f"{path.name}: {match.group(0)}")
         assert not offenders, (
-            "A composer template branches on a platform name. Every affordance has to come from "
-            "apps/broadcasts/composer.py, which reads the capability and policy tables — see "
-            "docs/agent-prompts/layer-6.md."
+            f"A composer template branches on a platform name at {offenders}. Every affordance has to "
+            f"come from apps/broadcasts/composer.py, which reads the capability and policy tables — see "
+            f"docs/agent-prompts/layer-6.md."
         )
 
     def test_no_module_in_this_app_compares_a_platform_literal(self):
@@ -566,3 +574,116 @@ class TestNoAudienceYet:
 
         with pytest.raises(services.BroadcastError, match="Choose who"):
             services.schedule_broadcast(broadcast)
+
+
+@pytest.mark.django_db
+class TestTemplateStaysUsable:
+    """A template can stop being sendable between composing and sending.
+
+    ``save_template`` checks approval and the connection when the operator picks
+    one, but Meta rejects templates on review and the housekeeping poller writes
+    that status back — so the check has to be repeated at the moment somebody
+    presses send, or every recipient discovers it separately.
+    """
+
+    def _approved(self, tenancy, connection, name="ready"):
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        return WhatsAppTemplate.objects.create(
+            workspace=tenancy.workspace,
+            channel_connection=connection,
+            name=name,
+            language="en_US",
+            category="utility",
+            status=WhatsAppTemplateStatus.APPROVED,
+            body_structure={"body": {"text": "Hello"}},
+        )
+
+    def _drafted(self, tenancy, connection, template):
+        from apps.broadcasts.tests.conftest import EVERYONE
+
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Notice", connection=connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+        services.save_template(broadcast, template, {})
+        return broadcast
+
+    def test_scheduling_is_refused_once_rather_than_failing_per_recipient(
+        self, tenancy, whatsapp_connection, make_contacts
+    ):
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        make_contacts(3, connection=whatsapp_connection)
+        template = self._approved(tenancy, whatsapp_connection, "withdrawn_before_send")
+        broadcast = self._drafted(tenancy, whatsapp_connection, template)
+
+        WhatsAppTemplate.objects.for_workspace(tenancy.workspace).filter(pk=template.pk).update(
+            status=WhatsAppTemplateStatus.REJECTED
+        )
+
+        with pytest.raises(services.BroadcastError, match="no longer approved"):
+            services.schedule_broadcast(broadcast)
+
+        broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.DRAFT
+
+    def test_duplicating_re_checks_the_template_rather_than_copying_the_key(self, tenancy, whatsapp_connection):
+        """Assignment would carry a rejected template into a fresh draft with
+        none of the checks the composer applies."""
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        template = self._approved(tenancy, whatsapp_connection, "withdrawn_before_copy")
+        broadcast = self._drafted(tenancy, whatsapp_connection, template)
+        WhatsAppTemplate.objects.for_workspace(tenancy.workspace).filter(pk=template.pk).update(
+            status=WhatsAppTemplateStatus.REJECTED
+        )
+
+        copy = services.duplicate_broadcast(broadcast, user=tenancy.owner)
+
+        assert copy.whatsapp_template_id is None
+        # And the copy is an ordinary draft the operator can fix, not a
+        # half-built row that fails at send.
+        assert copy.status == BroadcastStatus.DRAFT
+
+    def test_a_still_approved_template_duplicates_normally(self, tenancy, whatsapp_connection):
+        template = self._approved(tenancy, whatsapp_connection, "still_fine")
+        broadcast = self._drafted(tenancy, whatsapp_connection, template)
+
+        copy = services.duplicate_broadcast(broadcast, user=tenancy.owner)
+
+        assert copy.whatsapp_template_id == template.pk
+
+
+@pytest.mark.django_db
+class TestContentValidatesAgainstItsOwnChannel:
+    def test_it_validates_against_the_connection_not_the_workspace(
+        self, tenancy, connection, whatsapp_connection, monkeypatch
+    ):
+        """A broadcast runs on exactly one connection, so that is the platform its
+        content should be judged against.
+
+        ``validate_for_workspace`` resolves the set to every platform the
+        workspace has connected, which collects capability warnings about
+        channels this message will never touch and, on a workspace whose other
+        channel is more capable, misses the one it will.
+        """
+        from apps.broadcasts.tests.conftest import EVERYONE
+
+        seen: list[tuple[str, ...]] = []
+        real = services.validate_graph
+
+        def spy(graph, **kwargs):
+            seen.append(tuple(kwargs.get("platforms", ())))
+            return real(graph, **kwargs)
+
+        monkeypatch.setattr(services, "validate_graph", spy)
+
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Gallery", connection=whatsapp_connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+        services.save_content(broadcast, {"blocks": [{"type": "text", "text": "Hi"}]})
+
+        assert seen == [(whatsapp_connection.platform,)]
+        assert connection.platform not in seen[0]

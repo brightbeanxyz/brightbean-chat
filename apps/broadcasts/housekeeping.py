@@ -17,6 +17,10 @@ never fires for a broadcast that is, to any observer, finished.
 So this reconciles a recipient against the action that was supposed to send it,
 and then settles anything that has come to rest. Both halves are set-wise and
 bounded to broadcasts that are actually live.
+
+Registered without ``replace=True``, for the reason ``apps/broadcasts/handlers.py``
+gives about the handler registry: a second claim on this name is a bug worth
+hearing about at startup rather than one that resolves by import order.
 """
 
 import logging
@@ -35,7 +39,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["settle_broadcasts"]
 
 
-@register_housekeeping_job("settle_broadcasts", replace=True)
+@register_housekeeping_job("settle_broadcasts")
 def settle_broadcasts() -> str | None:
     """Reconcile abandoned recipients, then finish the broadcasts that are done."""
     # Cross-tenant on purpose: housekeeping drains the whole deployment, which is

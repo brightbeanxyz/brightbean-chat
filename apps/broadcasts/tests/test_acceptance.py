@@ -371,12 +371,24 @@ class TestOneImplementationEach:
         assert "WhatsAppTemplateStatus" not in sources
 
     def test_segment_counting_is_not_reimplemented(self):
+        """Asserted on names, not on digits.
+
+        This used to grep the dump for the substrings "160" and "153", which
+        appear inside any unrelated constant — a ``max_length=160``, a
+        ``1600``-byte cap, a ``15300``ms timeout — so the guard fired on code
+        containing no arithmetic at all, and the cheapest way out was to delete
+        it. A reimplementation has to *name* something: the encodings, the
+        packing helper, or the module it is avoiding.
+        """
         sources = self._sources()
 
-        # The GSM 03.38 constants. Their presence anywhere in this app would mean
-        # somebody wrote the arithmetic a second time.
-        for magic in ("160", "153", "GSM7", "UCS2"):
-            assert magic not in sources, f"{magic} suggests a second segment counter"
+        for name in ("GSM7", "UCS2", "Encoding", "septet", "_is_gsm7", "segments_for"):
+            assert name not in sources, f"{name} suggests a second segment counter in this app"
+
+        # And the module that owns the arithmetic is imported nowhere here: the
+        # count comes from L5-D's endpoint, which already applies the price.
+        assert "channels.segments" not in sources
+        assert "id='sms_segments'" not in sources
 
     def test_suppression_comes_from_the_channels_module(self):
         sources = self._sources()

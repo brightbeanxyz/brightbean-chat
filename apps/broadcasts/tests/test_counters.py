@@ -14,13 +14,18 @@ from django.urls import reverse
 
 from apps.broadcasts import handlers, services
 from apps.messaging.models import Message, MessageStatus
-from apps.queueing.models import ActionType, ScheduledAction
+from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
 
 
 def _run(workspace, broadcast):
     services.schedule_broadcast(broadcast)
     fanout = ScheduledAction.objects.for_workspace(workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
     handlers.handle_broadcast_fanout(fanout.payload, fanout)
+    # Marked done the way the worker would. A fanout row left ``pending`` is work
+    # still owed, and ``services.fanout_outstanding`` reads it as such — which is
+    # the whole point of that guard, so a helper that skipped this would be
+    # testing against a state the product never reaches.
+    ScheduledAction.objects.for_workspace(workspace).filter(pk=fanout.pk).update(status=ActionStatus.DONE)
     for action in ScheduledAction.objects.for_workspace(workspace).filter(type=ActionType.BROADCAST_SEND):
         handlers.handle_broadcast_send(action.payload, action)
     broadcast.refresh_from_db()
@@ -223,3 +228,47 @@ class TestRecipientList:
         )
 
         assert response.status_code == 200
+
+
+@pytest.mark.django_db
+class TestProgressWhileExpanding:
+    """The bar carries no value until the denominator is real.
+
+    ``queued`` counts the recipients fanout has written *so far*, so a
+    percentage against it walks backwards every time a chunk of five hundred
+    lands — and the moment an operator is most likely to be watching is the one
+    where the indicator looks broken.
+    """
+
+    def test_the_bar_is_indeterminate_between_chunks(
+        self, tenancy, client_for, make_contacts, make_broadcast, connection, monkeypatch
+    ):
+        from apps.broadcasts import handlers
+        from apps.queueing.models import ActionStatus
+
+        monkeypatch.setattr(handlers, "CHUNK_SIZE", 3)
+        make_contacts(9, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+        services.schedule_broadcast(broadcast)
+        fanout = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).get()
+        handlers.handle_broadcast_fanout(fanout.payload, fanout)
+        ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=fanout.pk).update(status=ActionStatus.DONE)
+
+        body = client_for(tenancy.owner).get(_url("broadcasts:counters", tenancy, broadcast)).content.decode()
+
+        assert "bc-bar-indeterminate" in body
+        assert "Working out who this reaches" in body
+        assert "aria-valuenow" not in body
+
+    def test_it_becomes_a_real_percentage_once_the_audience_is_resolved(
+        self, tenancy, client_for, make_contacts, make_broadcast, connection, adapter_for
+    ):
+        make_contacts(2, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+        with adapter_for(connection.platform):
+            _run(tenancy.workspace, broadcast)
+
+        body = client_for(tenancy.owner).get(_url("broadcasts:counters", tenancy, broadcast)).content.decode()
+
+        assert "bc-bar-indeterminate" not in body
+        assert 'aria-valuenow="100"' in body

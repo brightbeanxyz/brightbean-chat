@@ -286,3 +286,43 @@ def test_cancelling_stops_a_send_the_token_bucket_had_deferred(
     assert not retry.filter(status=ActionStatus.PENDING).exists()
     recipient.refresh_from_db()
     assert recipient.status == RecipientStatus.CANCELLED
+
+
+@pytest.mark.django_db
+def test_a_cancel_does_not_rewrite_a_recipient_that_was_already_delivered(
+    tenancy, make_contacts, make_broadcast, connection, adapter_for
+):
+    """ "Already-sent stand" has to survive a re-run, not only the bulk flip.
+
+    A send action that was ``running`` when the cancel landed is out of the bulk
+    flip's reach, and zombie recovery returns it to ``pending`` for a second run.
+    If the handler checked the broadcast's cancellation before it checked the
+    recipient's own status, that second run would rewrite a recipient who had
+    already received the message to ``cancelled`` — losing the record of a
+    message on somebody's phone, and moving a count from ``sent`` to
+    ``cancelled`` for a send that demonstrably happened.
+    """
+    make_contacts(2, connection=connection)
+    broadcast = make_broadcast(connection=connection)
+
+    with adapter_for(connection.platform) as adapter:
+        actions = _fan_out(tenancy.workspace, broadcast)
+        delivered = actions[0]
+        handlers.handle_broadcast_send(delivered.payload, delivered)
+        assert len(adapter.sends) == 1
+
+        services.cancel_broadcast(broadcast)
+
+        # The re-run zombie recovery would produce, against a cancelled broadcast.
+        handlers.handle_broadcast_send(delivered.payload, delivered)
+
+        assert len(adapter.sends) == 1, "it must not send again either"
+
+    recipient = broadcast.recipients.get(pk=delivered.payload["recipient_id"])
+    assert recipient.status == RecipientStatus.SENT
+    assert recipient.message_id is not None
+
+    counts = services.counters(broadcast)
+    assert counts.sent == 1
+    assert counts.cancelled == 1
+    assert counts.queued == counts.sent + counts.failed + counts.cancelled + counts.skipped

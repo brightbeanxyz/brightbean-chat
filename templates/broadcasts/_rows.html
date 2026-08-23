@@ -51,3 +51,14 @@ page is where the live figures are computed, and it writes them back here.
         {% endfor %}
     </tbody>
 </table>
+
+{% if truncated %}
+{% comment %}
+  A silent cap reads as "the older ones were deleted". Saying so costs one line
+  and one extra row fetched, and the search and status filters narrow the whole
+  set rather than this page, so they are the way to reach what is not here.
+{% endcomment %}
+<p class="bc-hint mt-2">
+    Showing the {{ page_size }} most recent. Search or filter by status to find an older one.
+</p>
+{% endif %}

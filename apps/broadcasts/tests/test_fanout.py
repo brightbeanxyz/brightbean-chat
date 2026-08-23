@@ -367,3 +367,142 @@ def test_a_cancelled_broadcast_stops_expanding_its_audience(
     if stale is not None:
         handlers.handle_broadcast_fanout(stale.payload, stale)
     assert broadcast.recipients.count() == 3
+
+
+@pytest.mark.django_db
+class TestSettleWaitsForFanout:
+    """A broadcast is not finished just because nothing is pending.
+
+    Fanout expands five hundred contacts at a time. Between two chunks the rows
+    written so far can all reach a terminal state — and settling at that moment
+    marks the broadcast ``sent``, after which the next chunk reads that status
+    and returns without expanding anybody else. The rest of the audience is
+    never messaged, the counters read complete, and ``broadcast.finished`` has
+    already gone out.
+    """
+
+    def test_a_drained_first_chunk_does_not_finish_the_broadcast(
+        self, tenancy, make_contacts, make_broadcast, connection, adapter_for, monkeypatch
+    ):
+        """The reachable shape: a chunk that failed and is waiting on its backoff.
+
+        Thirty seconds is the first rung of SPEC §15's ladder and is easily long
+        enough for a chunk's worth of sends to drain, so this is not a race that
+        needs an unlucky millisecond — it needs one transient database error.
+        """
+        monkeypatch.setattr(handlers, "CHUNK_SIZE", 3)
+        make_contacts(9, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        with adapter_for(connection.platform) as adapter:
+            services.schedule_broadcast(broadcast)
+            first = _fanout_actions(tenancy.workspace).get()
+            _run_fanout(first)
+
+            # The successor exists but has not run — the state a backoff leaves.
+            assert _fanout_actions(tenancy.workspace).filter(status=ActionStatus.PENDING).exists()
+
+            # Every send written so far completes.
+            for action in _send_actions(tenancy.workspace):
+                handlers.handle_broadcast_send(action.payload, action)
+            assert len(adapter.sends) == 3
+
+            broadcast.refresh_from_db()
+            assert broadcast.status == BroadcastStatus.SENDING, (
+                "settling here would strand the six contacts fanout has not reached yet"
+            )
+
+            # And the successor still expands them.
+            successor = _fanout_actions(tenancy.workspace).filter(status=ActionStatus.PENDING).get()
+            _run_fanout(successor)
+            assert broadcast.recipients.count() == 6
+
+    def test_the_housekeeping_sweep_will_not_finish_one_either(
+        self, tenancy, make_contacts, make_broadcast, connection, adapter_for, monkeypatch
+    ):
+        """The sweep reaches the same state from the other side.
+
+        It reconciles stranded recipients and then settles, so without the guard
+        it would truncate an audience on its own schedule rather than waiting for
+        an unlucky race.
+        """
+        from apps.broadcasts.housekeeping import settle_broadcasts
+
+        monkeypatch.setattr(handlers, "CHUNK_SIZE", 3)
+        make_contacts(9, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        with adapter_for(connection.platform):
+            services.schedule_broadcast(broadcast)
+            _run_fanout(_fanout_actions(tenancy.workspace).get())
+            for action in _send_actions(tenancy.workspace):
+                handlers.handle_broadcast_send(action.payload, action)
+
+            settle_broadcasts()
+
+        broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.SENDING
+
+    def test_the_last_chunk_can_still_settle_an_audience_it_wholly_skipped(
+        self, tenancy, make_contacts, make_broadcast, connection
+    ):
+        """The guard must not deadlock the handler against its own row.
+
+        A fanout action is ``running`` for the length of its own transaction, so
+        an unqualified "is any fanout outstanding?" would stop the very chunk
+        that has just exhausted the audience from finishing it.
+        """
+        make_contacts(3, connection=connection, opted_out=True, prefix="gone")
+        make_contacts(1, connection=connection, prefix="ok")
+        broadcast = make_broadcast(connection=connection)
+        services.schedule_broadcast(broadcast)
+        broadcast.recipients.all().delete()
+
+        from apps.messaging.models import ContactChannelIdentity
+
+        ContactChannelIdentity.objects.for_workspace(tenancy.workspace).update(opted_out_at=timezone.now())
+        action = _fanout_actions(tenancy.workspace).get()
+        # Claimed, exactly as the worker leaves it while the handler runs.
+        _fanout_actions(tenancy.workspace).filter(pk=action.pk).update(status=ActionStatus.RUNNING)
+        action.refresh_from_db()
+
+        handlers.handle_broadcast_fanout(action.payload, action)
+
+        broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.SENT
+
+
+@pytest.mark.django_db
+def test_a_fanout_that_failed_for_good_leaves_the_broadcast_visibly_unfinished(
+    tenancy, make_contacts, make_broadcast, connection, adapter_for, monkeypatch
+):
+    """A permanently failed chunk means the audience was never fully expanded.
+
+    Not hypothetical: deleting a tag the filter names makes every remaining
+    chunk raise until the retry budget is spent. Marking the broadcast ``sent``
+    then would announce success for a send that reached a fraction of its
+    audience. Leaving it at ``sending`` beside a red queue row is the state an
+    operator can see — and cancel is the exit.
+    """
+    monkeypatch.setattr(handlers, "CHUNK_SIZE", 3)
+    make_contacts(9, connection=connection)
+    broadcast = make_broadcast(connection=connection)
+
+    with adapter_for(connection.platform):
+        services.schedule_broadcast(broadcast)
+        _run_fanout(_fanout_actions(tenancy.workspace).get())
+
+        # The successor exhausts its retries.
+        _fanout_actions(tenancy.workspace).filter(status=ActionStatus.PENDING).update(
+            status=ActionStatus.FAILED, last_error="ConditionValidationError: unknown tag"
+        )
+        for action in _send_actions(tenancy.workspace):
+            handlers.handle_broadcast_send(action.payload, action)
+
+    broadcast.refresh_from_db()
+    assert broadcast.status == BroadcastStatus.SENDING
+
+    # And the operator can still stop it.
+    services.cancel_broadcast(broadcast)
+    broadcast.refresh_from_db()
+    assert broadcast.status == BroadcastStatus.CANCELLED

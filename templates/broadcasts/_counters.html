@@ -26,11 +26,24 @@ no receipt path of its own.
         {% endif %}
     </div>
 
+    {% comment %}
+      While fanout is still expanding the audience, `queued` counts the
+      recipients written so far rather than the total — so a percentage against
+      it retreats every time a chunk of five hundred lands. The bar carries no
+      value until the denominator is real, and says what it is doing instead.
+    {% endcomment %}
+    {% if expanding %}
+    <div class="bc-bar" role="progressbar" aria-label="Broadcast progress" aria-valuetext="Working out who this reaches">
+        <div class="bc-bar-fill bc-bar-indeterminate"></div>
+    </div>
+    <p class="bc-hint mt-1">Working out who this reaches…</p>
+    {% else %}
     <div class="bc-bar" role="progressbar"
          aria-valuenow="{{ counters.percent }}" aria-valuemin="0" aria-valuemax="100"
          aria-label="Broadcast progress">
         <div class="bc-bar-fill" style="width: {{ counters.percent }}%"></div>
     </div>
+    {% endif %}
 
     <div class="bc-tiles mt-3">
         <div class="bc-tile">

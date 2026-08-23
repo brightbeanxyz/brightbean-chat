@@ -195,7 +195,8 @@ def iter_candidates(broadcast: Any, *, after: Any = None, limit: int | None = No
     which the identity join cannot produce a row for and which SPEC §13.2 still
     wants counted.
     """
-    contacts = target_queryset(broadcast.workspace_id, broadcast.target_filter_json)
+    compiled = _compile(broadcast)
+    contacts = target_queryset(broadcast.workspace_id, compiled)
     if after is not None:
         contacts = contacts.filter(pk__gt=after)
     # values_list before the slice: a sliced queryset refuses further filtering,
@@ -261,8 +262,16 @@ def suppressed(workspace_id: Any, address: str) -> bool:
 
 
 def preview(broadcast: Any) -> AudiencePreview:
-    """The composer's live count. Set-wise, whatever the audience size."""
-    contacts = target_queryset(broadcast.workspace_id, broadcast.target_filter_json)
+    """The composer's live count. Set-wise, whatever the audience size.
+
+    The filter document is compiled **once** and the compiled form reused.
+    ``conditions.validate`` resolves every tag, field and segment id a filter
+    names against the database, and ``conditions.queryset`` accepts a
+    ``CompiledFilter`` precisely so a caller that asks twice does not pay twice —
+    which matters here, because the composer fires this on every keystroke.
+    """
+    compiled = _compile(broadcast)
+    contacts = target_queryset(broadcast.workspace_id, compiled)
     total = contacts.count()
     if not total:
         return AudiencePreview()
@@ -286,36 +295,56 @@ def preview(broadcast: Any) -> AudiencePreview:
     if unaccounted > 0:
         skipped[Denial.NO_IDENTITY.value] = skipped.get(Denial.NO_IDENTITY.value, 0) + unaccounted
 
-    return AudiencePreview(total=total, eligible=eligible, skipped=skipped, samples=_samples(broadcast, skipped))
+    return AudiencePreview(
+        total=total, eligible=eligible, skipped=skipped, samples=_samples(broadcast, skipped, compiled)
+    )
 
 
-def _samples(broadcast: Any, skipped: dict[str, int]) -> dict[str, list[str]]:
+def _samples(broadcast: Any, skipped: dict[str, int], compiled: Any) -> dict[str, list[str]]:
     """A few names per skip reason, so "why?" has an answer a person recognises.
 
-    One query for every reason rather than one per reason, and bounded: the slice
-    is the number of reasons times :data:`PREVIEW_SAMPLE` with headroom for rows
-    that land in a bucket already full.
+    One small query **per reason**, rather than one slice shared across all of
+    them. A shared slice is drawn in contact order, so a reason whose contacts
+    sort late gets nothing when another dominates the head: an audience of five
+    thousand opted-out contacts and a hundred needing a tag would show the tag
+    reason as a bare number, which is precisely the one an operator has to look
+    at because it is the one blocking the send.
+
+    The reason set is small and bounded by the compliance vocabulary, so "one
+    query per reason" is a handful of ``LIMIT 5`` reads and not a fan-out.
     """
     wanted = sorted(code for code in skipped if code != Denial.NO_IDENTITY.value)
     if not wanted:
         return {}
 
-    contacts = target_queryset(broadcast.workspace_id, broadcast.target_filter_json)
-    rows = (
-        _annotated(broadcast, contacts)
-        .filter(**{f"{DECISION_FIELD}__in": wanted})
-        .order_by("contact_id")
-        .values_list(DECISION_FIELD, "contact__first_name", "contact__last_name", "contact__email")[
-            : len(wanted) * PREVIEW_SAMPLE * 4
-        ]
-    )
+    contacts = target_queryset(broadcast.workspace_id, compiled)
+    annotated = _annotated(broadcast, contacts)
 
     samples: dict[str, list[str]] = {}
-    for decision, first, last, email in rows:
-        bucket = samples.setdefault(str(decision), [])
-        if len(bucket) < PREVIEW_SAMPLE:
-            # Never HTML — these are contact-authored strings on the
-            # attacker-content path (SECURITY-BASELINE §2) and the template
-            # escapes them like any other value.
-            bucket.append(" ".join(part for part in (first, last) if part) or email or "Unnamed contact")
+    for code in wanted:
+        rows = (
+            annotated.filter(**{DECISION_FIELD: code})
+            .order_by("contact_id")
+            .values_list("contact__first_name", "contact__last_name", "contact__email")[:PREVIEW_SAMPLE]
+        )
+        # Never HTML — these are contact-authored strings on the attacker-content
+        # path (SECURITY-BASELINE §2) and the template escapes them like any
+        # other value.
+        names = [
+            " ".join(part for part in (first, last) if part) or email or "Unnamed contact"
+            for first, last, email in rows
+        ]
+        if names:
+            samples[code] = names
     return samples
+
+
+def _compile(broadcast: Any) -> Any:
+    """This broadcast's filter, parsed and resolved once.
+
+    ``conditions.validate`` raises ``ConditionError`` for a document that no
+    longer compiles — a segment whose tag somebody deleted, say. Callers here are
+    previews and fanout, both of which already treat that as the operator's
+    problem rather than a crash, so it propagates.
+    """
+    return conditions.validate(broadcast.workspace_id, broadcast.target_filter_json)

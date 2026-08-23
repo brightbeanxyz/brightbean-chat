@@ -43,7 +43,7 @@ from typing import Any
 
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -90,6 +90,11 @@ __all__ = [
 #: built from a request parameter is a template-injection hole.
 STEPS: tuple[str, ...] = ("channel", "audience", "content", "schedule")
 
+#: How many broadcasts the list shows at once. The search and status filters
+#: narrow within the whole set, so the cap bites only on the unfiltered view —
+#: and the page says when it has.
+PAGE_SIZE = 200
+
 #: Cap on the composed message document. The flow schema applies its own size and
 #: depth caps (``apps.flows.schema.envelope``), but those run *after* a parse, and
 #: SECURITY-BASELINE §7 wants a body-size bound before the DB is touched.
@@ -121,9 +126,15 @@ def _visible(request: WorkspaceRequest) -> Any:
 
 
 def _rows_context(request: WorkspaceRequest) -> dict[str, Any]:
-    rows = list(_visible(request)[:200])
+    # One row past the cap, so the page can *say* it truncated rather than
+    # quietly showing a workspace's newest two hundred and letting an operator
+    # conclude the older ones were deleted. A silent cap is the failure mode
+    # worth spending one extra row on.
+    page = list(_visible(request)[: PAGE_SIZE + 1])
     return {
-        "broadcasts": rows,
+        "broadcasts": page[:PAGE_SIZE],
+        "truncated": len(page) > PAGE_SIZE,
+        "page_size": PAGE_SIZE,
         "q": (request.GET.get("q") or "").strip()[:200],
         "status": (request.GET.get("status") or "").strip(),
         "status_options": list(BroadcastStatus.choices),
@@ -238,9 +249,12 @@ def compose(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) -> 
     """The composer page. A sent or sending broadcast redirects to its detail."""
     broadcast = _broadcast(request, broadcast_id)
     if broadcast.status != BroadcastStatus.DRAFT:
-        return _redirect(
-            reverse("broadcasts:detail", kwargs={"workspace_id": workspace_id, "broadcast_id": broadcast.pk})
-        )
+        # A real 302, not ``HX-Redirect``. This is a page, reached by typing or
+        # bookmarking a URL as often as by clicking, and a browser with no htmx
+        # in the request ignores that header completely — the 204 would render as
+        # a blank page and go nowhere. The htmx POST endpoints below are the
+        # opposite case and keep ``_redirect``.
+        return redirect("broadcasts:detail", workspace_id=workspace_id, broadcast_id=broadcast.pk)
     step = _requested_step(request, broadcast)
     return render(request, "broadcasts/compose.html", _wizard_context(request, broadcast, step))
 
@@ -388,6 +402,11 @@ def _counters_context(broadcast: Broadcast) -> dict[str, Any]:
     return {
         "broadcast": broadcast,
         "counters": current,
+        # While fanout is still expanding the audience, ``queued`` is the number
+        # of recipients written *so far* rather than the total — so a percentage
+        # against it walks backwards every time a chunk of five hundred lands.
+        # The bar is indeterminate until the denominator is real.
+        "expanding": services.fanout_outstanding(broadcast),
         "reasons": _reasons(current.skips),
     }
 

@@ -13,7 +13,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from apps.broadcasts import handlers, services
+from apps.broadcasts import audience, handlers, services
 from apps.broadcasts.models import RecipientStatus
 from apps.messaging.codes import Denial
 from apps.messaging.models import ContactChannelIdentity, Message, MessageSource, MessageStatus
@@ -424,3 +424,73 @@ class TestReEntrancy:
             assert len(adapter.sends) == 1
 
         assert Message.objects.for_workspace(tenancy.workspace).count() == 1
+
+
+@pytest.mark.django_db
+class TestIdentityAgreement:
+    """The send must go to the identity fanout counted, not a differently-chosen one.
+
+    ``audience.iter_candidates`` ranks a contact's candidate identities
+    eligible-first; a send-time lookup that ordered only by connection and id
+    could pick a different row for a contact holding two addresses on one
+    connection — and then refuse the send for a reason nothing actually changed,
+    which is the preview/send drift the shared rule list exists to prevent.
+    """
+
+    def _second_identity(self, tenancy, contact, connection, *, opted_out):
+        from apps.messaging.models import ContactChannelIdentity, OptInSource
+
+        return ContactChannelIdentity.objects.create(
+            workspace=tenancy.workspace,
+            contact=contact,
+            channel_connection=connection,
+            platform=connection.platform,
+            platform_user_id=f"second-{contact.pk}",
+            opt_in=True,
+            opt_in_at=timezone.now(),
+            opt_in_source=OptInSource.IMPORT,
+            opted_out_at=timezone.now() if opted_out else None,
+        )
+
+    def test_a_contact_with_one_opted_out_address_is_still_reached_on_the_other(
+        self, tenancy, make_contacts, make_broadcast, connection, adapter_for
+    ):
+        [contact] = make_contacts(1, connection=connection)
+        # A second address on the same connection that has opted out. Whichever
+        # of the two sorts first by id, the eligible one is the one that counts.
+        self._second_identity(tenancy, contact, connection, opted_out=True)
+        broadcast = make_broadcast(connection=connection)
+
+        preview = audience.preview(broadcast)
+        assert preview.eligible == 1
+
+        with adapter_for(connection.platform) as adapter:
+            for action in _fan_out(tenancy.workspace, broadcast):
+                _send(action)
+
+            assert len(adapter.sends) == 1, "the send picked the opted-out address"
+
+        assert broadcast.recipients.get().status == RecipientStatus.SENT
+
+    def test_an_identity_deleted_between_fanout_and_send_falls_back(
+        self, tenancy, make_contacts, make_broadcast, connection, adapter_for
+    ):
+        """The recorded identity wins only while it is still usable."""
+        from apps.messaging.models import ContactChannelIdentity
+
+        [contact] = make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        with adapter_for(connection.platform) as adapter:
+            actions = _fan_out(tenancy.workspace, broadcast)
+            recorded = broadcast.recipients.get().identity_id
+            spare = self._second_identity(tenancy, contact, connection, opted_out=False)
+            ContactChannelIdentity.objects.for_workspace(tenancy.workspace).filter(pk=recorded).delete()
+
+            for action in actions:
+                _send(action)
+
+            assert len(adapter.sends) == 1
+
+        assert broadcast.recipients.get().status == RecipientStatus.SENT
+        assert spare.pk is not None

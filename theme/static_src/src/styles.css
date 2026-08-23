@@ -2612,3 +2612,15 @@ span.flatpickr-weekday {
 .status-pill-sending   { background: var(--brand-50);    color: var(--primary); }
 .status-pill-sent      { background: var(--success-50);  color: var(--success-700); }
 .status-pill-cancelled { background: var(--error-50);    color: var(--error-700); }
+
+/* The bar with no value: fanout has not finished expanding the audience, so
+   there is no honest denominator yet. A sweep rather than a width, because the
+   one thing it must not do is imply a proportion it does not know. */
+.bc-bar-indeterminate {
+  width: 40%;
+  animation: bc-bar-sweep 1.4s ease-in-out infinite;
+}
+@keyframes bc-bar-sweep {
+  0%   { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}
