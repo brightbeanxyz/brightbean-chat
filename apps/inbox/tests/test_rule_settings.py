@@ -305,3 +305,69 @@ class TestTheEditor:
         assert "data-rule-list" in page
         assert "data-rule-move" in page
         assert "Message mentions refund" in page
+
+
+class TestEditingPreservesActions:
+    def test_reopening_a_rule_preselects_its_actions(self, tenancy, admin_client, url_for):
+        """The regression this class exists for: the editor hydrated its
+        keywords and channel selects and left the three action controls blank,
+        so an edit silently forgot what the rule did."""
+        label = services.create_label(tenancy.workspace, name="Refunds")
+        agent = tenancy.user_for("agent")
+        rule = _rule(
+            tenancy.workspace,
+            actions_json=[
+                {"type": "add_label", "label_id": str(label.pk)},
+                {"type": "assign_to_member", "user_id": str(agent.pk)},
+                {"type": "mark_done"},
+            ],
+        )
+
+        response = admin_client.get(url_for("rule_form"), {"rule": str(rule.pk)})
+
+        selected = response.context["selected_actions"]
+        assert selected["label_ids"] == [str(label.pk)]
+        assert selected["assignee_id"] == str(agent.pk)
+        assert selected["mark_done"] is True
+
+        page = response.content.decode()
+        assert f'value="{label.pk}"\n                  selected' in page or "selected" in page
+        assert page.count("selected") >= 2
+
+    def test_renaming_a_rule_through_the_form_keeps_its_actions(self, tenancy, admin_client, url_for):
+        """End to end: read the editor, post back exactly what it rendered, and
+        the actions survive."""
+        label = services.create_label(tenancy.workspace, name="Refunds")
+        rule = _rule(
+            tenancy.workspace,
+            actions_json=[{"type": "add_label", "label_id": str(label.pk)}, {"type": "mark_done"}],
+        )
+        selected = admin_client.get(url_for("rule_form"), {"rule": str(rule.pk)}).context["selected_actions"]
+
+        response = admin_client.post(
+            url_for("rule_save"),
+            {
+                "rule": str(rule.pk),
+                "name": "Renamed",
+                "enabled": "on",
+                "keyword_text": ["refund"],
+                "keyword_mode": ["contains"],
+                # Exactly what the hydrated form would submit.
+                "action_label": selected["label_ids"],
+                "action_assignee": selected["assignee_id"],
+                "action_done": "on" if selected["mark_done"] else "",
+            },
+        )
+
+        assert response.status_code == 204
+        rule.refresh_from_db()
+        assert rule.name == "Renamed"
+        assert [action["type"] for action in rule.actions_json] == ["add_label", "mark_done"]
+
+    def test_the_editor_does_not_repeat_the_container_id(self, tenancy, admin_client, url_for):
+        """It is swapped into #inbox-rule-editor with innerHTML, so carrying that
+        id would put two elements with one id in the document and send every
+        later hx-target to the wrapper."""
+        page = admin_client.get(url_for("rule_form")).content.decode()
+
+        assert 'id="inbox-rule-editor"' not in page

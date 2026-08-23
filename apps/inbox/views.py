@@ -229,12 +229,17 @@ def _label_context_for(request: WorkspaceRequest, conversation: Conversation) ->
     control.
     """
     carried = selectors.labels_by_conversation(request.workspace, [conversation]).get(conversation.pk, [])
+    carried_ids = {label.pk for label in carried}
     return {
         "thread_labels": label_chips(carried),
-        "label_options": [
+        # Deliberately **not** ``label_options``: the filter bar owns that name
+        # and means the whole palette by it, and the full-page thread render
+        # merges both contexts — so sharing the key silently gave the header the
+        # unfiltered list and offered labels the thread already carries.
+        "thread_label_options": [
             {"value": str(row.pk), "label": row.name}
             for row in selectors.labels_for(request.workspace)
-            if row.pk not in {label.pk for label in carried}
+            if row.pk not in carried_ids
         ],
     }
 
@@ -713,11 +718,12 @@ def note(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> 
 
 def _deliver(request: WorkspaceRequest, conversation_id: Any, *, internal: bool) -> HttpResponse:
     conversation = _conversation(request, conversation_id)
+    dropped: set[str] = set()
     try:
         # The same assembler a scheduled reply uses, so a message composed now
         # and one composed for later are built by one piece of code — including
         # what happens to an attachment the platform cannot carry.
-        body = _outbound_body(request, conversation, allow_media=not internal)
+        body = _outbound_body(request, conversation, allow_media=not internal, dropped=dropped)
     except _ComposeError as exc:
         return toast_response(tone="error", title="Nothing to send", body=str(exc))
 
@@ -736,7 +742,27 @@ def _deliver(request: WorkspaceRequest, conversation_id: Any, *, internal: bool)
         # which is a machine code that can carry a provider suffix.
         return toast_response(tone="error", title="Not sent", body=describe(message.error), events=events)
     title = "Note added" if internal else "Reply sent"
+    if dropped:
+        # Sent, but not with everything the agent attached. Saying so beats a
+        # success toast under a message that refers to a document the contact
+        # never received.
+        return toast_response(
+            tone="warn",
+            title=title,
+            body=f"{_platform_name(conversation)} cannot carry {_listed(dropped)}, so that was left off.",
+            events=events,
+        )
     return toast_response(tone="success", title=title, events=events)
+
+
+def _platform_name(conversation: Conversation) -> str:
+    return str(conversation.channel_connection.get_platform_display())
+
+
+def _listed(kinds: set[str]) -> str:
+    """ "an image", or "an image or a video" — for a sentence, not a log line."""
+    words = sorted(f"{'an' if kind[0] in 'aeiou' else 'a'} {kind}" for kind in kinds)
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " or " + words[-1]
 
 
 def _idempotency_key(request: WorkspaceRequest, *, prefix: str) -> str:
@@ -1114,6 +1140,15 @@ def create_reminder(request: WorkspaceRequest, workspace_id: str, conversation_i
             remind_at=when,
             note=(request.POST.get("note") or "")[:MAX_REMINDER_NOTE_CHARS],
             created_by=request.user,
+            # Deliberately no compose token, unlike the scheduled reply below.
+            # This endpoint answers with ``_refresh()``, which does not carry
+            # ``inboxSent``, so the compose box does not refetch and its token
+            # does not rotate — a token guard here would read a *deliberate*
+            # second reminder from the same render as a duplicate and silently
+            # return the first. The double click is handled where it happens,
+            # with ``hx-disabled-elt`` on the button, and the harm if one slips
+            # through is a repeated in-app nudge rather than a second message to
+            # the contact.
         )
     except services.InboxError as exc:
         return toast_response(tone="error", title="No reminder set", body=str(exc))
@@ -1153,7 +1188,13 @@ def create_scheduled_reply(request: WorkspaceRequest, workspace_id: str, convers
     except _ComposeError as exc:
         return toast_response(tone="error", title="Not scheduled", body=str(exc))
     try:
-        services.schedule_reply(conversation, body=body, send_at=when, created_by=request.user)
+        services.schedule_reply(
+            conversation,
+            body=body,
+            send_at=when,
+            created_by=request.user,
+            compose_token=_compose_token(request),
+        )
     except services.InboxError as exc:
         return toast_response(tone="error", title="Not scheduled", body=str(exc))
     return toast_response(tone="success", title="Reply scheduled", events=_refresh(inboxSent=True))
@@ -1205,6 +1246,27 @@ class _ComposeError(ValueError):
     """A composed message this view will not build."""
 
 
+def _compose_token(request: WorkspaceRequest) -> str:
+    """The compose box's per-render token, normalised (SPEC §9.4).
+
+    Same field and same parsing as :func:`_idempotency_key`, which is what makes
+    a double-clicked "Schedule" one queued reply rather than two messages to the
+    contact. It is safe to key on **because scheduling refetches the compose
+    box** — ``create_scheduled_reply`` answers with ``inboxSent``, so the next
+    composition carries a fresh token and a second, deliberate scheduled reply is
+    not mistaken for a duplicate.
+
+    A missing or malformed token yields ``""``, which the services read as "no
+    guard" rather than as a reason to refuse — an operator losing their reply
+    because a hidden field went astray is worse than the duplicate.
+    """
+    raw = (request.POST.get("token") or "").strip()
+    try:
+        return uuid.UUID(hex=raw).hex
+    except (ValueError, AttributeError, TypeError):
+        return ""
+
+
 def _label_or_404(request: WorkspaceRequest, label_id: str) -> ConversationLabel:
     return get_scoped_object_or_404(ConversationLabel, request.workspace, pk=label_id)
 
@@ -1227,14 +1289,27 @@ def _when(raw: Any) -> Any:
     text = (raw or "").strip() if isinstance(raw, str) else ""
     if not text:
         return None
-    parsed = parse_datetime(text)
+    try:
+        # ``parse_datetime`` returns None for something it cannot parse at all,
+        # but **raises** ``ValueError`` for a value that is well formatted and
+        # not a real datetime — "2099-13-45T00:00" matches its regex and then
+        # fails ``datetime(month=13)``. Uncaught, that is a 500 anyone can reach
+        # from the compose box, which is the same trap ``selectors._as_uuid``
+        # documents for the id filters.
+        parsed = parse_datetime(text)
+    except ValueError:
+        return None
     if parsed is None:
         return None
     return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
 
 
 def _outbound_body(
-    request: WorkspaceRequest, conversation: Conversation, *, allow_media: bool = True
+    request: WorkspaceRequest,
+    conversation: Conversation,
+    *,
+    allow_media: bool = True,
+    dropped: set[str] | None = None,
 ) -> dict[str, Any]:
     """Turn the compose form into the stored body shape.
 
@@ -1250,17 +1325,22 @@ def _outbound_body(
     text = (request.POST.get("body") or "").strip()
     if len(text) > MAX_REPLY_CHARS:
         raise _ComposeError("That message is too long.")
+    dropped = dropped if dropped is not None else set()
     blocks: list[Any] = []
     if text:
         blocks.append(TextBlock(text=text))
     if allow_media:
-        blocks.extend(_attachments(request, conversation))
+        blocks.extend(_attachments(request, conversation, dropped))
     if not blocks:
-        raise _ComposeError("Write something first.")
+        raise _ComposeError(
+            f"{conversation.channel_connection.get_platform_display()} cannot carry that attachment."
+            if dropped
+            else "Write something first."
+        )
     return OutboundMessage(blocks=tuple(blocks)).to_body()
 
 
-def _attachments(request: WorkspaceRequest, conversation: Conversation) -> list[Any]:
+def _attachments(request: WorkspaceRequest, conversation: Conversation, dropped: set[str]) -> list[Any]:
     """Media blocks for the library assets the composer picked.
 
     Ids, never URLs. ``apps.media_library.picker``'s contract is explicit —
@@ -1271,7 +1351,9 @@ def _attachments(request: WorkspaceRequest, conversation: Conversation) -> list[
     What the platform cannot carry is dropped rather than refused, which is the
     same call ``apps.channels.downgrade`` makes for the automation path: an
     operator who attaches a PDF to a channel that takes only images should get
-    their message, with a note, rather than a wall.
+    their message rather than a wall. **Dropped kinds are reported**, through
+    ``dropped``, so the caller can say so — a silent drop leaves an agent
+    referring in the text to a document that was never sent.
     """
     ids = [value for value in request.POST.getlist("media")[:MAX_ATTACHMENTS] if value]
     if not ids:
@@ -1285,6 +1367,7 @@ def _attachments(request: WorkspaceRequest, conversation: Conversation) -> list[
             raise _ComposeError("One of those attachments is no longer in the library.") from None
         kind = str(asset["kind"])
         if capabilities is not None and not capabilities.supports_block(kind):
+            dropped.add(kind)
             continue
         blocks.append(MediaBlock(kind=kind, url=str(asset["url"])))
     return blocks
@@ -1467,7 +1550,7 @@ def rule_form(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         {
             "rule": rule,
             "condition": document,
-            "actions": rule.actions_json if rule and isinstance(rule.actions_json, list) else [],
+            "selected_actions": _selected_actions(rule),
             "filter_config": builder_config(request.workspace, document=contact_half),
             "connections": _connections(request),
             "platform_options": list(Platform.choices),
@@ -1475,6 +1558,25 @@ def rule_form(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
             "members": _members(request),
         },
     )
+
+
+def _selected_actions(rule: Any) -> dict[str, Any]:
+    """The stored actions, in the shape the three form controls need.
+
+    Assembled here rather than reading ``actions_json`` in the template, because
+    the controls are a multi-select, a single select and a checkbox — three
+    different questions of one list, and Django's template language cannot ask
+    any of them without a filter per control.
+    """
+    actions = rule.actions_json if rule and isinstance(rule.actions_json, list) else []
+    verbs = [item for item in actions if isinstance(item, dict)]
+    return {
+        "label_ids": [str(item.get("label_id") or "") for item in verbs if item.get("type") == "add_label"],
+        "assignee_id": next(
+            (str(item.get("user_id") or "") for item in verbs if item.get("type") == "assign_to_member"), ""
+        ),
+        "mark_done": any(item.get("type") == "mark_done" for item in verbs),
+    }
 
 
 @login_required
@@ -1576,8 +1678,10 @@ def rule_test(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 
 def _next_priority(request: WorkspaceRequest) -> int:
     """New rules go last. ``reorder_rules`` renumbers everything anyway."""
-    last = InboxRule.objects.for_workspace(request.workspace).order_by("-priority").values_list("priority", flat=True)
-    return (last[0] + services.PRIORITY_STEP) if last else 0
+    from django.db.models import Max
+
+    highest = InboxRule.objects.for_workspace(request.workspace).aggregate(top=Max("priority"))["top"]
+    return 0 if highest is None else highest + services.PRIORITY_STEP
 
 
 def _posted_condition(request: WorkspaceRequest) -> dict[str, Any]:

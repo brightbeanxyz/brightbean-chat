@@ -221,3 +221,40 @@ class TestTheSettingsPage:
 
         assert "Refunds" in page
         assert selectors.label_usage(tenancy.workspace) == {label.pk: 1}
+
+
+class TestTheRuleLabelCap:
+    def test_a_full_thread_still_gets_a_label_it_is_missing(self, tenancy, conversation, connection, identity):
+        """The cap is applied to what is *missing*, not to the rule's whole list.
+
+        Slicing the rule's labels against the remaining room spends the last free
+        slot on whichever sorts first — which may be one the thread already
+        carries, silently dropping the one that was new.
+        """
+        from apps.flows.tests.routing_support import routing_adapter
+        from apps.flows.tests.support import inbound as raw_event
+        from apps.flows.triggers.pipeline import route_events
+        from apps.inbox.models import InboxRule
+
+        already = _label(tenancy.workspace, "Aaa already here")
+        missing = _label(tenancy.workspace, "Zzz brand new")
+        services.apply_label(conversation, already)
+        # Fill the thread to exactly one slot short of the cap.
+        for index in range(MAX_LABELS_PER_CONVERSATION - 2):
+            services.apply_label(conversation, _label(tenancy.workspace, f"Filler {index}"))
+
+        rule = InboxRule(
+            workspace=tenancy.workspace,
+            name="Both",
+            condition_json={"channel": {"platforms": ["telegram"]}},
+            actions_json=[
+                {"type": "add_label", "label_id": str(already.pk)},
+                {"type": "add_label", "label_id": str(missing.pk)},
+            ],
+        )
+        rule.save()
+
+        with routing_adapter(connection.platform):
+            route_events(connection, [raw_event(connection, text="hi", user="u1")])
+
+        assert "Zzz brand new" in _names(conversation)

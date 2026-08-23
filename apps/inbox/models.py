@@ -398,6 +398,19 @@ class DeferredWorkModel(ConversationScopedModel):
         related_name="+",
     )
     status = models.CharField(max_length=16, choices=DeferredStatus.choices, default=DeferredStatus.PENDING)
+    #: How many times this row has been armed. It exists to go **in the queue
+    #: row's idempotency key**, and it is a counter rather than a timestamp for
+    #: one reason: ``schedule()`` returns an existing row *unchanged whatever its
+    #: status*, so a key that repeats hands back the row a reschedule just
+    #: cancelled. Keying on the run time alone looks sufficient and is not —
+    #: editing a scheduled reply's text without touching its time re-mints the
+    #: same key, and the reply silently never sends.
+    arm_count = models.PositiveIntegerField(default=0)
+    #: The compose box's per-render token (SPEC §9.4), when one was supplied.
+    #: Unique per workspace while non-empty, which is what makes a double-clicked
+    #: "Schedule" one row rather than two messages to the contact — the deferred
+    #: analogue of ``message_unique_conv_idem`` on the live send path.
+    compose_token = models.CharField(max_length=64, blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -449,6 +462,17 @@ class InboxReminder(DeferredWorkModel):
     class Meta:
         db_table = "inbox_reminder"
         ordering = ["remind_at"]
+        constraints = [
+            # Partial, because the column is blank for anything scheduled by a
+            # caller that has no compose box — a future API, a flow action. A
+            # plain unique-together would let exactly one of those exist per
+            # workspace.
+            models.UniqueConstraint(
+                fields=["workspace", "compose_token"],
+                condition=models.Q(compose_token__gt=""),
+                name="reminder_unique_compose_token",
+            ),
+        ]
         indexes = [
             models.Index(fields=["workspace", "conversation", "status"], name="reminder_ws_conv_status_idx"),
         ]
@@ -498,6 +522,14 @@ class ScheduledReply(DeferredWorkModel):
     class Meta:
         db_table = "inbox_scheduled_reply"
         ordering = ["send_at"]
+        constraints = [
+            # See InboxReminder.Meta for why this is partial.
+            models.UniqueConstraint(
+                fields=["workspace", "compose_token"],
+                condition=models.Q(compose_token__gt=""),
+                name="schedreply_unique_compose_token",
+            ),
+        ]
         indexes = [
             models.Index(fields=["workspace", "conversation", "status"], name="schedreply_ws_conv_status_idx"),
         ]

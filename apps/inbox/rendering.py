@@ -63,6 +63,7 @@ from django.urls import NoReverseMatch, reverse
 from django.utils.timesince import timeuntil
 
 from apps.common.validators import is_renderable_url, is_valid_hex_color
+from apps.inbox.codes import describe_inbox_failure
 from apps.inbox.models import DEFAULT_LABEL_COLOR
 from apps.messaging.codes import describe
 from apps.messaging.models import Message, MessageDirection, MessageStatus
@@ -612,7 +613,7 @@ def failed_scheduled_reply(reply: Any) -> FailedScheduledReply:
         id=str(reply.pk),
         preview=preview_of_body(reply.body),
         due_at=reply.send_at,
-        reason=describe(reply.error) if reply.error else "It could not be sent.",
+        reason=describe_inbox_failure(reply.error) if reply.error else "It could not be sent.",
     )
 
 

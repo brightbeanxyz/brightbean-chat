@@ -82,7 +82,7 @@ it under the reader mid-choice.
       {% endif %}
     </span>
   {% endfor %}
-  {% if can_reply and label_options %}
+  {% if can_reply and thread_label_options %}
     <form hx-post="{% url 'inbox:add_label' workspace_id=request.workspace.id conversation_id=conversation.id %}"
           hx-swap="none"
           hx-trigger="change">
@@ -90,7 +90,7 @@ it under the reader mid-choice.
       <label class="sr-only" for="label-picker-{{ conversation.id }}">Add a label</label>
       <select class="bb-select" id="label-picker-{{ conversation.id }}" name="label">
         <option value="">Add a label…</option>
-        {% for option in label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
+        {% for option in thread_label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
       </select>
     </form>
   {% endif %}

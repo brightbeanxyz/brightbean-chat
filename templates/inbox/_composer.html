@@ -89,6 +89,7 @@ could flip by hand.
       <button type="submit" class="btn-outline btn-inline"
               hx-post="{% url 'inbox:create_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id %}"
               hx-include="closest form"
+              hx-disabled-elt="this"
               hx-swap="none">Schedule</button>
     </div>
   </form>
@@ -113,7 +114,13 @@ could flip by hand.
     </select>
     <label class="sr-only" for="remind-note-{{ conversation.id }}">Note</label>
     <input id="remind-note-{{ conversation.id }}" type="text" name="note" maxlength="500" placeholder="Chase the refund">
-    <button type="submit" class="btn-outline btn-inline">Remind</button>
+    {% comment %}
+      hx-disabled-elt is the whole double-submit guard here, unlike the Schedule
+      button beside it: this endpoint does not refetch the compose box, so its
+      token would not rotate and a token guard would read a deliberate second
+      reminder as a duplicate.
+    {% endcomment %}
+    <button type="submit" class="btn-outline btn-inline" hx-disabled-elt="this">Remind</button>
   </form>
 {% else %}
   <div class="ib-composer text-xs" style="color: var(--text-tertiary);">

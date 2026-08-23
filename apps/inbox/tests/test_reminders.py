@@ -195,3 +195,38 @@ class TestWillFire:
         reminder.refresh_from_db()
         assert reminder.status == DeferredStatus.PENDING
         assert reminder.will_fire is False
+
+
+class TestNotificationFailures:
+    def test_a_failed_notification_retries_rather_than_reading_as_sent(self, tenancy, conversation, monkeypatch):
+        """There is no provider call on this path to protect, so a notification
+        backend having a bad day should take SPEC §15's backoff — swallowing it
+        would mark the reminder SENT and lose it with nothing to retry."""
+        from apps.inbox import handlers
+        from apps.inbox.handlers import handle_reminder
+
+        reminder = _schedule(conversation, tenancy.user_for("agent"))
+        _due_now(reminder)
+        monkeypatch.setattr(handlers, "_notify", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("down")))
+
+        with pytest.raises(RuntimeError):
+            handle_reminder({"reminder_id": str(reminder.pk)}, reminder.action)
+
+        reminder.refresh_from_db()
+        assert reminder.status == DeferredStatus.PENDING
+
+    def test_the_worker_leaves_the_row_retriable(self, tenancy, conversation, monkeypatch):
+        """And the queue does the rest: a raising handler comes back to pending
+        with its run_at pushed out onto SPEC §15's ladder, rather than done."""
+        from apps.inbox import handlers
+
+        reminder = _schedule(conversation, tenancy.user_for("agent"))
+        _due_now(reminder)
+        monkeypatch.setattr(handlers, "_notify", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("down")))
+
+        _run_due()
+
+        reminder.action.refresh_from_db()
+        assert reminder.action.status == ActionStatus.PENDING
+        assert reminder.action.run_at > timezone.now()
+        assert reminder.action.last_error

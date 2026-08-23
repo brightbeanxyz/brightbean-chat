@@ -191,18 +191,29 @@ def _add_labels(conversation: Any, label_ids: list[str]) -> None:
     """
     from apps.inbox.models import MAX_LABELS_PER_CONVERSATION, ConversationLabel, ConversationLabelLink
 
+    links = ConversationLabelLink.objects.for_workspace(conversation.workspace_id)
     labels = list(ConversationLabel.objects.for_workspace(conversation.workspace_id).filter(pk__in=label_ids))
     if not labels:
         # Every id was checked against this workspace when the rule was saved,
         # so an empty result means the label has since been deleted. Not an
         # error: the rule simply has nothing left to apply.
         return
-    existing = ConversationLabelLink.objects.for_workspace(conversation.workspace_id).filter(conversation=conversation)
-    room = MAX_LABELS_PER_CONVERSATION - existing.count()
-    if room <= 0:
+
+    # Already-attached labels come out **before** the cap is applied, not after.
+    # Slicing the rule's full list against the remaining room spends the last
+    # free slot on whichever label sorts first — which may be one the thread
+    # already carries, silently dropping the one that was actually new.
+    attached = set(links.filter(conversation=conversation).values_list("label_id", flat=True))
+    missing = [label for label in labels if label.pk not in attached]
+    room = MAX_LABELS_PER_CONVERSATION - len(attached)
+    if room <= 0 or not missing:
         return
-    ConversationLabelLink.objects.bulk_create(
-        [ConversationLabelLink.unsaved(conversation=conversation, label=label) for label in labels[:room]],
+    # Scoped, like the bulk_update in apps/inbox/services.py and for the same
+    # reason: bulk_create is not one of the terminals the enforcing manager
+    # guards, so an unscoped call runs without complaint and a grep for
+    # cross-tenant writes would miss it.
+    links.bulk_create(
+        [ConversationLabelLink.unsaved(conversation=conversation, label=label) for label in missing[:room]],
         ignore_conflicts=True,
     )
 

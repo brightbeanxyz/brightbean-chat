@@ -10,7 +10,13 @@ language that already has one is exactly what ROADMAP contract 8 exists to
 prevent. Its script half has to come with it — see the include at the bottom.
 {% endcomment %}
 {% load common_extras %}
-<div id="inbox-rule-editor" x-data="contactFilters({{ filter_config|json_attr }})">
+{% comment %}
+  No id on this root. It is swapped into rule_settings.html's
+  #inbox-rule-editor with htmx's default innerHTML, so repeating that id here
+  would put two elements with one id in the document — and every later
+  hx-target="#inbox-rule-editor" would resolve to the outer wrapper.
+{% endcomment %}
+<div class="ib-rule-editor" x-data="contactFilters({{ filter_config|json_attr }})">
   <form hx-post="{% url 'inbox:rule_save' workspace_id=request.workspace.id %}">
     {% if rule %}<input type="hidden" name="rule" value="{{ rule.id }}" />{% endif %}
 
@@ -95,19 +101,35 @@ prevent. Its script half has to come with it — see the include at the bottom.
     <fieldset>
       <legend>Then</legend>
       <label for="rule-labels">Add these labels</label>
+      {% comment %}
+        Hydrated from `selected_actions`, like the keyword rows and the channel
+        selects above. Without it, opening an existing rule and saving it posts
+        an empty action list — which validate_actions refuses with "a rule needs
+        at least one action", after silently forgetting what the rule did.
+      {% endcomment %}
       <select id="rule-labels" name="action_label" multiple size="4">
-        {% for label in labels %}<option value="{{ label.id }}">{{ label.name }}</option>{% endfor %}
+        {% for label in labels %}
+          <option value="{{ label.id }}"
+                  {% if label.id|stringformat:'s' in selected_actions.label_ids %}selected{% endif %}>
+            {{ label.name }}
+          </option>
+        {% endfor %}
       </select>
 
       <label for="rule-assignee">Assign to</label>
       <select id="rule-assignee" name="action_assignee">
         <option value="">Nobody</option>
-        {% for member in members %}<option value="{{ member.user_id }}">{{ member.user.display_name }}</option>{% endfor %}
+        {% for member in members %}
+          <option value="{{ member.user_id }}"
+                  {% if member.user_id|stringformat:'s' == selected_actions.assignee_id %}selected{% endif %}>
+            {{ member.user.display_name }}
+          </option>
+        {% endfor %}
       </select>
       <p class="muted">Only when nobody has the conversation already — a rule never takes a thread off a colleague.</p>
 
       <label>
-        <input type="checkbox" name="action_done" />
+        <input type="checkbox" name="action_done" {% if selected_actions.mark_done %}checked{% endif %} />
         Mark done
       </label>
       <p class="muted">

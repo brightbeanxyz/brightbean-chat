@@ -202,10 +202,16 @@ def reorder_rules(workspace: Any, ordered_ids: list[str]) -> int:
         ordered += [row for row in rows if str(row.pk) not in set(wanted)]
 
         moved = []
+        now = timezone.now()
         for index, row in enumerate(ordered):
             priority = index * PRIORITY_STEP
             if row.priority != priority:
                 row.priority = priority
+                # Stamped by hand. ``updated_at`` is ``auto_now``, which Django
+                # applies in ``Model.save()`` and **not** in ``bulk_update`` — so
+                # listing the field without setting it writes the stale value
+                # back and reads, wrongly, as "and bump the timestamp".
+                row.updated_at = now
                 moved.append(row)
         if moved:
             # Scoped explicitly: bulk_update is not one of the terminals the
@@ -228,19 +234,27 @@ def schedule_reminder(
     remind_at: datetime,
     note: str = "",
     created_by: Any = None,
+    compose_token: str = "",
 ) -> InboxReminder:
     """Arrange an in-app nudge about this thread (SPEC §14)."""
     if remind_at <= timezone.now():
         raise InboxError("Pick a time in the future.")
+    existing = _already_arranged(InboxReminder, conversation, compose_token)
+    if existing is not None:
+        return existing
     reminder = InboxReminder(
         conversation=conversation,
         recipient=recipient,
         remind_at=remind_at,
         note=(note or "").strip(),
         created_by=created_by,
+        compose_token=compose_token,
     )
     _validated(reminder, fallback="That reminder is not valid.")
-    reminder.save()
+    if not _saved(reminder):
+        # Two genuinely simultaneous posts both missed the read above; the
+        # constraint arbitrated, and the loser reads the winner's row back.
+        return _already_arranged(InboxReminder, conversation, compose_token) or reminder
     _arm(reminder, REMINDER, reminder.remind_at, {"reminder_id": str(reminder.pk)})
     return reminder
 
@@ -261,6 +275,7 @@ def schedule_reply(
     body: dict[str, Any],
     send_at: datetime,
     created_by: Any = None,
+    compose_token: str = "",
 ) -> ScheduledReply:
     """Queue a reply to go out later (SPEC §14).
 
@@ -272,8 +287,18 @@ def schedule_reply(
     """
     if send_at <= timezone.now():
         raise InboxError("Pick a time in the future.")
-    reply = ScheduledReply(conversation=conversation, body=body, send_at=send_at, created_by=created_by)
-    reply.save()
+    existing = _already_arranged(ScheduledReply, conversation, compose_token)
+    if existing is not None:
+        return existing
+    reply = ScheduledReply(
+        conversation=conversation,
+        body=body,
+        send_at=send_at,
+        created_by=created_by,
+        compose_token=compose_token,
+    )
+    if not _saved(reply):
+        return _already_arranged(ScheduledReply, conversation, compose_token) or reply
     _arm(reply, SCHEDULED_REPLY, reply.send_at, {"scheduled_reply_id": str(reply.pk)})
     return reply
 
@@ -323,6 +348,41 @@ def cancel_scheduled_reply(reply: ScheduledReply) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _saved(row: Any) -> bool:
+    """Insert the row. False when the compose-token constraint refused it.
+
+    In its own ``atomic()`` block: catching an ``IntegrityError`` without a
+    savepoint poisons the surrounding transaction, and these services are called
+    from views that may already be inside one.
+    """
+    try:
+        with transaction.atomic():
+            row.save()
+    except IntegrityError:
+        return False
+    return True
+
+
+def _already_arranged(model: Any, conversation: Conversation, compose_token: str) -> Any:
+    """The row this compose token already produced, if it did (SPEC §9.4).
+
+    The deferred half of the idempotency the live send path gets from
+    ``message_unique_conv_idem``: the compose box mints one token per render, so
+    a double-clicked "Schedule" arrives twice carrying the same one and must
+    become one queued reply rather than two messages to the contact. Without
+    this the two rows have different pks, arm different queue keys, and the
+    ``send_as_agent`` key — which is derived from the row — cannot collapse them
+    either.
+
+    A read, with the partial unique constraint behind it as the real arbiter: two
+    genuinely simultaneous posts both miss here, and the second one's
+    ``IntegrityError`` is caught by the caller's ``_validated``/save path.
+    """
+    if not compose_token:
+        return None
+    return model.objects.for_workspace(conversation.workspace_id).filter(compose_token=compose_token).first()
+
+
 def _arm(row: Any, action_type: str, run_at: datetime, payload: dict[str, Any]) -> None:
     """Put this row's work on the queue and remember which row it is.
 
@@ -331,9 +391,19 @@ def _arm(row: Any, action_type: str, run_at: datetime, payload: dict[str, Any]) 
     with a flow step for the same person. It is also what makes
     ``apps.contacts.activity.stand_down`` cancel this action when the contact is
     deleted, without that module needing to know these tables exist.
+
+    **The key carries ``arm_count``, not the run time.** ``schedule()`` returns an
+    existing row *unchanged whatever its status*, so a key that can repeat is a
+    key that can hand back a row this function's caller just cancelled. Keying on
+    ``(pk, run_at)`` looks sufficient — a later time is a later key — and misses
+    the case that matters: editing a scheduled reply's text without touching its
+    time re-mints the identical key, gets the cancelled action back, and the
+    reply silently never sends. A counter is monotonic by construction, which is
+    the property actually needed.
     """
     from apps.queueing.registry import schedule
 
+    row.arm_count += 1
     action = schedule(
         action_type,
         run_at,
@@ -342,10 +412,10 @@ def _arm(row: Any, action_type: str, run_at: datetime, payload: dict[str, Any]) 
         # FK and an id there raises.
         workspace=row.conversation.workspace,
         contact=row.conversation.contact_id,
-        idempotency_key=f"inbox:{action_type}:{row.pk}:{int(run_at.timestamp())}",
+        idempotency_key=f"inbox:{action_type}:{row.pk}:{row.arm_count}",
     )
     row.action = action
-    row.save(update_fields=["action", "updated_at"])
+    row.save(update_fields=["action", "arm_count", "updated_at"])
 
 
 def _stand_down(row: Any) -> bool:

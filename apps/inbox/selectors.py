@@ -541,7 +541,10 @@ class _LooseRule:
     """
 
     pk = None
-    actions_json: list[Any] = []
 
     def __init__(self, condition: dict[str, Any]) -> None:
         self.condition_json = condition
+        # Per instance, not a class attribute. A mutable default on the class is
+        # shared by every instance ever made, and the first caller to append to
+        # it would leak into every later dry-run in the process.
+        self.actions_json: list[Any] = []

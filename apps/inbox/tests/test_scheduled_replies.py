@@ -254,3 +254,94 @@ class TestDismissingAFailure:
         assert reply.status == DeferredStatus.DISMISSED
         assert reply.error
         assert failed_replies_for(tenancy.workspace, conversation) == []
+
+
+class TestRearming:
+    def test_editing_only_the_body_leaves_it_armed(self, tenancy, conversation, identity):
+        """The regression this class exists for.
+
+        ``schedule()`` returns an existing row *unchanged whatever its status*,
+        so a re-arm key that can repeat hands back the row the reschedule just
+        cancelled. Keying on the run time alone looks sufficient and misses
+        exactly this: same time, new text, and the reply silently never sends.
+        """
+        when = timezone.now() + timedelta(hours=2)
+        reply = _schedule(conversation, tenancy.user_for("agent"), send_at=when)
+        first_action = reply.action
+
+        services.reschedule_reply(reply, body=OutboundMessage(blocks=(TextBlock(text="v2"),)).to_body(), send_at=when)
+
+        reply.refresh_from_db()
+        assert reply.action_id != first_action.pk
+        assert reply.action.status == ActionStatus.PENDING
+        assert reply.will_fire is True
+
+    def test_it_still_sends_once_after_that_edit(self, tenancy, conversation, identity):
+        when = timezone.now() + timedelta(hours=2)
+        reply = _schedule(conversation, tenancy.user_for("agent"), send_at=when)
+        first_action = reply.action
+        services.reschedule_reply(reply, body=BODY, send_at=when)
+        reply.refresh_from_db()
+        _due_now(reply)
+
+        with registered(Platform.TELEGRAM) as adapter:
+            handle_scheduled_reply({"scheduled_reply_id": str(reply.pk)}, first_action)
+            handle_scheduled_reply({"scheduled_reply_id": str(reply.pk)}, reply.action)
+
+        assert len(adapter.sends) == 1
+
+    def test_the_arm_counter_is_what_the_key_carries(self, tenancy, conversation, identity):
+        when = timezone.now() + timedelta(hours=2)
+        reply = _schedule(conversation, tenancy.user_for("agent"), send_at=when)
+
+        services.reschedule_reply(reply, body=BODY, send_at=when)
+
+        reply.refresh_from_db()
+        assert reply.arm_count == 2
+        assert reply.action.idempotency_key.endswith(":2")
+
+
+class TestDoubleSubmit:
+    def test_the_same_compose_token_queues_one_reply(self, tenancy, conversation, identity):
+        """A double-clicked "Schedule". Two rows would arm two queue actions with
+        different keys, and the ``send_as_agent`` key is derived from the row —
+        so nothing further down could collapse them either."""
+        token = "b" * 32
+        when = timezone.now() + timedelta(hours=2)
+
+        first = services.schedule_reply(conversation, body=BODY, send_at=when, compose_token=token)
+        second = services.schedule_reply(conversation, body=BODY, send_at=when, compose_token=token)
+
+        assert first.pk == second.pk
+        assert ScheduledReply.objects.for_workspace(tenancy.workspace).count() == 1
+
+    def test_a_fresh_token_queues_a_second_reply(self, tenancy, conversation, identity):
+        when = timezone.now() + timedelta(hours=2)
+
+        services.schedule_reply(conversation, body=BODY, send_at=when, compose_token="c" * 32)
+        services.schedule_reply(conversation, body=BODY, send_at=when, compose_token="d" * 32)
+
+        assert ScheduledReply.objects.for_workspace(tenancy.workspace).count() == 2
+
+    def test_no_token_means_no_guard(self, tenancy, conversation, identity):
+        """A caller with no compose box — a future API, a flow action — must not
+        be limited to one deferred row per workspace by a blank column."""
+        when = timezone.now() + timedelta(hours=2)
+
+        services.schedule_reply(conversation, body=BODY, send_at=when)
+        services.schedule_reply(conversation, body=BODY, send_at=when)
+
+        assert ScheduledReply.objects.for_workspace(tenancy.workspace).count() == 2
+
+    def test_two_reminders_from_one_composer_render_both_stand(self, tenancy, conversation):
+        """The reason reminders are *not* token-guarded: this endpoint does not
+        refetch the compose box, so its token does not rotate — and a guard here
+        would read a deliberate second reminder as a duplicate."""
+        agent = tenancy.user_for("agent")
+
+        services.schedule_reminder(conversation, recipient=agent, remind_at=timezone.now() + timedelta(hours=1))
+        services.schedule_reminder(conversation, recipient=agent, remind_at=timezone.now() + timedelta(hours=3))
+
+        from apps.inbox.models import InboxReminder
+
+        assert InboxReminder.objects.for_workspace(tenancy.workspace).count() == 2

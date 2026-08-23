@@ -241,3 +241,47 @@ class TestActionValidation:
         )
 
         assert [item["type"] for item in actions] == ["add_label", "assign_to_member", "mark_done"]
+
+
+class TestTheDatetimeParser:
+    """``_when`` is the compose box's clock, and it is reachable by anyone."""
+
+    def test_a_well_formatted_but_impossible_datetime_is_refused_not_raised(self):
+        """``parse_datetime`` returns None for something it cannot parse and
+        **raises** for a value that is well formatted and not a real datetime —
+        the difference between a toast and a 500 anyone can reach from a form."""
+        from apps.inbox.views import _when
+
+        assert _when("2099-13-45T00:00") is None
+
+    def test_ordinary_values_still_parse(self):
+        from apps.inbox.views import _when
+
+        parsed = _when("2099-01-02T15:30")
+
+        assert parsed is not None
+        assert (parsed.year, parsed.month, parsed.day, parsed.hour, parsed.minute) == (2099, 1, 2, 15, 30)
+        assert parsed.tzinfo is not None
+
+    def test_a_blank_or_unparseable_value_is_none(self):
+        from apps.inbox.views import _when
+
+        assert _when("") is None
+        assert _when("not a date") is None
+        assert _when(None) is None
+
+
+class TestInboxFailureCopy:
+    def test_an_inbox_code_gets_a_sentence_rather_than_the_code(self):
+        """``messaging.codes.describe`` returns the code itself for a string it
+        does not know, which is right there and wrong in a thread."""
+        from apps.inbox.codes import EMPTY_BODY, describe_inbox_failure
+
+        assert describe_inbox_failure(EMPTY_BODY) != EMPTY_BODY
+        assert describe_inbox_failure(EMPTY_BODY).endswith(".")
+
+    def test_it_falls_through_to_messagings_table(self):
+        from apps.inbox.codes import describe_inbox_failure
+        from apps.messaging.codes import Denial, describe
+
+        assert describe_inbox_failure(Denial.OPTED_OUT.value) == describe(Denial.OPTED_OUT.value)

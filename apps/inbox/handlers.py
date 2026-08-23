@@ -32,6 +32,7 @@ already uses for the same verdict.
 import logging
 from typing import Any
 
+from apps.inbox.codes import EMPTY_BODY, describe_inbox_failure
 from apps.inbox.notifications import EVENT_REMINDER, EVENT_SCHEDULED_REPLY_FAILED
 from apps.inbox.services import REMINDER, SCHEDULED_REPLY
 from apps.queueing.models import ScheduledAction
@@ -58,6 +59,11 @@ def handle_reminder(payload: dict[str, Any], action: ScheduledAction) -> None:
         # nothing left to do.
         return
 
+    # Deliberately unwrapped, unlike the call inside :func:`_fail`. There is no
+    # provider call to protect here, so a notification backend having a bad day
+    # should raise, take SPEC §15's backoff and try again — swallowing it would
+    # mark the reminder SENT and lose it silently, which is the same failure as
+    # never firing at all.
     _notify(
         reminder.workspace,
         EVENT_REMINDER,
@@ -96,7 +102,7 @@ def handle_scheduled_reply(payload: dict[str, Any], action: ScheduledAction) -> 
         # An empty body cannot become a message, and no number of retries will
         # give it one. Recorded as a failure rather than swallowed, because a
         # reply an agent believed was queued has to end somewhere visible.
-        _fail(reply, "empty_body", "That scheduled reply had nothing to send.")
+        _fail(reply, EMPTY_BODY, describe_inbox_failure(EMPTY_BODY))
         return
 
     # ---- nothing below this line may raise before the send returns ----
@@ -149,13 +155,19 @@ def _fail(reply: Any, code: str, reason: str, *, message: Any = None) -> None:
     reply.save(update_fields=["status", "error", "message", "updated_at"])
 
     conversation = reply.conversation
-    _notify(
-        reply.workspace,
-        EVENT_SCHEDULED_REPLY_FAILED,
-        recipient=reply.created_by,
-        conversation=conversation,
-        context={"contact_name": conversation.contact.display_name, "reason": reason},
-    )
+    try:
+        _notify(
+            reply.workspace,
+            EVENT_SCHEDULED_REPLY_FAILED,
+            recipient=reply.created_by,
+            conversation=conversation,
+            context={"contact_name": conversation.contact.display_name, "reason": reason},
+        )
+    except Exception:
+        # Best-effort by design: this runs after the provider call, so raising
+        # would roll back the record of *why* the send failed — and the row and
+        # the thread are the more important half of "never a silent drop".
+        logger.exception("Could not notify %s that a scheduled reply failed", getattr(reply.created_by, "pk", None))
 
 
 def _notify(workspace: Any, event: str, *, recipient: Any, conversation: Any, context: dict[str, Any]) -> None:
@@ -166,9 +178,12 @@ def _notify(workspace: Any, event: str, *, recipient: Any, conversation: Any, co
     back to its admins rather than to silence. A reminder nobody receives is the
     same bug as a reminder that never fired.
 
-    Wrapped, and the reason is the module docstring's: on the scheduled-reply
-    path this runs after the provider call, where an exception would roll the
-    message row back under a message that has already been delivered.
+    It does **not** swallow. Whether a notification failure should abandon the
+    handler depends on what else the handler has already done, which is the
+    caller's question: :func:`_fail` runs after a provider call and wraps this,
+    because raising there would roll a delivered message's row back;
+    :func:`handle_reminder` does not, because retrying is exactly what should
+    happen when the only thing that failed is the notification.
     """
     from django.urls import reverse
 
@@ -180,10 +195,7 @@ def _notify(workspace: Any, event: str, *, recipient: Any, conversation: Any, co
         kwargs={"workspace_id": conversation.workspace_id, "conversation_id": conversation.pk},
     )
     users = [recipient] if _still_a_member(workspace, recipient) else None
-    try:
-        notify(workspace, event, users=users, roles=None if users else ("admin",), context=payload)
-    except Exception:
-        logger.exception("Could not notify %s about %s", getattr(recipient, "pk", None), event)
+    notify(workspace, event, users=users, roles=None if users else ("admin",), context=payload)
 
 
 def _still_a_member(workspace: Any, user: Any) -> bool:
@@ -208,6 +220,11 @@ def _load(model: Any, payload: dict[str, Any], action: ScheduledAction, key: str
     return (
         model.objects.for_workspace(action.workspace_id)
         .filter(pk=row_id)
-        .select_related("conversation", "conversation__contact", "conversation__channel_connection")
+        .select_related(
+            "conversation",
+            "conversation__contact",
+            "conversation__channel_connection",
+            "conversation__workspace",
+        )
         .first()
     )
