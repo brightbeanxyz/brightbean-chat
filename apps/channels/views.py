@@ -54,10 +54,9 @@ PLATFORM_LABELS = dict(Platform.choices)
 #: placeholder panels so an operator looking at an empty page knows whether they
 #: have misconfigured something or are simply early.
 CONNECT_FLOW_ISSUES: dict[str, str] = {
-    # Telegram and SMS are absent: #12 and #20 shipped their guided flows, and
-    # the list template links to those instead of naming an issue. A platform
-    # leaves this table on the day its connect view lands.
-    Platform.INSTAGRAM: "#17 (L5-A)",
+    # Telegram, Instagram and SMS are absent: #12, #17 and #20 shipped their
+    # guided flows, and the list template links to those instead of naming an
+    # issue. A platform leaves this table on the day its connect view lands.
     Platform.MESSENGER: "#18 (L5-B)",
     Platform.WHATSAPP: "#19 (L5-C)",
     Platform.EMAIL: "#21 (L5-E)",

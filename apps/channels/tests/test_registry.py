@@ -174,12 +174,15 @@ class TestRegistry:
     def test_register_and_resolve(self) -> None:
         with registered(Platform.TELEGRAM) as adapter_cls:
             assert has_adapter(Platform.TELEGRAM)
-            # Enum order, and it grows as Layer 5 lands: Telegram (#12) and SMS
-            # (#20) today. Asserted as a set membership plus the ordering rule
-            # rather than a frozen tuple, so the next adapter is a one-line
-            # change here instead of a puzzle.
-            assert set(registered_platforms()) >= {Platform.TELEGRAM, Platform.SMS}
-            assert list(registered_platforms()) == [p for p in Platform.values if p in registered_platforms()]
+            # The contract is **enum order**, and it is asserted against
+            # Platform.values rather than against the function's own filter —
+            # comparing to `tuple(v for v in Platform.values if has_adapter(v))`
+            # would restate registered_platforms()' implementation and could
+            # never fail. Every shipped adapter registers itself at startup, so
+            # the *membership* is not pinned to a literal; the ordering is.
+            platforms = registered_platforms()
+            assert Platform.TELEGRAM in platforms
+            assert list(platforms) == sorted(platforms, key=Platform.values.index)
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
         # Restored, not cleared. Telegram has a real adapter since issue #12 and

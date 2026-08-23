@@ -136,6 +136,14 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # authenticates with HTTP Basic, and the ``Authorization`` header is already
     # covered by the auth-scheme rule at the top of this table.
     (re.compile(r"\b(?:AC|SK)[0-9a-fA-F]{32}\b"), REDACTED),
+    # BrightBean Chat's own public-API keys (issue #25, SPEC §17):
+    # ``bb_<43 url-safe chars>_<8 hex>``. Registered as its own shape rather
+    # than left to the key=value rule above, because the one place this
+    # credential predictably reaches a log is an ``Authorization`` header echoed
+    # into an exception or a request dump, where there is no ``key=`` to anchor
+    # on. The trailing group is deliberately not anchored to exactly 8 hex
+    # characters: a truncated key in a log line is still key material.
+    (re.compile(r"\bbb_[A-Za-z0-9_\-]{20,}"), REDACTED),
     # Telegram bot tokens: <bot_id>:<35-char secret>.
     #
     # The `/bot` alternative is not decoration. A bot token's one appearance at

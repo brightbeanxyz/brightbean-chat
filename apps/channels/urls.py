@@ -8,7 +8,7 @@ for a platform's POST.
 
 from django.urls import path
 
-from apps.channels import views, views_sms, views_telegram
+from apps.channels import views, views_instagram, views_sms, views_telegram
 
 app_name = "channels"
 
@@ -24,6 +24,11 @@ urlpatterns = [
         views_telegram.telegram_preview,
         name="telegram_preview",
     ),
+    # Instagram's guided connect (issue #17). The OAuth *callback* is not here:
+    # Meta allows one exact redirect URI per app, so it cannot carry a workspace
+    # id and lives in ``urls_oauth.py`` at the deployment root instead.
+    path("instagram/connect/", views_instagram.instagram_connect, name="instagram_connect"),
+    path("instagram/posts/", views_instagram.instagram_posts, name="instagram_posts"),
     # Twilio's guided connect flow, SPEC §6.6's configurable compliance copy,
     # and the segment-count preview the send_sms panel and L6-B's composer
     # both call (issue #20). Declared before the ``<uuid:connection_id>``

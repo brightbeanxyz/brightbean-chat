@@ -20,6 +20,8 @@ __all__ = [
     "DEFAULT_REPLY_INTERVAL",
     "PRIVATE_REPLY_WINDOW",
     "claim_default_reply",
+    "claim_public_reply",
+    "claimed_comment",
     "may_claim_comment",
     "may_private_reply",
     "mark_private_reply_sent",
@@ -135,6 +137,26 @@ def _bounded(value: str) -> str:
     return messaging_facade.bounded_identifier(value, limit=_MAX_PLATFORM_ID)
 
 
+def claimed_comment(connection: Any, comment_id: str) -> HandledComment | None:
+    """The row already claiming **this** comment on this connection, if any.
+
+    The distinction :func:`record_comment` cannot make on its own: it answers
+    None for two unrelated refusals — this comment is already claimed, and a
+    *different* comment from the same person on the same post is
+    (``once_per_contact_per_post``). Telling them apart matters, because the
+    first is the platform handing a claim of ours back and the second is the
+    guard doing its job.
+
+    Bounded through the same helper the insert used, so the lookup finds what
+    was written rather than a value that only looks like it.
+    """
+    return (
+        HandledComment.objects.for_workspace(connection.workspace_id)
+        .filter(channel_connection=connection, comment_id=_bounded(comment_id))
+        .first()
+    )
+
+
 def private_reply_deadline(row: HandledComment) -> datetime:
     """When the platform stops accepting a private reply to this comment."""
     return row.commented_at + PRIVATE_REPLY_WINDOW
@@ -160,6 +182,32 @@ def mark_private_reply_sent(row: HandledComment, *, contact: Any = None, now: da
         row.contact = contact
         fields.append("contact")
     row.save(update_fields=fields)
+
+
+def claim_public_reply(row: HandledComment, *, now: datetime | None = None) -> bool:
+    """May the public reply go out — and if so, take the guard.
+
+    A compare-and-set rather than a read followed by a write, for the same
+    reason :func:`claim_default_reply` is one: the caller is a queue handler,
+    and ``apps.queueing.registry`` documents that a handler "must be safe to run
+    more than once" because zombie recovery re-runs one that committed without
+    being marked done. Of two concurrent or repeated runs exactly one sees
+    ``updated == 1``; the loser posts nothing.
+
+    Taken *before* the call rather than recorded after it, because the failure
+    this prevents is a duplicate comment on somebody's post, and a claim spent
+    on a reply that then failed costs only that reply — the private one, which
+    is what the flow author configured, is a separate call and unaffected.
+    """
+    moment = now or timezone.now()
+    updated = (
+        HandledComment.objects.for_workspace(row.workspace_id)
+        .filter(pk=row.pk, public_reply_sent_at__isnull=True)
+        .update(public_reply_sent_at=moment, updated_at=moment)
+    )
+    if updated:
+        row.public_reply_sent_at = moment
+    return bool(updated)
 
 
 def may_claim_comment(commented_at: datetime, *, now: datetime | None = None) -> bool:
