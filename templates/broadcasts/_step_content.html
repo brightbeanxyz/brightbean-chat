@@ -127,12 +127,17 @@ script tag out of its own comment for its extractor.
     </div>
 
     {# ── Buttons and quick replies ────────────────────────────── #}
-    <div class="bc-panel" x-show="mode === 'message' && (config.allows_buttons || config.allows_quick_replies)">
+    {% comment %}
+      Buttons, and deliberately not quick replies. SPEC §13.1 writes a
+      broadcast's content as "send_message [+ buttons]" and issue #23 repeats it;
+      the config payload still carries `allows_quick_replies` and
+      `max_quick_replies` because they are the composer's honest reading of the
+      capability table, and a later issue that wants them has the numbers.
+    {% endcomment %}
+    <div class="bc-panel" x-show="mode === 'message' && config.allows_buttons">
       <div class="bc-panel-head">
         <span class="bc-panel-title">Buttons</span>
-        <span class="bc-hint" x-show="config.interaction_is_exclusive">
-          This channel shows buttons or quick replies, never both.
-        </span>
+        <span class="bc-hint">A reply button parks the contact in a waiting run until they answer.</span>
       </div>
 
       <template x-for="(button, index) in buttons" :key="index">
@@ -152,10 +157,8 @@ script tag out of its own comment for its extractor.
       <div class="bc-actions">
         <button type="button" class="btn-outline btn-inline"
                 :disabled="buttons.length >= config.max_buttons"
-                x-show="config.allows_buttons"
                 @click="addButton()">Add button</button>
-        <span class="bc-hint" x-show="config.allows_buttons"
-              x-text="`${buttons.length} of ${config.max_buttons}`"></span>
+        <span class="bc-hint" x-text="`${buttons.length} of ${config.max_buttons}`"></span>
       </div>
     </div>
 
