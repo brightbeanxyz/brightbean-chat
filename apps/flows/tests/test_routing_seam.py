@@ -20,8 +20,17 @@ class TestTheSeam:
         """Registering under an existing name replaces *in place*, so routing
         inherits the slot messaging's no-op was holding rather than appending
         after it — which is what makes "routing sees what persistence wrote"
-        true without either app knowing about the other."""
-        assert channels_ingest.registered_processors() == (PERSISTENCE_PROCESSOR, ROUTING_PROCESSOR)
+        true without either app knowing about the other.
+
+        Asserted as adjacency rather than as the whole tuple. The claim is about
+        where routing sits *relative to persistence*, and the full-tuple form
+        also silently asserted that no third stage exists anywhere — which stopped
+        being true when issue #12 registered its preview stage at ``LATE_ORDER``,
+        and would break again for every later stage that legitimately joins.
+        """
+        names = channels_ingest.registered_processors()
+
+        assert names.index(ROUTING_PROCESSOR) == names.index(PERSISTENCE_PROCESSOR) + 1
         assert channels_ingest._PROCESSORS[ROUTING_PROCESSOR] is route_events
 
     def test_messagings_guard_never_puts_the_no_op_back(self):
