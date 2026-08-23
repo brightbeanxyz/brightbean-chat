@@ -156,12 +156,15 @@ MAX_REF_CHARS = 64
 MAX_EXTRA_CHARS = 200
 
 #: The width of the ``platform_user_id`` column an id has to fit. Longer ones
-#: are hashed rather than cut — see :func:`_chat_id`.
+#: are hashed rather than cut — see :func:`_private_chat_id`.
 MAX_PLATFORM_ID_CHARS = 200
 
 #: The ``/start`` command, which SPEC §10 maps to two different triggers
 #: depending on whether it carries a payload.
 START_COMMAND = "/start"
+
+#: The only ``chat.type`` this adapter will act on. See :func:`_private_chat_id`.
+PRIVATE_CHAT = "private"
 
 #: ``message`` keys that carry media, and the block kind each becomes. The
 #: aliases are folded in deliberately: a voice note is audio and a video note is
@@ -309,12 +312,19 @@ def get_me(token: str) -> dict[str, Any]:
     return result
 
 
-def set_webhook(token: str, *, url: str, secret_token: str) -> None:
+def set_webhook(token: str, *, url: str, secret_token: str, drop_pending: bool = False) -> None:
     """Point the bot at ``url`` and pin the secret it must present.
 
-    ``drop_pending_updates`` is on: a bot connected today should not replay a
-    backlog of messages sent to it before this workspace existed, which would
-    arrive as inbound events and could fire triggers.
+    ``drop_pending`` defaults to **False** and belongs to first connection only.
+    Discarding the backlog is right there: a bot connected today should not
+    replay messages sent to it before this workspace existed, which would arrive
+    as inbound events and could fire triggers at people who never opted in.
+
+    It is wrong everywhere else, and rotating a secret is the everywhere else.
+    Telegram holds a delivery queue for a bot it cannot reach; a rotation that
+    dropped it would permanently discard real customer messages that happened to
+    arrive during the seconds the old secret was already invalid — silently, and
+    at exactly the moment an operator is fixing something.
     """
     call(
         token,
@@ -323,7 +333,7 @@ def set_webhook(token: str, *, url: str, secret_token: str) -> None:
             "url": url,
             "secret_token": secret_token,
             "allowed_updates": list(ALLOWED_UPDATES),
-            "drop_pending_updates": True,
+            "drop_pending_updates": drop_pending,
             "max_connections": 40,
         },
         timeout=BACKGROUND_TIMEOUT,
@@ -548,8 +558,25 @@ def _text(value: Any, limit: int = MAX_INBOUND_TEXT_CHARS) -> str:
     return value[:limit] if isinstance(value, str) else ""
 
 
-def _chat_id(container: Any) -> str:
-    """``chat.id`` as a string, or "" when the shape is not what it should be.
+def _private_chat_id(container: Any) -> str:
+    """``chat.id`` for a **private** chat, or "" for anything else.
+
+    The privacy control on this adapter, and the reason it is one function
+    rather than a check at each call site.
+
+    A bot added to a group keeps receiving ``message`` updates, and the ``chat``
+    on them is the *group*. Using that id as ``platform_user_id`` would make one
+    contact and one conversation shared by every member of the group — so an
+    automation's output, which a flow author wrote for one person, would be
+    delivered into a room of strangers, and every member's messages would be
+    filed against a single stranger's contact record. Groups are out of scope
+    for v1 (issue #12), so the honest handling is to ignore them entirely rather
+    than to half-support them.
+
+    Fails **closed**: only the literal ``"private"`` is accepted. ``chat.type``
+    is a required field of Telegram's Chat object, so a payload without one did
+    not come from Telegram, and guessing on its behalf is exactly the wrong
+    instinct for a control like this.
 
     Telegram sends chat ids as JSON numbers. ``bool`` is excluded explicitly
     because it is an ``int`` in Python and ``str(True)`` is a chat id nobody has.
@@ -563,7 +590,7 @@ def _chat_id(container: Any) -> str:
     another's conversation. Not reachable from a real Telegram payload; the
     point is that it cannot become reachable.
     """
-    if not isinstance(container, dict):
+    if not isinstance(container, dict) or container.get("type") != PRIVATE_CHAT:
         return ""
     raw = container.get("id")
     if isinstance(raw, bool) or not isinstance(raw, (int, str)):
@@ -743,8 +770,10 @@ class TelegramAdapter(Adapter):
         provider_event_id: str,
         raw: dict[str, Any],
     ) -> list[NormalizedEvent]:
-        chat_id = _chat_id(message.get("chat"))
+        chat_id = _private_chat_id(message.get("chat"))
         if not chat_id:
+            # Not a private chat, or not a shape Telegram produces. Either way
+            # there is no one person this belongs to.
             return []
 
         text = _text(message.get("text")) or _text(message.get("caption"))
@@ -807,13 +836,15 @@ class TelegramAdapter(Adapter):
         # produced by _callback_data and will not match a handle either way.
         data = _text(query.get("data"), MAX_CALLBACK_DATA_BYTES)
         source_message = query.get("message")
-        chat_id = _chat_id(source_message.get("chat") if isinstance(source_message, dict) else None)
-        if not chat_id:
-            # An inline-mode press has no `message`. We do not enable inline
-            # mode, but the sender is still the person, and their id is the chat
-            # id for a private bot conversation.
-            chat_id = _chat_id(query.get("from"))
+        chat_id = _private_chat_id(source_message.get("chat") if isinstance(source_message, dict) else None)
         if not chat_id or not data:
+            # No fallback to ``callback_query.from``. That is a User rather than
+            # a Chat and carries no ``type``, so it cannot be checked against
+            # the private-chat rule above — a press on a button in a group would
+            # come back through it looking exactly like a private one. The
+            # cases it would have covered are inline-mode presses and messages
+            # too old for Telegram to include, neither of which this adapter
+            # supports.
             return []
 
         self._answer_callback_query(connection, _text(query.get("id"), 200))

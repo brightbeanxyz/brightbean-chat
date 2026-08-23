@@ -40,7 +40,7 @@ from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEve
 from apps.channels.policy import policy_for
 from apps.channels.providers.base import Adapter
 from apps.channels.providers.exceptions import AdapterError
-from apps.channels.registry import AdapterNotRegisteredError, adapter_for, has_adapter
+from apps.channels.registry import AdapterNotRegisteredError, adapter_for, connect_route_for, has_adapter
 from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.members.decorators import require_permission
@@ -146,13 +146,9 @@ def _connection_context(
     }
 
 
-#: Platforms with a guided connect flow, and the route that serves it.
-CONNECT_ROUTES: dict[str, str] = {Platform.TELEGRAM: "channels:telegram_connect"}
-
-
 def _connect_url(platform: str, workspace_id: str) -> str:
     """The guided connect route for ``platform``, or "" if it has none yet."""
-    route = CONNECT_ROUTES.get(platform)
+    route = connect_route_for(platform)
     return reverse(route, kwargs={"workspace_id": workspace_id}) if route else ""
 
 

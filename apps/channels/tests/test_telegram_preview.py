@@ -30,6 +30,7 @@ from apps.channels.providers.telegram import store_bot_token
 from apps.channels.tests.telegram_support import BOT_TOKEN, fake_bot_api
 from apps.common.encryption import hmac_digest
 from apps.common.platforms import Platform
+from apps.flows import services
 from apps.flows.engine import start_flow
 from apps.flows.models import LIVE_STATUSES, FlowExecution
 from apps.flows.services import create_flow, publish, save_draft
@@ -368,20 +369,48 @@ class TestConnectionsMadeByHand:
             kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk},
         )
 
+    def _hand_made(self, tenancy: Tenancy, display_name: str, *, token: str = BOT_TOKEN) -> ChannelConnection:
+        connection = ChannelConnection(
+            workspace=tenancy.workspace,
+            platform=Platform.TELEGRAM,
+            display_name=display_name,
+            external_id=f"hand-{len(display_name)}-{bool(token)}",
+        )
+        if token:
+            store_bot_token(connection, token)
+        connection.save()
+        return connection
+
     @pytest.mark.parametrize("display_name", ["My bot", "", "@ab", "@a" * 40, "@bot with spaces"])
     def test_a_display_name_that_is_not_a_username_is_an_empty_state(
         self, client_for: Any, tenancy: Tenancy, drafted_flow: Any, display_name: str
     ) -> None:
-        ChannelConnection.objects.create(
-            workspace=tenancy.workspace,
-            platform=Platform.TELEGRAM,
-            display_name=display_name,
-            external_id=f"hand-{len(display_name)}",
-        )
+        self._hand_made(tenancy, display_name)
         client = client_for(tenancy.user_for(WorkspaceRole.EDITOR))
         payload = client.post(self.url(tenancy, drafted_flow)).json()
         assert payload["ok"] is False
         assert payload["reason"] == "no_username"
+
+    def test_a_connection_with_no_token_is_not_offered(
+        self, client_for: Any, tenancy: Tenancy, drafted_flow: Any
+    ) -> None:
+        """It cannot send, so a link to it would open a chat with a bot that
+        never answers. Rows like this predate the generic form refusing
+        Telegram; they should not be picked."""
+        self._hand_made(tenancy, "@ghost_bot", token="")
+        client = client_for(tenancy.user_for(WorkspaceRole.EDITOR))
+        payload = client.post(self.url(tenancy, drafted_flow)).json()
+        assert payload["ok"] is False
+        assert payload["reason"] == "no_connection"
+
+    def test_a_working_bot_wins_over_an_older_tokenless_one(
+        self, client_for: Any, tenancy: Tenancy, telegram_connection: ChannelConnection, drafted_flow: Any
+    ) -> None:
+        self._hand_made(tenancy, "@ghost_bot", token="")
+        client = client_for(tenancy.user_for(WorkspaceRole.EDITOR))
+        payload = client.post(self.url(tenancy, drafted_flow)).json()
+        assert payload["ok"] is True
+        assert payload["bot"] == "@acme_bot"
 
 
 class TestAlongsideRouting:
@@ -550,3 +579,32 @@ class TestTheLinkIsBoundToItsBot:
         assert channels_ingest.process_events(
             telegram_connection, (referral(telegram_connection, preview.start_payload(handle)),)
         )
+
+
+class TestAPublishedFlowIsStillATest:
+    """Pressing Test must never move the numbers the tester is about to read.
+
+    ``latest_version`` returns the newest version, and for a flow published and
+    not edited since that *is* the published one. Deriving the preview flag from
+    ``not version.published`` would then file a deliberate test as a production
+    run, which is the quietest way to corrupt a report.
+    """
+
+    def test_a_flow_with_no_draft_still_runs_as_a_preview(
+        self, tenancy: Tenancy, telegram_connection: ChannelConnection
+    ) -> None:
+        flow = create_flow(workspace=tenancy.workspace, name="Just published")
+        save_draft(flow, one_message_graph("LIVE"))
+        publish(flow)
+        flow.refresh_from_db()
+        latest = services.latest_version(flow)
+        assert latest is not None and latest.published is True
+
+        _link, handle = preview.mint(flow=flow, connection=telegram_connection, user=tenancy.owner)
+        with fake_bot_api() as fake:
+            deliver(telegram_connection, preview.start_payload(handle))
+
+        execution = FlowExecution.objects.unscoped().get(flow=flow)
+        assert execution.preview is True
+        assert execution.started_by.startswith("preview:")
+        assert fake.payloads("sendMessage")[0]["text"] == "LIVE"

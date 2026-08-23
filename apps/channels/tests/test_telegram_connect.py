@@ -261,3 +261,60 @@ class TestRotatingTheSecret:
         assert secret is not None
         emitted = "\n".join(record.getMessage() for record in caplog.records)
         assert secret.group(1) not in emitted
+
+
+class TestTheGenericFormRefusesTelegram:
+    """A guided platform must not be reachable through the platform-agnostic form.
+
+    That form creates a row and nothing else — no token, no webhook — which for
+    Telegram is a connection that looks active in the list and whose every send
+    fails on a missing token. It could also be picked as the bot behind a "test
+    on Telegram" link.
+    """
+
+    def test_telegram_is_not_offered(self, client: Client, tenancy: Tenancy) -> None:
+        url = reverse("channels:create", kwargs={"workspace_id": tenancy.workspace.pk})
+        body = as_admin(client, tenancy).get(url).content.decode()
+        assert 'value="telegram"' not in body
+        # And the platforms that have no guided flow yet are still offered.
+        assert 'value="whatsapp"' in body
+
+    def test_a_hand_crafted_post_is_refused(self, client: Client, tenancy: Tenancy) -> None:
+        """The rendered choices are the visible half; a POST need not come from
+        the page we rendered."""
+        url = reverse("channels:create", kwargs={"workspace_id": tenancy.workspace.pk})
+        response = as_admin(client, tenancy).post(
+            url,
+            {"platform": Platform.TELEGRAM, "display_name": "Sneaky", "external_id": "bot-999"},
+        )
+
+        assert response.status_code == 200
+        assert "guided setup" in response.content.decode()
+        assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
+
+
+class TestRotationKeepsTheBacklog:
+    def test_pending_updates_are_not_dropped(self, client: Client, tenancy: Tenancy) -> None:
+        """Telegram queues updates for a bot it cannot reach. Rotating happens
+        exactly when the old secret has just stopped verifying, so dropping the
+        queue would discard real messages at the worst possible moment."""
+        connection = _connected_bot(tenancy, "777020")
+        url = reverse(
+            "channels:rotate_secret",
+            kwargs={"workspace_id": tenancy.workspace.pk, "connection_id": connection.pk},
+        )
+        with fake_bot_api() as fake:
+            as_admin(client, tenancy).post(url)
+
+        (payload,) = fake.payloads("setWebhook")
+        assert payload["drop_pending_updates"] is False
+
+    def test_first_connection_still_drops_the_pre_connection_backlog(self, client: Client, tenancy: Tenancy) -> None:
+        """Messages sent to a bot before this workspace connected it are not
+        this workspace's, and replaying them could fire triggers at people who
+        never opted in."""
+        with fake_bot_api(lambda fake: fake.reply("getMe", Reply(result=BOT))) as fake:
+            as_admin(client, tenancy).post(connect_url(tenancy), {"bot_token": BOT_TOKEN})
+
+        (payload,) = fake.payloads("setWebhook")
+        assert payload["drop_pending_updates"] is True

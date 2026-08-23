@@ -170,7 +170,8 @@ def _connect(request: WorkspaceRequest, token: str) -> str:
     # delete that itself fails leaves a row the operator can remove by hand,
     # which is recoverable; a wedged pool is not.
     try:
-        telegram.set_webhook(token, url=telegram.webhook_url(), secret_token=secret)
+        # drop_pending only here: this bot's backlog predates the workspace.
+        telegram.set_webhook(token, url=telegram.webhook_url(), secret_token=secret, drop_pending=True)
     except APIError:
         logger.info("Telegram connect: setWebhook failed for workspace %s.", request.workspace.pk)
         connection.delete()
@@ -197,11 +198,20 @@ def telegram_preview(request: WorkspaceRequest, workspace_id: str, flow_id: str)
     """
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
 
-    connection = (
-        ChannelConnection.objects.for_workspace(request.workspace)
-        .filter(platform=Platform.TELEGRAM.value, status=ConnectionStatus.ACTIVE)
-        .order_by("created_at")
-        .first()
+    # The first active bot that can actually send. A row created through the
+    # generic form before that path was closed has no token, and picking it
+    # would mint a link to a bot that answers nothing — the connection has to be
+    # filtered on the token, which is an encrypted column and therefore a
+    # Python-side check rather than a queryset filter.
+    connection = next(
+        (
+            candidate
+            for candidate in ChannelConnection.objects.for_workspace(request.workspace)
+            .filter(platform=Platform.TELEGRAM.value, status=ConnectionStatus.ACTIVE)
+            .order_by("created_at")
+            if telegram.bot_token(candidate)
+        ),
+        None,
     )
     if connection is None:
         return JsonResponse(

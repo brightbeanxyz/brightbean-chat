@@ -175,10 +175,14 @@ def _start_preview(connection: ChannelConnection, handle: str, chat_id: str) -> 
             contact,
             link.flow,
             started_by=StartedBy.stamp(StartedBy.PREVIEW, link.pk),
-            # The whole point: the *latest* version, published or not. The runner
-            # flags the execution `preview` from `not version.published`, so a
-            # draft run stays out of L7-A's counters without a second flag here.
+            # The whole point: the *latest* version, published or not.
             flow_version=version,
+            # Said explicitly rather than left to the runner's derivation. A
+            # flow that was published and not edited since has the published
+            # version as its latest, and deriving from `not version.published`
+            # would then record a deliberate test as a production run — moving
+            # the numbers the tester is about to go and read.
+            preview=True,
             connection=connection,
         )
     except Exception:

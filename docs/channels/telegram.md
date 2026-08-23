@@ -34,7 +34,13 @@ reconnect.
 secret) re-runs `setWebhook` for you, because Telegram holds the secret over its
 API rather than in a console you could paste into. The page after rotating says
 whether that worked; if it did not, the channel rejects every delivery until you
-rotate again.
+rotate again. Rotating keeps whatever Telegram has queued — only the *first*
+connection drops the pending backlog, because that backlog predates the
+workspace.
+
+Telegram is not offered in the generic "Add a channel" form. That form creates a
+connection row and nothing else, which here would be a bot with no token whose
+every send fails; the guided setup above is the only way in.
 
 Disconnecting calls `deleteWebhook`, so a removed bot stops delivering. If that
 call fails — Telegram down, network gone — the connection is still removed and
@@ -60,6 +66,14 @@ that does not exist — the two are indistinguishable on purpose.
 
 `allowed_updates` is set to `message` and `callback_query`. Everything else is
 refused at Telegram's end rather than delivered and discarded.
+
+**Private chats only.** A bot added to a group still receives `message` updates,
+and their `chat` is the group. The adapter ignores every chat whose `type` is
+not `private`, in both directions: a group's messages create no contact, a
+button pressed in a group produces no event, and a preview link pasted into one
+does nothing. Treating a group as a contact would give a whole room one shared
+contact record and deliver automation written for one person into it. Groups are
+out of scope for v1, and this is what that means concretely.
 
 | What the contact does | Event | Notes |
 |---|---|---|
@@ -166,10 +180,14 @@ chat with the bot.
 
 - The link looks like `t.me/<bot>?start=preview-<handle>` and expires in 15
   minutes. Press the button again for a new one.
+- It only works on the bot it was minted for. Presented to any other bot it does
+  nothing, and stays unclaimed for the tester it was meant for.
 - The first chat to open it claims it. Nobody else's chat can use it afterwards,
   so two people testing at once do not collide.
 - The resulting execution is flagged `preview`, and analytics exclude it — a
-  few test runs cannot move a flow's reported numbers.
+  few test runs cannot move a flow's reported numbers. That holds even when the
+  flow has no draft and the test therefore runs the published version: pressing
+  Test is a test whatever version it ran.
 - Starting a preview **supersedes** whatever else the contact was running, which
   is the same rule every flow start follows (SPEC §9.2).
 - An expired, tampered or already-claimed link does nothing at all: no preview,

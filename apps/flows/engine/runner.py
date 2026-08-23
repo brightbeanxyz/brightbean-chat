@@ -139,15 +139,22 @@ def start_flow(
     variables: dict[str, Any] | None = None,
     flow_version: FlowVersion | None = None,
     connection: Any = None,
+    preview: bool | None = None,
     _carry_blocks: int = 0,
 ) -> FlowExecution:
     """Begin ``flow`` for ``contact`` and run it until it pauses or ends.
 
     ``flow_version`` names an explicit version, which is how #12's "test on
-    Telegram" runs a **draft** without the runner needing a preview mode: the
-    resulting execution is flagged ``preview`` and L7-A's counters exclude it.
-    Omitted, the flow's published version is used and a flow with none raises
-    :class:`FlowNotRunnableError`.
+    Telegram" runs a draft. Omitted, the flow's published version is used and a
+    flow with none raises :class:`FlowNotRunnableError`.
+
+    ``preview`` marks the execution as a test run, which keeps it out of L7-A's
+    counters. Left as None it is **derived** from the version — an unpublished
+    version can only be a preview — and that derivation is right for every
+    caller except one. A "test on Telegram" run of a flow that was published and
+    not edited since has the published version as its latest, so deriving would
+    call a deliberate test a production run and let it move the flow's reported
+    numbers. The caller that knows it is testing says so.
 
     ``connection`` is the channel this run happens on. It is remembered on the
     execution because ROADMAP contract 1 requires one on every send and SPEC
@@ -190,7 +197,7 @@ def start_flow(
             variables=dict(variables or {}),
             blocks_since_pause=_carry_blocks,
             started_by=started_by,
-            preview=not version.published,
+            preview=(not version.published) if preview is None else preview,
         )
         execution.save()
         logger.info(

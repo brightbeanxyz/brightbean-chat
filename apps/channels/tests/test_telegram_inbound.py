@@ -246,7 +246,9 @@ class TestHostilePayloads:
             update["message"]["text"] = payload
             update["message"]["from"]["username"] = payload
             update["message"]["from"]["first_name"] = payload
-            update["message"]["chat"]["type"] = payload
+            # chat.type is not fuzzed here: it is the private-chat gate, and
+            # TestPrivateChatsOnly covers what a hostile value in it does.
+            update["message"]["from"]["language_code"] = payload
             events = parse(update, telegram_connection)
             assert len(events) == 1, payload
             # Carried, not interpreted, and never long enough to be a problem.
@@ -277,7 +279,13 @@ class TestHostilePayloads:
     ) -> None:
         update = {
             "update_id": 900501,
-            "message": {"chat": {"id": 5150}, "date": None, "text": "hi", "photo": {}, "from": None},
+            "message": {
+                "chat": {"id": 5150, "type": "private"},
+                "date": None,
+                "text": "hi",
+                "photo": {},
+                "from": None,
+            },
         }
         (event,) = parse(update, telegram_connection)
         assert event.payload.text == "hi"
@@ -314,14 +322,14 @@ class TestHostilePayloads:
         [
             {},
             {"update_id": 1},
-            {"update_id": None, "message": {"chat": {"id": 1}, "text": "hi"}},
-            {"update_id": True, "message": {"chat": {"id": 1}, "text": "hi"}},
+            {"update_id": None, "message": {"chat": {"id": 1, "type": "private"}, "text": "hi"}},
+            {"update_id": True, "message": {"chat": {"id": 1, "type": "private"}, "text": "hi"}},
             {"update_id": 1, "message": None},
             {"update_id": 1, "message": []},
             {"update_id": 1, "callback_query": "nope"},
             {"update_id": 1, "message": {"chat": None}},
-            {"update_id": 1, "message": {"chat": {"id": True}}},
-            {"update_id": 1, "message": {"chat": {"id": 1}}},
+            {"update_id": 1, "message": {"chat": {"id": True, "type": "private"}}},
+            {"update_id": 1, "message": {"chat": {"id": 1, "type": "private"}}},
             [1, 2, 3],
             "a string",
             None,
@@ -350,7 +358,10 @@ class TestHostilePayloads:
         nested: Any = {"file_id": "deep"}
         for _ in range(10):
             nested = {"inner": nested}
-        update = {"update_id": 900503, "message": {"chat": {"id": 5150}, "text": "hi", "document": nested}}
+        update = {
+            "update_id": 900503,
+            "message": {"chat": {"id": 5150, "type": "private"}, "text": "hi", "document": nested},
+        }
         (event,) = parse(update, telegram_connection)
         assert event.payload.media_ids == ()
         assert event.payload.text == "hi"
@@ -377,3 +388,53 @@ class TestWebhookVerification:
 
     def test_an_unknown_secret_resolves_to_nothing(self, telegram_connection: ChannelConnection) -> None:
         assert TelegramAdapter().resolve_connection(request_for({}, secret="nope"), b"{}") is None
+
+
+class TestPrivateChatsOnly:
+    """Groups are out of scope, and half-supporting them is the dangerous option.
+
+    A bot added to a group keeps receiving ``message`` updates whose ``chat`` is
+    the group. Taking that as the ``platform_user_id`` would make one contact
+    and one conversation shared by everyone in the room: automation written for
+    one person delivered to a crowd, and a crowd's messages filed against one
+    stranger's record.
+    """
+
+    @pytest.mark.parametrize("chat_type", ["group", "supergroup", "channel", "sender", ""])
+    def test_a_non_private_chat_produces_nothing(self, telegram_connection: ChannelConnection, chat_type: str) -> None:
+        update = load_update("message_text")
+        update["message"]["chat"]["type"] = chat_type
+        assert parse(update, telegram_connection) == []
+
+    def test_a_chat_with_no_type_is_refused(self, telegram_connection: ChannelConnection) -> None:
+        """Fails closed. ``chat.type`` is required by Telegram's own schema, so a
+        payload without one did not come from Telegram — and guessing on its
+        behalf is the wrong instinct for a privacy gate."""
+        update = load_update("message_text")
+        del update["message"]["chat"]["type"]
+        assert parse(update, telegram_connection) == []
+
+    def test_a_group_start_does_not_become_a_referral(self, telegram_connection: ChannelConnection) -> None:
+        """The deep-link path has to be gated too, or a preview link pasted into
+        a group would bind the group as the tester."""
+        update = load_update("message_start_ref")
+        update["message"]["chat"]["type"] = "supergroup"
+        assert parse(update, telegram_connection) == []
+
+    def test_a_group_button_press_produces_nothing(self, telegram_connection: ChannelConnection) -> None:
+        update = load_update("callback_query")
+        update["callback_query"]["message"]["chat"]["type"] = "group"
+        with fake_bot_api() as fake:
+            assert parse(update, telegram_connection) == []
+        # And no spinner answer either: nothing about the press was accepted.
+        assert fake.calls == []
+        assert not ScheduledAction.objects.unscoped().filter(type=ANSWER_CALLBACK_ACTION).exists()
+
+    def test_a_press_with_no_source_message_produces_nothing(self, telegram_connection: ChannelConnection) -> None:
+        """There is no fallback to ``callback_query.from``: a User carries no
+        ``type``, so it cannot be checked against the private-chat rule and a
+        group press would come back through it looking private."""
+        update = load_update("callback_query")
+        del update["callback_query"]["message"]
+        with fake_bot_api():
+            assert parse(update, telegram_connection) == []
