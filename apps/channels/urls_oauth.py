@@ -17,13 +17,14 @@ is nothing for the sweep to substitute another tenant's id into. The boundary is
 covered directly instead, by the cross-tenant class in
 ``apps/channels/tests/test_instagram_connect.py``.
 
-L5-B's Messenger callback belongs here too, as one more line.
+Messenger's callback (#18) is the second line: same shape, same reasons.
 """
 
 from django.urls import path
 
-from apps.channels import views_instagram
+from apps.channels import views_instagram, views_messenger
 
 urlpatterns = [
     path("instagram/callback/", views_instagram.instagram_callback, name="instagram_callback"),
+    path("messenger/callback/", views_messenger.messenger_oauth_callback, name="messenger_oauth_callback"),
 ]

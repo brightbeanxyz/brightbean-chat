@@ -54,11 +54,10 @@ PLATFORM_LABELS = dict(Platform.choices)
 #: placeholder panels so an operator looking at an empty page knows whether they
 #: have misconfigured something or are simply early.
 CONNECT_FLOW_ISSUES: dict[str, str] = {
-    # Telegram, Instagram, WhatsApp and SMS are absent: #12, #17, #19 and
-    # #20 shipped their guided flows, and the list template links to those
-    # instead of naming an issue. A platform leaves this table on the day
-    # its connect view lands.
-    Platform.MESSENGER: "#18 (L5-B)",
+    # Only email is left: #12, #17, #18, #19 and #20 all shipped guided flows,
+    # and the list template links to those instead of naming an issue. A
+    # platform leaves this table on the day its connect view lands, which
+    # ``test_views.py`` asserts rather than trusting.
     Platform.EMAIL: "#21 (L5-E)",
 }
 
@@ -77,6 +76,7 @@ CONNECT_HINTS: dict[str, str] = {
     Platform.TELEGRAM: "paste a BotFather token and we do the rest.",
     Platform.INSTAGRAM: "sign in with the Instagram account and grant the messaging permissions.",
     Platform.WHATSAPP: "paste your Cloud API ids and system user token; we verify them with Meta first.",
+    Platform.MESSENGER: "sign in with Facebook and pick the page to connect.",
     Platform.SMS: "paste your Twilio account SID, auth token and number.",
 }
 

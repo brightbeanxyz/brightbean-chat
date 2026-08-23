@@ -1,0 +1,27 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "111111111111111",
+      "time": 1712345678000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "222222222222222"
+          },
+          "recipient": {
+            "id": "111111111111111"
+          },
+          "timestamp": 1712345686000,
+          "delivery": {
+            "mids": [
+              "mid.out-1",
+              "mid.out-2"
+            ],
+            "watermark": 1712345686000
+          }
+        }
+      ]
+    }
+  ]
+}

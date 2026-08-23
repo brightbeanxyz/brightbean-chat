@@ -109,10 +109,10 @@ urlpatterns = [
     # specific includes.
     path("w/<uuid:workspace_id>/", include("apps.flows.urls")),
     *[_ws_stub(*stub) for stub in _WORKSPACE_STUBS],
-    # Platform OAuth callbacks (SPEC §6.3). Session-authenticated but *not*
-    # workspace-scoped: Meta matches one exact redirect URI per app, so the
-    # workspace travels in a signed ``state`` instead. See
-    # apps/channels/urls_oauth.py.
+    # Platform OAuth callbacks (SPEC §§6.3, 6.4). Session-authenticated but *not*
+    # workspace-scoped: Meta matches one exact redirect URI per app, so a
+    # per-workspace path would need one whitelist entry per tenant. The workspace
+    # travels in a signed ``state`` instead. See apps/channels/urls_oauth.py.
     path("channels/", include("apps.channels.urls_oauth")),
     # Inbound webhooks (SPEC §7.1). Unauthenticated and deliberately NOT under
     # /w/<workspace_id>/: a platform posting an event has no session, and
