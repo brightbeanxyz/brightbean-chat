@@ -1,0 +1,154 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Connect email · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Connect an email sender</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Email is outbound only. BrightBean Chat sends through your own provider —
+    your SMTP server, Resend, or Amazon SES — so the sending reputation, the
+    domain and the bill stay yours.
+  </p>
+
+  <h2>Before you start</h2>
+  <p class="muted">
+    Set up SPF, DKIM and DMARC on the domain you are going to send from. All
+    three, not one: without them a meaningful share of what you send goes to
+    spam, and Gmail and Yahoo reject bulk mail from domains that lack them
+    outright. Your provider publishes the exact records. The full checklist is
+    in <code>docs/channels/email.md</code>.
+  </p>
+
+  {% if error %}
+    <div class="alert-error"><p>{{ error }}</p></div>
+  {% endif %}
+
+  {% comment %}
+  A GET form with a real submit button rather than an onchange handler: the CSP
+  on every page is nonce-based (SECURITY-BASELINE §8), which blocks inline event
+  attributes, and this way the page also works with no JavaScript at all.
+  {% endcomment %}
+  <form method="get">
+    <p>
+      <label for="provider-select">Provider</label><br />
+      <select id="provider-select" name="provider">
+        {% for value in providers %}
+          <option value="{{ value }}" {% if value == provider %}selected{% endif %}>
+            {% if value == "smtp" %}Your own SMTP server{% elif value == "resend" %}Resend{% else %}Amazon SES{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <button type="submit">Show these fields</button>
+    </p>
+  </form>
+
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="provider" value="{{ provider }}" />
+
+    <p>
+      <label for="from_address">From address</label><br />
+      <input type="email" id="from_address" name="from_address" value="{{ form.from_address }}" required />
+      <span class="muted">Its domain becomes this channel's identity, and only one workspace can claim a domain.</span>
+    </p>
+    <p>
+      <label for="from_name">From name</label><br />
+      <input type="text" id="from_name" name="from_name" value="{{ form.from_name }}" maxlength="200" />
+    </p>
+    <p>
+      <label for="display_name">Channel name</label><br />
+      <input type="text" id="display_name" name="display_name" value="{{ form.display_name }}" maxlength="200" />
+      <span class="muted">What this channel is called in BrightBean Chat. Defaults to the domain.</span>
+    </p>
+
+    {% comment %}
+    Every credential input below is type="password" with autocomplete="off", for
+    the reason the Telegram page gives: these are live credentials and must not
+    end up in the browser's saved form data. None of them is ever echoed back on
+    a failed submit either — the view's `_echoed` names only non-secret fields.
+    {% endcomment %}
+
+    {% if provider == "smtp" %}
+      <h2>Your SMTP server</h2>
+      <p>
+        <label for="host">Host</label><br />
+        <input type="text" id="host" name="host" value="{{ form.host }}" required spellcheck="false" />
+      </p>
+      <p>
+        <label for="port">Port</label><br />
+        <input type="text" id="port" name="port" value="{{ form.port|default:'587' }}" inputmode="numeric" />
+      </p>
+      <p>
+        <label for="security">Encryption</label><br />
+        <select id="security" name="security">
+          <option value="starttls" {% if form.security == "starttls" or not form.security %}selected{% endif %}>STARTTLS (port 587)</option>
+          <option value="ssl" {% if form.security == "ssl" %}selected{% endif %}>SSL/TLS (port 465)</option>
+          <option value="none" {% if form.security == "none" %}selected{% endif %}>None</option>
+        </select>
+        <span class="muted">Choose "none" only for a relay on your own private network.</span>
+      </p>
+      <p>
+        <label for="username">Username</label><br />
+        <input type="text" id="username" name="username" value="{{ form.username }}" autocomplete="off" spellcheck="false" />
+      </p>
+      <p>
+        <label for="password">Password</label><br />
+        <input type="password" id="password" name="password" autocomplete="off" spellcheck="false" />
+        <span class="muted">Stored encrypted and never shown again.</span>
+      </p>
+
+    {% elif provider == "resend" %}
+      <h2>Resend</h2>
+      <p>
+        <label for="api_key">API key</label><br />
+        <input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" required />
+        <span class="muted">From the Resend dashboard. Stored encrypted and never shown again.</span>
+      </p>
+      <p>
+        <label for="signing_secret">Webhook signing secret</label><br />
+        <input type="password" id="signing_secret" name="signing_secret" autocomplete="off" spellcheck="false" />
+        <span class="muted">
+          Optional now, required for bounce handling. Create a webhook endpoint in Resend pointing at
+          the URL this page shows after you connect, then paste the secret it gives you.
+        </span>
+      </p>
+
+    {% else %}
+      <h2>Amazon SES</h2>
+      <p>
+        <label for="access_key_id">Access key ID</label><br />
+        <input type="text" id="access_key_id" name="access_key_id" autocomplete="off" spellcheck="false" required />
+      </p>
+      <p>
+        <label for="secret_access_key">Secret access key</label><br />
+        <input type="password" id="secret_access_key" name="secret_access_key" autocomplete="off" spellcheck="false" required />
+        <span class="muted">Stored encrypted and never shown again.</span>
+      </p>
+      <p>
+        <label for="region">Region</label><br />
+        <input type="text" id="region" name="region" value="{{ form.region }}" placeholder="eu-west-1" spellcheck="false" required />
+      </p>
+      <p class="muted">
+        The key needs <code>ses:SendEmail</code>, and <code>sns:ConfirmSubscription</code> if you want
+        bounce handling. See <code>docs/channels/email.md</code>.
+      </p>
+    {% endif %}
+
+    <button type="submit">Connect</button>
+  </form>
+
+  <h2>What happens next</h2>
+  <p class="muted">
+    We check the credentials with your provider before saving anything. Once the
+    channel exists, its page shows the webhook URL to paste into Resend or to
+    subscribe an SNS topic to, and a button that sends a test email to your own
+    address.
+  </p>
+  <p class="muted">
+    Every email BrightBean Chat sends carries a <code>List-Unsubscribe</code>
+    header and an unsubscribe link in the footer. That is not configurable:
+    it is what keeps the channel compliant, and it is what the unsubscribe and
+    suppression handling is built on.
+  </p>
+
+  <p><a href="{{ list_url }}">Back to channels</a></p>
+{% endblock %}

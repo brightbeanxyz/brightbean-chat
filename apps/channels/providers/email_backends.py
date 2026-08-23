@@ -1,0 +1,486 @@
+"""The three ways an email leaves this deployment, behind one seam.
+
+SPEC §6.7 is "BYO SMTP / Resend / SES", which is the one place in the product
+where a single platform has three unrelated transports. The seam is drawn the
+way ``apps/media_library/storage.py`` draws its boto3 seam, and for the same
+reason: **module-level functions, with the third-party import deferred inside
+the one function that needs it.**
+
+So an SMTP-only deployment never loads boto3, a deployment with no SES
+connection never pays for botocore's import, and the test suite exercises all
+three with monkeypatches rather than a bucket, an API key or a mail server.
+
+--------------------------------------------------------------------------
+What each backend is handed
+--------------------------------------------------------------------------
+
+An :class:`Envelope` — already rendered, already sanitized, already carrying its
+headers. Composition is the adapter's job (``providers/email.py``); this module
+only knows how to put a finished message on a wire. That split is what keeps
+"every email carries List-Unsubscribe" a property of one function rather than a
+thing three transports each have to remember.
+
+All three send the **same MIME document** where they can. SES takes raw MIME
+outright; SMTP is Django's ``EmailMultiAlternatives``, which builds the same
+thing; Resend takes a JSON body with an explicit ``headers`` map. The one thing
+that must survive every path is the ``List-Unsubscribe`` pair, because a provider
+that silently dropped it would make every send non-compliant with nothing
+visible to say so — ``test_email_backends.py`` asserts it on all three.
+
+--------------------------------------------------------------------------
+Errors
+--------------------------------------------------------------------------
+
+Everything raises ``APIError`` / ``RateLimitError`` from
+``providers/exceptions.py``, so ``apps.messaging.services._dispatch`` maps them
+with the policy it already has: 4xx permanent, 5xx and timeouts retryable, 429
+deferred with the provider's own ``retry_after``. Nothing here invents a retry,
+a sleep or a status.
+
+Messages never carry the provider's prose (SECURITY-BASELINE §5): an SMTP
+rejection quotes the envelope, and an API error quotes the request that caused
+it — including, on a bad-credential path, the credential.
+"""
+
+import logging
+import smtplib
+import ssl
+from dataclasses import dataclass, field
+from email.message import EmailMessage
+from email.utils import formataddr, make_msgid
+from typing import Any
+
+from apps.channels.providers.base import BACKGROUND_TIMEOUT, request_json
+from apps.channels.providers.exceptions import APIError, RateLimitError
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "DEFAULT_PROVIDER",
+    "Envelope",
+    "PROVIDERS",
+    "RESEND_API_ROOT",
+    "credentials_of",
+    "deliver",
+    "new_message_id",
+    "provider_for",
+    "verify_credentials",
+]
+
+#: The provider values ``credentials["provider"]`` may hold. Mirrored by
+#: ``apps.channels.views._email_provider``, which builds the webhook URL from
+#: the same value, and by the ``<provider>`` segment of the webhook route.
+PROVIDERS: tuple[str, ...] = ("smtp", "resend", "ses")
+
+#: What a connection with no stored provider is. Matches
+#: ``apps.channels.views.DEFAULT_EMAIL_PROVIDER``, which predates this module.
+DEFAULT_PROVIDER = "smtp"
+
+RESEND_API_ROOT = "https://api.resend.com"
+
+#: SMTP is a conversation, not a request, and 2 seconds is not enough for one
+#: over a TLS handshake to a third-party relay. The adapter runs in a worker.
+SMTP_TIMEOUT = 30.0
+
+#: Resend's API is a fixed host built from a constant here, so this is
+#: ``request_json`` territory rather than the SSRF guard's (SECURITY-BASELINE
+#: §6: "the sibling for URLs an adapter builds from constants and stored ids").
+RESEND_TIMEOUT = BACKGROUND_TIMEOUT
+
+
+@dataclass(frozen=True)
+class Envelope:
+    """One finished email, transport-agnostic.
+
+    Every field is already rendered and already bounded by the adapter. A
+    backend's only remaining job is to encode it.
+    """
+
+    to: str
+    subject: str
+    html: str
+    text: str
+    from_address: str
+    from_name: str = ""
+    #: ``List-Unsubscribe``, ``List-Unsubscribe-Post`` and anything else the
+    #: adapter decided belongs on the wire. Header injection is impossible by
+    #: construction — the adapter builds these, never a contact — but the values
+    #: are still scrubbed of newlines by :func:`_header_safe` on the way out.
+    headers: dict[str, str] = field(default_factory=dict)
+    #: Our own ``Message-ID``. Minted before the send so it can be correlated
+    #: with a bounce even on SMTP, which returns no id of its own.
+    message_id: str = ""
+
+    def sender(self) -> str:
+        """The ``From`` header value, with a display name when there is one."""
+        return formataddr((self.from_name, self.from_address)) if self.from_name else self.from_address
+
+
+def credentials_of(connection: Any) -> dict[str, Any]:
+    """The connection's decrypted credentials, or ``{}``.
+
+    Decryption failure is reported and swallowed rather than raised, exactly as
+    ``telegram.bot_token`` does: a connection whose ciphertext no longer opens
+    is a connection that cannot send, and the caller's "no credentials" path is
+    already the right one.
+    """
+    try:
+        credentials: Any = connection.credentials or {}
+    except ValueError:
+        logger.error("Connection %s: credentials could not be decrypted.", connection.pk)
+        return {}
+    return credentials if isinstance(credentials, dict) else {}
+
+
+def provider_for(connection: Any) -> str:
+    """Which of :data:`PROVIDERS` this connection sends through.
+
+    Falls back to :data:`DEFAULT_PROVIDER` for anything unrecognised, which is
+    what makes the value safe to interpolate into the webhook URL — it can only
+    ever be one of three literals from this module.
+    """
+    value = credentials_of(connection).get("provider")
+    provider = str(value).strip().lower() if isinstance(value, str) else ""
+    return provider if provider in PROVIDERS else DEFAULT_PROVIDER
+
+
+def new_message_id(domain: str = "") -> str:
+    """A fresh RFC 5322 ``Message-ID``, in the sending domain where we have one."""
+    cleaned = _header_safe(domain).strip().lstrip("@")
+    return make_msgid(domain=cleaned) if cleaned else make_msgid()
+
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+
+def deliver(connection: Any, envelope: Envelope) -> str:
+    """Send ``envelope``. Returns the provider's message id, or ours.
+
+    Raises ``APIError``/``RateLimitError``; never returns a failure. The message
+    row's status is the send pipeline's to write, not this module's.
+    """
+    provider = provider_for(connection)
+    if provider == "resend":
+        return _deliver_resend(connection, envelope)
+    if provider == "ses":
+        return _deliver_ses(connection, envelope)
+    return _deliver_smtp(connection, envelope)
+
+
+def verify_credentials(connection: Any) -> None:
+    """Prove the stored credentials work. Raises ``APIError`` when they do not.
+
+    Called by the guided connect **before the connection row is written**, the
+    same ordering ``views_telegram._connect`` uses so a bad credential leaves no
+    trace, and again by the "send test email" action.
+
+    Deliberately the cheapest call each provider offers rather than a send: an
+    operator pasting the wrong key should not have to receive an email to find
+    out, and SES in sandbox mode would refuse the send for an unrelated reason.
+    """
+    provider = provider_for(connection)
+    if provider == "resend":
+        _verify_resend(connection)
+        return
+    if provider == "ses":
+        _verify_ses(connection)
+        return
+    _verify_smtp(connection)
+
+
+# ---------------------------------------------------------------------------
+# SMTP
+# ---------------------------------------------------------------------------
+
+
+def _smtp_settings(connection: Any) -> dict[str, Any]:
+    credentials = credentials_of(connection)
+    port = credentials.get("port")
+    try:
+        port_number = int(port) if port is not None else 587
+    except (TypeError, ValueError):
+        port_number = 587
+    security = str(credentials.get("security") or "starttls").lower()
+    return {
+        "host": str(credentials.get("host") or ""),
+        "port": port_number,
+        "username": str(credentials.get("username") or ""),
+        "password": str(credentials.get("password") or ""),
+        # Two mutually exclusive modes, because Django's backend treats both as
+        # booleans and a connection with both set raises at use time rather than
+        # at configure time.
+        "use_tls": security == "starttls",
+        "use_ssl": security == "ssl",
+    }
+
+
+def smtp_connection(connection: Any) -> Any:
+    """Django's SMTP backend, configured for this connection.
+
+    **The documented test seam.** ``telegram._client`` is the equivalent for an
+    HTTP adapter; this is the one for a mail one, and the tests monkeypatch it
+    to point at a local dummy server or at ``locmem``. Nothing else in this
+    module builds an SMTP connection.
+    """
+    from django.core.mail import get_connection
+
+    settings = _smtp_settings(connection)
+    if not settings["host"]:
+        raise APIError("This email connection has no SMTP host stored.")
+    return get_connection(
+        backend="django.core.mail.backends.smtp.EmailBackend",
+        fail_silently=False,
+        timeout=SMTP_TIMEOUT,
+        **settings,
+    )
+
+
+def _mime(envelope: Envelope) -> EmailMessage:
+    """The multipart/alternative document, text part first (RFC 2046 §5.1.4).
+
+    Order matters and is not cosmetic: a client picks the *last* part it can
+    render, so text before HTML is what makes the HTML the one that shows.
+    """
+    message = EmailMessage()
+    message["Subject"] = _header_safe(envelope.subject)
+    message["From"] = _header_safe(envelope.sender())
+    message["To"] = _header_safe(envelope.to)
+    if envelope.message_id:
+        message["Message-ID"] = _header_safe(envelope.message_id)
+    for name, value in envelope.headers.items():
+        message[_header_safe(name)] = _header_safe(value)
+    message.set_content(envelope.text or " ")
+    if envelope.html:
+        message.add_alternative(envelope.html, subtype="html")
+    return message
+
+
+def _header_safe(value: Any) -> str:
+    """A header value with everything that could start a new header removed.
+
+    Belt and braces: the adapter composes every one of these from its own
+    constants and from values the renderer already bounded, so nothing
+    contact-supplied reaches a header. It costs one pass and removes the whole
+    class, which is worth it on the one code path that writes SMTP headers.
+    """
+    return "".join(char for char in str(value) if char not in "\r\n\x00")
+
+
+def _deliver_smtp(connection: Any, envelope: Envelope) -> str:
+    """Hand the message to the configured relay. Returns our own Message-ID.
+
+    SMTP has no id to give back — acceptance by the relay is the whole receipt,
+    which is why SPEC §6.7 says the row goes to ``sent`` on SMTP accept. Our
+    ``Message-ID`` is returned so the row still carries something an operator can
+    grep a mail log for.
+    """
+    from django.core.mail import EmailMultiAlternatives
+
+    message = EmailMultiAlternatives(
+        subject=_header_safe(envelope.subject),
+        body=envelope.text or " ",
+        from_email=_header_safe(envelope.sender()),
+        to=[_header_safe(envelope.to)],
+        connection=smtp_connection(connection),
+        headers={_header_safe(name): _header_safe(value) for name, value in _smtp_headers(envelope).items()},
+    )
+    if envelope.html:
+        message.attach_alternative(envelope.html, "text/html")
+    try:
+        sent = message.send()
+    except (smtplib.SMTPException, ssl.SSLError, OSError) as exc:
+        code = _smtp_code(exc)
+        if code is None:
+            # A relay that could not be reached at all, or an error carrying no
+            # reply code. Retryable: the pipeline treats a missing status as
+            # transient.
+            raise APIError(f"The mail server could not be reached: {type(exc).__name__}") from exc
+        # SMTP's own permanent/transient split, which lines up exactly with the
+        # HTTP one `apps.messaging.services._record_api_error` already applies:
+        # 5xx is "do not try this again", 4xx is "try later". Mapped onto HTTP
+        # status codes so the pipeline needs no SMTP knowledge at all — and note
+        # the inversion, because SMTP numbers them the opposite way from HTTP.
+        status = 400 if 500 <= code < 600 else 503
+        raise APIError("The mail server refused the message.", status_code=status, code=str(code)) from exc
+    if not sent:
+        raise APIError("The mail server accepted no recipients.", status_code=400, code="no_recipients")
+    return envelope.message_id
+
+
+def _smtp_code(exc: Exception) -> int | None:
+    """The SMTP reply code behind an exception, or ``None`` if it carries none.
+
+    ``SMTPRecipientsRefused`` needs its own branch and it is the case that
+    matters most: a rejected mailbox is the commonest permanent failure there
+    is, and that class is **not** an ``SMTPResponseException`` — it carries a
+    ``recipients`` dict of ``address -> (code, message)`` instead of an
+    ``smtp_code``. Reading only ``smtp_code`` therefore classified every "no
+    such mailbox" as a transient failure, and the send pipeline spent the full
+    five-attempt backoff ladder rediscovering that the address is still wrong.
+    """
+    refused = getattr(exc, "recipients", None)
+    if isinstance(refused, dict) and refused:
+        first = next(iter(refused.values()))
+        if isinstance(first, tuple) and first and isinstance(first[0], int):
+            return first[0]
+    code = getattr(exc, "smtp_code", None)
+    return code if isinstance(code, int) and code > 0 else None
+
+
+def _smtp_headers(envelope: Envelope) -> dict[str, str]:
+    """``envelope.headers`` plus the Message-ID, which Django sets separately."""
+    headers = dict(envelope.headers)
+    if envelope.message_id:
+        headers["Message-ID"] = envelope.message_id
+    return headers
+
+
+def _verify_smtp(connection: Any) -> None:
+    """Open the connection and close it. An auth failure surfaces here."""
+    backend = smtp_connection(connection)
+    try:
+        backend.open()
+    except (smtplib.SMTPException, ssl.SSLError, OSError) as exc:
+        raise APIError(f"Could not sign in to the mail server: {type(exc).__name__}") from exc
+    finally:
+        try:
+            backend.close()
+        except Exception:  # noqa: BLE001 - closing a failed connection is best effort
+            logger.debug("Closing the SMTP probe connection raised; ignoring.")
+
+
+# ---------------------------------------------------------------------------
+# Resend
+# ---------------------------------------------------------------------------
+
+
+def _resend_key(connection: Any) -> str:
+    key = credentials_of(connection).get("api_key")
+    if not isinstance(key, str) or not key:
+        raise APIError("This email connection has no Resend API key stored.")
+    return key
+
+
+def _deliver_resend(connection: Any, envelope: Envelope) -> str:
+    body: dict[str, Any] = {
+        "from": envelope.sender(),
+        "to": [envelope.to],
+        "subject": envelope.subject,
+        "headers": {name: value for name, value in _smtp_headers(envelope).items()},
+    }
+    if envelope.html:
+        body["html"] = envelope.html
+    if envelope.text:
+        body["text"] = envelope.text
+    result = request_json(
+        "POST",
+        f"{RESEND_API_ROOT}/emails",
+        json=body,
+        headers=_resend_headers(connection),
+        timeout=RESEND_TIMEOUT,
+    )
+    provider_id = result.get("id")
+    return provider_id if isinstance(provider_id, str) else envelope.message_id
+
+
+def _resend_headers(connection: Any) -> dict[str, str]:
+    return {"Authorization": f"Bearer {_resend_key(connection)}", "Content-Type": "application/json"}
+
+
+def _verify_resend(connection: Any) -> None:
+    """List the account's domains — the cheapest authenticated Resend call."""
+    request_json(
+        "GET",
+        f"{RESEND_API_ROOT}/domains",
+        headers=_resend_headers(connection),
+        timeout=RESEND_TIMEOUT,
+    )
+
+
+# ---------------------------------------------------------------------------
+# SES
+# ---------------------------------------------------------------------------
+
+
+def ses_client(connection: Any, service: str = "sesv2") -> Any:
+    """A boto3 client for this connection's SES account.
+
+    **The boto3 seam.** This function and nothing else in the app constructs
+    one, and the import is deferred inside it so a deployment with no SES
+    connection never loads botocore — the same arrangement, for the same reason,
+    as ``apps.media_library.storage._client_and_bucket``.
+
+    ``service`` is ``"sesv2"`` for sending and ``"sns"`` for confirming a bounce
+    topic's subscription; both authenticate with the same stored key pair.
+    """
+    import boto3
+
+    credentials = credentials_of(connection)
+    key_id = str(credentials.get("access_key_id") or "")
+    secret = str(credentials.get("secret_access_key") or "")
+    region = str(credentials.get("region") or "")
+    if not key_id or not secret or not region:
+        raise APIError("This email connection has no complete set of SES credentials stored.")
+    return boto3.client(
+        service,
+        region_name=region,
+        aws_access_key_id=key_id,
+        aws_secret_access_key=secret,
+    )
+
+
+def _deliver_ses(connection: Any, envelope: Envelope) -> str:
+    """Send the raw MIME document, so our own headers reach the recipient.
+
+    ``Raw`` rather than ``Simple``: the simple form takes a subject and two
+    bodies and builds the MIME itself, which means it decides the headers — and
+    ``List-Unsubscribe`` is not one it would keep. SPEC §6.7 makes that header
+    mandatory on every email, so the document has to be ours.
+    """
+    raw = _mime(envelope).as_bytes()
+    try:
+        # Inside the try as well: building the client resolves credentials and
+        # can itself fail on a DNS or configuration problem, and that is an SES
+        # failure like any other rather than an unhandled exception on the send
+        # path.
+        client = ses_client(connection)
+        result = client.send_email(Content={"Raw": {"Data": raw}})
+    except APIError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - botocore's exceptions are built at runtime
+        raise _ses_error(exc) from exc
+    provider_id = result.get("MessageId") if isinstance(result, dict) else None
+    return provider_id if isinstance(provider_id, str) else envelope.message_id
+
+
+def _verify_ses(connection: Any) -> None:
+    """Read the account's sending status — cheap, and refuses a bad key pair."""
+    try:
+        client = ses_client(connection)
+        client.get_account()
+    except APIError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - as above
+        raise _ses_error(exc) from exc
+
+
+def _ses_error(exc: Exception) -> APIError:
+    """Map a botocore exception onto this project's error vocabulary.
+
+    Read off the response dict rather than by exception class, because botocore
+    builds its error classes at runtime and importing them here would undo the
+    deferred-import seam this module exists to keep.
+    """
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return APIError(f"SES could not be reached: {type(exc).__name__}")
+    metadata = response.get("ResponseMetadata")
+    status = metadata.get("HTTPStatusCode") if isinstance(metadata, dict) else None
+    code = str((response.get("Error") or {}).get("Code") or "")[:64]
+    if status == 429 or code in {"Throttling", "TooManyRequestsException"}:
+        return RateLimitError("SES is throttling this account.", code=code)
+    if isinstance(status, int):
+        return APIError("SES refused the message.", status_code=status, code=code)
+    return APIError("SES refused the message.", code=code)

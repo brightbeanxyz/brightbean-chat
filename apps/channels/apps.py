@@ -26,3 +26,7 @@ class ChannelsConfig(AppConfig):
         # runs late (apps.channels.ingest.LATE_ORDER) rather than relying on
         # this app's position in INSTALLED_APPS, which is before messaging.
         register_preview()
+        # The send_email runtime (#21). Contract 5's node registry is additive
+        # and `apps/flows/engine/nodes/__init__.py` says L5-D/E register from
+        # their own apps — so this import, not an entry in that package.
+        from apps.channels import nodes  # noqa: F401  (registration side effect)

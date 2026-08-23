@@ -75,6 +75,10 @@ urlpatterns = [
     # platform with no session; the signed token is the whole credential. Joins
     # the /u/, /c/ and /o/ family documented in apps/common/signing.py.
     path("", include("apps.media_library.urls_public")),
+    # The hosted unsubscribe page (#21). Same family, same reasoning: the
+    # recipient of an email has no account here, and SPEC §6.7 puts this link in
+    # every message the product sends.
+    path("", include("apps.channels.urls_public")),
     # Per-user, so no workspace prefix: the bell shows every workspace at once
     # (issue #7).
     path("notifications/", include("apps.notifications.urls")),

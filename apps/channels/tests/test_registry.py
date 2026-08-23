@@ -174,7 +174,11 @@ class TestRegistry:
     def test_register_and_resolve(self) -> None:
         with registered(Platform.TELEGRAM) as adapter_cls:
             assert has_adapter(Platform.TELEGRAM)
-            assert registered_platforms() == (Platform.TELEGRAM,)
+            # Membership, not equality. Every Layer-5 adapter that ships adds
+            # itself to this tuple in every process, so an exact match would
+            # make this test a list of which adapters exist — and fail for the
+            # next one rather than for anything to do with registration.
+            assert Platform.TELEGRAM in registered_platforms()
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
         # Restored, not cleared. Telegram has a real adapter since issue #12 and

@@ -55,6 +55,27 @@
     <li>Broadcasts: {% if policy.broadcast_allowed %}allowed{% else %}not allowed on this platform{% endif %}</li>
   </ul>
 
+  {% if connection.platform == "email" %}
+    {% comment %}
+    Issue #21. The test posts to a JSON endpoint that answers 200 even when the
+    send fails — the request succeeded; what it reports is the state of somebody
+    else's mail configuration. Rendered as a plain form so it works without
+    JavaScript; the response is a small JSON document the browser shows.
+    {% endcomment %}
+    <h2>Send a test email</h2>
+    <p class="muted">
+      Sends one real email to your own account address, through this connection,
+      carrying the same <code>List-Unsubscribe</code> headers and footer every
+      other send does — so a provider that strips them shows up here rather than
+      after a campaign.
+    </p>
+    <form method="post"
+          action="{% url 'channels:send_test_email' workspace_id=request.workspace.id connection_id=connection.id %}">
+      {% csrf_token %}
+      <button type="submit">Send a test email</button>
+    </form>
+  {% endif %}
+
   <h2>Webhook secret</h2>
   <p class="muted">
     Stored encrypted and never displayed again. Rotating issues a new secret

@@ -22,7 +22,7 @@ from django.urls import NoReverseMatch, reverse
 
 from apps.channels import ingest
 from apps.channels.models import ChannelConnection, WebhookEventLog, WebhookEventStatus
-from apps.channels.tests.fake_adapter import SECRET_HEADER, SIGNATURE_HEADER, registered, sign
+from apps.channels.tests.fake_adapter import SECRET_HEADER, SIGNATURE_HEADER, registered, sign, unregistered
 from apps.common.platforms import Platform
 
 pytestmark = pytest.mark.django_db
@@ -305,7 +305,14 @@ class TestIdIndistinguishability:
     def test_a_real_and_an_unknown_id_look_identical_without_an_adapter(
         self, client: Client, connection: ChannelConnection, platform: str
     ) -> None:
-        """The state this layer ships in: no adapter exists for any platform."""
+        """The other half: 503 to every id while the platform has no adapter.
+
+        The empty slot is now something the test has to arrange. Email got a
+        real adapter in #21, exactly as Telegram did in #12, so "no adapter
+        exists" stopped being the shipped state and ``unregistered`` is how a
+        test says it depends on it — which is better anyway, because the
+        dependency used to be invisible.
+        """
         real = ChannelConnection(
             workspace=connection.workspace,
             platform=platform,
@@ -315,12 +322,13 @@ class TestIdIndistinguishability:
         secret = real.rotate_webhook_secret()
         real.save()
 
-        real_response, unknown_response = self._pair(
-            client,
-            _route_for(platform, real.pk),
-            _route_for(platform, "11111111-1111-1111-1111-111111111111"),
-            secret,
-        )
+        with unregistered(platform):
+            real_response, unknown_response = self._pair(
+                client,
+                _route_for(platform, real.pk),
+                _route_for(platform, "11111111-1111-1111-1111-111111111111"),
+                secret,
+            )
 
         assert real_response.status_code == unknown_response.status_code == 503
         assert real_response.content == unknown_response.content

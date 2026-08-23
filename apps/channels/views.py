@@ -38,6 +38,7 @@ from apps.channels.capabilities import capabilities_for
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR, ChannelConnectionForm
 from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEventLog
 from apps.channels.policy import policy_for
+from apps.channels.providers import email_backends
 from apps.channels.providers.base import Adapter
 from apps.channels.providers.exceptions import AdapterError
 from apps.channels.registry import AdapterNotRegisteredError, adapter_for, connect_route_for, has_adapter
@@ -60,7 +61,9 @@ CONNECT_FLOW_ISSUES: dict[str, str] = {
     Platform.MESSENGER: "#18 (L5-B)",
     Platform.WHATSAPP: "#19 (L5-C)",
     Platform.SMS: "#20 (L5-D)",
-    Platform.EMAIL: "#21 (L5-E)",
+    # Email is absent for the same reason Telegram is: #21 shipped its guided
+    # flow, so registry.CONNECT_ROUTES has an entry and the list template links
+    # to it instead of naming an issue.
 }
 
 #: Statuses an operator may set by hand. ``needs_reauth`` is absent because an
@@ -104,19 +107,12 @@ def _email_provider(connection: ChannelConnection) -> str:
     routed correctly and then handed the adapter the wrong shape hint, which
     would read as a provider bug.
 
-    It comes from the connection's own credentials, which is where #21 (L5-E)
-    puts the provider choice. Until then there is nothing to read and the
-    default stands. Wrapped because ``credentials`` is an encrypted field: a
-    decryption failure must not take the settings page down with it.
+    Delegated to the adapter's own reader now that #21 has shipped one, so the
+    URL this page prints and the verifier the webhook actually runs cannot
+    disagree — they read the same key through the same function, and it answers
+    with one of three literals from that module whatever the column holds.
     """
-    try:
-        credentials: Any = connection.credentials or {}
-    except ValueError:
-        return DEFAULT_EMAIL_PROVIDER
-    provider = credentials.get("provider") if isinstance(credentials, dict) else None
-    if not isinstance(provider, str) or not provider.isalnum():
-        return DEFAULT_EMAIL_PROVIDER
-    return provider.lower()
+    return email_backends.provider_for(connection)
 
 
 def _connection_context(

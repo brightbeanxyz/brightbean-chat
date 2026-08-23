@@ -1,0 +1,18 @@
+{
+  "type": "email.bounced",
+  "created_at": "2026-08-20T10:00:00.000Z",
+  "id": "evt-bounce-1",
+  "data": {
+    "email_id": "resend-msg-1",
+    "to": [
+      "gone@example.test"
+    ],
+    "from": "hello@sender.test",
+    "subject": "Hello",
+    "bounce": {
+      "type": "hard",
+      "subType": "general",
+      "message": "not delivered"
+    }
+  }
+}

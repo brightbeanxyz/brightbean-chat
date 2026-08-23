@@ -242,6 +242,20 @@ class OutboundMessage:
     #: chat. Additive to the SPEC §7.2 shape: readers that do not know the key
     #: ignore it, and an older row without it reads back as "".
     node_id: str = ""
+    #: The subject line, for platforms that have one. Email is the only such
+    #: platform in v1 (SPEC §6.7, §11.10); every other adapter ignores it.
+    #:
+    #: A field rather than a block kind, for the reason ``node_id`` is one: the
+    #: block vocabulary is walked by ``apps.channels.downgrade`` for every
+    #: platform, and a subject is not a thing that can be downgraded into text
+    #: — it is an envelope property. Empty means "the adapter picks", which for
+    #: email means the connection's configured default.
+    subject: str = ""
+    #: A per-message From address, overriding the connection's (SPEC §11.10's
+    #: ``from_override``). Empty means the connection's own from-address, which
+    #: is the case for every send that did not ask for something else. Like
+    #: ``subject``, envelope rather than content.
+    from_override: str = ""
 
     def to_body(self) -> dict[str, Any]:
         """The SPEC §7.2 ``message.body`` json.
@@ -249,8 +263,9 @@ class OutboundMessage:
         L3-A stores this on the message row, so the shape is a persisted
         contract: blocks carry their own ``type`` discriminator and every
         top-level key is always present, even when empty. Keys are added
-        additively (``node_id`` arrived with issue #12) and never removed or
-        renamed — rows written by an older release stay readable, which is what
+        additively (``node_id`` arrived with issue #12; ``subject`` and
+        ``from_override`` with #21) and never removed or renamed — rows written
+        by an older release stay readable, which is what
         ``apps.messaging.rendering`` depends on to retry them.
         """
         return {
@@ -260,6 +275,8 @@ class OutboundMessage:
             "tag": self.tag,
             "template_ref": self.template_ref,
             "node_id": self.node_id,
+            "subject": self.subject,
+            "from_override": self.from_override,
         }
 
 

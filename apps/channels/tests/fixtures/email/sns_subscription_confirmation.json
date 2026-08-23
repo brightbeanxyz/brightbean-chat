@@ -1,0 +1,12 @@
+{
+  "Type": "SubscriptionConfirmation",
+  "MessageId": "sub-1",
+  "Token": "2336412f37fb687f5d51e6e2425dacbb2336412f37fb687f5d51e6e2425dacbb",
+  "TopicArn": "arn:aws:sns:eu-west-1:123456789012:brightbean-bounces",
+  "Message": "You have chosen to subscribe to the topic arn:aws:sns:eu-west-1:123456789012:brightbean-bounces.",
+  "SubscribeURL": "https://sns.eu-west-1.amazonaws.com/?Action=ConfirmSubscription&Token=abc",
+  "Timestamp": "2026-08-20T09:00:00.000Z",
+  "SignatureVersion": "1",
+  "Signature": "PLACEHOLDER",
+  "SigningCertURL": "https://sns.eu-west-1.amazonaws.com/SimpleNotificationService-abc123.pem"
+}

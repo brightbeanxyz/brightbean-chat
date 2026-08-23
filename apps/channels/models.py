@@ -40,6 +40,8 @@ from apps.common.scoping import WorkspaceScopedModel
 __all__ = [
     "ChannelConnection",
     "ConnectionStatus",
+    "EmailSuppression",
+    "SuppressionReason",
     "FlowPreviewLink",
     "WebhookEventLog",
     "WebhookEventStatus",
@@ -249,6 +251,100 @@ class WebhookEventLog(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.platform}:{self.provider_event_id} ({self.status})"
+
+
+class SuppressionReason(models.TextChoices):
+    """Why an address stopped being mailable.
+
+    Kept apart from ``OptInSource`` on the identity: that column records how
+    consent was *obtained*, and overwriting it at the moment consent stopped
+    applying would destroy the pair a regulator asks to see together
+    (``apps.messaging.services.record_opt_out`` makes the same argument).
+    """
+
+    HARD_BOUNCE = "hard_bounce", "Hard bounce"
+    SOFT_BOUNCE = "soft_bounce", "Repeated soft bounce"
+    COMPLAINT = "complaint", "Spam complaint"
+    UNSUBSCRIBE = "unsubscribe", "Unsubscribed"
+    MANUAL = "manual", "Added by hand"
+
+
+class EmailSuppression(WorkspaceScopedModel):
+    """One mailbox this workspace must not write to again (SPEC §6.7).
+
+    --------------------------------------------------------------------------
+    Why this is not a column on the identity
+    --------------------------------------------------------------------------
+
+    ``ContactChannelIdentity.opted_out_at`` already answers "did this identity
+    withdraw consent?", and for an unsubscribe it is set too. It cannot be the
+    whole answer, because of a decision made two apps away:
+    ``apps/contacts/imports.py`` **never fabricates an identity** — "a spreadsheet
+    column is not consent" — and ``imports._match`` deliberately skips deleted
+    contacts. So a contact that goes away and comes back is a brand-new
+    ``Contact`` row, and the opt-out is out of its reach two different ways:
+
+    * ``delete_contact`` is a *soft* delete, so the old identity survives — but
+      it belongs to a tombstone, and identities resolve **by contact**, so the
+      re-imported contact has none and cannot be given one (the
+      ``(connection, address)`` unique constraint is already taken).
+    * A **hard** delete — issue #29's GDPR erasure, or a merge — takes the
+      identity with it, and every trace of the opt-out goes too.
+
+    A bounce is not a fact about a contact row. It is a fact about a **mailbox**:
+    that address rejected mail, or its owner marked us as spam, and neither
+    stops being true because somebody re-uploaded a spreadsheet. So the key is
+    the normalised address and there is deliberately no foreign key to
+    ``Contact`` — a cascade from one would delete exactly the record that has to
+    survive.
+
+    Workspace-scoped rather than deployment-wide, for the reason
+    ``messaging.models``' pending-identity constraint gives for the same choice:
+    two workspaces may legitimately both hold the same address, they send from
+    different domains, and one tenant's bounce is not evidence about another's
+    relationship with that mailbox.
+
+    **Enforcement** is in ``apps.channels.providers.email``, immediately before
+    the wire, and a hit there also opts the identity out through the messaging
+    facade — so the *second* send to a re-imported suppressed address is refused
+    by the compliance engine (SPEC §19's chokepoint) rather than by the adapter,
+    and every set-wise consumer sees it too.
+    """
+
+    #: The mailbox, through ``apps.common.addresses.normalize_email``. Plain text
+    #: rather than encrypted for the reason CONTRIBUTING gives: this column is
+    #: looked up by value on every send, and an encrypted column cannot be
+    #: filtered. It is the same exposure ``contact.email`` already carries.
+    address = models.CharField(max_length=320)
+    reason = models.CharField(max_length=20, choices=SuppressionReason.choices)
+    #: The provider's own code or bounce subtype, for an operator working out
+    #: why. A code, never the provider's prose: a diagnostic string routinely
+    #: quotes the message that bounced (SECURITY-BASELINE §5).
+    detail = models.CharField(max_length=200, blank=True, default="")
+    #: The connection that was sending when this was recorded, for support. Kept
+    #: nullable and ``SET_NULL``: disconnecting a channel must not delete the
+    #: suppression list it produced.
+    connection = models.ForeignKey(
+        ChannelConnection,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="email_suppressions",
+    )
+
+    class Meta:
+        db_table = "channels_email_suppression"
+        ordering = ["address"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "address"],
+                name="emailsuppression_unique_workspace_address",
+            ),
+        ]
+        indexes = [models.Index(fields=["workspace", "address"], name="emailsuppress_ws_addr_idx")]
+
+    def __str__(self) -> str:
+        return f"{self.address} ({self.reason})"
 
 
 class FlowPreviewLink(WorkspaceScopedModel):
