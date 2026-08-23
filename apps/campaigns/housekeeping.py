@@ -144,6 +144,11 @@ def prune_rule_trigger_fires() -> str | None:
         )
         if not stale:
             break
-        deleted, _ = RuleTriggerFire.objects.unscoped().filter(pk__in=stale).delete()
+        # The cutoff is repeated on the delete, not just on the select. Between
+        # the two statements `claim_rule_fire` can refresh one of these rows —
+        # that is the *live* cooldown for a contact who just fired — and a
+        # pk-only delete would remove it, letting the very next event through
+        # inside the 60-second window the guard exists to hold.
+        deleted, _ = RuleTriggerFire.objects.unscoped().filter(pk__in=stale, last_fired_at__lt=cutoff).delete()
         total += deleted
     return f"pruned {total} rule-trigger cooldown row(s)" if total else None

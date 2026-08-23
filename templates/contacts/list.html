@@ -187,14 +187,14 @@ inert — a button that looks fine and does nothing.
       buttons rather than a mode select, matching the tag form above it: `mode`
       travels on whichever button was pressed.
     {% endcomment %}
-    {% if can_manage_crm and filter_config.sequences %}
+    {% if can_manage_crm and enrollable_sequences %}
       <form class="mb-0"
             hx-post="{% url 'contacts:bulk_sequence' workspace_id=request.workspace.id %}"
             hx-swap="none">
         <template x-for="id in ids" :key="id"><input type="hidden" name="ids" :value="id"></template>
         <label for="bulk-sequence" class="sr-only">Sequence</label>
         <select id="bulk-sequence" name="sequence_id" required>
-          {% for sequence in filter_config.sequences %}<option value="{{ sequence.value }}">{{ sequence.label }}</option>{% endfor %}
+          {% for sequence in enrollable_sequences %}<option value="{{ sequence.value }}">{{ sequence.label }}</option>{% endfor %}
         </select>
         <button type="submit" name="mode" value="subscribe">Subscribe</button>
         <button type="submit" name="mode" value="unsubscribe">Unsubscribe</button>

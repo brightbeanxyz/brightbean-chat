@@ -291,8 +291,20 @@ def filter_config(workspace: Any, *, document: Any = None, segment_id: str = "")
     }
 
 
-def sequence_options(workspace: Any) -> list[dict[str, str]]:
-    """This workspace's sequences, for the ``sequence`` source's key picker.
+def sequence_options(workspace: Any, *, enrollable: bool = False) -> list[dict[str, str]]:
+    """This workspace's sequences, for a picker.
+
+    ``enrollable`` narrows it to the ones that would actually accept a
+    subscriber — the ``active`` ones, which is what
+    ``apps.campaigns.services.subscribe`` enforces. The two callers want
+    genuinely different sets and getting them the same way round is a bug in
+    each direction:
+
+    * the **enrolment** controls (the CRM's bulk action, the contact pane) must
+      not offer a sequence every attempt would refuse;
+    * the **condition** key picker must offer every sequence, because "not
+      subscribed to the old onboarding" is a perfectly good segment rule about a
+      campaign that was archived last year.
 
     Resolved through Django's app registry rather than by importing
     ``apps.campaigns``: this app is L2-A and campaigns is L6-A, and a lower layer
@@ -307,7 +319,7 @@ def sequence_options(workspace: Any) -> list[dict[str, str]]:
         model = django_apps.get_model("campaigns", "Sequence")
     except LookupError:
         return []
-    return [
-        {"value": str(row["id"]), "label": row["name"]}
-        for row in model.objects.for_workspace(workspace).order_by("name").values("id", "name")
-    ]
+    rows = model.objects.for_workspace(workspace)
+    if enrollable:
+        rows = rows.filter(status="active")
+    return [{"value": str(row["id"]), "label": row["name"]} for row in rows.order_by("name").values("id", "name")]

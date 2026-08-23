@@ -275,7 +275,15 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     return render(
         request,
         "contacts/list.html",
-        {**context, "filter_config": _filter_config(request.workspace, context["query"])},
+        {
+            **context,
+            "filter_config": _filter_config(request.workspace, context["query"]),
+            # Separate from `filter_config["sequences"]` on purpose: that list
+            # feeds the §11.4 condition picker and has to offer every sequence,
+            # while the bulk enrolment control must offer only the ones
+            # `campaigns.services.subscribe` would accept.
+            "enrollable_sequences": filters.sequence_options(request.workspace, enrollable=True),
+        },
     )
 
 
@@ -408,7 +416,9 @@ def _activity_context(request: WorkspaceRequest, contact: Contact) -> dict[str, 
         # Issue #22's enrolment control. The pane refreshes on its own, so the
         # picker is built here rather than only in contact_detail — otherwise
         # starting a flow would redraw the pane with an empty sequence list.
-        "sequences": filters.sequence_options(request.workspace),
+        # `enrollable`, because `subscribe` takes active sequences only and a
+        # picker offering a draft is a control whose every use is a refusal.
+        "sequences": filters.sequence_options(request.workspace, enrollable=True),
         **_permissions(request),
     }
 
@@ -897,7 +907,14 @@ def bulk_sequence(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if not contacts:
         return toast_response(tone="info", title="Nothing selected")
 
+    # A refusal for one contact does not abandon the rest, and does not discard
+    # the ones already done. Each `subscribe` commits its own transaction, so
+    # returning early on the first error left a batch that reported failure and
+    # had in fact restarted half the selection — with no refresh event to show
+    # it. The realistic error here is a lost race on a single contact, which is
+    # a reason to skip that contact and say so, not to abandon 499 others.
     touched = 0
+    refusals: list[str] = []
     for contact in contacts:
         try:
             if removing:
@@ -906,14 +923,24 @@ def bulk_sequence(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
                 campaign_services.subscribe(sequence, contact, source="manual")
                 touched += 1
         except CampaignsError as exc:
-            return _failed(exc, "Could not update the sequence")
+            refusals.append(str(exc))
+
+    if not touched and refusals:
+        # Nothing happened at all, so there is no partial state to report and
+        # the reason is the whole story.
+        return toast_response(tone="error", title="Could not update the sequence", body=refusals[0])
 
     verb = "unsubscribed from" if removing else "subscribed to"
-    return _bulk_result(
-        f"{touched} contact{'' if touched == 1 else 's'} {verb} {sequence.name}",
+    detail = (
         "Unsubscribing stops future steps; anything already running finishes."
         if removing
-        else "Everyone starts again at step 1.",
+        else "Everyone starts again at step 1."
+    )
+    if refusals:
+        detail = f"{len(refusals)} skipped: {refusals[0]}"
+    return _bulk_result(
+        f"{touched} contact{'' if touched == 1 else 's'} {verb} {sequence.name}",
+        detail,
         events={"contactsChanged": True, "sequenceSubscribersChanged": True, "sequenceStepsChanged": True},
     )
 

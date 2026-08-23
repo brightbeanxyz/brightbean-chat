@@ -156,6 +156,25 @@ def _advance(enrollment: SequenceEnrollment, *, sent_at: Any) -> None:
 
 
 def _enrollment(workspace_id: Any, raw_id: Any) -> SequenceEnrollment | None:
+    """The enrollment this row names, **locked for the length of the handler**.
+
+    The lock is the whole correctness argument for advancing. Without it the
+    status check below and ``_advance``'s save are two statements with a window
+    between them: an ``unsubscribe()`` that commits inside that window is read as
+    ``active``, and then ``_advance`` writes the handler's stale ``active`` back
+    over it and queues the next step — a successful unsubscribe silently undone,
+    and the campaign carrying on. The queue's contact advisory lock does not
+    close this, because ``unsubscribe()`` runs from a request and never takes it.
+
+    ``of=("self",)`` locks the enrollment row and not the sequence, contact and
+    workspace joined in for the advance; without it every step would hold a row
+    lock on shared parent rows for the length of a flow run.
+
+    The handler runs inside the worker's transaction, so the lock is released at
+    commit. An ``unsubscribe()`` that arrives while a step is mid-flight
+    therefore blocks briefly, then writes on top of the advanced row — which is
+    SPEC §12's rule exactly: future steps stop, the in-flight one completes.
+    """
     if not raw_id or workspace_id is None:
         return None
     try:
@@ -166,6 +185,7 @@ def _enrollment(workspace_id: Any, raw_id: Any) -> SequenceEnrollment | None:
         SequenceEnrollment.objects.for_workspace(workspace_id)
         .filter(pk=pk)
         .select_related("sequence", "contact", "workspace")
+        .select_for_update(of=("self",))
         .first()
     )
 

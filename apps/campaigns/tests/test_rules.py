@@ -494,6 +494,25 @@ class TestPruningTheCooldown:
         remaining = RuleTriggerFire.objects.for_workspace(tenancy.workspace)
         assert [row.contact_id for row in remaining] == [fresh.pk]
 
+    def test_a_row_refreshed_mid_prune_survives(self, tenancy):
+        """The prune selects ids and then deletes them, and `claim_rule_fire`
+        can refresh one in between — that row is the *live* cooldown for a
+        contact who just fired, and deleting it by pk alone would let the very
+        next event through inside the window the guard exists to hold."""
+        from apps.campaigns.housekeeping import PRUNE_MARGIN, prune_rule_trigger_fires
+
+        trigger = _rule_trigger(tenancy.workspace, {"event": "tag_added"})
+        contact = contact_for(tenancy.workspace)
+        stale = timezone.now() - COOLDOWN - PRUNE_MARGIN - timedelta(minutes=1)
+        claim_rule_fire(trigger, contact, now=stale)
+        # The refresh that lands between the select and the delete.
+        RuleTriggerFire.objects.for_workspace(tenancy.workspace).update(last_fired_at=timezone.now())
+
+        prune_rule_trigger_fires()
+
+        assert RuleTriggerFire.objects.for_workspace(tenancy.workspace).count() == 1
+        assert claim_rule_fire(trigger, contact) is False
+
     def test_a_row_inside_the_window_is_never_pruned(self, tenancy):
         """Deleting at the boundary would let through a fire the guard refused."""
         from apps.campaigns.housekeeping import prune_rule_trigger_fires

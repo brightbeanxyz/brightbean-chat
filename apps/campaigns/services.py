@@ -343,8 +343,13 @@ def subscribe(sequence: Sequence, contact: Any, *, source: str = "manual") -> Se
     """
     if contact.workspace_id != sequence.workspace_id:
         raise WorkspaceMismatchError("That contact belongs to a different workspace than the sequence.")
-    if sequence.status == SequenceStatus.ARCHIVED:
-        raise SequenceNotRunnableError("That sequence is archived.")
+    if sequence.status != SequenceStatus.ACTIVE:
+        # Active only, which is what `set_status` and the model both already
+        # said. Refusing merely the archived case let somebody be enrolled in a
+        # half-built draft: their steps would start running against whatever
+        # rungs existed at the time, and the rest of the campaign would be
+        # written underneath them.
+        raise SequenceNotRunnableError(f"“{sequence.name}” is not active, so it cannot take new subscribers.")
 
     _retire_active(sequence, contact)
 

@@ -481,6 +481,58 @@ class TestBulkActions:
             EnrollmentStatus.UNSUBSCRIBED
         )
 
+    def test_a_draft_sequence_is_refused_and_offered_to_nobody(self, tenancy, client_for, crm):
+        """`subscribe` takes active sequences only, so the bulk picker must not
+        list a draft — and the endpoint refuses one posted by hand anyway."""
+        from apps.campaigns.models import Sequence, SequenceEnrollment
+
+        draft = Sequence.objects.create(workspace=tenancy.workspace, name="Half-built")
+
+        page = client_for(tenancy.owner).get(url(tenancy, "contacts/"))
+        assert page.context["enrollable_sequences"] == []
+        # The condition picker still offers it: "not subscribed to the old
+        # onboarding" is a good segment rule about an inactive campaign.
+        assert [row["label"] for row in page.context["filter_config"]["sequences"]] == ["Half-built"]
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, "contacts/bulk/sequence/"),
+            {"ids": [str(crm["contact"].pk)], "sequence_id": str(draft.pk), "mode": "subscribe"},
+        )
+
+        assert triggers(response)["showToast"]["tone"] == "error"
+        assert not SequenceEnrollment.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_refusal_for_one_contact_does_not_discard_the_others(self, tenancy, client_for, crm, monkeypatch):
+        """Each subscribe commits its own transaction, so returning early on the
+        first error reported failure for a batch that had already restarted half
+        the selection — and fired no refresh event to show it."""
+        from apps.campaigns import services as campaign_services
+        from apps.campaigns.errors import CampaignsError
+        from apps.campaigns.models import SequenceEnrollment
+
+        sequence = _sequence_with_a_step(tenancy.workspace)
+        good = crm["contact"]
+        bad = services.create_contact(tenancy.workspace, first_name="Racy")
+        real = campaign_services.subscribe
+
+        def refuse_one(seq, contact, **kwargs):
+            if contact.pk == bad.pk:
+                raise CampaignsError("That contact was subscribed by somebody else just now.")
+            return real(seq, contact, **kwargs)
+
+        monkeypatch.setattr(campaign_services, "subscribe", refuse_one)
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, "contacts/bulk/sequence/"),
+            {"ids": [str(good.pk), str(bad.pk)], "sequence_id": str(sequence.pk), "mode": "subscribe"},
+        )
+
+        assert triggers(response)["showToast"]["tone"] == "success"
+        assert "1 skipped" in triggers(response)["showToast"]["body"]
+        assert triggers(response)["sequenceSubscribersChanged"] is True
+        enrolled = SequenceEnrollment.objects.for_workspace(tenancy.workspace)
+        assert [row.contact_id for row in enrolled] == [good.pk]
+
     def test_another_tenants_sequence_is_a_404(self, tenancy, other_tenancy, client_for, crm):
         """The id arrives in the body, where tests/idor.py cannot reach it."""
         from apps.campaigns.models import Sequence
@@ -1074,13 +1126,17 @@ class TestSegmentControls:
         assert "contacts/segments/" not in body
 
 
-def _sequence_with_a_step(workspace):
-    """A one-step sequence. A sequence with no steps completes on subscribe —
-    correct (there is nothing to wait for) and not what these tests are about."""
-    from apps.campaigns.models import DelayUnit, Sequence, SequenceStep
+def _sequence_with_a_step(workspace, *, name="Onboarding"):
+    """A one-step **active** sequence.
+
+    Active because `subscribe` takes active sequences only; one step because a
+    sequence with none completes the moment somebody subscribes — correct (there
+    is nothing to wait for) and not what these tests are about.
+    """
+    from apps.campaigns.models import DelayUnit, Sequence, SequenceStatus, SequenceStep
     from apps.flows.services import create_flow
 
-    sequence = Sequence.objects.create(workspace=workspace, name="Onboarding")
+    sequence = Sequence.objects.create(workspace=workspace, name=name, status=SequenceStatus.ACTIVE)
     SequenceStep.objects.create(
         workspace=workspace,
         sequence=sequence,

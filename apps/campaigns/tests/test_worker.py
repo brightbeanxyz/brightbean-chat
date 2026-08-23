@@ -81,6 +81,29 @@ class TestSubscribing:
         with pytest.raises(SequenceNotRunnableError):
             services.subscribe(sequence, contact_for(tenancy.workspace))
 
+    def test_only_an_active_sequence_takes_subscribers(self, tenancy):
+        """A draft is half-built: its subscriber's steps would start running
+        against whatever rungs existed, with the rest written underneath them."""
+        from apps.campaigns.errors import SequenceNotRunnableError
+
+        sequence = sequence_with(tenancy.workspace, steps=1)
+        services.set_status(sequence, status=SequenceStatus.DRAFT)
+
+        with pytest.raises(SequenceNotRunnableError):
+            services.subscribe(sequence, contact_for(tenancy.workspace))
+
+    def test_pausing_a_sequence_does_not_disturb_its_existing_subscribers(self, tenancy):
+        """Moving one back to draft stops new subscribers and nothing else —
+        that is what makes draft a usable pause."""
+        sequence = sequence_with(tenancy.workspace, steps=2)
+        enrollment = services.subscribe(sequence, contact_for(tenancy.workspace))
+
+        services.set_status(sequence, status=SequenceStatus.DRAFT)
+
+        enrollment.refresh_from_db()
+        assert enrollment.status == EnrollmentStatus.ACTIVE
+        assert _due_step(tenancy.workspace).filter(status=ActionStatus.PENDING).count() == 1
+
     def test_a_contact_from_another_workspace_is_refused(self, tenancy, other_tenancy):
         from apps.campaigns.errors import WorkspaceMismatchError
 
@@ -487,3 +510,97 @@ class TestADeletedContact:
         assert selectors.sequences_for(tenancy.workspace).get().subscriber_count == 0
         assert selectors.at_position(sequence) == {}
         assert selectors.subscribers_for(sequence).rows == []
+
+
+@pytest.mark.django_db(transaction=True)
+class TestUnsubscribeRacingAStep:
+    """The window between the handler's status check and its advance.
+
+    ``unsubscribe()`` runs from a request and never takes the contact advisory
+    lock, so the queue's hold on it is no help: without a row lock the handler
+    reads ``active``, and then writes that stale status back over a successful
+    unsubscribe and queues the next step.
+
+    ``transaction=True`` because the two halves have to be in different
+    transactions on different connections for the race to exist at all.
+    """
+
+    def test_an_unsubscribe_mid_step_is_not_undone(self, tenancy):
+        """The discipline: an advance holding the row lock, an unsubscribe
+        arriving mid-flight, and the unsubscribe winning the final state.
+
+        This half proves the locking *protocol* is sound — it stands in for the
+        handler rather than calling it, so on its own it would still pass if the
+        handler stopped taking the lock. The test below is what pins that the
+        handler actually does.
+        """
+        import threading
+
+        from django.db import connections, transaction
+
+        sequence = sequence_with(tenancy.workspace, steps=3)
+        contact = contact_for(tenancy.workspace)
+        enrollment = services.subscribe(sequence, contact)
+        action = _due_step(tenancy.workspace).get()
+        action.status = ActionStatus.RUNNING
+        action.save(update_fields=["status"])
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def hold_the_row():
+            """Stand in for the handler: lock the enrollment, then dawdle."""
+            try:
+                with transaction.atomic():
+                    locked = (
+                        SequenceEnrollment.objects.for_workspace(tenancy.workspace)
+                        .filter(pk=enrollment.pk)
+                        .select_for_update(of=("self",))
+                        .first()
+                    )
+                    started.set()
+                    release.wait(timeout=10)
+                    # What `_advance` does: write the status it read back out.
+                    locked.current_step += 1
+                    locked.save(update_fields=["current_step", "status", "updated_at"])
+            finally:
+                connections.close_all()
+
+        worker = threading.Thread(target=hold_the_row)
+        worker.start()
+        assert started.wait(timeout=10)
+
+        # The unsubscribe blocks on the row lock rather than slipping in front
+        # of the advance, and lands on top of it.
+        unsubscriber = threading.Thread(
+            target=lambda: (services.unsubscribe(sequence, contact), connections.close_all())
+        )
+        unsubscriber.start()
+        release.set()
+        worker.join(timeout=15)
+        unsubscriber.join(timeout=15)
+
+        enrollment.refresh_from_db()
+        assert enrollment.status == EnrollmentStatus.UNSUBSCRIBED
+        assert not _due_step(tenancy.workspace).filter(status=ActionStatus.PENDING).exists()
+
+    def test_the_handler_reads_the_enrollment_under_a_lock(self, tenancy):
+        """The mechanism, asserted directly: the query the handler issues is a
+        locking one. A test on outcomes alone would still pass if somebody
+        removed the lock and got lucky with the interleaving."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        sequence = sequence_with(tenancy.workspace, steps=2)
+        services.subscribe(sequence, contact_for(tenancy.workspace))
+        action = _due_step(tenancy.workspace).get()
+        action.status = ActionStatus.RUNNING
+        action.save(update_fields=["status"])
+
+        with CaptureQueriesContext(connection) as captured:
+            process_action(action)
+
+        statements = [query["sql"] for query in captured.captured_queries]
+        locking = [sql for sql in statements if "campaigns_sequence_enrollment" in sql and "FOR UPDATE" in sql]
+        assert locking, "the step handler must read the enrollment FOR UPDATE"
+        assert all("OF " in sql for sql in locking), "and must lock only the enrollment row"
