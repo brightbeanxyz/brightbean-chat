@@ -1,0 +1,27 @@
+{
+  "object": "page",
+  "entry": [
+    {
+      "id": "111111111111111",
+      "time": 1712345678000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "222222222222222"
+          },
+          "recipient": {
+            "id": "111111111111111"
+          },
+          "timestamp": 1712345681000,
+          "message": {
+            "mid": "m_qr1",
+            "text": "Yes please",
+            "quick_reply": {
+              "payload": "node-7:yes"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

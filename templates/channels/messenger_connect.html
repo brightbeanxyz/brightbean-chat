@@ -1,0 +1,58 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Connect Facebook Messenger · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Connect a Facebook page</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Messenger connects through Facebook Login for Business. You sign in to
+    Facebook, choose which page to connect, and we store that page's access
+    token encrypted — it is never shown again.
+  </p>
+
+  {% if not configured %}
+    <div class="alert-error">
+      <p>{{ not_configured_message }}</p>
+      <p><a href="{{ credentials_url }}">Add Facebook app credentials</a></p>
+    </div>
+  {% endif %}
+
+  <h2>Before you start</h2>
+  <ol>
+    <li>Create a Meta app of type <strong>Business</strong> and add the
+      <strong>Messenger</strong> and <strong>Facebook Login for Business</strong>
+      products to it.</li>
+    <li>Add this exact redirect URI to Facebook Login for Business →
+      <em>Valid OAuth Redirect URIs</em>:
+      <br /><code>{{ callback_url }}</code></li>
+    <li>Put the app's ID and secret into
+      <a href="{{ credentials_url }}">Settings → Credentials</a>, or into
+      <code>PLATFORM_MESSENGER_CLIENT_ID</code> and
+      <code>PLATFORM_MESSENGER_CLIENT_SECRET</code>.</li>
+    <li>Set <code>PLATFORM_MESSENGER_VERIFY_TOKEN</code> and paste the same value
+      into the Messenger webhook's <em>Verify token</em> field.</li>
+  </ol>
+
+  <form method="post">
+    {% csrf_token %}
+    <button type="submit" {% if not configured %}disabled{% endif %}>Continue with Facebook</button>
+  </form>
+
+  <h2>What we ask Facebook for</h2>
+  <ul class="muted">
+    {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
+  </ul>
+  <p class="muted">
+    Once you pick a page we subscribe it to these webhook fields and configure its
+    Get Started button, so the welcome trigger can fire:
+  </p>
+  <ul class="muted">
+    {% for field in subscribed_fields %}<li><code>{{ field }}</code></li>{% endfor %}
+  </ul>
+  <p class="muted">
+    To serve pages other than your own app's test page, Meta requires App Review
+    and Business Verification. Full setup notes are in
+    <code>docs/channels/messenger.md</code>.
+  </p>
+
+  <p><a href="{{ list_url }}">Back to channels</a></p>
+{% endblock %}

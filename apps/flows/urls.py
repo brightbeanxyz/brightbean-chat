@@ -34,6 +34,14 @@ urlpatterns = [
     path(
         "flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/delete/", views_triggers.trigger_delete, name="trigger_delete"
     ),
+    # The comment trigger's post picker (#17/#18). Bound to a connection because
+    # posts belong to an account, not to a flow; both ids are tenant-scoped and
+    # tests/idor.py already knows how to build them.
+    path(
+        "flows/<uuid:flow_id>/triggers/posts/<uuid:connection_id>/",
+        views_triggers.trigger_posts,
+        name="trigger_posts",
+    ),
     path(
         "flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/qr/<uuid:connection_id>/",
         views_triggers.trigger_qr,

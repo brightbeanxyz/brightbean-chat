@@ -28,6 +28,7 @@ from apps.flows.engine import FlowNotRunnableError, start_flow
 from apps.flows.engine.waits import Consumed as ResumeConsumed
 from apps.flows.engine.waits import attempt_resume
 from apps.flows.models import ExecutionStatus, FlowExecution, StartedBy, Trigger, TriggerType
+from apps.flows.triggers import comments
 from apps.flows.triggers.context import RoutingContext
 from apps.flows.triggers.guards import claim_default_reply, may_claim_comment, record_comment
 from apps.flows.triggers.hooks import Consumed, HookOutcome, Passed, Stage, register_hook
@@ -110,13 +111,19 @@ def trigger_match(context: RoutingContext) -> HookOutcome:
     if found is None:
         return Passed("no trigger matched")
 
-    if context.contact is None:
-        # A comment. The trigger matched, but there is nobody to run a flow for
-        # until a private reply opens a DM thread — L5-A and L5-B own that half.
-        # What *this* layer owes is the guard: claim the comment now, so a
-        # redelivery and a second comment from the same person on the same post
-        # are refused by the database rather than by a platform matcher nobody
-        # has written yet.
+    if context.event.type == EventType.COMMENT or context.contact is None:
+        # A comment goes through the guard, always. The trigger matched, but SPEC
+        # §10's once-per-commenter-per-post rule and its seven-day private-reply
+        # deadline are the comment path's, not the flow's — so the claim is taken
+        # here and the platform answers it (``triggers.comments``).
+        #
+        # **Whether or not this person already has a contact**, which is the part
+        # that is easy to get wrong. A first-time commenter has none, because
+        # ``apps/messaging/ingest.py`` deliberately creates no contact for a
+        # comment; somebody who has since been sent a private reply does. Starting
+        # the flow directly in that second case would skip the guard entirely, and
+        # a returning commenter could fire the same flow on every comment they
+        # left — which is the exact thing ``HandledComment`` exists to stop.
         return _claim_comment(context, found.trigger)
 
     if not _start(context, found.trigger, found.variables):
@@ -195,9 +202,21 @@ def _claim_comment(context: RoutingContext, trigger: Trigger) -> HookOutcome:
     if row is None:
         return Passed("this comment is already handled")
 
-    # The row id is what L5-A's private reply picks up: it names the comment to
-    # answer, the trigger whose flow to run, and the deadline to answer inside.
+    # The row id is what a platform's private reply picks up: it names the comment
+    # to answer, the trigger whose flow to run, and the deadline to answer inside.
     context.notes["handled_comment_id"] = str(row.pk)
+
+    # And this is where it gets picked up. The claim is platform-agnostic; the
+    # answer — a public reply, a like, Meta's comment-addressed private reply —
+    # is not, so it is a registry rather than a branch (``triggers.comments``,
+    # the module ``triggers.matching`` already names). A platform with nothing
+    # registered leaves the claim standing and sends nothing, which is exactly
+    # the behaviour before any Layer-5 adapter shipped. ``run_actions`` never
+    # raises: a hook that did would roll this savepoint back and un-record the
+    # comment, handing the next redelivery a guard it had already spent.
+    comments.run_actions(
+        comments.CommentClaim(row=row, connection=context.connection, trigger=trigger, event=context.event)
+    )
     return Consumed(f"{trigger.type} trigger, awaiting a contact")
 
 

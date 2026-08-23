@@ -6,7 +6,9 @@ from typing import Any
 import pytest
 
 from apps.channels.models import ChannelConnection
+from apps.channels.providers import meta_common
 from apps.channels.tests.fake_adapter import FakeAdapter, registered
+from apps.channels.tests.messenger_support import APP_SECRET, PAGE_ID, PAGE_TOKEN
 from apps.common.platforms import Platform
 
 
@@ -28,6 +30,41 @@ def connection(tenancy: Any) -> ChannelConnection:
 def secret(connection: ChannelConnection) -> str:
     """The connection's webhook secret, in plaintext."""
     return connection.webhook_secret
+
+
+@pytest.fixture
+def app_secret(settings: Any) -> str:
+    """Configure the deployment-level Meta app — the bottom of SPEC §4's chain.
+
+    The environment level rather than a credential row, because it is the level
+    every test can set without building an organization's settings, and because
+    it is the one a self-hoster actually uses. A test that needs the *chain*
+    exercised (a workspace override beating this) says so and builds the rows.
+    """
+    settings.PLATFORM_CREDENTIALS_FROM_ENV = {
+        **getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {}),
+        Platform.MESSENGER.value: {
+            "client_id": "1234567890",
+            "client_secret": APP_SECRET,
+            "verify_token": "fake-verify-token",
+        },
+    }
+    return APP_SECRET
+
+
+@pytest.fixture
+def page(tenancy: Any, app_secret: str) -> ChannelConnection:
+    """An active Messenger connection for the fixtures' page, token already stored."""
+    connection = ChannelConnection(
+        workspace=tenancy.workspace,
+        platform=Platform.MESSENGER.value,
+        display_name="Acme Page",
+        external_id=PAGE_ID,
+    )
+    meta_common.store_page_token(connection, PAGE_TOKEN)
+    connection.rotate_webhook_secret()
+    connection.save()
+    return connection
 
 
 @pytest.fixture

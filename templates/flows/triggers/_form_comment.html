@@ -1,18 +1,29 @@
 {% comment %}
 A comment trigger. Everything here is platform-agnostic and takes effect as soon
 as an Instagram or Messenger adapter parses comment events — L4-A ships the
-config, the matcher and the once-per-commenter guard; L5-A and L5-B add the
-public reply, the like and the post picker, which is why post ids are typed in
-for now.
+config, the matcher and the once-per-commenter guard.
+
+The post picker below is the platform-aware half, added by #18: a channel whose
+adapter registered a lister on ``apps.channels.posts`` gets a button that fetches
+its recent posts, and everything else still types ids in. The list of buttons is
+built from that registry, so a platform gains one by registering, not by editing
+this template.
 {% endcomment %}
 <label class="block text-xs font-medium mb-1" for="trigger-post-scope" style="color: var(--text-primary);">Posts</label>
 <select id="trigger-post-scope" name="post_scope" class="form-input-styled mb-2">
     <option value="all" {% if config.post_scope != "specific" %}selected{% endif %}>Any post</option>
     <option value="specific" {% if config.post_scope == "specific" %}selected{% endif %}>Only these posts</option>
 </select>
-<textarea name="post_ids" rows="2" class="form-input-styled mb-3"
+<textarea id="trigger-post-ids" name="post_ids" rows="2" class="form-input-styled mb-2"
           placeholder="One post id per line">{{ config.post_ids|join:"
 " }}</textarea>
+{% for option in post_picker_connections %}
+  <button type="button" class="btn-secondary text-xs mb-2"
+          hx-get="{{ option.url }}" hx-target="#post-picker" hx-swap="outerHTML">
+    Browse {{ option.label }} posts
+  </button>
+{% endfor %}
+<div id="post-picker"></div>
 
 <label class="block text-xs font-medium mb-1" for="trigger-include" style="color: var(--text-primary);">Only when the comment contains</label>
 <textarea id="trigger-include" name="include_keywords" rows="2" class="form-input-styled mb-3"

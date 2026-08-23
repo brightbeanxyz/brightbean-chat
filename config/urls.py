@@ -102,6 +102,11 @@ urlpatterns = [
     # specific includes.
     path("w/<uuid:workspace_id>/", include("apps.flows.urls")),
     *[_ws_stub(*stub) for stub in _WORKSPACE_STUBS],
+    # Meta's OAuth callback (issue #18). Deliberately NOT under
+    # /w/<workspace_id>/: Meta whitelists one exact redirect URI per app, so the
+    # path cannot carry a workspace and the signed `state` names it instead. See
+    # apps/channels/urls_oauth.py.
+    path("oauth/meta/", include("apps.channels.urls_oauth")),
     # Inbound webhooks (SPEC §7.1). Unauthenticated and deliberately NOT under
     # /w/<workspace_id>/: a platform posting an event has no session, and
     # RBACMiddleware would try to resolve a membership for it. The signature is

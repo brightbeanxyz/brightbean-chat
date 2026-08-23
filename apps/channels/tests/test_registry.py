@@ -25,6 +25,13 @@ from apps.channels.registry import (
 from apps.channels.tests.fake_adapter import fake_adapter_for, registered
 from apps.common.platforms import Platform
 
+#: Platforms whose adapter module has shipped, in ``Platform`` order. Telegram
+#: arrived with issue #12 and Messenger with #18; the remaining four are Layer-5
+#: workstreams still in flight. Pinned the way
+#: ``apps.flows.triggers.types.STUB_TYPES`` is: growing it is a deliberate act
+#: with a test to update, not a silent behaviour change on some other branch.
+SHIPPED_ADAPTERS: tuple[str, ...] = (Platform.TELEGRAM.value, Platform.MESSENGER.value)
+
 
 class TestTablesCoverEveryPlatform:
     def test_every_platform_has_capabilities(self) -> None:
@@ -174,7 +181,7 @@ class TestRegistry:
     def test_register_and_resolve(self) -> None:
         with registered(Platform.TELEGRAM) as adapter_cls:
             assert has_adapter(Platform.TELEGRAM)
-            assert registered_platforms() == (Platform.TELEGRAM,)
+            assert Platform.TELEGRAM in registered_platforms()
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
         # Restored, not cleared. Telegram has a real adapter since issue #12 and
@@ -182,6 +189,16 @@ class TestRegistry:
         # does not outlive the block, not that the slot ends up empty.
         assert has_adapter(Platform.TELEGRAM)
         assert not isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
+
+    def test_the_shipped_adapter_set_is_pinned(self) -> None:
+        """Which platforms have a working adapter, stated rather than discovered.
+
+        Contract 4 is additive and each Layer-5 workstream adds exactly one entry,
+        so this list is a one-line diff per merge — and a merge that changed it
+        without meaning to has either registered an adapter twice or lost one.
+        Enum order, because that is the order ``registered_platforms`` promises.
+        """
+        assert registered_platforms() == SHIPPED_ADAPTERS
 
     def test_missing_adapter_raises_rather_than_returning_none(self) -> None:
         # On the webhook path, None would read as "nothing to do" — a silently
