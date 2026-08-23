@@ -8,7 +8,14 @@ for a platform's POST.
 
 from django.urls import path
 
-from apps.channels import views, views_email, views_instagram, views_sms, views_telegram
+from apps.channels import (
+    views,
+    views_email,
+    views_instagram,
+    views_messenger,
+    views_sms,
+    views_telegram,
+)
 
 app_name = "channels"
 
@@ -30,6 +37,12 @@ urlpatterns = [
     # id and lives in ``urls_oauth.py`` at the deployment root instead.
     path("instagram/connect/", views_instagram.instagram_connect, name="instagram_connect"),
     path("instagram/posts/", views_instagram.instagram_posts, name="instagram_posts"),
+    # Messenger's guided connect (issue #18), the page chooser, and the comment
+    # trigger's post picker. Its OAuth callback is not here either, and for the
+    # same reason.
+    path("messenger/connect/", views_messenger.messenger_connect, name="messenger_connect"),
+    path("messenger/pages/", views_messenger.messenger_pages, name="messenger_pages"),
+    path("messenger/posts/", views_messenger.messenger_posts, name="messenger_posts"),
     # Twilio's guided connect flow, SPEC §6.6's configurable compliance copy,
     # and the segment-count preview the send_sms panel and L6-B's composer
     # both call (issue #20). Declared before the ``<uuid:connection_id>``

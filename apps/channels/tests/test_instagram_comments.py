@@ -766,5 +766,10 @@ class TestTheResponderSeam:
 def test_the_responder_registry_survives_this_module() -> None:
     """A guard on this module itself. The registry is process-global, and the
     tests above install and remove fakes in it; a leak would leave every later
-    test in the process without Instagram's comment automation."""
-    assert comment_responders.registered_platforms() == ("instagram",)
+    test in the process without Instagram's comment automation.
+
+    Membership, not equality: the registry grows by one entry per Layer-5
+    platform that ships comment automation (#18 added Messenger), and pinning the
+    whole tuple would turn every one of those into a failure here rather than in
+    the workstream that changed something."""
+    assert "instagram" in comment_responders.registered_platforms()
