@@ -530,4 +530,17 @@ jobs:
           gitleaks version
 
       - name: Run gitleaks
-        run: gitleaks detect --source . --redact --verbose --no-banner
+        # --log-opts="HEAD" scopes the scan to commits reachable from the ref
+        # under test. Without it `gitleaks detect` walks every commit in the
+        # clone, and `fetch-depth: 0` above brings down every remote branch — so
+        # one branch carrying an un-allowlisted fixture failed the secret scan on
+        # every *other* open PR. With six Layer-5 branches in flight that is how
+        # it was found.
+        #
+        # This is still the full history that .gitleaks.toml's header depends on
+        # when it explains why allowlists are path-based rather than inline
+        # `# gitleaks:allow` markers: HEAD reaches all of main, so a secret
+        # committed anywhere in this branch's ancestry is still caught, at every
+        # commit that carries it. What is no longer scanned is work that is not
+        # part of this branch — and which this branch cannot fix.
+        run: gitleaks detect --source . --redact --verbose --no-banner --log-opts="HEAD"
