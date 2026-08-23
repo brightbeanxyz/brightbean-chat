@@ -5,7 +5,7 @@ Three workstreams, **all parallel**. Layer 5 is merged, so nothing here is block
 | Issue | | Owns | Permission key |
 |---|---|---|---|
 | [#22](https://github.com/brightbeanxyz/brightbean-chat/issues/22) | L6-A | `apps/campaigns/` — sequences + rule triggers | `edit_flows` |
-| [#23](https://github.com/brightbeanxyz/brightbean-chat/issues/23) | L6-B | broadcasts — composer, fanout, counters | `send_broadcasts` |
+| [#23](https://github.com/brightbeanxyz/brightbean-chat/issues/23) | L6-B | `apps/broadcasts/` — composer, fanout, counters | `send_broadcasts` |
 | [#24](https://github.com/brightbeanxyz/brightbean-chat/issues/24) | L6-C | `apps/inbox/` v2 — labels, rules, reminders | `use_inbox` / `reply_in_inbox` |
 
 The **issue body is the scope**. This file records the seams Layers 3–5 reserved for these three, with real names. Several are named-and-empty on purpose: the stage exists, the picklist resolver exists, the condition source is declared, the action-verb schemas ship. Finding them by reading source costs each agent a cycle, and *not* finding them means building a duplicate.
@@ -35,6 +35,14 @@ This is the layer where the reserved seams pay off, and the failure mode is buil
 | Media picker payload | `apps/media_library/picker.py` | Names "the broadcast composer (#23)" as a caller |
 
 If you find yourself writing a second table of approved templates, a second segment counter or a second eligibility filter, stop and go find the first one.
+
+### App labels: `campaigns` is L6-A's, `broadcasts` is L6-B's
+
+Issue #23's body says L6-B owns "campaigns/broadcasts\*". **That is superseded.** Broadcasts ship as their own Django app, `apps/broadcasts/`, and SPEC §2 and §5 have been amended to match.
+
+Why: L6-A has no choice about its label — `apps/flows/picklists.py` hard-codes `installed_model("campaigns", "apps.campaigns", "Sequence")`. If L6-B also built inside `apps/campaigns/`, both trees would create `apps.py`, `__init__.py` and `migrations/0001_initial.py` for one app label, and Django cannot carry two `0001_initial` for one app. ROADMAP's per-PR bar already forbids exactly this: *"No two same-layer workstreams touch the same Django app — that is what makes parallel merges and migrations safe."* #22 and #23 are both Layer 6.
+
+The split costs nothing architecturally. Nothing anywhere resolves a `Broadcast` model by app label (only `Sequence` is hard-coded), the two share no model — an enrollment is sequence-only, a broadcast carries its own `target_filter_json` — and everything they genuinely share (queue action types, the compliance engine, the condition engine) already lives in other apps.
 
 ### L6-A: the app is called `campaigns`, and that is not a preference
 
@@ -99,6 +107,7 @@ Read first: the issue body (it is the scope), then docs/agent-prompts/layer-6.md
 
 Specifics for you:
 - THE APP IS CALLED `campaigns`, and that is a contract, not a preference. apps/flows/picklists.py::_sequences calls installed_model("campaigns", "apps.campaigns", "Sequence") and returns [] while it resolves to nothing. Ship apps/campaigns/ with a Sequence model exposing `name` and .objects.for_workspace(...), and the builder's dropdown fills itself with no edit to apps/flows/. A different app label leaves that resolver permanently empty and nothing fails loudly.
+- BROADCASTS ARE NOT YOURS. SPEC §2 used to file sequences and broadcasts together under apps/campaigns/; it has been amended and broadcasts now live in apps/broadcasts/, which is L6-B's (issue #23). You own apps/campaigns/ alone, so there is no add/add conflict on apps.py or 0001_initial.py.
 - The subscribe_sequence / unsubscribe_sequence SCHEMAS already ship in apps/flows/schema/nodes.py. You register the RUNTIME via apps.flows.engine.registry.register_verb. Read apps/flows/engine/nodes/action.py first: an unregistered verb currently logs a warning and moves on, which is the documented no-op you are replacing. Do not add a second schema.
 - The `sequence` condition source is already DECLARED in apps/contacts/conditions.py with a None handler and the note "issue #22, L6-A". Fill it via register_source. Set-wise through queryset(), never a Python loop over contacts.
 - Rule triggers consume the EVENT CATALOG (contract 7), NOT the inbound routing pipeline. ROADMAP contract 6 says so explicitly. A rule firing on contact.tag_added connects to that Django signal in apps/contacts/events.py. Do NOT register a routing hook for it.
@@ -122,6 +131,7 @@ Read first: the issue body (it is the scope), then docs/agent-prompts/layer-6.md
 You are on the critical path (ROADMAP line 13: ... → L5 wave → L6-B → L7-E).
 
 Specifics for you:
+- YOUR APP IS `apps/broadcasts/`, NOT apps/campaigns/. Issue #23's body says "campaigns/broadcasts*" and that is superseded — SPEC §2 and §5 are amended. L6-A cannot move: apps/flows/picklists.py hard-codes installed_model("campaigns", "apps.campaigns", "Sequence"). If you also built in apps/campaigns/ you would both create apps.py, __init__.py and migrations/0001_initial.py for one app label, and Django cannot carry two 0001_initial for one app. ROADMAP's per-PR bar forbids two same-layer workstreams touching the same Django app for exactly this reason. Nothing resolves a Broadcast model by app label, so the split is free.
 - The composer is HTMX with a single-node graph_json. ROADMAP line 43 says "no React embed" — the React island belongs to the flow builder, and a broadcast is one message. Reuse the config panels' DATA SHAPES, not the canvas.
 - Eligibility is apps.messaging.compliance.eligible(...) — its docstring says "Exported for L6-B". Use annotate_eligibility when you need to show WHY someone was excluded. Do not re-derive window state or opt-out status.
 - Targeting is apps.contacts.conditions.queryset(workspace, filter_json) — the same engine segments use, so an audience and a segment agree by construction.
@@ -173,7 +183,8 @@ Development is fully parallel. Merge order is free — no workstream owns a seam
 3. The `subscribe_sequence` verb runs from a flow, and the `sequence` condition source filters set-wise in one query.
 4. `sequence.subscribed`, `sequence.unsubscribed` and `broadcast.finished` all reach an L5-F outbound webhook subscriber with no edit to `apps/api/`.
 5. A broadcast cancelled mid-fanout leaves no send behind, proven against a partially-drained queue.
-6. Eligibility, template selection, segment counting and suppression each have exactly one implementation, still — `grep` for a second one.
-7. Inbox rules fire while automation is paused, and no rule writes a conversation field outside `apps.messaging.services`.
-8. IDOR suite green and extended; security review over the merged diff; dependency audits clean.
-9. **Deployment (#28) is still outstanding** and has now been carried past two gates. Layer 7 opens with L7-C, so this is the last point at which it can stop being deferred.
+6. `apps/campaigns/` and `apps/broadcasts/` are separate Django apps, each with its own `0001_initial` — ROADMAP's per-PR bar held.
+7. Eligibility, template selection, segment counting and suppression each have exactly one implementation, still — `grep` for a second one.
+8. Inbox rules fire while automation is paused, and no rule writes a conversation field outside `apps.messaging.services`.
+9. IDOR suite green and extended; security review over the merged diff; dependency audits clean.
+10. **Deployment (#28) is still outstanding** and has now been carried past two gates. Layer 7 opens with L7-C, so this is the last point at which it can stop being deferred.
