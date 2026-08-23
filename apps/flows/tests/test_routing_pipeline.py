@@ -390,6 +390,39 @@ class TestCommentGuard:
 
         assert not HandledComment.objects.for_workspace(tenancy.workspace).exists()
 
+    def test_a_comment_from_a_known_contact_is_claimed_too(self, tenancy):
+        """The gate used to be ``context.contact is None``, which conflated "is
+        this a comment" with "is there anybody to run a flow for". SPEC §10's
+        guards are properties of the comment, so a commenter who happened to
+        have a contact row bypassed them entirely."""
+        from apps.flows.models import HandledComment
+
+        instagram = self._instagram(tenancy)
+        self._comment_trigger(tenancy)
+        contact = _contact_with_identity(tenancy, instagram, "ig-known")
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram, user="ig-known"))
+
+        row = HandledComment.objects.for_workspace(tenancy.workspace).get()
+        assert row.commenter_ref == "ig-known"
+        assert contact is not None
+
+    def test_a_known_contacts_second_comment_on_the_post_is_refused(self, tenancy):
+        """``once_per_contact_per_post`` — the setting that silently did
+        nothing for this class of commenter."""
+        from apps.flows.models import HandledComment
+
+        instagram = self._instagram(tenancy)
+        self._comment_trigger(tenancy)
+        _contact_with_identity(tenancy, instagram, "ig-known")
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram, comment_id="c-1", user="ig-known"))
+            _route(instagram, self._comment(instagram, comment_id="c-2", user="ig-known"))
+
+        assert HandledComment.objects.for_workspace(tenancy.workspace).count() == 1
+
     def test_a_comment_with_no_id_is_not_claimed(self, tenancy):
         """L5-A and L5-B fill payload.comment_id; until then there is nothing to
         key the guard on and nothing may be started."""
@@ -546,3 +579,26 @@ class TestContextBuilding:
             connection, inbound(connection, text="hi"), InlineBudget.start(), mode=RoutingMode.INLINE
         )
         assert context.is_paused is True
+
+
+def _contact_with_identity(tenancy, connection, address):
+    """A contact this connection already knows, so the comment path meets one.
+
+    Through the facade (contract 1) rather than the ORM: the identity table has
+    a check constraint tying ``opt_in`` to its audit fields, and a fixture that
+    wrote the row directly would be a fixture that can drift from what the
+    product produces.
+    """
+    from apps.contacts.services import create_contact
+    from apps.messaging import services
+
+    contact = create_contact(workspace=tenancy.workspace, first_name="Known")
+    services.upsert_contact_identity(
+        contact,
+        connection.platform,
+        address,
+        source="message_in",
+        opt_in=True,
+        connection=connection,
+    )
+    return contact

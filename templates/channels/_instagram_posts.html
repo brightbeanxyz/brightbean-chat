@@ -1,0 +1,42 @@
+{% comment %}
+The comment trigger's post picker (issue #17, SPEC §10).
+
+Everything here came off the Graph API, so every value is escaped by Django's
+default autoescaping and nothing is marked safe — a caption is whatever somebody
+typed into Instagram. A thumbnail renders as an <img> because the CSP allows
+`img-src https:`; the permalink is a plain link.
+
+`pick()` is defined by the enclosing x-data in flows/triggers/_form_comment.html,
+which this fragment is swapped into. An inline `onclick` would be blocked: the
+CSP has no 'unsafe-inline' in script-src (config/settings/base.py).
+{% endcomment %}
+<div class="rounded-lg border p-2" style="border-color: var(--border);" data-testid="instagram-post-picker">
+  {% if reason %}
+    <p class="text-xs" style="color: var(--text-secondary);">
+      {{ reason }}
+      {% if connect_url %}<a href="{{ connect_url }}">Connect Instagram</a>.{% endif %}
+    </p>
+  {% else %}
+    <ul class="grid grid-cols-2 gap-2">
+      {% for post in posts %}
+        <li class="flex items-center gap-2">
+          <button type="button" class="flex items-center gap-2 text-left text-xs"
+                  data-post-id="{{ post.id }}"
+                  @click="pick($el.dataset.postId)">
+            {% if post.thumbnail_url %}
+              <img src="{{ post.thumbnail_url }}" alt="" loading="lazy" width="40" height="40"
+                   class="rounded object-cover" style="width: 40px; height: 40px;" />
+            {% endif %}
+            <span>
+              <span class="block">{{ post.caption|default:"(no caption)"|truncatechars:48 }}</span>
+              <span style="color: var(--text-tertiary);">{{ post.media_type }}</span>
+            </span>
+          </button>
+          {% if post.permalink %}
+            <a class="text-xs" href="{{ post.permalink }}" target="_blank" rel="noopener noreferrer">View</a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>

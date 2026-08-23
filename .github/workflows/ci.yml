@@ -529,5 +529,36 @@ jobs:
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
+      # Always given an explicit range: the pull request's own commits on a PR,
+      # and the pushed ref's full ancestry otherwise.
+      #
+      # `gitleaks detect` with no `--log-opts` walks **every ref**, not the
+      # checked-out one — its default git-log invocation includes `--all` — and
+      # `fetch-depth: 0` fetches every branch. So a scan here was reporting
+      # findings from *other people's unmerged branches*. With six Layer-5
+      # workstreams in flight that is not a rare collision: each branch carrying
+      # a credential-shaped test fixture failed this job on every open PR,
+      # including ones pushed before it existed, and no per-branch fix could
+      # clear it. A red check nobody's PR can turn green is a check people learn
+      # to ignore.
+      #
+      # `HEAD` rather than no range at all on the push and dispatch paths, and
+      # that distinction is the whole point: "the full history" and "every ref"
+      # are not the same thing, and only the first one is wanted. Nothing is
+      # weakened where this decides something — a push to main still scans
+      # main's complete ancestry, so a credential-shaped fixture still needs its
+      # `.gitleaks.toml` allowlist entry before it lands, and a secret committed
+      # and later deleted is still caught.
       - name: Run gitleaks
-        run: gitleaks detect --source . --redact --verbose --no-banner
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            RANGE="$BASE_SHA..$HEAD_SHA"
+            echo "Scanning $RANGE (this pull request's own commits)"
+          else
+            RANGE="HEAD"
+            echo "Scanning HEAD (this ref's full ancestry, and no other branch)"
+          fi
+          gitleaks detect --source . --redact --verbose --no-banner --log-opts="$RANGE"
