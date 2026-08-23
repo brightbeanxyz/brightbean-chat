@@ -168,3 +168,55 @@ class TestCrossTenantAccess:
 
         assert response.status_code == 302
         assert "/accounts/login/" in response.headers["Location"]
+
+
+class TestIssue24Permissions:
+    """The one split issue #24 introduces, asserted from both sides.
+
+    ``reply_in_inbox`` for labels, ``manage_workspace_settings`` for rules.
+    Neither key is new — ``PERMISSION_KEYS`` is the whole vocabulary — and the
+    line between them is what a rule can reach: labelling files *this* thread,
+    while a rule reassigns and closes conversations across the workspace with
+    nobody watching. Every other settings CRUD in this product sits above Agent
+    for that reason.
+    """
+
+    def test_an_agent_may_file_and_defer_but_not_author_rules(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        from apps.inbox.services import create_label
+
+        label = create_label(tenancy.workspace, name="Refunds")
+
+        assert agent_client.get(url_for("label_settings")).status_code == 200
+        assert (
+            agent_client.post(
+                url_for("add_label", conversation_id=conversation.pk), {"label": str(label.pk)}
+            ).status_code
+            == 204
+        )
+        assert agent_client.get(url_for("rule_settings")).status_code == 403
+        assert agent_client.post(url_for("rule_reorder"), {"rule": []}).status_code == 403
+
+    def test_a_viewer_may_read_a_thread_and_change_nothing(
+        self, tenancy: Any, viewer_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        from apps.inbox.services import create_label
+
+        label = create_label(tenancy.workspace, name="Refunds")
+
+        assert viewer_client.get(url_for("thread", conversation_id=conversation.pk)).status_code == 200
+        for name, payload in (
+            ("add_label", {"label": str(label.pk)}),
+            ("create_reminder", {"remind_at": "2099-01-01T09:00"}),
+            ("create_scheduled_reply", {"body": "later", "send_at": "2099-01-01T09:00"}),
+        ):
+            response = viewer_client.post(url_for(name, conversation_id=conversation.pk), payload)
+            assert response.status_code == 403, name
+        assert viewer_client.get(url_for("label_settings")).status_code == 403
+
+    def test_an_admin_reaches_both(self, tenancy: Any, client_for: Any, url_for: Any) -> None:
+        admin = client_for(tenancy.user_for("admin"))
+
+        assert admin.get(url_for("label_settings")).status_code == 200
+        assert admin.get(url_for("rule_settings")).status_code == 200

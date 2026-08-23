@@ -90,6 +90,42 @@ class TestCrossTenantIsolation:
             "inbox:retry",
         } <= names
 
+    def test_the_sweep_covers_the_inbox_v2_routes(self):
+        """Issue #24 adds labels, rules, reminders and scheduled replies.
+
+        Two of these are worth naming explicitly. `inbox:bulk_label` carries no
+        conversation_id — it posts a set of them — so `label_id` being a
+        *registered* kwarg is the only thing that makes iter_tenant_routes()
+        look at it: a route with no registered kwarg is skipped before the
+        unknown-kwarg check ever runs. And the two settings pages are the first
+        inbox routes that name no conversation at all, so they would have been
+        invisible to this sweep without `label_id` and `rule_id`."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "inbox:add_label",
+            "inbox:remove_label",
+            "inbox:bulk_label",
+            "inbox:create_reminder",
+            "inbox:cancel_reminder",
+            "inbox:create_scheduled_reply",
+            "inbox:update_scheduled_reply",
+            "inbox:cancel_scheduled_reply",
+            "inbox:label_settings",
+            "inbox:label_rows",
+            "inbox:label_create",
+            "inbox:label_update",
+            "inbox:label_delete",
+            "inbox:rule_settings",
+            "inbox:rule_rows",
+            "inbox:rule_form",
+            "inbox:rule_save",
+            "inbox:rule_reorder",
+            "inbox:rule_test",
+            "inbox:rule_toggle",
+            "inbox:rule_delete",
+        } <= names
+
     def test_the_sweep_covers_the_contacts_routes(self):
         """Issue #3 replaced three of the shell placeholders with real views."""
         names = {route.name for route in iter_tenant_routes()}

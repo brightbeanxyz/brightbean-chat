@@ -1,0 +1,66 @@
+{% comment %}
+Reminders and scheduled replies waiting on this thread, plus any scheduled reply
+that came due and was refused.
+
+Inside the polled region, unlike the compose box and the header: these carry a
+countdown, and apps/inbox/views.py folds the *rendered* countdown strings into
+this pane's ETag precisely so the pane refreshes when the words would change —
+about once a minute — rather than every three seconds or never. Nothing here
+holds unsaved work, so a swap costs nothing.
+
+A failed reply stays until somebody cancels it. "Never a silent drop" means the
+thread carries the failure, not only the notification a logged-out agent may
+never see; `reason` is apps.messaging.codes.describe's sentence for a machine
+code, never a provider's own text.
+{% endcomment %}
+{% if pending_reminders or pending_replies or failed_replies %}
+  <ul class="ib-deferred">
+    {% for reminder in pending_reminders %}
+      <li class="ib-deferred-item">
+        <span class="ib-chip">Reminder</span>
+        <span>
+          {% if reminder.is_mine %}You{% else %}{{ reminder.who }}{% endif %}
+          {{ reminder.due_in }} from now{% if reminder.note %} — {{ reminder.note }}{% endif %}
+        </span>
+        {% if can_reply %}
+          <form class="ml-auto"
+                hx-post="{% url 'inbox:cancel_reminder' workspace_id=request.workspace.id conversation_id=conversation.id reminder_id=reminder.id %}"
+                hx-swap="none">
+            {% csrf_token %}
+            <button type="submit" class="btn-link btn-inline">Cancel</button>
+          </form>
+        {% endif %}
+      </li>
+    {% endfor %}
+
+    {% for reply in pending_replies %}
+      <li class="ib-deferred-item">
+        <span class="ib-chip">Scheduled</span>
+        <span>Sending {{ reply.due_in }} from now — {{ reply.preview }}</span>
+        {% if can_reply %}
+          <form class="ml-auto"
+                hx-post="{% url 'inbox:cancel_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id scheduled_reply_id=reply.id %}"
+                hx-swap="none">
+            {% csrf_token %}
+            <button type="submit" class="btn-link btn-inline">Cancel</button>
+          </form>
+        {% endif %}
+      </li>
+    {% endfor %}
+
+    {% for reply in failed_replies %}
+      <li class="ib-deferred-item ib-deferred-failed">
+        <span class="ib-chip">Not sent</span>
+        <span>{{ reply.reason }} — {{ reply.preview }}</span>
+        {% if can_reply %}
+          <form class="ml-auto"
+                hx-post="{% url 'inbox:cancel_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id scheduled_reply_id=reply.id %}"
+                hx-swap="none">
+            {% csrf_token %}
+            <button type="submit" class="btn-link btn-inline">Dismiss</button>
+          </form>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
