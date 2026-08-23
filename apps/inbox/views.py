@@ -62,6 +62,7 @@ from apps.messaging.rendering import outbound_from_body
 __all__ = [
     "assign",
     "composer",
+    "header",
     "inbox",
     "messages",
     "pause",
@@ -354,6 +355,12 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
         "contact_tags": contact_tags,
         "available_tags": list(Tag.objects.for_workspace(request.workspace).exclude(pk__in=chosen)),
         "execution": selectors.live_execution_for(request.workspace, contact),
+        # The panel's pause toggle reads this. It used to arrive only because
+        # the thread merged _thread_body_context over the top, so the standalone
+        # sidebar endpoint — the one every refresh after a send or a pause goes
+        # through — rendered "Pause automation" at a conversation that was
+        # already paused.
+        "is_paused": _is_paused(conversation),
         "can_reply": _can_reply(request),
         "can_edit_contact": _can_edit_contact(request),
         "members": _members(request),
@@ -386,20 +393,21 @@ def inbox(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 def rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The conversation list, polled every 3 s. 304 when nothing moved."""
     filters, queryset = _rows_context(request)
+    # The payload first, the token from it second. The rows are two bounded
+    # queries and the template is the expensive half, so an unchanged poll still
+    # skips the work that matters — and the token cannot disagree with the
+    # markup, because it is made of it. See selectors.list_version.
+    context = _rendered_rows(request, queryset)
     etag = version_etag(
         "inbox-rows",
         request.user.pk,
         filters["state"],
         filters["connection"],
         filters["assignee"],
-        request.GET.get("open", ""),
-        *selectors.list_version(request.workspace, queryset, request.user),
+        context["open_conversation_id"],
+        *selectors.list_version(context["conversations"]),
     )
-    return conditional(
-        request,
-        etag,
-        lambda: render(request, "inbox/_conversation_rows.html", _rendered_rows(request, queryset)),
-    )
+    return conditional(request, etag, lambda: render(request, "inbox/_conversation_rows.html", context))
 
 
 @login_required
@@ -494,6 +502,19 @@ def composer(request: WorkspaceRequest, workspace_id: str, conversation_id: str)
         request,
         "inbox/_composer.html",
         {"can_reply": _can_reply(request), **_composer_context(conversation)},
+    )
+
+
+@login_required
+@require_permission("use_inbox")
+@require_GET
+def header(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> HttpResponse:
+    """The identity line and the state/assignee controls, after something moved."""
+    conversation = _conversation(request, conversation_id)
+    return render(
+        request,
+        "inbox/_thread_header.html",
+        {"conversation": conversation, "can_reply": _can_reply(request), "members": _members(request)},
     )
 
 

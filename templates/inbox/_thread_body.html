@@ -84,26 +84,10 @@ is a link, and rendering.py is where that is decided.
             <a href="{{ part.url }}" target="_blank" rel="noopener noreferrer">{{ part.caption|default:part.media_kind }}</a>
             <span class="ib-chip">{{ part.media_kind }}</span>
           {% elif part.kind == "card" %}
-            <div>
-              {% if part.image_url %}<img class="ib-media" src="{{ part.image_url }}" alt="" loading="lazy">{% endif %}
-              {% if part.title %}<div class="font-semibold">{{ part.title }}</div>{% endif %}
-              {% if part.subtitle %}<div>{{ part.subtitle }}</div>{% endif %}
-              {% if part.url %}<a href="{{ part.url }}" target="_blank" rel="noopener noreferrer">Open</a>{% endif %}
-              {% for button in part.buttons %}
-                {% if button.url %}
-                  <a class="ib-chip" href="{{ button.url }}" target="_blank" rel="noopener noreferrer">{{ button.label }}</a>
-                {% else %}
-                  <span class="ib-chip">{{ button.label }}</span>
-                {% endif %}
-              {% endfor %}
-            </div>
+            {% include "inbox/_card.html" with card=part %}
           {% elif part.kind == "gallery" %}
             {% for card in part.cards %}
-              <div>
-                {% if card.image_url %}<img class="ib-media" src="{{ card.image_url }}" alt="" loading="lazy">{% endif %}
-                {% if card.title %}<div class="font-semibold">{{ card.title }}</div>{% endif %}
-                {% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Open</a>{% endif %}
-              </div>
+              {% include "inbox/_card.html" with card=card %}
             {% endfor %}
           {% else %}
             <div class="ib-tombstone">{{ part.reason }}</div>

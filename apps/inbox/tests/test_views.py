@@ -141,6 +141,17 @@ class TestTheList:
         assert preview_queries, "the preview query did not run"
         assert any("DISTINCT ON" in sql for sql in preview_queries)
 
+    def test_an_unparseable_channel_filter_is_not_a_500(
+        self, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        """Same hazard as the assignee filter and the same answer. Both are
+        query-string fragments reaching a UUID column, on endpoints the page
+        polls every three seconds — a stale bookmark must not be a 500."""
+        response = agent_client.get(url_for("rows"), {"connection": "not-a-uuid"})
+
+        assert response.status_code == 200
+        assert "Ada" not in response.content.decode()
+
     def test_an_unparseable_assignee_filter_is_not_a_500(
         self, agent_client: Any, url_for: Any, conversation: Conversation
     ) -> None:

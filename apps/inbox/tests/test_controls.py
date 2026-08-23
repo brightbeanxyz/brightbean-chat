@@ -82,6 +82,32 @@ class TestState:
         conversation.refresh_from_db()
         assert conversation.state == ConversationState.OPEN
 
+    def test_the_header_control_flips_after_the_state_changes(
+        self, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        """The state form posts and gets a 204 back, so nothing re-renders it on
+        its own. Without a refresh it kept its old label and its old hidden
+        value, and the only transition available was the one just made — the
+        thread could be marked done and never reopened without a page reload."""
+        agent_client.post(url_for("state", conversation_id=conversation.pk), {"state": "done"})
+
+        header = agent_client.get(url_for("header", conversation_id=conversation.pk)).content.decode()
+
+        assert "Reopen" in header
+        assert "Mark done" not in header
+        assert 'value="open"' in header
+
+    def test_the_header_refreshes_on_the_event_the_mutations_fire(
+        self, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        """A markup pin: the endpoint is only half the fix if nothing asks it."""
+        pane = agent_client.get(
+            url_for("thread", conversation_id=conversation.pk), headers={"HX-Request": "true"}
+        ).content.decode()
+
+        assert 'id="inbox-thread-header"' in pane
+        assert 'hx-trigger="inboxThreadChanged from:body"' in pane
+
     def test_reopening_does_not_create_a_second_thread(
         self, agent_client: Any, url_for: Any, conversation: Conversation
     ) -> None:
@@ -146,6 +172,20 @@ class TestThePause:
         body = agent_client.get(url_for("messages", conversation_id=conversation.pk)).content.decode()
 
         assert "ib-banner-paused" not in body
+
+    def test_the_standalone_panel_knows_the_conversation_is_paused(
+        self, agent_client: Any, url_for: Any, conversation: Conversation
+    ) -> None:
+        """The panel's toggle used to get `is_paused` only because the thread
+        merged the body's context over the top — so the endpoint every refresh
+        after a send or a pause goes through offered "Pause automation" at a
+        conversation that was already paused."""
+        pause_automation(conversation, timezone.now() + AGENT_AUTOMATION_PAUSE)
+
+        panel = agent_client.get(url_for("sidebar", conversation_id=conversation.pk)).content.decode()
+
+        assert "Resume automation" in panel
+        assert "Pause automation" not in panel
 
     def test_a_viewer_cannot_pause(self, viewer_client: Any, url_for: Any, conversation: Conversation) -> None:
         response = viewer_client.post(url_for("pause", conversation_id=conversation.pk), {"action": "pause"})

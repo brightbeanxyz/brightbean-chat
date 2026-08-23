@@ -21,6 +21,7 @@ urlpatterns = [
     path("<uuid:conversation_id>/", views.thread, name="thread"),
     path("<uuid:conversation_id>/messages/", views.messages, name="messages"),
     path("<uuid:conversation_id>/composer/", views.composer, name="composer"),
+    path("<uuid:conversation_id>/header/", views.header, name="header"),
     path("<uuid:conversation_id>/sidebar/", views.sidebar, name="sidebar"),
     path("<uuid:conversation_id>/send/", views.send, name="send"),
     path("<uuid:conversation_id>/note/", views.note, name="note"),

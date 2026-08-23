@@ -10,12 +10,21 @@ since this member last looked, so :func:`with_unread` tests for an inbound
 message newer than the cursor and nothing else. That is also what the issue
 means by keeping notes out of the contact-visible counts.
 
-**The version token.** The pollers need a value that changes when, and only
-when, the rendered markup would. ``Max("updated_at")`` alone is not it: delete
-the most recently touched row and the maximum walks *backwards* to a value the
-client is already holding, so the stale render survives the change that removed
-it. Pairing it with ``Count("id")`` closes that, which is why every token here
-is built from both.
+**The version tokens.** The pollers need a value that changes when, and only
+when, the rendered markup would, and the two surfaces reach that differently.
+
+:func:`conversation_version` aggregates, because a thread's markup follows its
+message rows. ``Max("updated_at")`` alone is not enough: delete the most
+recently touched row and the maximum walks *backwards* to a value the client is
+already holding, so the stale render survives the change that removed it.
+Pairing it with ``Count("id")`` closes that.
+
+:func:`list_version` hashes the values the rows are about to print instead. An
+aggregate over conversations kept missing changes that live somewhere else — a
+refused send writes a message without touching the conversation, a rename moves
+a contact — and each miss was a client stuck on a 304 for ever. Hashing the
+render inputs makes the token right by construction rather than right as long
+as somebody remembers to add the next input to it.
 """
 
 from datetime import UTC, datetime
@@ -24,6 +33,7 @@ from uuid import UUID
 
 from django.db.models import Count, DateTimeField, Exists, F, Max, OuterRef, Q, QuerySet, Subquery, Value
 from django.db.models.functions import Coalesce
+from django.utils.timesince import timesince
 
 from apps.contacts.models import Contact
 from apps.inbox.models import ConversationRead
@@ -103,21 +113,33 @@ def conversations_for(
     if state in (ConversationState.OPEN, ConversationState.DONE):
         rows = rows.filter(state=state)
     if connection_id:
-        rows = rows.filter(channel_connection_id=connection_id)
+        parsed = _as_uuid(connection_id)
+        rows = rows.filter(channel_connection_id=parsed) if parsed else rows.none()
     if assignee == ASSIGNEE_ME:
         rows = rows.filter(assignee=viewer)
     elif assignee == ASSIGNEE_UNASSIGNED:
         rows = rows.filter(assignee__isnull=True)
     elif assignee:
-        # Parsed rather than passed through: the value is a query-string
-        # fragment, and handing a non-UUID to a UUID column is a 500 anyone can
-        # trigger with a bookmark. An unparseable one filters nothing, which is
-        # the same thing an unknown-but-valid id would do.
-        try:
-            rows = rows.filter(assignee_id=UUID(assignee))
-        except ValueError:
-            rows = rows.none()
+        parsed = _as_uuid(assignee)
+        rows = rows.filter(assignee_id=parsed) if parsed else rows.none()
     return with_unread(rows, workspace=workspace, viewer=viewer)
+
+
+def _as_uuid(value: Any) -> UUID | None:
+    """A filter value from the query string, or None if it is not an id.
+
+    Both id filters go through here. They are query-string fragments, and
+    handing a non-UUID to a UUID column raises — a 500 anyone can reach with a
+    stale bookmark, on the two endpoints the page polls every three seconds. An
+    unparseable id filters nothing, which is what an unknown-but-valid one would
+    have done anyway.
+    """
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 def with_unread(rows: QuerySet[Conversation], *, workspace: Any, viewer: Any) -> QuerySet[Conversation]:
@@ -214,20 +236,47 @@ def thread_messages(workspace: Any, conversation: Conversation, *, limit: int) -
     return page, has_more
 
 
-def list_version(workspace: Any, rows: QuerySet[Conversation], viewer: Any) -> tuple[Any, ...]:
-    """The parts of the conversation list's ETag that come from the database.
+def list_version(rendered: list[dict[str, Any]]) -> tuple[Any, ...]:
+    """The conversation list's ETag, read off the rows it is about to render.
 
-    The viewer's read rows are in there because the unread dot is part of the
-    markup: without them, marking a thread read would leave every other tab
-    holding an ETag that still says "unread" and no reason to refetch.
+    Derived from the payload rather than from aggregates over the tables behind
+    it, because the two kept disagreeing. A refused send is the case that broke
+    it: ``messaging._failed`` writes a message row and deliberately does *not*
+    call ``_touch`` — a refusal is not thread recency — so the preview line
+    changed while ``Max(conversation.updated_at)`` sat still, and a client
+    holding the old tag went on being told nothing had happened. Contact and
+    member renames were the same shape from a different direction: they move a
+    row this token never looked at.
+
+    Hashing the values the template prints ends that class of bug rather than
+    fixing one instance of it: anything the markup shows is in the token by
+    construction, and anything it does not show cannot churn it. The rows are
+    already in memory — :func:`conversations_for` and
+    :func:`last_messages_by_conversation` between them are two bounded queries —
+    so this costs a join of about a hundred short strings, and an unchanged poll
+    still skips the template, which is the expensive half.
     """
-    conversations = rows.aggregate(latest=Max("updated_at"), total=Count("id"))
-    reads = (
-        ConversationRead.objects.for_workspace(workspace)
-        .filter(user=viewer)
-        .aggregate(latest=Max("updated_at"), total=Count("id"))
+    return tuple(
+        (
+            str(row["conversation"].pk),
+            row["conversation"].state,
+            row["conversation"].contact.display_name,
+            row["conversation"].channel_connection.platform,
+            # The assignee's *name*, because that is what the chip prints — an
+            # id would hold still through a rename.
+            row["conversation"].assignee.display_name if row["conversation"].assignee else "",
+            # The relative string, not the timestamp behind it. "5 minutes ago"
+            # goes wrong on its own while the row it describes never moves, and
+            # a token built from last_message_at would answer 304 to that. This
+            # way the list refreshes when the text would actually change —
+            # about once a minute on a quiet workspace, not every three seconds.
+            timesince(row["conversation"].last_message_at) if row["conversation"].last_message_at else "",
+            row["preview"],
+            row["last_internal"],
+            row["unread"],
+        )
+        for row in rendered
     )
-    return (conversations["latest"], conversations["total"], reads["latest"], reads["total"])
 
 
 def conversation_version(workspace: Any, conversation: Conversation) -> tuple[Any, ...]:

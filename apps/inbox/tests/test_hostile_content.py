@@ -186,6 +186,52 @@ class TestHostileUrls:
         assert card.url == ""
         assert card.buttons[0].url == ""
 
+    def test_a_gallery_card_renders_everything_a_standalone_card_does(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """The gallery branch was a copy of the card branch that had lost its
+        subtitle and its buttons, so a carousel arrived in the thread with the
+        text and the actions missing. One shared partial now serves both."""
+        card = {
+            "title": "Blue jacket",
+            "subtitle": "In stock, ships tomorrow",
+            "image_url": "https://cdn.example.test/j.png",
+            "url": "https://shop.example.test/j",
+            "buttons": [{"id": "b1", "label": "Buy it", "url": "https://shop.example.test/buy"}],
+        }
+        inbound(blocks=[{"type": "gallery", "cards": [card]}])
+
+        body = _thread(agent_client, url_for, conversation)
+
+        assert "Blue jacket" in body
+        assert "In stock, ships tomorrow" in body
+        assert "Buy it" in body
+
+    def test_a_gallery_cards_urls_go_through_the_same_scheme_check(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """Sharing the partial must not mean sharing a hole: the vetting happens
+        in rendering.py before either branch sees a Card."""
+        inbound(
+            blocks=[
+                {
+                    "type": "gallery",
+                    "cards": [
+                        {
+                            "title": "t",
+                            "image_url": "javascript:alert(1)",
+                            "url": "javascript:alert(1)",
+                            "buttons": [{"id": "b", "label": "Press", "url": "javascript:alert(1)"}],
+                        }
+                    ],
+                }
+            ]
+        )
+
+        body = _thread(agent_client, url_for, conversation)
+
+        assert "javascript:" not in body.lower()
+
     def test_an_ordinary_https_attachment_still_renders(
         self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
     ) -> None:

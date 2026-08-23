@@ -111,6 +111,47 @@ class TestTheConversationList:
 
         assert _poll(agent_client, url, etag).status_code == 200
 
+    def test_a_refused_send_busts_the_tag_even_though_recency_did_not_move(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """`messaging._failed` writes a message row and deliberately does not
+        call `_touch` — a refusal is not thread recency. The preview line still
+        changes, so a token aggregating conversations alone left the client on a
+        304 with a stale preview and nothing able to clear it."""
+        inbound("hello")
+        url = url_for("rows")
+        etag = _poll(agent_client, url).headers["ETag"]
+
+        Message.objects.create(
+            conversation=conversation,
+            direction=MessageDirection.OUT,
+            source=MessageSource.AUTOMATION,
+            status=MessageStatus.FAILED,
+            error="opted_out",
+            idempotency_key="refused:1",
+            body={"blocks": [{"type": "text", "text": "a refused automation"}]},
+        )
+        after = _poll(agent_client, url, etag)
+
+        assert after.status_code == 200
+        assert "a refused automation" in after.content.decode()
+
+    def test_a_contact_rename_busts_the_tag(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """The name is in the markup but the row it lives on is a contact, which
+        an aggregate over conversations never looked at."""
+        inbound("hello")
+        url = url_for("rows")
+        etag = _poll(agent_client, url).headers["ETag"]
+
+        conversation.contact.first_name = "Renamed"
+        conversation.contact.save(update_fields=["first_name", "updated_at"])
+        after = _poll(agent_client, url, etag)
+
+        assert after.status_code == 200
+        assert "Renamed" in after.content.decode()
+
     def test_different_filters_never_share_a_tag(
         self, agent_client: Any, url_for: Any, conversation: Conversation
     ) -> None:

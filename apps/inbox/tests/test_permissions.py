@@ -34,7 +34,7 @@ WRITE_ROUTES: tuple[tuple[str, dict[str, str]], ...] = (
 )
 
 #: Every route the inbox reads through, minus the two needing extra kwargs.
-READ_ROUTES = ("thread", "messages", "composer", "sidebar")
+READ_ROUTES = ("thread", "messages", "composer", "header", "sidebar")
 
 
 class TestTheRoleTableItself:

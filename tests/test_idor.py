@@ -78,6 +78,7 @@ class TestCrossTenantIsolation:
             "inbox:thread",
             "inbox:messages",
             "inbox:composer",
+            "inbox:header",
             "inbox:sidebar",
             "inbox:send",
             "inbox:note",

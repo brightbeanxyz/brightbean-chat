@@ -60,6 +60,30 @@ class TestTheCursor:
         row = ConversationRead.objects.for_workspace(tenancy.workspace).get(conversation=conversation)
         assert row.last_read_at == later
 
+    def test_two_overlapping_requests_cannot_drag_it_backwards(self, tenancy: Any, conversation: Conversation) -> None:
+        """The interleaving a read-then-decide-in-Python version allows.
+
+        Both requests read the same stored value and both conclude they are
+        newer; the one holding the *earlier* timestamp commits last and wins.
+        The comparison is a condition on the UPDATE now, so the row arbitrates
+        and the loser simply matches nothing.
+        """
+        agent = tenancy.user_for("agent")
+        start = timezone.now()
+        later = start + timedelta(minutes=5)
+        earlier = start + timedelta(minutes=1)
+        mark_read(conversation, agent, at=start)
+
+        # Both hold the same stale instance, which is what overlapping requests
+        # have — each loaded the row before either wrote.
+        stale = ConversationRead.objects.for_workspace(tenancy.workspace).get(conversation=conversation)
+        assert stale.last_read_at == start
+        mark_read(conversation, agent, at=later)
+        mark_read(conversation, agent, at=earlier)
+
+        stale.refresh_from_db()
+        assert stale.last_read_at == later
+
     def test_it_derives_its_workspace_from_the_conversation(self, tenancy: Any, conversation: Conversation) -> None:
         """Same discipline as messaging.Message: the tenant column is not
         something a caller gets to supply."""
