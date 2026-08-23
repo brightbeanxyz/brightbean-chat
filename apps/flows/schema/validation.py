@@ -463,7 +463,7 @@ def _send_message_warnings(
         yield _warn(
             "capability_unsupported",
             f"{platform} shows buttons or quick replies, not both; the adapter appends the quick "
-            f"replies to the text as numbered options instead (SPEC §6.1).",
+            "replies to the text as numbered options instead (SPEC §6.1).",
             node,
             "config.quick_replies",
         )

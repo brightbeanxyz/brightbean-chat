@@ -337,11 +337,13 @@ def _record_display_fields(identity: ContactChannelIdentity, event: NormalizedEv
     nobody predicted.
     """
     extra = event.payload.extra if isinstance(event.payload.extra, dict) else {}
-    incoming = {
-        key: _clean(extra[key], MAX_DISPLAY_CHARS)
-        for key in DISPLAY_FIELDS
-        if isinstance(extra.get(key), str) and _clean(extra[key], MAX_DISPLAY_CHARS)
-    }
+    incoming: dict[str, str] = {}
+    for key in DISPLAY_FIELDS:
+        # Cleaned once: called twice — as the test and as the value — it was two
+        # chances for the two to disagree about what "empty" means.
+        value = _clean(extra.get(key), MAX_DISPLAY_CHARS)
+        if value:
+            incoming[key] = value
     if not incoming:
         return
 
@@ -351,8 +353,18 @@ def _record_display_fields(identity: ContactChannelIdentity, event: NormalizedEv
 
     merged = {**stored, **incoming}
     try:
-        identity.extra = merged
-        identity.save(update_fields=["extra", "updated_at"])
+        # **The savepoint is not optional**, and catching without one was worse
+        # than not catching at all. ``persist_events`` runs this whole function
+        # inside ``transaction.atomic()``, and a database-level error marks that
+        # transaction unusable — so swallowing one here left every write after
+        # it (the conversation, the message row, the window bookkeeping) raising
+        # ``TransactionManagementError``. The guard meant to stop a display name
+        # from costing the message did exactly that, with a more confusing
+        # error. Same call ``views_webhooks._log_event`` and
+        # ``views_telegram._connect`` make, for the same reason.
+        with transaction.atomic():
+            identity.extra = merged
+            identity.save(update_fields=["extra", "updated_at"])
     except (DataError, TypeError, ValueError):
         identity.extra = stored
         logger.warning("Could not store display fields on identity %s; the message is unaffected.", identity.pk)

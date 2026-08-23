@@ -235,6 +235,44 @@ class TestProfileNameReachesTheIdentity:
         post_delivery(client, load_delivery("interactive_button_reply"))
         assert "reply_id" not in identity_for(connection).extra
 
+    def test_a_database_error_storing_the_name_does_not_cost_the_message(
+        self, client: Client, connection: ChannelConnection, tenancy: Tenancy, monkeypatch: Any
+    ) -> None:
+        """The write is savepointed, and without that the guard around it made
+        things worse rather than better.
+
+        ``persist_events`` runs the whole of ``_persist_one`` inside one
+        ``transaction.atomic()``. A database-level error marks that transaction
+        unusable, so catching one *without* a savepoint left every later write
+        — the conversation, the message row, the window bookkeeping — raising
+        ``TransactionManagementError``, and the message was lost anyway.
+
+        The failure here is a real one rather than a patched exception: a
+        patched raise never reaches the database and so never poisons anything,
+        which would make this test pass with or without the fix. Dividing by
+        zero in Postgres genuinely aborts the transaction.
+        """
+        from django.db import connection as db
+        from django.db.utils import DataError
+
+        from apps.messaging.models import ContactChannelIdentity
+
+        original = ContactChannelIdentity.save
+
+        def poisoning_save(self: Any, *args: Any, **kwargs: Any) -> None:
+            if kwargs.get("update_fields") == ["extra", "updated_at"]:
+                with db.cursor() as cursor:
+                    cursor.execute("SELECT 1 / 0")
+                raise DataError("unreachable")
+            original(self, *args, **kwargs)
+
+        monkeypatch.setattr(ContactChannelIdentity, "save", poisoning_save)
+        assert post_delivery(client, load_delivery("message_text")).status_code == 200
+
+        # The thing that matters: the message survived the failed decoration.
+        message = Message.objects.for_workspace(tenancy.workspace).get()
+        assert message.body["blocks"][0]["text"] == "Hello there"
+
     def test_a_renamed_contact_is_updated(self, client: Client, connection: ChannelConnection) -> None:
         post_delivery(client, load_delivery("message_text"))
 
