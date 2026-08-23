@@ -78,6 +78,12 @@ class OptInSource(models.TextChoices):
     """
 
     MESSAGE_IN = "message_in", "Inbound message"
+    #: They commented on one of the workspace's posts and the platform permits
+    #: exactly one private reply to it (SPEC §10). Distinct from ``message_in``
+    #: because a public comment is not a message, and an audit that could not
+    #: tell the two apart would answer "they wrote to us" for someone who did
+    #: not — which is precisely the fact §11.8 exists to record accurately.
+    COMMENT = "comment", "Public comment"
     DATA_COLLECTION = "data_collection", "Data collection"
     IMPORT = "import", "Import"
     API = "api", "API"
@@ -113,11 +119,23 @@ class MessageSource(models.TextChoices):
 
 
 class MessageStatus(models.TextChoices):
+    """Where a message got to.
+
+    ``DELETED`` is not a rung on the delivery ladder — it is the row being
+    retracted. SPEC §6.3 requires Instagram's ``message_deletions`` webhook to
+    "redact message body, keep row with status deleted" and §19 repeats it, so
+    the row survives with its timestamps and its place in the thread while its
+    contents are gone. ``apps.messaging.ingest`` is the only thing that writes
+    it, and :data:`DELIVERY_PROGRESS` deliberately omits it so no late receipt
+    can walk a deleted message back onto the ladder.
+    """
+
     QUEUED = "queued", "Queued"
     SENT = "sent", "Sent"
     DELIVERED = "delivered", "Delivered"
     READ = "read", "Read"
     FAILED = "failed", "Failed"
+    DELETED = "deleted", "Deleted"
 
 
 #: How far along the delivery ladder each status is. Receipts arrive as

@@ -1,6 +1,7 @@
 """Fixtures shared by the channels test modules."""
 
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -71,3 +72,52 @@ def _clean_processors() -> Iterator[None]:
             ingest.unregister_processor(name)
         for name, processor in before.items():
             ingest.register_processor(processor, name=name)
+
+
+@pytest.fixture
+def instagram_app(settings: Any) -> dict[str, str]:
+    """Deployment-level Instagram app credentials, the bottom of SPEC §4's chain.
+
+    The env level rather than a workspace override, because that is the shape a
+    self-hoster uses and because it exercises ``env_credentials`` — which is also
+    what the ``hub.challenge`` verification reads.
+    """
+    from apps.channels.tests.instagram_support import APP_SECRET
+
+    settings.PLATFORM_CREDENTIALS_FROM_ENV = {
+        Platform.INSTAGRAM.value: {
+            "client_id": "1122334455",
+            "client_secret": APP_SECRET,
+            "verify_token": "hub-verify-token",
+        }
+    }
+    return settings.PLATFORM_CREDENTIALS_FROM_ENV[Platform.INSTAGRAM.value]
+
+
+@pytest.fixture
+def instagram_connection(tenancy: Any) -> ChannelConnection:
+    """An active Instagram connection with a long-lived token on it.
+
+    ``external_id`` is the Instagram professional account id, because that is
+    what arrives as ``entry[].id`` and is the only thing
+    ``InstagramAdapter.resolve_connection`` has to find the row by.
+    """
+    from django.utils import timezone
+
+    from apps.channels import instagram_oauth
+    from apps.channels.tests.instagram_support import ACCESS_TOKEN, IG_ACCOUNT_ID
+
+    connection = ChannelConnection(
+        workspace=tenancy.workspace,
+        platform=Platform.INSTAGRAM,
+        display_name="@brightbean",
+        external_id=IG_ACCOUNT_ID,
+    )
+    instagram_oauth.store_credentials(
+        connection,
+        token=ACCESS_TOKEN,
+        expires_at=timezone.now() + timedelta(days=59),
+        user_id=IG_ACCOUNT_ID,
+    )
+    connection.save()
+    return connection

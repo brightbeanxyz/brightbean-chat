@@ -38,10 +38,12 @@ referral
 follow                 yes         **no**    **no**  no
 opt_out                yes         opts out  no      no
 comment                **no**      no        no      no
+comment, claimed       yes         yes       yes     no
+message_deleted        no          no        no      no (redacts one)
 delivery_status        no          no        no      no (updates one)
 =====================  ==========  ========  ======  ==================
 
-Three of those rows are decisions rather than transcription.
+Four of those rows are decisions rather than transcription.
 
 *A window opens only for an event the contact authored.* A story mention or an
 m.me / ``?start=`` referral is the contact opening a conversation, so it opens
@@ -57,10 +59,29 @@ matches on them, but writing one into the thread would show an agent a
 conversation the contact never had, and float an empty thread to the top of an
 inbox sorted by ``last_message_at``.
 
-*A comment writes nothing at all.* It is public, not a DM, and creating a
-contact per comment turns one viral post into a contact-spam amplifier. L4-A
-owns the platform-agnostic comment infrastructure and reads the event off this
-same seam; when comment-to-DM needs an identity, it is the DM that creates one.
+*A comment writes nothing at all* — **unless it has been claimed.** A comment is
+public, not a DM, and creating a contact per comment turns one viral post into a
+contact-spam amplifier, so an ordinary comment event is ignored here. L4-A owns
+the platform-agnostic comment infrastructure and reads the event off this same
+seam.
+
+The exception is the one case where the platform genuinely permits us to write
+to the person: a comment that SPEC §10's once-per-comment guard has already
+claimed, which an adapter re-dispatches carrying
+:data:`PRIVATE_REPLY_CLAIMED_KEY`. That marker is why the amplifier stays shut —
+a claim is once per comment and once per commenter per post, so the identity
+count is bounded by the guard rather than by how viral the post went. Such an
+event gets an identity, a consent record stamped ``OptInSource.COMMENT``, and
+the messaging window, because the private reply is an ordinary outbound send and
+has to pass the same compliance chokepoint as any other (SPEC §8). It still
+writes **no** message row: their comment is not a DM they sent us.
+
+*A deletion redacts rather than removes.* SPEC §6.3 and §19 both require
+Instagram's ``message_deletions`` to "redact message body, keep row with status
+deleted". The row keeps its place in the thread and its timestamps; the body is
+replaced with a marker the inbox renders as a tombstone. It is matched on
+``provider_message_id`` in **either** direction, because a contact can delete
+their own message as easily as we can delete ours.
 
 --------------------------------------------------------------------------
 The clock is ours, not the platform's
@@ -86,6 +107,18 @@ populate ``payload.extra``:
 Anything else is ignored rather than raised on: a receipt for a message this
 deployment never sent is normal (a shared page, a restored backup), not an
 error.
+
+Two more keys travel the same way, for the same reason, and are read only here:
+
+``provider_message_id`` on a **message** event
+    The platform's own id for an *inbound* message. Optional — Telegram supplies
+    none — and stored on the row when it is there, which is what lets a later
+    ``message_deleted`` event find the message to redact. It also becomes a
+    second deduplication line under the conditional unique constraint on
+    ``(channel_connection, provider_message_id)``.
+
+``private_reply_claimed`` on a **comment** event
+    See the comment row of the table above.
 """
 
 import logging
@@ -131,14 +164,55 @@ ROUTING_PROCESSOR = "routing"
 THREAD_EVENTS = frozenset({EventType.MESSAGE, EventType.POSTBACK, EventType.STORY_REPLY})
 
 #: Contact-authored activity that is not thread content. Opens the window.
-ACTIVITY_EVENTS = frozenset({EventType.STORY_MENTION, EventType.REFERRAL})
+#:
+#: ``comment`` is in here for the claimed case only — :func:`_persist_one`
+#: refuses an unclaimed one before this set is consulted. See the module
+#: docstring for why that exception exists and why it is bounded.
+ACTIVITY_EVENTS = frozenset({EventType.STORY_MENTION, EventType.REFERRAL, EventType.COMMENT})
 
 #: Creates an identity and nothing else — no consent, no window. See the table.
 CONTACT_ONLY_EVENTS = frozenset({EventType.FOLLOW})
 
 #: Every type that resolves an identity at all. A type outside this set either
-#: updates an existing row (``delivery_status``) or is ignored (``comment``).
+#: updates an existing row (``delivery_status``, ``message_deleted``) or is
+#: ignored.
 IDENTITY_EVENTS = THREAD_EVENTS | ACTIVITY_EVENTS | CONTACT_ONLY_EVENTS | {EventType.OPT_OUT}
+
+#: Where a claimed comment says so. Set by the adapter that took SPEC §10's
+#: guard, never by a parser: at parse time nothing knows yet whether the comment
+#: will be claimed, because the guard runs later, in the routing stage.
+PRIVATE_REPLY_CLAIMED_KEY = "private_reply_claimed"
+
+#: Where an adapter puts the platform's own id for a message. Used by a receipt
+#: to name the message it refers to, and by an inbound message to record an id a
+#: later deletion can find it by.
+PROVIDER_MESSAGE_ID_KEY = "provider_message_id"
+
+
+def redacted_body() -> dict[str, Any]:
+    """What replaces a deleted message's body. A fresh object every call.
+
+    Self-describing on purpose: an operator reading the row, or a GDPR export,
+    should see that the content was retracted rather than that it was never
+    there. ``blocks`` stays present and empty so every reader of the SPEC §7.2
+    body shape keeps working unchanged.
+
+    A **function** rather than a module constant, because the constant form was
+    only ever copied shallowly (``dict(REDACTED_BODY)``) and every redacted row
+    then shared one ``blocks`` list with the module. Nothing mutates it today;
+    the day something does — a migration, an export builder, a fixture — it
+    would rewrite the constant for the rest of the process and every later
+    redaction would store the mutation.
+    """
+    return {
+        "blocks": [],
+        "buttons": [],
+        "quick_replies": [],
+        "tag": None,
+        "template_ref": None,
+        "deleted": True,
+    }
+
 
 #: What a ``delivery_status`` receipt may say. Narrower than
 #: ``MessageStatus.values`` on purpose: ``queued`` is a state *we* put a message
@@ -242,6 +316,14 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
     if event.type == EventType.DELIVERY_STATUS:
         _apply_delivery_status(connection, event)
         return
+    if event.type == EventType.MESSAGE_DELETED:
+        _apply_deletion(connection, event)
+        return
+    if event.type == EventType.COMMENT and not _claims_private_reply(event):
+        # A comment nobody claimed. Public, not a DM, and no contact — see the
+        # module docstring on the amplifier this refusal prevents.
+        logger.debug("Ignoring an unclaimed comment on connection %s", connection.pk)
+        return
     if event.type not in IDENTITY_EVENTS:
         logger.debug("Ignoring inbound event type %s on connection %s", event.type, connection.pk)
         return
@@ -266,8 +348,14 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
         # and no consent and no window to send through. See the table above.
         return
 
-    conversation = _conversation_for(contact, connection)
-    message = _insert_inbound(conversation, event) if event.type in THREAD_EVENTS else None
+    # A comment opens no thread. Every other identity event either *is* thread
+    # content or is the contact arriving in a conversation they can be answered
+    # in; a claimed comment is neither until the private reply actually goes
+    # out, and ``services.send_outbound`` opens the thread itself when it does.
+    # Creating one here left an empty conversation at the top of somebody's
+    # inbox for every comment whose reply never sent.
+    conversation = None if event.type == EventType.COMMENT else _conversation_for(contact, connection)
+    message = _insert_inbound(conversation, event) if conversation and event.type in THREAD_EVENTS else None
     if event.type in THREAD_EVENTS and message is None:
         # Already persisted. Returning before the bookkeeping is what stops a
         # redelivery re-extending the messaging window past first-receipt plus
@@ -283,14 +371,23 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
         # is documented here rather than defended against with a second table.
         return
 
-    _record_activity(identity, contact, conversation, now, message_at=now if message else None)
+    _record_activity(
+        identity,
+        contact,
+        conversation,
+        now,
+        message_at=now if message else None,
+        opt_in_source=OptInSource.COMMENT if event.type == EventType.COMMENT else OptInSource.MESSAGE_IN,
+    )
 
     if message is not None:
         emit(
             EVENT_MESSAGE_RECEIVED,
             workspace_id=contact.workspace_id,
             contact_id=contact.pk,
-            conversation_id=conversation.pk,
+            # From the row that was written rather than from the local, which is
+            # None for the event types that open no thread.
+            conversation_id=message.conversation_id,
             message_id=message.pk,
             connection_id=connection.pk,
             platform=connection.platform,
@@ -349,6 +446,23 @@ def inbound_idempotency_key(event: NormalizedEvent) -> str:
     return f"in:{bounded_key(event.provider_event_id, limit=MAX_EVENT_ID_CHARS)}"
 
 
+def _inbound_provider_message_id(event: NormalizedEvent) -> str:
+    """The platform's own id for an inbound message, where an adapter sent one.
+
+    Optional by design — Telegram supplies none — and stored when it is there for
+    two reasons: a later ``message_deleted`` event names the message by it, and
+    the conditional unique constraint on ``(channel_connection,
+    provider_message_id)`` then dedups a redelivery a second way.
+
+    Bounded by **hashing** rather than truncation, like every other identifier
+    here: two ids agreeing on a long prefix would otherwise collide in that
+    constraint and the second message would be refused as a duplicate of the
+    first.
+    """
+    extra = event.payload.extra if isinstance(event.payload.extra, dict) else {}
+    return bounded_key(_clean(extra.get(PROVIDER_MESSAGE_ID_KEY), 500), limit=MAX_EVENT_ID_CHARS)
+
+
 def _insert_inbound(conversation: Conversation, event: NormalizedEvent) -> Message | None:
     """Insert the inbound row, or return None if this event is already stored."""
     message = Message(
@@ -357,6 +471,7 @@ def _insert_inbound(conversation: Conversation, event: NormalizedEvent) -> Messa
         body=_inbound_body(event),
         status=MessageStatus.DELIVERED,
         idempotency_key=inbound_idempotency_key(event),
+        provider_message_id=_inbound_provider_message_id(event),
     )
     try:
         with transaction.atomic():
@@ -417,13 +532,19 @@ def _clean(value: Any, limit: int) -> str:
 def _record_activity(
     identity: ContactChannelIdentity,
     contact: Any,
-    conversation: Conversation,
+    conversation: Conversation | None,
     now: Any,
     *,
     message_at: Any = None,
+    opt_in_source: str = OptInSource.MESSAGE_IN,
 ) -> None:
-    """Window bookkeeping and recency. **The one write site for the window.**"""
-    changed = record_consent(identity, source=OptInSource.MESSAGE_IN, now=now)
+    """Window bookkeeping and recency. **The one write site for the window.**
+
+    ``opt_in_source`` is a parameter rather than a constant because SPEC §11.8's
+    audit has to say *how* consent was obtained, and "they sent us a message" and
+    "they commented on our post" are different answers to that question.
+    """
+    changed = record_consent(identity, source=opt_in_source, now=now)
     identity.last_inbound_at = now
     changed.append("last_inbound_at")
 
@@ -436,7 +557,7 @@ def _record_activity(
     contact.last_interaction_at = now
     contact.save(update_fields=["last_interaction_at", "updated_at"])
 
-    if message_at is not None:
+    if conversation is not None and message_at is not None:
         conversation.last_message_at = message_at
         conversation.save(update_fields=["last_message_at", "updated_at"])
 
@@ -513,6 +634,54 @@ def _apply_delivery_status(connection: Any, event: NormalizedEvent) -> None:
     )
     if not updated:
         logger.debug("A concurrent receipt already advanced message %s", message.pk)
+
+
+def _claims_private_reply(event: NormalizedEvent) -> bool:
+    """Has SPEC §10's comment guard already claimed this comment?
+
+    ``is True`` rather than truthiness: the value arrives inside an
+    attacker-adjacent payload, and a marker that any non-empty string could set
+    would be one webhook field away from creating a contact per comment.
+    """
+    extra = event.payload.extra if isinstance(event.payload.extra, dict) else {}
+    return extra.get(PRIVATE_REPLY_CLAIMED_KEY) is True
+
+
+def _apply_deletion(connection: Any, event: NormalizedEvent) -> None:
+    """Redact a message the platform says no longer exists (SPEC §6.3, §19).
+
+    The row is kept and its body replaced, which is the whole point: the thread
+    keeps its shape, the inbox shows a tombstone where the message was, and the
+    content is gone from the database rather than merely hidden by a flag the
+    next reader might not check.
+
+    Matched in **either** direction — a contact deletes their own DM as readily
+    as we delete ours — which is the one thing this cannot share with
+    :func:`_apply_delivery_status`, whose whole subject is messages we sent.
+
+    Idempotent and terminal: the update is narrowed to rows not already deleted,
+    so a redelivery is a no-op, and nothing walks a deleted row back onto the
+    delivery ladder because ``DELETED`` is not in :data:`DELIVERY_PROGRESS`.
+    """
+    extra = event.payload.extra if isinstance(event.payload.extra, dict) else {}
+    provider_id = _clean(extra.get(PROVIDER_MESSAGE_ID_KEY), 200)
+    if not provider_id:
+        logger.debug("Unusable message_deleted payload on connection %s; ignored.", connection.pk)
+        return
+
+    updated = (
+        Message.objects.for_workspace(connection.workspace_id)
+        .filter(channel_connection=connection, provider_message_id=provider_id)
+        .exclude(status=MessageStatus.DELETED)
+        .update(body=redacted_body(), status=MessageStatus.DELETED, updated_at=timezone.now())
+    )
+    if not updated:
+        # A message this deployment never stored, or one already redacted.
+        # Normal rather than exceptional: an account can be connected after a
+        # conversation started, and platforms redeliver.
+        logger.debug("message_deleted named no storable message on connection %s", connection.pk)
+        return
+    logger.info("Redacted %s message(s) on connection %s at the platform's request.", updated, connection.pk)
 
 
 def _next_status(current: str, incoming: str, error: str) -> tuple[str | None, str]:
