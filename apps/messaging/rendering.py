@@ -46,6 +46,10 @@ def outbound_from_body(body: Any) -> OutboundMessage:
         quick_replies=tuple(filter(None, (_quick_reply(item) for item in _list(body.get("quick_replies"))))),
         tag=_text(body.get("tag")) or None,
         template_ref=_text(body.get("template_ref")) or None,
+        # Absent from every row written before issue #12, which reads back as
+        # "" — the same thing an agent reply or an API send stores, and what an
+        # adapter already has to handle as "no node behind this message".
+        node_id=_text(body.get("node_id")),
     )
 
 

@@ -1,0 +1,15 @@
+{
+  "update_id": 900004,
+  "message": {
+    "message_id": 42,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada", "username": "ada"},
+    "chat": {"id": 5150, "type": "private"},
+    "date": 1735689603,
+    "caption": "Here is the receipt",
+    "photo": [
+      {"file_id": "AgACsmall", "file_unique_id": "u1", "width": 90, "height": 60, "file_size": 1200},
+      {"file_id": "AgACmedium", "file_unique_id": "u2", "width": 320, "height": 213, "file_size": 14000},
+      {"file_id": "AgAClargest", "file_unique_id": "u3", "width": 1280, "height": 853, "file_size": 180000}
+    ]
+  }
+}

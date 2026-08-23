@@ -1,0 +1,10 @@
+{
+  "update_id": 900005,
+  "message": {
+    "message_id": 43,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada"},
+    "chat": {"id": 5150, "type": "private"},
+    "date": 1735689604,
+    "voice": {"file_id": "AwACvoice", "file_unique_id": "u4", "duration": 3, "mime_type": "audio/ogg"}
+  }
+}

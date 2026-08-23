@@ -14,6 +14,8 @@ export interface BuilderEnv {
   statsUrl: string;
   schemaUrl: string;
   mediaPickerUrl: string;
+  /** SPEC §16's preview-link endpoint. */
+  previewUrl: string;
 }
 
 export class MissingEnvError extends Error {}
@@ -39,5 +41,6 @@ export function readEnv(mount: HTMLElement): BuilderEnv {
     statsUrl: required(mount, "statsUrl"),
     schemaUrl: required(mount, "schemaUrl"),
     mediaPickerUrl: required(mount, "mediaPickerUrl"),
+    previewUrl: required(mount, "previewUrl"),
   };
 }

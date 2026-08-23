@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from apps.channels.events import OutboundMessage, SendResult, SendStatus, TextBlock
 from apps.channels.providers.exceptions import APIError, RateLimitError
-from apps.channels.tests.fake_adapter import registered
+from apps.channels.tests.fake_adapter import registered, unregistered
 from apps.common.platforms import Platform
 from apps.contacts.services import create_contact
 from apps.messaging import services
@@ -304,7 +304,10 @@ class TestFailurePolicy:
     def test_a_missing_adapter_fails_the_message(
         self, tenancy: Any, contact: Any, connection: Any, identity: Any
     ) -> None:
-        message = send(tenancy, contact, connection)
+        # Telegram has had a real adapter since #12, so the empty slot this is
+        # about now has to be arranged rather than assumed.
+        with unregistered(Platform.TELEGRAM):
+            message = send(tenancy, contact, connection)
         assert message.status == MessageStatus.FAILED
         assert message.error == Failure.NO_ADAPTER
 
@@ -341,7 +344,8 @@ class TestDispatchOrdering:
     def test_a_missing_adapter_spends_no_token_and_no_attempt(
         self, tenancy: Any, contact: Any, connection: Any, identity: Any
     ) -> None:
-        message = send(tenancy, contact, connection)
+        with unregistered(Platform.TELEGRAM):
+            message = send(tenancy, contact, connection)
         assert message.status == MessageStatus.FAILED
         assert message.error == Failure.NO_ADAPTER
         assert message.send_attempts == 0

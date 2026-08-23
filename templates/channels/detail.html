@@ -17,6 +17,15 @@
     <dt>Status</dt>
     <dd><span class="status-pill status-pill-{{ connection.status }}">{{ connection.get_status_display }}</span></dd>
     <dt>Webhook URL</dt><dd><code>{{ webhook_url }}</code></dd>
+    <dt>Last event received</dt>
+    <dd>
+      {% if last_event_at %}
+        <span title="{{ last_event_at|date:"c" }}">{{ last_event_at|timesince }} ago</span>
+      {% else %}
+        <span class="muted">Nothing yet. If you have messaged this channel, the webhook is
+        not configured correctly.</span>
+      {% endif %}
+    </dd>
   </dl>
 
   {% comment %}
@@ -49,8 +58,9 @@
   <h2>Webhook secret</h2>
   <p class="muted">
     Stored encrypted and never displayed again. Rotating issues a new secret
-    immediately, so deliveries signed with the old one are rejected until the
-    platform is reconfigured.
+    immediately, so deliveries carrying the old one are rejected until the
+    platform has the new one. Where the platform accepts it over its own API —
+    Telegram does — that happens as part of rotating, and the next page says so.
   </p>
   <form method="post"
         action="{% url 'channels:rotate_secret' workspace_id=request.workspace.id connection_id=connection.id %}">

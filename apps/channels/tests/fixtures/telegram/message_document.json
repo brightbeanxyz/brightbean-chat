@@ -1,0 +1,11 @@
+{
+  "update_id": 900007,
+  "message": {
+    "message_id": 45,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada"},
+    "chat": {"id": 5150, "type": "private"},
+    "date": 1735689606,
+    "caption": "The signed contract",
+    "document": {"file_id": "BQACdoc", "file_unique_id": "u6", "file_name": "contract.pdf", "mime_type": "application/pdf"}
+  }
+}

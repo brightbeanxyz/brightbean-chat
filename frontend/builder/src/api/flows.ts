@@ -30,6 +30,21 @@ export function fetchStats(env: BuilderEnv): Promise<StatsPayload> {
   return request<StatsPayload>(env.statsUrl);
 }
 
+/**
+ * SPEC §16's preview link.
+ *
+ * A 200 either way: "you have no Telegram bot connected" is an ordinary state
+ * for the builder to render, not a request that failed, and a 4xx would send
+ * this down the API-error path and show a failure instead of an explanation.
+ */
+export type PreviewLink =
+  | { ok: true; deep_link: string; bot: string; expires_in: number }
+  | { ok: false; reason: string; message: string; settings_url: string };
+
+export function requestPreviewLink(env: BuilderEnv): Promise<PreviewLink> {
+  return request<PreviewLink>(env.previewUrl, { method: "POST" });
+}
+
 export interface PickerQuery {
   q?: string;
   kind?: string;

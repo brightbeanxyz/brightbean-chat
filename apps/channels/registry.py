@@ -36,14 +36,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CONNECT_ROUTES",
     "RegistryEntry",
     "adapter_for",
+    "connect_route_for",
     "entry_for",
     "has_adapter",
     "register_adapter",
     "registered_platforms",
     "unregister_adapter",
 ]
+
+#: Platforms with a guided connect flow, and the named route that serves it.
+#:
+#: Per-platform data like the policy and capability tables, and here rather than
+#: in ``views`` because ``forms`` needs it too: a platform with a guided flow is
+#: one the generic "add a channel" form must **refuse**, since that form creates
+#: a row with no credentials and every send on it fails. Each Layer-5 adapter
+#: adds its entry with its connect view.
+CONNECT_ROUTES: dict[str, str] = {Platform.TELEGRAM.value: "channels:telegram_connect"}
+
+
+def connect_route_for(platform: str) -> str:
+    """The guided connect route for ``platform``, or "" if it has none yet."""
+    return CONNECT_ROUTES.get(platform, "")
+
 
 _ADAPTERS: dict[str, type["Adapter"]] = {}
 

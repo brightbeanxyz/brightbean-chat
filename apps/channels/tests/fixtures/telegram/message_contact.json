@@ -1,0 +1,10 @@
+{
+  "update_id": 900008,
+  "message": {
+    "message_id": 46,
+    "from": {"id": 5150, "is_bot": false, "first_name": "Ada"},
+    "chat": {"id": 5150, "type": "private"},
+    "date": 1735689607,
+    "contact": {"phone_number": "+493012345678", "first_name": "Grace", "last_name": "Hopper", "user_id": 6100}
+  }
+}

@@ -26,7 +26,9 @@ to hit.
 """
 
 import secrets
+from datetime import timedelta
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -38,9 +40,11 @@ from apps.common.scoping import WorkspaceScopedModel
 __all__ = [
     "ChannelConnection",
     "ConnectionStatus",
+    "FlowPreviewLink",
     "WebhookEventLog",
     "WebhookEventStatus",
     "generate_webhook_secret",
+    "generate_preview_handle",
 ]
 
 #: 32 bytes of urandom, base64url encoded. Comfortably above the 64-bit
@@ -48,10 +52,25 @@ __all__ = [
 #: a provider console without wrapping.
 WEBHOOK_SECRET_BYTES = 32
 
+#: 24 bytes of urandom, base64url encoded: 32 characters, all of them inside
+#: Telegram's ``[A-Za-z0-9_-]`` deep-link alphabet and comfortably inside its
+#: 64-character ``start`` payload budget. See :class:`FlowPreviewLink`.
+PREVIEW_HANDLE_BYTES = 24
+
+#: How long a "test on Telegram" link stays usable. Short on purpose: it is
+#: clicked within seconds of being generated, and it is minted again by pressing
+#: the button again.
+PREVIEW_LINK_TTL = timedelta(minutes=15)
+
 
 def generate_webhook_secret() -> str:
     """A fresh webhook secret. The only place one is minted."""
     return secrets.token_urlsafe(WEBHOOK_SECRET_BYTES)
+
+
+def generate_preview_handle() -> str:
+    """A fresh preview-link handle. The only place one is minted."""
+    return secrets.token_urlsafe(PREVIEW_HANDLE_BYTES)
 
 
 class ConnectionStatus(models.TextChoices):
@@ -230,3 +249,90 @@ class WebhookEventLog(BaseModel):
 
     def __str__(self) -> str:
         return f"{self.platform}:{self.provider_event_id} ({self.status})"
+
+
+class FlowPreviewLink(WorkspaceScopedModel):
+    """One "test on Telegram" link: a tester's chat bound to a draft flow (SPEC §16).
+
+    SPEC §16 asks for "a test on Telegram action that links the editor's user to
+    a test conversation and runs the draft version against it". This row is that
+    link, and it exists because the binding has to survive the round trip out
+    through Telegram and back: the builder mints it, the tester taps a ``t.me``
+    link, and the ``/start`` that arrives seconds later is the first time the
+    server learns which chat belongs to which editor.
+
+    **Why a handle and not a signed token.** SECURITY-BASELINE §4 puts every
+    unauthenticated token route on ``apps.common.signing``, and issue #12's own
+    wording is ``?start=preview-<signed token>``. Telegram makes that impossible:
+    a deep-link ``start`` payload is capped at **64 characters** and restricted
+    to ``[A-Za-z0-9_-]``, while a ``django.core.signing`` token is longer than
+    that and contains ``:`` and ``.``. So the link carries a 32-character random
+    handle instead, and this row carries everything the token would have.
+
+    Every property the baseline is protecting survives the substitution:
+
+    expiry
+        ``expires_at``, checked on use. Shorter than a signed token's typical
+        life, not longer.
+    constant-time verification
+        The handle is looked up by ``hmac_digest``, an equality match on a
+        fixed-length column — the same construction ``ChannelConnection``
+        already uses for its webhook secret, and for the same reason: an
+        encrypted column cannot be filtered.
+    generic failure
+        Nothing about a bad handle is distinguishable from a good one that has
+        expired, or from an unrecognised ``/start`` payload. A failed preview
+        does not answer, log a distinct reason, or behave differently in any way
+        an outsider can see (:mod:`apps.channels.preview`).
+    unguessable
+        192 bits of ``secrets.token_urlsafe``, and the digest is keyed on
+        ``SECRET_KEY``, so a database dump gives up neither the handles nor the
+        ability to recompute one.
+
+    **Isolation per tester** is ``chat_id``. It is empty until the first
+    ``/start`` claims the link, and the claim is a conditional UPDATE rather
+    than a read followed by a write, so two chats racing the same handle cannot
+    both win. Afterwards only that chat can use the link again, which is what
+    keeps one editor's preview out of another person's conversation.
+    """
+
+    flow = models.ForeignKey("flows.Flow", on_delete=models.CASCADE, related_name="preview_links")
+    channel_connection = models.ForeignKey(
+        ChannelConnection,
+        on_delete=models.CASCADE,
+        related_name="preview_links",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="flow_preview_links",
+        help_text="The editor who pressed Test. SPEC §16's 'links the editor's user'.",
+    )
+    handle_digest = models.CharField(
+        max_length=64,
+        unique=True,
+        help_text="HMAC of the deep-link handle. The queryable half; see the class docstring.",
+    )
+    # No db_index: the named index below already covers this column, and the
+    # only query that reads it filters on nothing else. A second index would be
+    # dead weight on the write path — the same call ChannelConnection makes for
+    # webhook_secret_digest.
+    expires_at = models.DateTimeField()
+    chat_id = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text="The Telegram chat that claimed this link. Empty until the first /start.",
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "channels_flow_preview_link"
+        ordering = ["-created_at"]
+        indexes = [
+            # The housekeeping sweep reads exactly this shape.
+            models.Index(fields=["expires_at"], name="previewlink_expires_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"preview of {self.flow_id} ({'claimed' if self.chat_id else 'unclaimed'})"
