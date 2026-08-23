@@ -11,15 +11,26 @@ Two counts, and they answer different questions:
 ``at_position``
     Where those people are standing. SPEC §12's editor shows it per step, and it
     is one grouped query for the whole sequence rather than one per rung.
+
+**A soft-deleted contact is nobody's subscriber.** Every query here filters on
+``contact__status=ACTIVE`` as well as on the enrollment's own status.
+``delete_contact`` sets a tombstone and its whole promise is that the person is
+"hidden everywhere and excluded from every segment" — a count that still included
+them would be the one number contradicting it, and it feeds an operator's sense
+of how many people a campaign is about to message.
+:func:`apps.campaigns.services.retire_if_contact_gone` is what eventually clears
+the row itself; these filters are what stop it being visible in the meantime.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 from django.db.models import Count, Q, QuerySet
 
 from apps.campaigns.models import EnrollmentStatus, Sequence, SequenceEnrollment, SequenceStep
+from apps.contacts.models import ContactStatus
 
-__all__ = ["at_position", "sequences_for", "steps_for", "subscribers_for"]
+__all__ = ["SubscriberPage", "at_position", "sequences_for", "steps_for", "subscribers_for"]
 
 #: Subscriber pages beyond this are a report, not a page. The list is ordered by
 #: recency so the cap keeps the useful end.
@@ -38,7 +49,14 @@ def sequences_for(workspace: Any, *, query: str = "", status: str = "") -> Query
     if status:
         rows = rows.filter(status=status)
     return rows.annotate(
-        subscriber_count=Count("enrollments", filter=Q(enrollments__status=EnrollmentStatus.ACTIVE), distinct=True),
+        subscriber_count=Count(
+            "enrollments",
+            filter=Q(
+                enrollments__status=EnrollmentStatus.ACTIVE,
+                enrollments__contact__status=ContactStatus.ACTIVE,
+            ),
+            distinct=True,
+        ),
         step_count=Count("steps", distinct=True),
     ).order_by("name")
 
@@ -68,20 +86,43 @@ def at_position(sequence: Sequence) -> dict[int, int]:
     """``{position: how many active enrollments are waiting on it}``. One query."""
     rows = (
         SequenceEnrollment.objects.for_workspace(sequence.workspace_id)
-        .filter(sequence=sequence, status=EnrollmentStatus.ACTIVE)
+        .filter(sequence=sequence, status=EnrollmentStatus.ACTIVE, contact__status=ContactStatus.ACTIVE)
         .values("current_step")
         .annotate(total=Count("id"))
     )
     return {int(row["current_step"]): int(row["total"]) for row in rows}
 
 
-def subscribers_for(sequence: Sequence, *, status: str = EnrollmentStatus.ACTIVE) -> list[SequenceEnrollment]:
-    """The enrollment rows for the subscriber panel, newest first.
+@dataclass(frozen=True)
+class SubscriberPage:
+    """One page of the subscriber panel, and how much it is not showing.
+
+    ``total`` travels with ``rows`` rather than being left to the caller because
+    the panel has to say when it has truncated. A list that silently stops at 200
+    beside a count reading 5 000 is two numbers disagreeing with no explanation,
+    and an operator scanning for one person concludes they are not enrolled.
+    """
+
+    rows: list[SequenceEnrollment]
+    total: int
+
+    @property
+    def truncated(self) -> bool:
+        return self.total > len(self.rows)
+
+
+def subscribers_for(sequence: Sequence, *, status: str = EnrollmentStatus.ACTIVE) -> SubscriberPage:
+    """The enrollment rows for the subscriber panel, newest first, plus the total.
 
     ``select_related("contact")`` because every row renders a name; without it
     this is the page's N+1.
     """
-    rows = SequenceEnrollment.objects.for_workspace(sequence.workspace_id).filter(sequence=sequence)
+    rows = SequenceEnrollment.objects.for_workspace(sequence.workspace_id).filter(
+        sequence=sequence, contact__status=ContactStatus.ACTIVE
+    )
     if status:
         rows = rows.filter(status=status)
-    return list(rows.select_related("contact").order_by("-created_at")[:MAX_SUBSCRIBERS])
+    return SubscriberPage(
+        rows=list(rows.select_related("contact").order_by("-created_at")[:MAX_SUBSCRIBERS]),
+        total=rows.count(),
+    )

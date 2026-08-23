@@ -32,6 +32,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
@@ -48,6 +49,8 @@ from apps.campaigns.models import (
     SequenceStep,
 )
 from apps.campaigns.scheduling import cancel_pending_steps, enqueue_step, next_run_for
+from apps.common import naming
+from apps.contacts.models import ContactStatus
 
 __all__ = [
     "MAX_STEPS",
@@ -58,6 +61,7 @@ __all__ = [
     "first_step",
     "move_step",
     "rename_sequence",
+    "retire_if_contact_gone",
     "set_status",
     "step_at",
     "subscribe",
@@ -73,6 +77,12 @@ MAX_STEPS = 50
 
 MAX_NAME_CHARS = 200
 
+#: Where :func:`delete_step` parks positions while it closes a gap. Any value
+#: above ``MAX_STEPS`` works; the range above it is guaranteed empty, which is
+#: what makes both halves of the renumber collision-free whatever order Postgres
+#: walks the rows in.
+_RENUMBER_OFFSET = 1000
+
 #: The largest delay a step may carry, per unit. A step is not a calendar: "wait
 #: 40 000 days" is a typo, and letting one through would park an enrollment past
 #: the heat death of the campaign with nothing to say so.
@@ -85,57 +95,30 @@ MAX_DELAY: dict[str, int] = {DelayUnit.MINUTES: 60 * 24 * 90, DelayUnit.HOURS: 2
 
 
 def create_sequence(workspace: Any, *, name: str) -> Sequence:
-    """Create a sequence. Names are unique per workspace, case-insensitively."""
-    cleaned = _clean_name(name)
-    _assert_name_is_free(workspace, cleaned)
+    """Create a sequence. Names are unique per workspace, case-insensitively.
+
+    The three naming helpers are ``apps.common.naming``'s, shared with
+    ``apps.contacts``: the check-then-write reasoning, the savepoint that keeps
+    an enclosing atomic block usable, and the NUL refusal are one implementation
+    rather than one per app.
+    """
+    cleaned = naming.clean_name(name, limit=MAX_NAME_CHARS, noun="sequence", error=CampaignsError)
+    naming.assert_name_is_free(Sequence, workspace, cleaned, noun="sequence", error=CampaignsError)
     sequence = Sequence(workspace=workspace, name=cleaned)
-    with _unique_name():
+    with naming.unique_name("sequence", error=CampaignsError):
         sequence.save()
     return sequence
 
 
 def rename_sequence(sequence: Sequence, *, name: str) -> Sequence:
-    cleaned = _clean_name(name)
-    _assert_name_is_free(sequence.workspace_id, cleaned, excluding=sequence.pk)
+    cleaned = naming.clean_name(name, limit=MAX_NAME_CHARS, noun="sequence", error=CampaignsError)
+    naming.assert_name_is_free(
+        Sequence, sequence.workspace_id, cleaned, noun="sequence", error=CampaignsError, excluding=sequence.pk
+    )
     sequence.name = cleaned
-    with _unique_name():
+    with naming.unique_name("sequence", error=CampaignsError):
         sequence.save(update_fields=["name", "updated_at"])
     return sequence
-
-
-def _assert_name_is_free(workspace: Any, name: str, *, excluding: Any = None) -> None:
-    """Refuse a name another sequence in the workspace already holds.
-
-    Matched case-insensitively, because the unique constraint is on
-    ``Lower(name)`` — checking with ``=`` would let "onboarding" through and then
-    let the database raise on it. The same shape ``apps/contacts/services.py``
-    uses for tags and fields.
-    """
-    rows = Sequence.objects.for_workspace(workspace).filter(name__iexact=name)
-    if excluding is not None:
-        rows = rows.exclude(pk=excluding)
-    if rows.exists():
-        raise CampaignsError("A sequence with that name already exists.")
-
-
-@contextmanager
-def _unique_name() -> Iterator[None]:
-    """Turn the unique-index violation the check above races with into a refusal.
-
-    ``_assert_name_is_free`` is a check-then-write, so two concurrent requests
-    can both pass it. Without this the loser gets an ``IntegrityError`` — a 500
-    for input the single-threaded path answers with a readable message — and
-    poisons any enclosing atomic block. The savepoint keeps that block usable.
-
-    ``full_clean()`` does not cover this: the constraint is an expression over
-    ``Lower(name)`` **and** ``workspace``, and a ``full_clean`` that excludes the
-    derived ``workspace`` field skips every constraint naming it.
-    """
-    try:
-        with transaction.atomic():
-            yield
-    except IntegrityError as exc:
-        raise CampaignsError("A sequence with that name already exists.") from exc
 
 
 def set_status(sequence: Sequence, *, status: str) -> Sequence:
@@ -198,8 +181,14 @@ def add_step(
         delay_unit=delay_unit,
         send_window=_clean_window(send_window),
     )
-    step.full_clean(exclude=["workspace"])
-    step.save()
+    # `count + 1` is a check-then-write against a unique constraint, so two
+    # editors adding a step at the same moment both pick the same position and
+    # the loser violates it. The savepoint is what keeps that a refusal rather
+    # than a 500 that also poisons an enclosing atomic block — the same shape
+    # `apps.common.naming.unique_name` uses for a name collision.
+    with _crowded_position():
+        _validated(step)
+        step.save()
     return step
 
 
@@ -222,9 +211,43 @@ def update_step(
         step.delay_value = _clean_delay(delay_value, step.delay_unit)
     if send_window is not None:
         step.send_window = _clean_window(send_window)
-    step.full_clean(exclude=["workspace"])
+    _validated(step)
     step.save(update_fields=["flow", "delay_value", "delay_unit", "send_window", "updated_at"])
     return step
+
+
+def _validated(step: SequenceStep) -> SequenceStep:
+    """``full_clean``, with its refusal re-raised as this app's error type.
+
+    ``ValidationError`` is not a ``ValueError``, so a view catching
+    ``CampaignsError`` would answer a 500 to a model-level refusal — including
+    the cross-workspace check ``SequenceStep.clean()`` makes.
+    """
+    try:
+        step.full_clean(exclude=["workspace"])
+    except ValidationError as exc:
+        raise CampaignsError("; ".join(exc.messages)) from exc
+    return step
+
+
+@contextmanager
+def _already_enrolled() -> Iterator[None]:
+    """Turn a lost race to enroll one contact into a refusal, not a 500."""
+    try:
+        with transaction.atomic():
+            yield
+    except IntegrityError as exc:
+        raise CampaignsError("That contact was subscribed by somebody else just now.") from exc
+
+
+@contextmanager
+def _crowded_position() -> Iterator[None]:
+    """Turn a lost race for a step position into a refusal, not a 500."""
+    try:
+        with transaction.atomic():
+            yield
+    except IntegrityError as exc:
+        raise CampaignsError("Somebody else changed this sequence's steps just now. Try again.") from exc
 
 
 @transaction.atomic
@@ -240,19 +263,36 @@ def delete_step(step: SequenceStep) -> None:
     """
     sequence_id, position = step.sequence_id, step.position
     step.delete()
-    SequenceStep.objects.for_workspace(step.workspace_id).filter(sequence_id=sequence_id, position__gt=position).update(
-        position=F("position") - 1, updated_at=timezone.now()
-    )
+
+    # Two statements, not one. `(sequence, position)` is a NON-deferrable unique
+    # index, so Postgres checks it as each row of an UPDATE lands, and the row
+    # order is the planner's choice: a single `position = position - 1` succeeds
+    # if the rows arrive ascending and raises a duplicate-key error if they
+    # arrive descending. Parking the survivors above `_RENUMBER_OFFSET` first
+    # moves them into a range MAX_STEPS guarantees is empty, so neither
+    # statement can collide in either direction.
+    rows = SequenceStep.objects.for_workspace(step.workspace_id).filter(sequence_id=sequence_id)
+    now = timezone.now()
+    rows.filter(position__gt=position).update(position=F("position") + _RENUMBER_OFFSET, updated_at=now)
+    rows.filter(position__gt=_RENUMBER_OFFSET).update(position=F("position") - _RENUMBER_OFFSET - 1, updated_at=now)
 
 
 @transaction.atomic
 def move_step(step: SequenceStep, *, direction: str) -> SequenceStep:
     """Swap a step with its neighbour. ``direction`` is ``up`` or ``down``.
 
-    Two updates through a parking position rather than one, because
+    Three updates through a parking position rather than one swap, because
     ``(sequence, position)`` is unique and the intermediate state of a naive swap
     violates it. The same shape ``apps/flows/triggers/services.py::move_trigger``
     uses for trigger priorities.
+
+    **Enrollments are not moved with the steps**, exactly as in
+    :func:`delete_step` and for the same reason: an enrollment tracks a position,
+    not a step row. Somebody standing on position 3 when 3 and 4 swap receives
+    what used to be step 4, and then receives step 3's content next — they get
+    both, in the new order, which is the reading an operator editing a live
+    campaign expects. Reordering rungs under people mid-flight is inherently
+    visible to them; what this guarantees is that nobody is skipped.
     """
     if direction not in {"up", "down"}:
         raise CampaignsError("A step moves up or down.")
@@ -319,7 +359,13 @@ def subscribe(sequence: Sequence, contact: Any, *, source: str = "manual") -> Se
             next_run_for(step, base=now, contact=contact, workspace=sequence.workspace) if step is not None else None
         ),
     )
-    enrollment.save()
+    # `_retire_active` above is a check-then-write against
+    # `enrollment_one_active_per_contact`, so two concurrent subscribes for one
+    # pair both get past it and the loser violates the partial unique index.
+    # A savepoint keeps that a refusal instead of a 500 that also poisons the
+    # caller's transaction — `contacts.bulk_sequence` runs this in a loop.
+    with _already_enrolled():
+        enrollment.save()
 
     enqueue_step(enrollment)
     emit(
@@ -377,6 +423,27 @@ def _retire_active(sequence: Sequence, contact: Any) -> None:
         _retire(existing)
 
 
+def retire_if_contact_gone(enrollment: SequenceEnrollment) -> bool:
+    """Stop an enrollment whose contact has been soft-deleted. True if it did.
+
+    ``apps.contacts.activity.stand_down`` cancels every pending queue row naming
+    a deleted contact, but it knows nothing about sequences and there is no
+    ``contact.deleted`` catalog event to listen for — so without this the
+    enrollment stays ``active`` for ever: due, never advancing (its cancelled
+    queue row still holds the idempotency key), and counted as a subscriber of
+    somebody ``delete_contact`` promises is hidden everywhere.
+
+    No event is emitted. ``sequence.unsubscribed`` carries a contact id, and
+    announcing one for a tombstone would hand every subscriber an id that no
+    longer resolves.
+    """
+    if enrollment.contact.status == ContactStatus.ACTIVE:
+        return False
+    _retire(enrollment)
+    logger.info("Retired enrollment %s: contact %s is deleted.", enrollment.pk, enrollment.contact_id)
+    return True
+
+
 def _retire(enrollment: SequenceEnrollment) -> None:
     enrollment.status = EnrollmentStatus.UNSUBSCRIBED
     enrollment.next_run_at = None
@@ -387,15 +454,6 @@ def _retire(enrollment: SequenceEnrollment) -> None:
 # ---------------------------------------------------------------------------
 # Normalisation
 # ---------------------------------------------------------------------------
-
-
-def _clean_name(name: Any) -> str:
-    cleaned = (name or "").strip() if isinstance(name, str) else ""
-    if not cleaned:
-        raise CampaignsError("Give the sequence a name.")
-    if len(cleaned) > MAX_NAME_CHARS:
-        raise CampaignsError(f"That name is too long ({MAX_NAME_CHARS} characters maximum).")
-    return cleaned
 
 
 def _clean_delay(value: Any, unit: Any) -> int:

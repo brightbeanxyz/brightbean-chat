@@ -15,6 +15,7 @@ from apps.campaigns import services
 from apps.campaigns.models import DelayUnit, EnrollmentStatus, SequenceEnrollment, SequenceStatus
 from apps.campaigns.scheduling import idempotency_key_for
 from apps.campaigns.tests.support import contact_for, runnable_flow, sequence_with
+from apps.contacts import services as contact_services
 from apps.flows.models import ExecutionStatus, FlowExecution, StartedBy
 from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
 from apps.queueing.worker import process_action
@@ -330,3 +331,159 @@ class TestSteps:
 
         with pytest.raises(SequenceNotRunnableError):
             services.set_status(sequence, status=SequenceStatus.ACTIVE)
+
+
+@pytest.mark.django_db
+class TestRenumbering:
+    def test_deleting_the_first_of_many_steps_closes_the_gap(self, tenancy):
+        """A single decrementing UPDATE against `(sequence, position)` — which is
+        NOT deferrable — is checked per row as it lands, and the row order is the
+        planner's choice: ascending succeeds, descending raises a duplicate key.
+        The two-pass renumber is what makes it order-independent."""
+        sequence = sequence_with(tenancy.workspace, steps=6)
+
+        services.delete_step(sequence.steps.get(position=1))
+
+        assert list(sequence.steps.order_by("position").values_list("position", flat=True)) == [1, 2, 3, 4, 5]
+
+    def test_deleting_from_the_middle_keeps_the_order_of_the_survivors(self, tenancy):
+        sequence = sequence_with(tenancy.workspace, steps=5)
+        keep = [step.flow_id for step in sequence.steps.order_by("position") if step.position != 3]
+
+        services.delete_step(sequence.steps.get(position=3))
+
+        assert [step.flow_id for step in sequence.steps.order_by("position")] == keep
+
+    def test_deleting_the_last_step_leaves_the_rest_alone(self, tenancy):
+        sequence = sequence_with(tenancy.workspace, steps=3)
+
+        services.delete_step(sequence.steps.get(position=3))
+
+        assert list(sequence.steps.order_by("position").values_list("position", flat=True)) == [1, 2]
+
+
+@pytest.mark.django_db
+class TestLostRaces:
+    def test_a_duplicate_step_position_is_a_refusal_not_a_500(self, tenancy, monkeypatch):
+        """Two editors adding a step at once both read the same count and pick
+        the same position; the loser must hear a message, not poison the
+        caller's transaction with an IntegrityError.
+
+        The concurrent writer is simulated by taking the position in the window
+        between the check and the write, which is exactly where the real race
+        lives.
+        """
+        from apps.campaigns import services as campaign_services
+        from apps.campaigns.errors import CampaignsError
+        from apps.campaigns.models import SequenceStep
+
+        sequence = sequence_with(tenancy.workspace, steps=1)
+        squatter = runnable_flow(tenancy.workspace, name="Squatter")
+        original = campaign_services._validated
+
+        def take_the_position(step):
+            monkeypatch.undo()
+            SequenceStep.objects.create(
+                workspace_id=tenancy.workspace.pk,
+                sequence=sequence,
+                position=step.position,
+                flow=squatter,
+                delay_value=1,
+                delay_unit=DelayUnit.DAYS,
+            )
+            return original(step)
+
+        monkeypatch.setattr(campaign_services, "_validated", take_the_position)
+
+        with pytest.raises(CampaignsError):
+            services.add_step(
+                sequence, flow=runnable_flow(tenancy.workspace, name="Third"), delay_value=1, delay_unit=DelayUnit.DAYS
+            )
+
+    def test_a_lost_enrollment_race_is_a_refusal_not_a_500(self, tenancy, monkeypatch):
+        """`_retire_active` then insert is a check-then-write against the partial
+        unique index, and `contacts.bulk_sequence` runs subscribe in a loop — an
+        IntegrityError there would poison the whole batch.
+
+        Neutering the retire step is the same state a concurrent subscribe
+        produces: an active row still standing when the insert lands.
+        """
+        from apps.campaigns import services as campaign_services
+        from apps.campaigns.errors import CampaignsError
+
+        sequence = sequence_with(tenancy.workspace, steps=2)
+        contact = contact_for(tenancy.workspace)
+        services.subscribe(sequence, contact)
+        monkeypatch.setattr(campaign_services, "_retire_active", lambda sequence, contact: None)
+
+        with pytest.raises(CampaignsError):
+            services.subscribe(sequence, contact)
+
+    def test_a_model_level_refusal_arrives_as_this_app_s_error(self, tenancy, other_tenancy):
+        """`full_clean` raises ValidationError, which is not a ValueError — a view
+        catching CampaignsError would answer 500 to a cross-workspace step."""
+        from apps.campaigns.errors import CampaignsError
+
+        sequence = sequence_with(tenancy.workspace, steps=0)
+
+        with pytest.raises(CampaignsError):
+            services.add_step(
+                sequence,
+                flow=runnable_flow(other_tenancy.workspace),
+                delay_value=1,
+                delay_unit=DelayUnit.DAYS,
+            )
+
+
+@pytest.mark.django_db
+class TestADeletedContact:
+    """`delete_contact` promises a tombstone is hidden everywhere."""
+
+    def _enrolled(self, tenancy):
+        sequence = sequence_with(tenancy.workspace, steps=3)
+        contact = contact_for(tenancy.workspace)
+        enrollment = services.subscribe(sequence, contact)
+        return sequence, contact, enrollment
+
+    def test_the_sweep_retires_the_enrollment_rather_than_churning_on_it(self, tenancy):
+        """`activity.stand_down` cancels the queue row but knows nothing about
+        enrollments, and re-enqueueing hits the same idempotency key and gets
+        that cancelled row back — so without this it stays due for ever."""
+        from apps.campaigns.housekeeping import sweep_sequence_enrollments
+        from apps.contacts import activity
+
+        sequence, contact, enrollment = self._enrolled(tenancy)
+        activity.stand_down(contact)
+        contact_services.delete_contact(contact)
+        SequenceEnrollment.objects.for_workspace(tenancy.workspace).update(next_run_at=timezone.now())
+
+        sweep_sequence_enrollments()
+
+        enrollment.refresh_from_db()
+        assert enrollment.status == EnrollmentStatus.UNSUBSCRIBED
+        assert enrollment.next_run_at is None
+
+    def test_a_claimed_step_retires_rather_than_running_the_flow(self, tenancy):
+        sequence, contact, enrollment = self._enrolled(tenancy)
+        action = _due_step(tenancy.workspace).get()
+        contact_services.delete_contact(contact)
+        action.status = ActionStatus.RUNNING
+        action.save(update_fields=["status"])
+
+        assert process_action(action) == ActionStatus.DONE
+
+        enrollment.refresh_from_db()
+        assert enrollment.status == EnrollmentStatus.UNSUBSCRIBED
+        assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_they_stop_counting_as_a_subscriber(self, tenancy):
+        from apps.campaigns import selectors
+
+        sequence, contact, _ = self._enrolled(tenancy)
+        assert selectors.sequences_for(tenancy.workspace).get().subscriber_count == 1
+
+        contact_services.delete_contact(contact)
+
+        assert selectors.sequences_for(tenancy.workspace).get().subscriber_count == 0
+        assert selectors.at_position(sequence) == {}
+        assert selectors.subscribers_for(sequence).rows == []

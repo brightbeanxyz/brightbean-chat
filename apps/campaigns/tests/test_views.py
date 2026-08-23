@@ -63,9 +63,12 @@ class TestAccessControl:
     def test_the_editor_hides_the_controls_a_reader_may_not_use(self, tenancy, client_for, role):
         sequence = sequence_with(tenancy.workspace, steps=1)
 
-        body = client_for(tenancy.user_for(role)).get(url(tenancy, f"{sequence.pk}/")).content.decode()
+        response = client_for(tenancy.user_for(role)).get(url(tenancy, f"{sequence.pk}/"))
 
-        assert "Add a step" not in body
+        assert "Add a step" not in response.content.decode()
+        # And does not pay for the picker behind them: `_step_fields.html` is the
+        # only consumer and it is included solely under `{% if can_edit %}`.
+        assert response.context["flow_options"] == []
 
 
 @pytest.mark.django_db
@@ -97,6 +100,18 @@ class TestTheList:
         names = [row.name for row in client_for(tenancy.owner).get(url(tenancy, "?q=wink")).context["sequences"]]
 
         assert names == []
+
+    def test_an_unrecognised_status_falls_back_to_the_unfiltered_view(self, tenancy, client_for):
+        """Sanitised before the query, not only for the template. Validating it
+        only on the way out left `?status=bogus` returning an empty list under
+        the "create your first one" empty state, with no visible filter to
+        clear — the same correction `apps/flows/views.py` documents."""
+        sequence_with(tenancy.workspace, steps=1, name="Onboarding")
+
+        response = client_for(tenancy.owner).get(url(tenancy, "?status=bogus"))
+
+        assert [row.name for row in response.context["sequences"]] == ["Onboarding"]
+        assert response.context["status"] == ""
 
     def test_a_hostile_name_is_escaped(self, tenancy, client_for):
         """Sequence names are user-authored text on the team-browser path
@@ -342,6 +357,46 @@ class TestSubscribers:
 
         assert active == []
         assert len(gone) == 1
+
+    def test_the_panel_says_when_it_has_truncated(self, tenancy, client_for, monkeypatch):
+        """A list that silently stops beside a count in the thousands is two
+        numbers disagreeing, and somebody scanning for one person concludes they
+        are not enrolled."""
+        from apps.campaigns import selectors
+
+        monkeypatch.setattr(selectors, "MAX_SUBSCRIBERS", 2)
+        sequence = sequence_with(tenancy.workspace, steps=2)
+        for index in range(4):
+            services.subscribe(sequence, contact_for(tenancy.workspace, first_name=f"C{index}"))
+
+        response = client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/"))
+
+        assert response.context["truncated"] is True
+        assert response.context["subscriber_total"] == 4
+        assert len(response.context["enrollments"]) == 2
+        assert "Showing the 2 most recent of 4" in response.content.decode()
+
+    def test_an_untruncated_panel_just_reports_the_count(self, tenancy, client_for):
+        sequence = sequence_with(tenancy.workspace, steps=2)
+        services.subscribe(sequence, contact_for(tenancy.workspace))
+
+        response = client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/"))
+
+        assert response.context["truncated"] is False
+        assert "most recent of" not in response.content.decode()
+
+    def test_a_deleted_contact_drops_out_of_the_panel(self, tenancy, client_for):
+        from apps.contacts import services as contact_services
+
+        sequence = sequence_with(tenancy.workspace, steps=2)
+        contact = contact_for(tenancy.workspace, first_name="Gone")
+        services.subscribe(sequence, contact)
+        contact_services.delete_contact(contact)
+
+        response = client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/"))
+
+        assert response.context["enrollments"] == []
+        assert "Gone" not in response.content.decode()
 
     def test_a_hostile_contact_name_is_escaped(self, tenancy, client_for):
         sequence = sequence_with(tenancy.workspace, steps=1)

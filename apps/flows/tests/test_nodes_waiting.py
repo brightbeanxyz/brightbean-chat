@@ -458,6 +458,17 @@ class TestContinueWindow:
         assert local.weekday() == 0
 
     def test_the_contact_timezone_is_used_when_asked_for(self, tenancy):
+        """The window is read in the contact's clock, not the workspace's.
+
+        Asserted as "lands inside the window in Auckland" rather than "opens at
+        exactly 09:00". This node computes from the real ``timezone.now()``, so a
+        `hour == 9` assertion held only while the wall clock happened to sit
+        outside Monday business hours in New Zealand and failed for the eight
+        hours a week it did not — with nothing about the failure to say the code
+        was right. The exact-open case is pinned deterministically, DST included,
+        in ``apps/campaigns/tests/test_scheduling.py::TestTheSendWindow``, which
+        passes its own instants rather than reading a clock.
+        """
         contact = contact_for(tenancy.workspace, timezone="Pacific/Auckland")
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00", "use_contact_timezone": True}
 
@@ -465,7 +476,7 @@ class TestContinueWindow:
 
         local = run_at.astimezone(ZoneInfo("Pacific/Auckland"))
         assert local.weekday() == 0
-        assert local.hour == 9
+        assert 9 <= local.hour < 17
 
     def test_an_unparseable_contact_timezone_falls_back(self, tenancy, caplog):
         """Contact timezones come from platform profiles — attacker-controlled."""

@@ -1,8 +1,12 @@
-"""The ``sequence_step`` queue handler (SPEC §5, §12, §15).
+"""This app's queue handlers (SPEC §5, §12, §15).
 
-``ActionType.SEQUENCE_STEP`` is a name ``apps.queueing.models`` already reserved
-for this issue; registration is an import side effect of
-``CampaignsConfig.ready()``, which is the pattern
+Two types. ``sequence_step`` runs one rung of a sequence and arranges the next;
+``rule_event`` runs SPEC §10's rule-trigger match for one catalog event, which
+:mod:`apps.campaigns.rules` defers here rather than doing on the emitter's hot
+path. ``ActionType.SEQUENCE_STEP`` is a name ``apps.queueing.models`` already
+reserved for this issue and ``rule_event`` is a plain string, because that enum
+is deliberately not attached to the column as ``choices``. Registration is an
+import side effect of ``CampaignsConfig.ready()``, which is the pattern
 :mod:`apps.queueing.registry`'s docstring writes out.
 
 Three things the queue guarantees, so nothing here re-does them:
@@ -29,7 +33,9 @@ from uuid import UUID
 
 from django.utils import timezone
 
+from apps.campaigns import services
 from apps.campaigns.models import EnrollmentStatus, SequenceEnrollment
+from apps.campaigns.rules import ACTION_RULE_EVENT
 from apps.campaigns.scheduling import enqueue_step, next_run_for
 from apps.campaigns.services import step_at
 from apps.flows.engine import FlowNotRunnableError, start_flow
@@ -38,7 +44,7 @@ from apps.flows.triggers.entrypoints import connection_for_contact
 from apps.queueing.models import ActionType, ScheduledAction
 from apps.queueing.registry import register_handler
 
-__all__ = ["handle_sequence_step"]
+__all__ = ["handle_rule_event", "handle_sequence_step"]
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +63,12 @@ def handle_sequence_step(payload: dict[str, Any], action: ScheduledAction) -> No
     enrollment = _enrollment(action.workspace_id, payload.get("enrollment_id"))
     if enrollment is None:
         logger.info("sequence_step action %s names an enrollment that is gone; dropping it.", action.pk)
+        return
+    if services.retire_if_contact_gone(enrollment):
+        # Soft-deleted since the row was queued. `activity.stand_down` cancelled
+        # the queue rows but knows nothing about enrollments, so this is where an
+        # enrollment for a tombstone stops being active.
+        logger.info("sequence_step action %s: contact %s is deleted; retiring.", action.pk, enrollment.contact_id)
         return
     if enrollment.status != EnrollmentStatus.ACTIVE:
         # Unsubscribed or completed between the enqueue and now. `unsubscribe`
@@ -165,3 +177,29 @@ def _position(payload: dict[str, Any]) -> int:
         return int(payload["position"])
     except (KeyError, TypeError, ValueError):
         return -1
+
+
+@register_handler(ACTION_RULE_EVENT)
+def handle_rule_event(payload: dict[str, Any], action: ScheduledAction) -> None:
+    """Run SPEC §10's rule-trigger match for one catalog event.
+
+    Payload: ``event`` plus whatever ids the catalog carried
+    (:func:`apps.campaigns.rules._queued_payload`).
+
+    The work lives here rather than in the signal receiver because the receiver
+    is on the emitter's hot path — a CSV import calls ``create_contact`` per row
+    — and a flow start is not cheap work. Here it is one row of deferred work per
+    event, run under the contact advisory lock the queue takes because the row
+    names a contact, which is the same discipline the webhook router uses.
+
+    ``workspace_id`` is re-derived from the row rather than trusted from the
+    payload, so a document that has been sitting in a table cannot widen its own
+    scope.
+    """
+    from apps.campaigns.rules import match_and_fire
+
+    event = str(payload.get("event") or "")
+    if not event or action.workspace_id is None:
+        logger.warning("rule_event action %s has no event or no workspace; dropping it.", action.pk)
+        return
+    match_and_fire(event, {**payload, "workspace_id": action.workspace_id})

@@ -29,8 +29,7 @@ Not here, deliberately:
   messages and its identities is issue #29's GDPR work.
 """
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -39,6 +38,7 @@ from uuid import UUID
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.common import naming
 from apps.contacts.errors import ContactsError, FieldTypeError, WorkspaceMismatchError
 from apps.contacts.events import (
     EVENT_CONTACT_CREATED,
@@ -112,55 +112,21 @@ def _clean_text(value: Any, *, limit: int) -> str:
 
 
 def _clean_name(value: Any, *, limit: int, noun: str) -> str:
-    """Collapse whitespace and **refuse** anything over the column width.
+    """This app's spelling of :func:`apps.common.naming.clean_name`.
 
-    Silently truncating a name a human typed is worse than refusing it twice
-    over: they see a name they did not type, and two names that differ only
-    after the limit collapse into one, so the second attempt is rejected as a
-    duplicate of a name that looks nothing like it on screen. This is also what
-    ``coerce_value`` already does for a custom-field text value, so the two
-    paths now agree that over-length input is an error rather than a suggestion.
+    The three helpers below are shared with ``apps.campaigns`` (issue #22), which
+    needs the same "unique name per workspace" discipline for sequences. Only the
+    error class differs, so it is the only thing passed in.
     """
-    if not isinstance(value, str) and value is not None:
-        raise ContactsError(f"A {noun} name must be text.")
-    if value and "\x00" in value:
-        raise ContactsError(f"A {noun} name cannot contain a null byte.")
-    cleaned = " ".join((value or "").split())
-    if not cleaned:
-        raise ContactsError(f"A {noun} needs a name.")
-    if len(cleaned) > limit:
-        raise ContactsError(f"A {noun} name is at most {limit} characters.")
-    return cleaned
+    return naming.clean_name(value, limit=limit, noun=noun, error=ContactsError)
 
 
 def _assert_name_is_free(model: Any, workspace_id: Any, name: str, *, noun: str, excluding: Any = None) -> None:
-    """Refuse a name another row in the workspace already holds.
-
-    Matched case-insensitively, because the unique constraints are on
-    ``Lower(name)`` — checking with ``=`` here would let "vip" through and then
-    let the database raise on it.
-    """
-    rows = model.objects.for_workspace(workspace_id).filter(name__iexact=name)
-    if excluding is not None:
-        rows = rows.exclude(pk=excluding)
-    if rows.exists():
-        raise ContactsError(f"A {noun} with that name already exists.")
+    naming.assert_name_is_free(model, workspace_id, name, noun=noun, error=ContactsError, excluding=excluding)
 
 
-@contextmanager
-def _unique_name(noun: str) -> Iterator[None]:
-    """Turn the unique-index violation the check above races with into a refusal.
-
-    ``_assert_name_is_free`` is a check-then-write, so two concurrent requests
-    can both pass it. Without this the loser gets an ``IntegrityError`` — a 500
-    for input the single-threaded path answers with a readable message — and
-    poisons any enclosing atomic block. The savepoint keeps that block usable.
-    """
-    try:
-        with transaction.atomic():
-            yield
-    except IntegrityError as exc:
-        raise ContactsError(f"A {noun} with that name already exists.") from exc
+def _unique_name(noun: str) -> AbstractContextManager[None]:
+    return naming.unique_name(noun, error=ContactsError)
 
 
 # ---------------------------------------------------------------------------

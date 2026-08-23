@@ -9,18 +9,14 @@ with N rungs, and a contact standing on one.
 from typing import Any
 
 from apps.campaigns.models import DelayUnit, Sequence, SequenceStatus, SequenceStep
-from apps.contacts.models import Contact
 from apps.flows.services import create_flow, publish, save_draft
-from apps.flows.tests.support import graph, node
+
+# `contact_for` is the flow engine's, re-exported rather than copied: it is the
+# same fixture with the same defaults, and a second copy would have to be kept
+# in step with every new required column on Contact.
+from apps.flows.tests.support import contact_for, graph, node
 
 __all__ = ["contact_for", "runnable_flow", "sequence_with", "step_for"]
-
-
-def contact_for(workspace: Any, **fields: Any) -> Contact:
-    """A saved contact in ``workspace``, named unless the test says otherwise."""
-    fields.setdefault("first_name", "Ada")
-    fields.setdefault("last_name", "Lovelace")
-    return Contact.objects.create(workspace=workspace, **fields)
 
 
 def runnable_flow(workspace: Any, name: str = "Step flow", *, tag: str = "") -> Any:

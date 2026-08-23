@@ -92,13 +92,21 @@ def _refused(exc: Exception, title: str) -> HttpResponse:
 @require_GET
 def sequence_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The list. Answers the rows partial to HTMX and the page otherwise."""
-    query = (request.GET.get("q") or "").strip()[:200]
+    query = (request.GET.get("q") or "").strip()[:MAX_SEARCH_CHARS]
+    # Sanitised once, before the query. An unrecognised value falls back to the
+    # unfiltered view rather than to a filter matching nothing — the same
+    # correction `apps/flows/views.py::_visible_flows` documents: with the
+    # validation applied only to the context, `?status=bogus` returned an empty
+    # list under the "create your first one" empty state, with no visible filter
+    # to clear.
     status = (request.GET.get("status") or "").strip()
+    if status not in SequenceStatus.values:
+        status = ""
     context = {
         "sequences": list(selectors.sequences_for(request.workspace, query=query, status=status)),
         "status_options": list(SequenceStatus.choices),
         "query": query,
-        "status": status if status in SequenceStatus.values else "",
+        "status": status,
         "can_edit": _can_edit(request),
     }
     template = "campaigns/_list_rows.html" if request.headers.get("HX-Request") else "campaigns/list.html"
@@ -175,6 +183,7 @@ def sequence_detail(request: WorkspaceRequest, workspace_id: str, sequence_id: s
 
 
 def _detail_context(request: WorkspaceRequest, sequence: Sequence) -> dict[str, Any]:
+    can_edit = _can_edit(request)
     return {
         "sequence": sequence,
         "steps": selectors.steps_for(sequence),
@@ -183,18 +192,28 @@ def _detail_context(request: WorkspaceRequest, sequence: Sequence) -> dict[str, 
         # shared table rather than a second list of day names in a template.
         "weekdays": [(day, day.title()) for day in WEEKDAYS],
         "status_options": list(SequenceStatus.choices),
-        "can_edit": _can_edit(request),
-        # Only published flows are offered. A step pointing at a draft is a step
-        # whose every run logs "cannot start" — the picker should not be able to
-        # build one, and the "New flow" shortcut beside it is the answer to
-        # "the flow I want does not exist yet".
-        "flow_options": list(
-            Flow.objects.for_workspace(request.workspace)
-            .filter(status=FlowStatus.ACTIVE)
-            .order_by("name")
-            .values("id", "name")
-        ),
+        "can_edit": can_edit,
+        # Behind `can_edit` because `campaigns/_step_fields.html` — its only
+        # consumer — is included solely inside `{% if can_edit %}` blocks. A
+        # Viewer refreshing the steps panel was paying a scan of every active
+        # flow in the workspace for a picker never rendered.
+        "flow_options": _flow_options(request) if can_edit else [],
     }
+
+
+def _flow_options(request: WorkspaceRequest) -> list[Any]:
+    """Published flows a step may start.
+
+    Only active ones: a step pointing at a draft is a step whose every run logs
+    "cannot start", so the picker should not be able to build one. The "New flow"
+    shortcut beside it is the answer to "the flow I want does not exist yet".
+    """
+    return list(
+        Flow.objects.for_workspace(request.workspace)
+        .filter(status=FlowStatus.ACTIVE)
+        .order_by("name")
+        .values("id", "name")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -312,12 +331,16 @@ def subscribers_panel(request: WorkspaceRequest, workspace_id: str, sequence_id:
     status = (request.GET.get("status") or EnrollmentStatus.ACTIVE).strip()
     if status not in EnrollmentStatus.values:
         status = EnrollmentStatus.ACTIVE
+    page = selectors.subscribers_for(sequence, status=status)
     return render(
         request,
         "campaigns/_subscribers.html",
         {
             "sequence": sequence,
-            "enrollments": selectors.subscribers_for(sequence, status=status),
+            "enrollments": page.rows,
+            "subscriber_total": page.total,
+            "subscriber_cap": selectors.MAX_SUBSCRIBERS,
+            "truncated": page.truncated,
             "status": status,
             "status_options": list(EnrollmentStatus.choices),
             "can_edit": _can_edit(request),

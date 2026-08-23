@@ -74,15 +74,15 @@ class TestCreatingARuleTrigger:
 
         assert Trigger.objects.for_workspace(tenancy.workspace).get().config_json["filters"] == document
 
-        from apps.flows.models import FlowExecution
+        from apps.campaigns.tests.test_rules import _executions
 
         plain = contact_for(tenancy.workspace, first_name="Plain")
         contact_services.add_tag(plain, lead)
-        assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
+        assert not _executions(tenancy.workspace).exists()
 
         vip_contact = contact_for(tenancy.workspace, first_name="Vip")
         contact_services.add_tag(vip_contact, vip)
-        assert FlowExecution.objects.for_workspace(tenancy.workspace).count() == 1
+        assert _executions(tenancy.workspace).count() == 1
 
     def test_a_malformed_filter_is_refused_with_a_2xx_toast(self, tenancy, client_for):
         flow = _flow(tenancy.workspace)

@@ -48,6 +48,20 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
     {% if not enrollments %}
     <p class="text-sm" style="color: var(--text-secondary);">Nobody here yet.</p>
     {% else %}
+    {% comment %}
+      The panel says when it has stopped short. A list that silently ends at the
+      cap beside a subscriber count in the thousands is two numbers disagreeing
+      with no explanation, and somebody scanning for one person would conclude
+      they are not enrolled.
+    {% endcomment %}
+    <p class="text-xs mb-2" style="color: var(--text-tertiary);">
+        {% if truncated %}
+            Showing the {{ subscriber_cap }} most recent of {{ subscriber_total }}.
+            Filter or export from the contact list to see the rest.
+        {% else %}
+            {{ subscriber_total }} {% if status == "active" %}active{% else %}{{ status }}{% endif %}.
+        {% endif %}
+    </p>
     <ul class="divide-y" style="border-color: var(--border);">
         {% for enrollment in enrollments %}
         <li class="py-2 flex items-center gap-2">

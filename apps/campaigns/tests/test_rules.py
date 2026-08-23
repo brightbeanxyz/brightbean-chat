@@ -9,17 +9,21 @@ friends), so what is under test is the whole path: write → signal → candidat
 query → filters → cooldown → ``start_flow``.
 """
 
+from datetime import timedelta
+
 import pytest
 from django.utils import timezone
 
 from apps.campaigns import services as campaign_services
 from apps.campaigns.models import RuleTriggerFire
-from apps.campaigns.rules import COOLDOWN, RULE_EVENT_FOR, claim_rule_fire
+from apps.campaigns.rules import ACTION_RULE_EVENT, COOLDOWN, RULE_EVENT_FOR, claim_rule_fire, on_rule_event
 from apps.campaigns.tests.support import contact_for, sequence_with
 from apps.contacts import services as contact_services
 from apps.contacts.models import CustomFieldType
 from apps.flows.models import FlowExecution, FlowStatus, StartedBy, Trigger, TriggerType
 from apps.flows.tests.support import graph, node, published_flow
+from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
+from apps.queueing.worker import process_action
 
 
 def _rule_flow(workspace, name="Rule flow", *, tag="fired"):
@@ -40,11 +44,40 @@ def _rule_trigger(workspace, config, *, flow=None, priority=0, enabled=True, nam
     return trigger
 
 
+def drain(workspace):
+    """Run the queued rule-trigger work, the way a worker would.
+
+    The receiver on the catalog signal does not start a flow — it queues one
+    ``rule_event`` row and returns, because it runs inside the transaction that
+    wrote the tag and that write is very often one of thousands. So a test that
+    wants to see the flow has to let the worker have its turn.
+
+    ``start_flow`` rows are drained too: ``fire_trigger`` falls back to one when
+    the contact lock is held, and a test should not depend on which path it took.
+    """
+    for _ in range(4):
+        rows = list(
+            ScheduledAction.objects.for_workspace(workspace)
+            .filter(status=ActionStatus.PENDING, type__in=(ACTION_RULE_EVENT, ActionType.START_FLOW))
+            .order_by("run_at")
+        )
+        if not rows:
+            return
+        for action in rows:
+            action.status = ActionStatus.RUNNING
+            action.save(update_fields=["status"])
+            process_action(action)
+
+
 def _executions(workspace):
+    """Executions, after letting the worker drain what the event queued."""
+    drain(workspace)
     return FlowExecution.objects.for_workspace(workspace)
 
 
 def _tags(contact):
+    """The contact's tags, after the worker has run whatever the event queued."""
+    drain(contact.workspace_id)
     return {tag.name for tag in contact.tags.all()}
 
 
@@ -74,6 +107,67 @@ class TestTheBinding:
         from apps.flows.triggers.schema import RULE
 
         assert set(RULE["properties"]["event"]["enum"]) == set(RULE_EVENT_FOR.values())
+
+
+@pytest.mark.django_db
+class TestDeferral:
+    """The receiver queues; the worker runs. See :func:`drain` above."""
+
+    def test_the_receiver_queues_rather_than_starting_a_flow_inline(self, tenancy, django_assert_max_num_queries):
+        """The emitter's hot path stays cheap.
+
+        `contacts.imports` calls `create_contact` per CSV row and `bulk_tag`
+        tags up to 500 contacts per request; a flow start in the receiver would
+        put a whole graph execution inside each of those transactions. The
+        receiver does what `apps/api/events.py::on_catalog_event` does with the
+        same constraint: the cheap half here, the rest in the worker.
+        """
+        _rule_trigger(tenancy.workspace, {"event": "tag_added"})
+        contact = contact_for(tenancy.workspace)
+        tag, _ = contact_services.get_or_create_tag(tenancy.workspace, "VIP")
+
+        contact_services.add_tag(contact, tag)
+
+        assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
+        queued = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ACTION_RULE_EVENT).get()
+        assert queued.contact_id == contact.pk
+        assert queued.payload == {"event": "tag_added", "contact_id": str(contact.pk), "tag_id": str(tag.pk)}
+        # Ids only, as contract 7 requires of a payload — including one sitting
+        # in a queue table for a minute.
+        assert "VIP" not in str(queued.payload)
+
+    def test_a_workspace_with_no_rule_trigger_pays_one_query(self, tenancy, django_assert_num_queries):
+        """The overwhelmingly common case: one indexed candidate lookup, no row."""
+        contact = contact_for(tenancy.workspace)
+        tag, _ = contact_services.get_or_create_tag(tenancy.workspace, "VIP")
+
+        with django_assert_num_queries(1):
+            on_rule_event(
+                event="contact.tag_added",
+                workspace_id=tenancy.workspace.pk,
+                contact_id=contact.pk,
+                tag_id=tag.pk,
+            )
+
+        assert not ScheduledAction.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_rolled_back_write_takes_the_queued_row_with_it(self, tenancy):
+        """The property deferring must not lose: no run is ever announced for a
+        change that did not happen."""
+        from django.db import transaction
+
+        _rule_trigger(tenancy.workspace, {"event": "tag_added"})
+        contact = contact_for(tenancy.workspace)
+        tag, _ = contact_services.get_or_create_tag(tenancy.workspace, "VIP")
+
+        class RollbackError(Exception):
+            pass
+
+        with pytest.raises(RollbackError), transaction.atomic():
+            contact_services.add_tag(contact, tag)
+            raise RollbackError
+
+        assert not ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ACTION_RULE_EVENT).exists()
 
 
 @pytest.mark.django_db
@@ -121,6 +215,20 @@ class TestTagEvents:
         assert not _executions(tenancy.workspace).exists()
 
         contact_services.add_tag(contact, vip)
+        assert _executions(tenancy.workspace).count() == 1
+
+    def test_an_id_filter_for_another_event_is_ignored(self, tenancy):
+        """The schema permits `tag_id` on any rule, and the public API, a flow
+        import or a client that changed the event without clearing the key can
+        all produce one. Comparing it against a payload that never carries a
+        tag id would make the rule silently unfireable."""
+        vip, _ = contact_services.get_or_create_tag(tenancy.workspace, "VIP")
+        plan = contact_services.create_custom_field(tenancy.workspace, name="Plan", field_type=CustomFieldType.TEXT)
+        _rule_trigger(tenancy.workspace, {"event": "field_changed", "tag_id": str(vip.pk)})
+        contact = contact_for(tenancy.workspace)
+
+        contact_services.set_field_value(contact, plan, "gold")
+
         assert _executions(tenancy.workspace).count() == 1
 
     def test_tag_removed_is_its_own_event(self, tenancy):
@@ -365,3 +473,34 @@ class TestTheCooldown:
 
         assert _executions(tenancy.workspace).count() == 1
         assert _tags(contact) == {"VIP"}
+
+
+@pytest.mark.django_db
+class TestPruningTheCooldown:
+    def test_it_drops_rows_past_the_window_and_keeps_live_ones(self, tenancy):
+        """One row per (trigger, contact) that ever fired, updated in place — so
+        without a prune the table grows to contacts x rule triggers and stays."""
+        from apps.campaigns.housekeeping import PRUNE_MARGIN, prune_rule_trigger_fires
+
+        trigger = _rule_trigger(tenancy.workspace, {"event": "tag_added"})
+        stale = contact_for(tenancy.workspace, first_name="Stale")
+        fresh = contact_for(tenancy.workspace, first_name="Fresh")
+        claim_rule_fire(trigger, stale, now=timezone.now() - COOLDOWN - PRUNE_MARGIN - timedelta(minutes=1))
+        claim_rule_fire(trigger, fresh)
+
+        summary = prune_rule_trigger_fires()
+
+        assert "1" in (summary or "")
+        remaining = RuleTriggerFire.objects.for_workspace(tenancy.workspace)
+        assert [row.contact_id for row in remaining] == [fresh.pk]
+
+    def test_a_row_inside_the_window_is_never_pruned(self, tenancy):
+        """Deleting at the boundary would let through a fire the guard refused."""
+        from apps.campaigns.housekeeping import prune_rule_trigger_fires
+
+        trigger = _rule_trigger(tenancy.workspace, {"event": "tag_added"})
+        contact = contact_for(tenancy.workspace)
+        claim_rule_fire(trigger, contact, now=timezone.now() - COOLDOWN)
+
+        assert prune_rule_trigger_fires() is None
+        assert RuleTriggerFire.objects.for_workspace(tenancy.workspace).count() == 1
