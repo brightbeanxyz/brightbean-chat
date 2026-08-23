@@ -137,7 +137,6 @@ triggers on that connection are kept.
 | Mentions the account in their story | `story_mention` | Opens the 24-hour window |
 | Replies to one of the account's stories | `story_reply` | Carries the reply text, so keywords work |
 | Comments on a post | `comment` | Comment id, post id, parent id, body |
-| Mentions the account in someone else's comment | `comment` | Via the `mentions` field |
 | Unsends a DM | — | The stored message is redacted; see below |
 
 **Echoes are filtered.** Messages the account sends — from this product or from
@@ -145,9 +144,22 @@ the Instagram app on a phone — come back as deliveries flagged `is_echo`, and
 are dropped. So is a comment whose author is the account itself, which is what
 stops a comment trigger from answering its own public reply forever.
 
-**A caption mention is dropped.** The `mentions` field also fires when somebody
-`@`s the account in a caption rather than a comment. That carries no commenter
-and nothing to reply to, so no event is produced.
+**Mentions are dropped, and that is a limitation rather than a choice.** The
+`mentions` field fires when somebody `@`s the account in their own comment or
+caption. Meta's payload names the media, sometimes the comment, and the text —
+but never the **author**. Without an author there is nothing to key the
+once-per-commenter-per-post guard on and no address to open a DM to, and
+emitting a comment event anyway gave every mention on a post the same empty
+commenter: the first one claimed the guard and locked out everybody else, while
+itself failing to open a thread. Answering mentions needs a
+`GET /{ig-comment-id}?fields=from`, which is a Graph round trip inside the
+webhook acknowledgement, so it is out of scope rather than done badly. The
+parser is ready for the field if Meta ever adds it.
+
+**A comment with no author is dropped too**, for the same reasons — and for one
+more: the filter that stops the account answering its own public reply works by
+comparing the author against the account, so an anonymous comment would slip
+past it.
 
 ### Deleted messages
 
@@ -205,6 +217,13 @@ them on, and they are left out with a warning in the log.
 
 **Attachments have no captions.** Meta's attachment payload carries a URL and
 nothing else, so a media block's caption is sent as the message after it.
+
+**A caption-less media message cannot carry buttons or quick replies.** Buttons
+need a card, and Meta requires a card to have a title; quick replies are only
+accepted beside message text. A `send_message` node holding nothing but an image
+has neither, so the interaction is dropped with a warning in the log rather than
+rendered as numbered options that would resolve to nothing. Give the message a
+text block or a caption and both work normally.
 
 Typing indicators and read receipts are supported (`sender_action`) and are sent
 before an inline reply, as SPEC §7.1 asks.
@@ -318,6 +337,8 @@ screencast. This is a Meta process; nothing in this product changes it.
 - **Liking comments**, for the reason above.
 - **Hiding or deleting comments.** The API supports both; no trigger action
   exposes them yet.
+- **Answering `@mentions`.** See above — Meta's payload names no author, and
+  resolving one costs a Graph call on the webhook path.
 - **Message reactions**, both directions.
 - **Group threads.** Instagram has them; this product does not model them.
 - **`ig.me` link generation.** The `ref_url` trigger matches an incoming ref;

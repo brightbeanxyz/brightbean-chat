@@ -194,14 +194,61 @@ class TestWirePayloads:
         (body,) = wire_messages(TO, message)
         assert len(body["message"]["quick_replies"][0]["title"]) == 20
 
-    def test_quick_replies_with_no_text_become_numbered_options(self) -> None:
-        """Meta accepts ``quick_replies`` only beside ``message.text``."""
+    def test_quick_replies_with_no_text_are_dropped_not_numbered(self, caplog: Any) -> None:
+        """Meta accepts ``quick_replies`` only beside ``message.text``, and there
+        is none. Numbering them here *looked* like the shared numbered-option
+        fallback and was not one: that fallback works because the engine rebuilds
+        the number-to-id map by re-running ``downgrade``, which produces no
+        numbers for a platform declaring ``quick_replies=True``. The contact was
+        being shown instructions that resolved to nothing."""
         message = OutboundMessage(
             blocks=(MediaBlock(kind="image", url="https://cdn.test/a.png"),),
             quick_replies=(QuickReply(id="y", label="Yes"),),
         )
-        _, numbered = wire_messages(TO, message)
-        assert numbered["message"]["text"] == "Reply 1 for Yes"
+        with caplog.at_level(logging.WARNING):
+            (body,) = wire_messages(TO, message)
+        assert "attachment" in body["message"]
+        assert "Reply 1" not in str(body)
+        assert "left out" in caplog.text
+
+    def test_a_media_caption_gives_quick_replies_somewhere_to_ride(self) -> None:
+        """Which is what the warning tells an author to do."""
+        message = OutboundMessage(
+            blocks=(MediaBlock(kind="image", url="https://cdn.test/a.png", caption="Pick one"),),
+            quick_replies=(QuickReply(id="y", label="Yes"),),
+        )
+        _, caption = wire_messages(TO, message)
+        assert caption["message"]["text"] == "Pick one"
+        assert caption["message"]["quick_replies"][0]["title"] == "Yes"
+
+    def test_the_split_fallback_never_emits_an_over_cap_piece(self, caplog: Any) -> None:
+        """The depth guard used to return the chunk unsplit, so Meta answered 400
+        and the send pipeline reported a bare ``provider_rejected`` naming
+        nothing about length. It cuts on the encoded bytes instead, and says so.
+        """
+        from apps.channels.providers.instagram import _within_bytes
+
+        chunk = "\U0001f600" * 400
+        with caplog.at_level(logging.WARNING):
+            pieces = _within_bytes(chunk, depth=4)
+        assert len(pieces) == 1
+        assert len(pieces[0].encode("utf-8")) <= MAX_TEXT_BYTES
+        # Cut on a character boundary, not mid-codepoint.
+        assert pieces[0] == pieces[0].encode("utf-8").decode("utf-8")
+        assert "cut to fit" in caplog.text
+
+    def test_card_buttons_carry_the_node_id_like_message_buttons(self) -> None:
+        """Two halves of one message encoding differently is the kind of
+        inconsistency that costs somebody an afternoon later."""
+        card = Card(title="Berlin", subtitle="Ships Tuesday", buttons=(Button(id="buy", label="Buy"),))
+        message = OutboundMessage(
+            blocks=(CardBlock(card=card),),
+            buttons=(Button(id="more", label="More"),),
+            node_id="node-4",
+        )
+        (body,) = wire_messages(TO, message)
+        (element,) = body["message"]["attachment"]["payload"]["elements"]
+        assert [item["payload"] for item in element["buttons"]] == ["node-4:buy", "node-4:more"]
 
     def test_a_tag_becomes_messaging_type_message_tag(self) -> None:
         """The tag is the compliance engine's, never invented here (SPEC §22)."""

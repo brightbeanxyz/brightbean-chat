@@ -174,13 +174,15 @@ class TestRegistry:
     def test_register_and_resolve(self) -> None:
         with registered(Platform.TELEGRAM) as adapter_cls:
             assert has_adapter(Platform.TELEGRAM)
-            # In enum order, and a superset check rather than equality: every
-            # shipped adapter registers itself at startup, so pinning the exact
-            # tuple would turn each new Layer-5 platform into a failure here.
-            # What this asserts is the ordering contract and that the fake took
-            # the slot.
-            assert registered_platforms() == tuple(value for value in Platform.values if has_adapter(value))
-            assert Platform.TELEGRAM in registered_platforms()
+            # The contract is **enum order**, and it is asserted against
+            # Platform.values rather than against the function's own filter —
+            # comparing to `tuple(v for v in Platform.values if has_adapter(v))`
+            # would restate registered_platforms()' implementation and could
+            # never fail. Every shipped adapter registers itself at startup, so
+            # the *membership* is not pinned to a literal; the ordering is.
+            platforms = registered_platforms()
+            assert Platform.TELEGRAM in platforms
+            assert list(platforms) == sorted(platforms, key=Platform.values.index)
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
         # Restored, not cleared. Telegram has a real adapter since issue #12 and

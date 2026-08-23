@@ -108,6 +108,34 @@ class TestTheRegistryEntry:
         assert "platform" in submitted.errors
 
 
+class TestSharedExtraKeys:
+    """The ``payload.extra`` keys that cross the contract-6 seam, pinned.
+
+    ``apps.channels`` sits below ``apps.messaging``, so these keys are literals
+    on both sides and are documented in the module that reads them. That is the
+    same shape ``apps.flows.triggers.pipeline`` uses for ``ROUTING_PROCESSOR``,
+    and it comes with the same obligation: pin the duplication, or it drifts in
+    silence.
+    """
+
+    def test_the_private_reply_marker_agrees_across_apps(self) -> None:
+        """Rename one side and every comment-to-DM stops opening a messaging
+        window, so every private reply is Blocked by the compliance engine —
+        with nothing raising anywhere."""
+        from apps.channels.providers import instagram
+        from apps.messaging import ingest
+
+        assert instagram.PRIVATE_REPLY_CLAIMED_KEY == ingest.PRIVATE_REPLY_CLAIMED_KEY
+
+    def test_the_provider_message_id_key_agrees_across_apps(self) -> None:
+        """Rename one side and a ``message_deletions`` delivery stops finding the
+        row it is meant to redact (SPEC §6.3, §19)."""
+        from apps.channels.providers import instagram
+        from apps.messaging import ingest
+
+        assert instagram.PROVIDER_MESSAGE_ID_KEY == ingest.PROVIDER_MESSAGE_ID_KEY
+
+
 class TestContractFour:
     """ "No platform branch anywhere in ``apps/messaging/``" — asserted, not promised."""
 

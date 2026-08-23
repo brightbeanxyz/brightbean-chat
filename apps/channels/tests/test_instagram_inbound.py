@@ -108,15 +108,37 @@ class TestRecordedShapes:
         (event,) = parse(load_delivery("comment_reply"), instagram_connection)
         assert event.payload.extra[COMMENT_PARENT_ID_KEY] == "17900000000000101"
 
-    def test_a_mention_in_a_comment_is_a_comment(self, instagram_connection: ChannelConnection) -> None:
-        (event,) = parse(load_delivery("mention_comment"), instagram_connection)
+    def test_a_mention_is_dropped_because_meta_names_no_author(self, instagram_connection: ChannelConnection) -> None:
+        """Meta's ``mentions`` value carries a media id, a comment id and the
+        text — and never a ``from``. Emitting a comment event anyway gave every
+        mention on a post the same empty ``commenter_ref``, so the first one
+        claimed SPEC §10's once-per-commenter-per-post guard and locked out
+        everybody else, while itself having no address to open a DM to."""
+        assert parse(load_delivery("mention_comment"), instagram_connection) == []
+
+    def test_a_mention_that_did_name_its_author_would_be_a_comment(
+        self, instagram_connection: ChannelConnection
+    ) -> None:
+        """The parser is ready for the field Meta does not send, so the day it
+        does this is a configuration change rather than a code change."""
+        payload = load_delivery("mention_comment")
+        payload["entry"][0]["changes"][0]["value"]["from"] = {"id": IG_USER_ID, "username": "ada.codes"}
+        (event,) = parse(payload, instagram_connection)
         assert event.type == EventType.COMMENT
+        assert event.platform_user_id == IG_USER_ID
         assert event.payload.comment_id == "17900000000000104"
         assert event.payload.extra["mention"] is True
 
     def test_a_mention_in_a_caption_is_dropped(self, instagram_connection: ChannelConnection) -> None:
         """It carries no commenter and nothing to reply to."""
         assert parse(load_delivery("mention_caption"), instagram_connection) == []
+
+    def test_a_comment_with_no_author_is_dropped(self, instagram_connection: ChannelConnection) -> None:
+        """Unattributable in both directions — and it would slip past the
+        self-reply filter, which compares the author against the account."""
+        payload = load_delivery("comment")
+        del payload["entry"][0]["changes"][0]["value"]["from"]
+        assert parse(payload, instagram_connection) == []
 
     def test_follow(self, instagram_connection: ChannelConnection) -> None:
         """Parsed, and in practice never delivered — see the adapter on §10\'s
@@ -191,6 +213,43 @@ class TestConnectionResolution:
         payload = load_delivery("message_text")
         payload["entry"][0]["id"] = "17841499999999999"
         assert parse(payload, instagram_connection) == []
+
+
+class TestDeduplicationIds:
+    def test_two_follows_at_different_times_are_two_events(self, instagram_connection: ChannelConnection) -> None:
+        """A ``follows`` change carries only ``{"from": ...}``, so hashing it
+        alone made a follow, an unfollow and a re-follow collide — the second and
+        third discarded by ``webhook_event_log``'s unique (connection,
+        provider_event_id) as redeliveries. The entry's ``time`` is folded in."""
+        first = load_delivery("follow")
+        second = load_delivery("follow")
+        second["entry"][0]["time"] = first["entry"][0]["time"] + 86_400
+
+        (one,) = parse(first, instagram_connection)
+        (two,) = parse(second, instagram_connection)
+        assert one.provider_event_id != two.provider_event_id
+
+    def test_the_same_follow_delivered_twice_is_one_event(self, instagram_connection: ChannelConnection) -> None:
+        """The other half: a genuine redelivery still deduplicates."""
+        (one,) = parse(load_delivery("follow"), instagram_connection)
+        (two,) = parse(load_delivery("follow"), instagram_connection)
+        assert one.provider_event_id == two.provider_event_id
+
+
+class TestEntryAttribution:
+    def test_an_entry_naming_no_account_is_dropped(self, instagram_connection: ChannelConnection) -> None:
+        """Not attributed to whichever connection happened to verify the
+        signature. Meta always sends ``entry[].id``, and guessing would file a
+        stranger's messages into a thread on an account the payload never named.
+        """
+        payload = load_delivery("message_text")
+        payload["entry"].append(copy.deepcopy(payload["entry"][0]))
+        del payload["entry"][1]["id"]
+        payload["entry"][1]["messaging"][0]["message"]["mid"] = "aWdfZG1fOTox"
+
+        events = parse(payload, instagram_connection)
+        assert len(events) == 1
+        assert events[0].payload.extra["provider_message_id"] == "aWdfZG1fMTox"
 
 
 # ---------------------------------------------------------------------------

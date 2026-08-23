@@ -457,6 +457,14 @@ class HandledComment(WorkspaceScopedModel):
     once_per_contact_per_post = models.BooleanField(default=True)
 
     private_reply_sent_at = models.DateTimeField(null=True, blank=True)
+    #: When the trigger's public reply was posted under the comment, if it
+    #: configured one. Separate from ``private_reply_sent_at`` because the two
+    #: are different calls to different endpoints with different failure modes,
+    #: and because the queue's handler contract (``apps.queueing.registry``)
+    #: says a handler "must be safe to run more than once" — zombie recovery
+    #: re-runs one that committed without being marked done. Without a durable
+    #: record, that re-run posts a second visible comment on the customer's post.
+    public_reply_sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "flows_handled_comment"

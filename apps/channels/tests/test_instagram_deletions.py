@@ -160,6 +160,17 @@ class TestRedaction:
 
 
 class TestTheTombstone:
+    def test_the_redacted_body_is_a_fresh_object_each_time(self) -> None:
+        """It was a module constant copied shallowly, so every redacted row
+        shared one ``blocks`` list with the module. Nothing mutated it; the day
+        something did, it would have rewritten the constant for the process."""
+        from apps.messaging.ingest import redacted_body
+
+        first, second = redacted_body(), redacted_body()
+        assert first == second
+        first["blocks"].append({"type": "text", "text": "leaked"})
+        assert second["blocks"] == []
+
     def test_a_redacted_message_renders_as_a_tombstone(self, tenancy: Tenancy) -> None:
         """Not silence. A reader looking at a hole in a thread with nothing to
         explain it is the failure ``apps.inbox.rendering`` exists to prevent."""
@@ -167,7 +178,7 @@ class TestTheTombstone:
         from apps.common.platforms import Platform
         from apps.contacts.services import create_contact
         from apps.messaging import services
-        from apps.messaging.ingest import REDACTED_BODY
+        from apps.messaging.ingest import redacted_body
 
         connection = Connection.objects.create(
             workspace=tenancy.workspace,
@@ -180,7 +191,7 @@ class TestTheTombstone:
         message = Message.objects.create(
             conversation=conversation,
             direction=MessageDirection.IN,
-            body=dict(REDACTED_BODY),
+            body=redacted_body(),
             status=MessageStatus.DELETED,
         )
 

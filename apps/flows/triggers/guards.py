@@ -20,6 +20,7 @@ __all__ = [
     "DEFAULT_REPLY_INTERVAL",
     "PRIVATE_REPLY_WINDOW",
     "claim_default_reply",
+    "claim_public_reply",
     "may_claim_comment",
     "may_private_reply",
     "mark_private_reply_sent",
@@ -160,6 +161,32 @@ def mark_private_reply_sent(row: HandledComment, *, contact: Any = None, now: da
         row.contact = contact
         fields.append("contact")
     row.save(update_fields=fields)
+
+
+def claim_public_reply(row: HandledComment, *, now: datetime | None = None) -> bool:
+    """May the public reply go out — and if so, take the guard.
+
+    A compare-and-set rather than a read followed by a write, for the same
+    reason :func:`claim_default_reply` is one: the caller is a queue handler,
+    and ``apps.queueing.registry`` documents that a handler "must be safe to run
+    more than once" because zombie recovery re-runs one that committed without
+    being marked done. Of two concurrent or repeated runs exactly one sees
+    ``updated == 1``; the loser posts nothing.
+
+    Taken *before* the call rather than recorded after it, because the failure
+    this prevents is a duplicate comment on somebody's post, and a claim spent
+    on a reply that then failed costs only that reply — the private one, which
+    is what the flow author configured, is a separate call and unaffected.
+    """
+    moment = now or timezone.now()
+    updated = (
+        HandledComment.objects.for_workspace(row.workspace_id)
+        .filter(pk=row.pk, public_reply_sent_at__isnull=True)
+        .update(public_reply_sent_at=moment, updated_at=moment)
+    )
+    if updated:
+        row.public_reply_sent_at = moment
+    return bool(updated)
 
 
 def may_claim_comment(commented_at: datetime, *, now: datetime | None = None) -> bool:

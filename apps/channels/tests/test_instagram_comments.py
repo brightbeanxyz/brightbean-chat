@@ -339,6 +339,47 @@ class TestMatching:
             run_queued()
         assert len(api.message_bodies()) == 1
 
+    def test_a_claimed_comment_opens_no_empty_thread(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+        comment_flow: Flow,
+    ) -> None:
+        """A comment is not a DM thread. The thread is opened by the private
+        reply, through ``services.send_outbound`` — so a claim whose reply never
+        sends leaves nothing at the top of somebody's inbox.
+        """
+        # A flow with no publishable version: the trigger is not a candidate, so
+        # nothing is claimed. Claim it directly instead, then re-dispatch it the
+        # way the queue handler does, and stop before the flow sends anything.
+        from apps.channels.providers.instagram import _open_thread
+        from apps.flows.triggers import guards
+        from apps.messaging.models import Conversation
+
+        row = guards.record_comment(
+            connection=instagram_connection,
+            trigger=comment_trigger,
+            comment_id=COMMENT_ID,
+            post_id=POST_ID,
+            commenter_ref=IG_USER_ID,
+            commented_at=timezone.now(),
+        )
+        assert row is not None
+        comment_flow.status = "draft"
+        comment_flow.save(update_fields=["status", "updated_at"])
+
+        with fake_graph():
+            _open_thread(instagram_connection, row, {"comment_text": "PRICE please"})
+
+        # The contact, the consent record and the window all exist — the private
+        # reply needs every one of them to clear SPEC §8's chokepoint.
+        identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get()
+        assert identity.window_expires_at is not None
+        # The thread does not.
+        assert not Conversation.objects.for_workspace(tenancy.workspace).exists()
+
     def test_a_comment_creates_no_contact_until_it_is_claimed(
         self, client: Client, tenancy: Tenancy, instagram_connection: ChannelConnection
     ) -> None:
@@ -427,6 +468,153 @@ class TestAMultiPartPrivateReply:
         # And the one private reply this comment gets is spent exactly once.
         row = HandledComment.objects.for_workspace(tenancy.workspace).get()
         assert row.private_reply_sent_at is not None
+
+
+@pytest.mark.usefixtures("instagram_app", "real_pipeline")
+class TestTheClaimIsNotAGeneralLicence:
+    """A stale claim must not hijack an unrelated send. See ``_pending_private_reply``."""
+
+    def test_a_later_send_on_an_open_thread_is_an_ordinary_dm(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """The claim is spent by the message that opens the thread, and the row
+        is marked — so nothing afterwards can be readdressed."""
+        with fake_graph():
+            deliver(client, at_now(load_delivery("comment")))
+            run_queued()
+
+        contact = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get().contact
+        with fake_graph() as api:
+            _send(tenancy, contact, instagram_connection, "Anything else?", source="agent")
+        assert api.message_bodies()[0]["recipient"] == {"id": IG_USER_ID}
+
+    def test_an_unspent_claim_does_not_convert_a_send_on_an_open_thread(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """The case the guard was missing.
+
+        An unanswered claim is not on its own a licence to readdress a send.
+        Here one exists — the private reply never went out, so Meta would still
+        accept it for seven days — while the DM thread is demonstrably open.
+        Before the fix the next message to that person, an agent's inbox reply
+        included, was silently sent as the comment's one private reply: it
+        carried Meta's auto-appended link to the post and spent an allowance the
+        agent knew nothing about.
+
+        The row is built through ``guards.record_comment`` rather than through a
+        webhook because that combination is not reachable from one: L4-A's
+        routing takes the claim only when the commenter has no contact yet.
+        """
+        from apps.flows.triggers import guards
+        from apps.messaging.models import Message, MessageDirection, MessageSource, MessageStatus
+
+        with fake_graph():
+            deliver(client, at_now(load_delivery("message_text")))
+        identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get()
+        Message.objects.create(
+            conversation=identity.contact.conversations.get(),
+            direction=MessageDirection.OUT,
+            source=MessageSource.AUTOMATION,
+            status=MessageStatus.SENT,
+            body={"blocks": [{"type": "text", "text": "earlier"}]},
+        )
+
+        row = guards.record_comment(
+            connection=instagram_connection,
+            trigger=comment_trigger,
+            comment_id=COMMENT_ID,
+            post_id=POST_ID,
+            commenter_ref=IG_USER_ID,
+            commented_at=timezone.now(),
+        )
+        assert row is not None and row.private_reply_sent_at is None
+
+        with fake_graph() as api:
+            _send(tenancy, identity.contact, instagram_connection, "Following up", source="agent")
+
+        (body,) = api.message_bodies()
+        assert body["recipient"] == {"id": IG_USER_ID}
+        row.refresh_from_db()
+        assert row.private_reply_sent_at is None
+
+    def test_a_failed_earlier_send_does_not_count_as_an_open_thread(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """A queued or failed row never reached Instagram, so it opened nothing.
+        The check is on delivered statuses for exactly this reason — and because
+        contract 1 inserts the row being dispatched *before* calling the adapter,
+        so a naive "any outbound exists" test would see the message itself."""
+        with fake_graph() as api:
+            deliver(client, at_now(load_delivery("comment")))
+            run_queued()
+        assert api.message_bodies()[0]["recipient"] == {"comment_id": COMMENT_ID}
+
+
+@pytest.mark.usefixtures("instagram_app", "real_pipeline")
+class TestPublicReplyIdempotence:
+    def test_a_re_run_of_the_handler_posts_no_second_comment(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """``apps.queueing.registry``: "A handler must be safe to run more than
+        once" — a worker can die between the handler committing and the row being
+        marked, and zombie recovery re-runs it. Without a durable claim that was
+        a second visible comment on the customer's post."""
+        with fake_graph() as api:
+            deliver(client, at_now(load_delivery("comment")))
+            run_queued()
+            run_queued()
+            run_queued()
+        assert len(api.bodies(f"{COMMENT_ID}/replies")) == 1
+
+    def test_the_claim_is_taken_even_when_the_reply_is_refused(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """Taken before the call, not recorded after it: the failure being
+        prevented is a duplicate comment on somebody's post, and a claim spent on
+        a refused reply costs only that reply."""
+        from apps.channels.tests.instagram_support import Reply
+
+        with fake_graph(lambda api: api.reply(f"{COMMENT_ID}/replies", Reply(status=400))) as api:
+            deliver(client, at_now(load_delivery("comment")))
+            run_queued()
+            run_queued()
+        assert len(api.bodies(f"{COMMENT_ID}/replies")) == 1
+        row = HandledComment.objects.for_workspace(tenancy.workspace).get()
+        assert row.public_reply_sent_at is not None
+
+
+def _send(tenancy: Tenancy, contact: Any, connection: ChannelConnection, text: str, *, source: str) -> Any:
+    from apps.channels.events import OutboundMessage, TextBlock
+    from apps.messaging import services
+
+    return services.send_outbound(
+        workspace=tenancy.workspace,
+        contact=contact,
+        connection=connection,
+        outbound=OutboundMessage(blocks=(TextBlock(text=text),)),
+        source=source,
+        idempotency_key=f"test:{text}",
+    )
 
 
 class TestTheResponderSeam:

@@ -188,18 +188,31 @@ PRIVATE_REPLY_CLAIMED_KEY = "private_reply_claimed"
 #: later deletion can find it by.
 PROVIDER_MESSAGE_ID_KEY = "provider_message_id"
 
-#: What replaces a deleted message's body. Self-describing on purpose: an
-#: operator reading the row, or a GDPR export, should see that the content was
-#: retracted rather than that it was never there. ``blocks`` stays present and
-#: empty so every reader of the SPEC §7.2 body shape keeps working unchanged.
-REDACTED_BODY: dict[str, Any] = {
-    "blocks": [],
-    "buttons": [],
-    "quick_replies": [],
-    "tag": None,
-    "template_ref": None,
-    "deleted": True,
-}
+
+def redacted_body() -> dict[str, Any]:
+    """What replaces a deleted message's body. A fresh object every call.
+
+    Self-describing on purpose: an operator reading the row, or a GDPR export,
+    should see that the content was retracted rather than that it was never
+    there. ``blocks`` stays present and empty so every reader of the SPEC §7.2
+    body shape keeps working unchanged.
+
+    A **function** rather than a module constant, because the constant form was
+    only ever copied shallowly (``dict(REDACTED_BODY)``) and every redacted row
+    then shared one ``blocks`` list with the module. Nothing mutates it today;
+    the day something does — a migration, an export builder, a fixture — it
+    would rewrite the constant for the rest of the process and every later
+    redaction would store the mutation.
+    """
+    return {
+        "blocks": [],
+        "buttons": [],
+        "quick_replies": [],
+        "tag": None,
+        "template_ref": None,
+        "deleted": True,
+    }
+
 
 #: What a ``delivery_status`` receipt may say. Narrower than
 #: ``MessageStatus.values`` on purpose: ``queued`` is a state *we* put a message
@@ -335,8 +348,14 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
         # and no consent and no window to send through. See the table above.
         return
 
-    conversation = _conversation_for(contact, connection)
-    message = _insert_inbound(conversation, event) if event.type in THREAD_EVENTS else None
+    # A comment opens no thread. Every other identity event either *is* thread
+    # content or is the contact arriving in a conversation they can be answered
+    # in; a claimed comment is neither until the private reply actually goes
+    # out, and ``services.send_outbound`` opens the thread itself when it does.
+    # Creating one here left an empty conversation at the top of somebody's
+    # inbox for every comment whose reply never sent.
+    conversation = None if event.type == EventType.COMMENT else _conversation_for(contact, connection)
+    message = _insert_inbound(conversation, event) if conversation and event.type in THREAD_EVENTS else None
     if event.type in THREAD_EVENTS and message is None:
         # Already persisted. Returning before the bookkeeping is what stops a
         # redelivery re-extending the messaging window past first-receipt plus
@@ -366,7 +385,9 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
             EVENT_MESSAGE_RECEIVED,
             workspace_id=contact.workspace_id,
             contact_id=contact.pk,
-            conversation_id=conversation.pk,
+            # From the row that was written rather than from the local, which is
+            # None for the event types that open no thread.
+            conversation_id=message.conversation_id,
             message_id=message.pk,
             connection_id=connection.pk,
             platform=connection.platform,
@@ -511,7 +532,7 @@ def _clean(value: Any, limit: int) -> str:
 def _record_activity(
     identity: ContactChannelIdentity,
     contact: Any,
-    conversation: Conversation,
+    conversation: Conversation | None,
     now: Any,
     *,
     message_at: Any = None,
@@ -536,7 +557,7 @@ def _record_activity(
     contact.last_interaction_at = now
     contact.save(update_fields=["last_interaction_at", "updated_at"])
 
-    if message_at is not None:
+    if conversation is not None and message_at is not None:
         conversation.last_message_at = message_at
         conversation.save(update_fields=["last_message_at", "updated_at"])
 
@@ -652,7 +673,7 @@ def _apply_deletion(connection: Any, event: NormalizedEvent) -> None:
         Message.objects.for_workspace(connection.workspace_id)
         .filter(channel_connection=connection, provider_message_id=provider_id)
         .exclude(status=MessageStatus.DELETED)
-        .update(body=dict(REDACTED_BODY), status=MessageStatus.DELETED, updated_at=timezone.now())
+        .update(body=redacted_body(), status=MessageStatus.DELETED, updated_at=timezone.now())
     )
     if not updated:
         # A message this deployment never stored, or one already redacted.

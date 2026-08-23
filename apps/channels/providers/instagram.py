@@ -61,7 +61,6 @@ reaches a proxy access log. Nothing in this module logs a token or a URL;
 ``base.request_json`` reports the *host* of a failed call and never the path.
 """
 
-import hashlib
 import logging
 import secrets
 import threading
@@ -74,7 +73,7 @@ from django.utils import timezone
 from apps.channels import ingest as channels_ingest
 from apps.channels import security
 from apps.channels.capabilities import Capabilities, capabilities_for
-from apps.channels.downgrade import NUMBERED_OPTION, downgrade, split_text
+from apps.channels.downgrade import downgrade, split_text
 from apps.channels.events import (
     Button,
     Card,
@@ -97,6 +96,7 @@ from apps.channels.providers.base import BACKGROUND_TIMEOUT, Adapter, request_js
 from apps.channels.providers.exceptions import APIError
 from apps.channels.registry import register_adapter
 from apps.common.platforms import Platform
+from apps.flows import messaging as messaging_facade
 from apps.flows.triggers.comments import CommentResponder, register_responder
 from apps.flows.triggers.types import COMMENT_PARENT_ID_KEY, COMMENT_POST_ID_KEY
 from apps.queueing.registry import register_handler
@@ -138,6 +138,9 @@ _CAPABILITIES: Capabilities = capabilities_for(Platform.INSTAGRAM)
 MAX_TEXT_CHARS = _CAPABILITIES.max_text_len
 MAX_TEXT_BYTES = 1000
 
+#: How many re-split passes before :func:`_within_bytes` cuts on bytes instead.
+MAX_SPLIT_DEPTH = 4
+
 #: Generic template limits, from Meta's reference: ten elements per message,
 #: three buttons per element, eighty characters of title and of subtitle.
 MAX_TEMPLATE_ELEMENTS = 10
@@ -175,11 +178,19 @@ MAX_ATTACHMENTS = 10
 COMMENT_REPLY_ACTION = "instagram_comment_reply"
 
 #: Where a claimed comment tells ``apps.messaging.ingest`` that a private reply
-#: is permitted, so the messaging window opens for it. A literal rather than an
-#: import because ``apps.channels`` must not import ``apps.messaging``; the key
-#: is documented in the module that reads it, which is the convention delivery
-#: receipts already use for ``provider_message_id``.
+#: is permitted, so the messaging window opens for it, and where a message hands
+#: it the platform's own id so a later deletion can find the row to redact.
+#:
+#: Literals rather than imports, because ``apps.channels`` sits below
+#: ``apps.messaging`` and the keys are documented in the module that *reads*
+#: them. That is the same shape ``apps.flows.triggers.pipeline`` uses for
+#: ``ROUTING_PROCESSOR`` — and, like that one, the duplication is pinned by a
+#: test (``test_instagram_policy.py::TestSharedExtraKeys``) so it cannot drift
+#: silently. It would drift very quietly indeed: rename one side and every
+#: comment-to-DM stops opening a window, so every private reply is Blocked by
+#: the compliance engine and nothing raises anywhere.
 PRIVATE_REPLY_CLAIMED_KEY = "private_reply_claimed"
+PROVIDER_MESSAGE_ID_KEY = "provider_message_id"
 
 #: Meta error codes meaning "this credential is finished" (SPEC §6.3). Anything
 #: else is a message-level failure the send pipeline already classifies by HTTP
@@ -299,11 +310,11 @@ def wire_messages(recipient: dict[str, Any], message: OutboundMessage) -> list[d
 
     for block in message.blocks:
         if isinstance(block, CardBlock):
-            _collect_card(block.card, elements, parts)
+            _collect_card(block.card, elements, parts, message.node_id)
             continue
         if isinstance(block, GalleryBlock):
             for card in block.cards:
-                _collect_card(card, elements, parts)
+                _collect_card(card, elements, parts, message.node_id)
             continue
         _flush_elements(elements, parts)
         if isinstance(block, TextBlock):
@@ -341,9 +352,9 @@ def _flush_elements(elements: list[dict[str, Any]], parts: list[dict[str, Any]])
         parts.append({"attachment": {"type": "template", "payload": {"template_type": "generic", "elements": batch}}})
 
 
-def _collect_card(card: Card, elements: list[dict[str, Any]], parts: list[dict[str, Any]]) -> None:
+def _collect_card(card: Card, elements: list[dict[str, Any]], parts: list[dict[str, Any]], node_id: str = "") -> None:
     """Add one card as a template element, or as text when it cannot be one."""
-    element = _card_element(card)
+    element = _card_element(card, node_id)
     if element is not None:
         elements.append(element)
         return
@@ -354,8 +365,15 @@ def _collect_card(card: Card, elements: list[dict[str, Any]], parts: list[dict[s
     parts.extend(_text_messages(_card_text(card)))
 
 
-def _card_element(card: Card) -> dict[str, Any] | None:
-    """One generic-template element, or None when Meta would reject it."""
+def _card_element(card: Card, node_id: str = "") -> dict[str, Any] | None:
+    """One generic-template element, or None when Meta would reject it.
+
+    ``node_id`` is threaded in so a card's postback payloads carry SPEC §6.2's
+    ``node_id:button_id`` exactly as message-level buttons do. It is decoration
+    — the engine matches a press on the button id against the waiting node's
+    handles — but two halves of one message encoding differently is the kind of
+    inconsistency that costs somebody an afternoon later.
+    """
     title = (card.title or card.subtitle or card.url or "").strip()[:MAX_TITLE_CHARS]
     if not title:
         return None
@@ -366,7 +384,7 @@ def _card_element(card: Card) -> dict[str, Any] | None:
         element["image_url"] = card.image_url
     if card.url:
         element["default_action"] = {"type": "web_url", "url": card.url}
-    buttons = _buttons(card.buttons, "")
+    buttons = _buttons(card.buttons, node_id)
     if buttons:
         element["buttons"] = buttons
     # "At least one property must be set in addition to title."
@@ -410,8 +428,16 @@ def _within_bytes(chunk: str, depth: int = 0) -> list[str]:
     backstop against a pathological input, not an expected path.
     """
     encoded = len(chunk.encode("utf-8"))
-    if encoded <= MAX_TEXT_BYTES or depth >= 4:
+    if encoded <= MAX_TEXT_BYTES:
         return [chunk]
+    if depth >= MAX_SPLIT_DEPTH:
+        # Convergence has not been observed on real text, which is exactly why
+        # this branch must not hand the platform a piece it will reject with a
+        # 400 the send pipeline then reports as a bare ``provider_rejected``.
+        # Cut on the encoded bytes instead — ``errors="ignore"`` drops the
+        # partial character a byte slice can leave behind — and say so.
+        logger.warning("Instagram: text did not split within %s passes and was cut to fit.", MAX_SPLIT_DEPTH)
+        return [chunk.encode("utf-8")[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")]
     budget = max(1, len(chunk) * MAX_TEXT_BYTES // encoded)
     pieces: list[str] = []
     for piece in split_text(chunk, budget):
@@ -440,7 +466,19 @@ def _media_messages(block: MediaBlock) -> list[dict[str, Any]]:
 
 
 def _attach_quick_replies(parts: list[dict[str, Any]], quick_replies: tuple[QuickReply, ...], node_id: str) -> None:
-    """Put quick replies on the last text message, or number them into one."""
+    """Put quick replies on the last text message.
+
+    Meta accepts ``quick_replies`` only beside ``message.text``, so a message
+    with no text bubble anywhere — a caption-less image, say — has nowhere to put
+    them, and they are dropped with a warning. That is the same visible failure
+    :func:`_attach_buttons` chooses, and it replaced something worse: rendering
+    "Reply 1 for Yes" here looked like the shared numbered-option fallback and
+    was not one. That fallback only works because
+    ``apps.flows.engine.nodes.send_message`` rebuilds the number-to-id map by
+    re-running ``downgrade`` — and ``downgrade`` produces no numbers for
+    Instagram, which declares ``quick_replies=True``. The contact was being shown
+    instructions that resolved to nothing.
+    """
     if not quick_replies:
         return
     chips = [
@@ -458,15 +496,11 @@ def _attach_quick_replies(parts: list[dict[str, Any]], quick_replies: tuple[Quic
         if "text" in part:
             part["quick_replies"] = chips
             return
-    # Meta accepts quick_replies only beside message.text, and there is none.
-    # The shared numbered-option wording is the documented fallback for exactly
-    # this (SPEC §6.1), and L4-A matches an inbound "1" back to the id.
-    numbered = "\n".join(
-        NUMBERED_OPTION.format(number=index, label=_label(item))
-        for index, item in enumerate(quick_replies, start=1)
-        if _label(item)
+    logger.warning(
+        "Instagram: %s quick repl(ies) had no text message to ride on and were left out. "
+        "Give the message a text block or a media caption to carry them.",
+        len(chips),
     )
-    parts.extend(_text_messages(numbered))
 
 
 def _attach_buttons(parts: list[dict[str, Any]], buttons: tuple[Button, ...], node_id: str) -> None:
@@ -504,11 +538,16 @@ def _attach_buttons(parts: list[dict[str, Any]], buttons: tuple[Button, ...], no
         ]
         return
 
-    # 3. Neither. A media-only message has no title to give a card, and Meta
-    #    requires one — so the buttons are left out, visibly and loudly, which is
-    #    the same choice Telegram's adapter makes for a button it cannot encode.
+    # 3. Neither. A media-only message has no title to give a card and Meta
+    #    requires one, so the buttons are left out — visibly and loudly, and
+    #    without a numbered fallback, because the engine's number-to-id map is
+    #    rebuilt by re-running ``downgrade``, which keeps buttons natively for a
+    #    platform declaring ``buttons=True`` and so records no numbers to match.
+    #    Inventing numbers here would show the contact instructions that resolve
+    #    to nothing. See ``docs/channels/instagram.md``.
     logger.warning(
-        "Instagram: %s button(s) had no text or card to attach to and were left out of the message.",
+        "Instagram: %s button(s) had no text or card to attach to and were left out. "
+        "Give the message a text block or a media caption to carry them.",
         len(rendered),
     )
 
@@ -596,20 +635,20 @@ def _text(value: Any, limit: int = MAX_INBOUND_TEXT_CHARS) -> str:
 def _platform_id(value: Any) -> str:
     """A platform id, bounded by **hashing** rather than by truncation.
 
-    The rule this codebase applies to every identifier — see
-    ``apps.messaging.identities.bounded_key`` and
-    ``apps.channels.views_webhooks._dedup_id``, both of which explain it at
-    length. Two ids agreeing on their first two hundred characters would
-    otherwise become one person receiving another's conversation.
+    The bounding itself is ``apps.messaging.identities.bounded_key``, reached
+    through the ``apps.flows.messaging`` facade rather than re-derived here. That
+    is not tidiness: :func:`_pending_private_reply` compares the result against a
+    ``commenter_ref`` that ``triggers.guards`` bounded with that same function,
+    and the facade's own docstring says why a local copy is wrong — "re-deriving
+    it locally would be a second implementation that silently stops agreeing".
+    Two implementations that must agree are one implementation with a delay.
+
+    What is left here is the part that is genuinely this parser's: Meta sends
+    ids as JSON numbers as well as strings, and ``bool`` is an ``int`` in Python.
     """
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         return ""
-    text = str(value).replace("\x00", "").strip()
-    if not text:
-        return ""
-    if len(text) <= MAX_PLATFORM_ID_CHARS:
-        return text
-    return f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+    return messaging_facade.bounded_identifier(str(value), limit=MAX_PLATFORM_ID_CHARS)
 
 
 def _moment(raw: Any, *, milliseconds: bool) -> datetime:
@@ -722,7 +761,13 @@ class InstagramAdapter(Adapter):
 
         events: list[NormalizedEvent] = []
         for entry in meta_common.entries(payload):
-            owner = _connection_for_entry(entry) or (connection if not _entry_id(entry) else None)
+            # No fallback to the delivery-level connection for an entry that
+            # names no account. Meta always sends ``entry[].id``, so an entry
+            # without one is not a delivery to attribute — and attributing it to
+            # whichever connection happened to verify the signature would file a
+            # stranger's messages into a thread on an account the payload never
+            # mentioned.
+            owner = _connection_for_entry(entry)
             if owner is None:
                 logger.info("Instagram delivery named an account with no connection on this deployment.")
                 continue
@@ -882,17 +927,26 @@ def _entry_events(connection: ChannelConnection, entry: dict[str, Any]) -> list[
     return events
 
 
-def _event_id(item: dict[str, Any], mid: str, prefix: str) -> str:
+def _event_id(item: dict[str, Any], mid: str, prefix: str, *, at: Any = None) -> str:
     """A deduplication key (SPEC §7.1 step 2), from the platform's id or content.
 
     Meta gives most things a stable id; the ones it does not — a referral, some
-    follow shapes — are hashed from their own content *including the timestamp*,
-    which is what keeps two genuinely separate arrivals from colliding while a
-    redelivery of one still does.
+    follow shapes — are hashed from their own content.
+
+    ``at`` is the arrival time, and it is not optional decoration. A ``messaging``
+    item carries its own ``timestamp`` and hashes distinctly on its own, but a
+    ``changes`` item does not: a ``follows`` value is ``{"from": {...}}`` and
+    nothing else, so a follow, an unfollow and a re-follow a week later all hash
+    to the same digest and the second and third are discarded by
+    ``webhook_event_log``'s unique ``(connection, provider_event_id)`` as
+    redeliveries. ``synthetic_event_id``'s own docstring names this trap and says
+    the way out is to include the platform's timestamp — the entry's ``time`` is
+    what that is here, so callers reading a ``changes`` item pass it.
     """
     if mid:
         return f"{prefix}{mid}"
-    return channels_ingest.synthetic_event_id(item, prefix=prefix)
+    payload = item if at is None else {"item": item, "at": at}
+    return channels_ingest.synthetic_event_id(payload, prefix=prefix)
 
 
 def _messaging_events(
@@ -951,7 +1005,7 @@ def _message_events(
                 platform_user_id=sender_id,
                 provider_event_id=f"ig:del:{mid}",
                 timestamp=when,
-                payload=EventPayload(extra={"provider_message_id": mid}),
+                payload=EventPayload(extra={PROVIDER_MESSAGE_ID_KEY: mid}),
                 raw=item,
             )
         ]
@@ -1025,7 +1079,7 @@ def _message_events(
         # Recorded so a later ``message_deletions`` delivery can find this row.
         # ``apps.messaging.ingest`` reads the key; the convention is documented
         # there, beside the delivery-receipt one it already owns.
-        extra["provider_message_id"] = mid
+        extra[PROVIDER_MESSAGE_ID_KEY] = mid
 
     return [
         NormalizedEvent(
@@ -1109,6 +1163,8 @@ def _follow_event(
     item: dict[str, Any],
     sender_id: str,
     when: datetime,
+    *,
+    at: Any = None,
 ) -> list[NormalizedEvent]:
     """SPEC §10's follow trigger, which degrades gracefully by design.
 
@@ -1125,7 +1181,7 @@ def _follow_event(
             type=EventType.FOLLOW,
             connection=connection,
             platform_user_id=sender_id,
-            provider_event_id=_event_id(item, "", "ig:follow:"),
+            provider_event_id=_event_id(item, "", "ig:follow:", at=at),
             timestamp=when,
             payload=EventPayload(),
             raw=item,
@@ -1151,7 +1207,9 @@ def _change_events(
     if field in FOLLOW_FIELDS:
         commenter = value.get("from")
         sender_id = _platform_id(commenter.get("id")) if isinstance(commenter, dict) else ""
-        return _follow_event(connection, change, sender_id, when) if sender_id else []
+        # ``at`` because a ``follows`` change carries no time of its own; see
+        # :func:`_event_id`.
+        return _follow_event(connection, change, sender_id, when, at=entry.get("time")) if sender_id else []
     return []
 
 
@@ -1174,7 +1232,17 @@ def _comment_event(
 
     author = value.get("from")
     commenter_id = _platform_id(author.get("id")) if isinstance(author, dict) else ""
-    if commenter_id and account_id and commenter_id == account_id:
+    if not commenter_id:
+        # Unattributable, and therefore unusable in both directions. SPEC §10's
+        # once-per-commenter-per-post guard keys on the commenter, so an empty
+        # one collides with every other empty one and the *first* such comment
+        # locks out everybody else on that post; and the private reply cannot
+        # open a DM thread without an address to open it to. The self-reply
+        # filter below also depends on it, so an anonymous comment would slip
+        # past that too. Dropping is the only answer that is right on all three.
+        logger.info("Instagram comment on connection %s carried no author; ignored.", connection.pk)
+        return []
+    if account_id and commenter_id == account_id:
         # Our own public reply comes straight back as a comment webhook. Acting
         # on it would let a comment trigger answer its own reply, forever.
         return []
@@ -1210,16 +1278,35 @@ def _mention_event(
     account_id: str,
     when: datetime,
 ) -> list[NormalizedEvent]:
-    """An ``@mention`` of this account in somebody else's comment.
+    """An ``@mention`` of this account, in a comment or in a caption.
 
-    A mention in a **caption** carries only a media id — no commenter, no text,
-    nothing to reply to — so it is dropped rather than turned into a comment
-    event nothing could act on. A mention in a comment is a comment, and reaches
-    the same trigger as one on our own post.
+    Both shapes are dropped today, for the same reason and not for want of
+    trying: **Meta's ``mentions`` value names no author.** A caption mention
+    carries a media id and nothing else; a comment mention adds a comment id and
+    the text. Neither says who wrote it.
+
+    Without an author there is nothing to key SPEC §10's
+    once-per-commenter-per-post guard on and no address to open a DM thread to.
+    Emitting one anyway meant every mention on a post shared the empty
+    ``commenter_ref``, so the first one claimed the guard and locked out
+    everybody else — while itself failing to open a thread. Answering mentions
+    needs a ``GET /{ig-comment-id}?fields=from``, which is a Graph round trip
+    inside the webhook ack path, so it is out of scope here rather than done
+    badly. See ``docs/channels/instagram.md``.
+
+    Parsed to the point of proving what is and is not there, so the day Meta adds
+    an author this is one field rather than a new code path.
     """
     comment_id = _platform_id(value.get("comment_id"))
-    if not comment_id:
-        logger.debug("Instagram mention on connection %s carried no comment; ignored.", connection.pk)
+    author = value.get("from")
+    commenter_id = _platform_id(author.get("id")) if isinstance(author, dict) else ""
+    if not comment_id or not commenter_id:
+        logger.debug(
+            "Instagram mention on connection %s named no comment or no author; ignored.",
+            connection.pk,
+        )
+        return []
+    if account_id and commenter_id == account_id:
         return []
     extra: dict[str, Any] = {
         COMMENT_POST_ID_KEY: _platform_id(value.get("media_id")),
@@ -1229,7 +1316,7 @@ def _mention_event(
         NormalizedEvent(
             type=EventType.COMMENT,
             connection=connection,
-            platform_user_id="",
+            platform_user_id=commenter_id,
             provider_event_id=f"ig:m:{comment_id}",
             timestamp=when,
             payload=EventPayload(text=_text(value.get("text")), comment_id=comment_id, extra=extra),
@@ -1256,14 +1343,23 @@ def _pending_private_reply(connection: ChannelConnection, identity: Any) -> Any:
     flow engine sends a message to a contact and does not need to learn that
     Instagram has two kinds of recipient.
 
-    One indexed lookup on the send path, and no cheaper pre-filter in front of
-    it. The obvious one — "only ask when the contact has never written to us" —
-    was wrong: a claimed comment *is* recorded as inbound activity, so it sets
-    ``last_inbound_at`` and the filter closed on the very case it was meant to
-    open. ``HandledComment`` carries a partial index over exactly the unanswered
-    rows for this (:class:`apps.flows.models.HandledComment`), so asking every
-    time costs an index probe against a small set rather than a heuristic that
-    can silently stop being true.
+    **Only the thread-opening message.** An unanswered claim is not on its own a
+    licence to readdress a send: a claim whose flow never started — no
+    publishable version, a refused first send — sits open for seven days, and
+    without this check an agent's inbox reply days later would go out as that
+    comment's one private reply, carrying Meta's auto-appended link to the post
+    and spending an allowance the agent knew nothing about. So the claim is
+    consumed only when this really is the first outbound message on the thread,
+    which is the one moment a private reply is both correct and the only form
+    Meta will accept.
+
+    Two indexed lookups on the send path, and no cheaper pre-filter in front of
+    the first. The obvious one — "only ask when the contact has never written to
+    us" — was wrong: a claimed comment *is* recorded as inbound activity, so it
+    sets ``last_inbound_at`` and the filter closed on the very case it was meant
+    to open. ``HandledComment`` carries a partial index over exactly the
+    unanswered rows (:class:`apps.flows.models.HandledComment`), and the second
+    lookup only runs once the first has found something.
 
     Never raises. A private reply is a refinement of an ordinary send; a failure
     to look one up must not fail the send itself.
@@ -1284,12 +1380,46 @@ def _pending_private_reply(connection: ChannelConnection, identity: Any) -> Any:
             )
             .order_by("-commented_at")[:5]
         )
-        for row in rows:
-            if guards.may_private_reply(row):
-                return row
+        candidate = next((row for row in rows if guards.may_private_reply(row)), None)
+        if candidate is None or not _thread_is_unopened(connection, identity):
+            return None
+        return candidate
     except Exception:
         logger.warning("Instagram: could not check for a pending private reply on connection %s.", connection.pk)
     return None
+
+
+#: Statuses that mean a message actually reached Instagram. Narrower than "not
+#: failed" on both ends, and both ends matter to :func:`_thread_is_unopened`:
+#: ``queued`` excludes the very message being dispatched right now — contract 1
+#: inserts the row *before* calling the adapter — and it also excludes an
+#: earlier attempt that never left, which did not open a thread either.
+_DELIVERED_STATUSES = ("sent", "delivered", "read")
+
+
+def _thread_is_unopened(connection: ChannelConnection, identity: Any) -> bool:
+    """Has this contact never actually been sent anything on this connection?
+
+    The question a private reply turns on, and the reason it is asked of the
+    message table rather than of the identity: that is where the answer lives.
+    Only reached once a pending claim has been found, so an established thread
+    never pays for it.
+    """
+    from apps.messaging.models import Message, MessageDirection
+
+    contact_id = getattr(identity, "contact_id", None)
+    if contact_id is None:
+        return True
+    return not (
+        Message.objects.for_workspace(connection.workspace_id)
+        .filter(
+            channel_connection=connection,
+            conversation__contact_id=contact_id,
+            direction=MessageDirection.OUT,
+            status__in=_DELIVERED_STATUSES,
+        )
+        .exists()
+    )
 
 
 def _spend_private_reply(row: Any, identity: Any, result: dict[str, Any]) -> None:
@@ -1427,6 +1557,16 @@ def _send_public_reply(connection: ChannelConnection, row: Any, config: dict[str
     """
     text = _public_reply_text(config)
     if not text:
+        return
+
+    from apps.flows.triggers import guards
+
+    if not guards.claim_public_reply(row):
+        # Somebody already posted it. The queue's handler contract says a
+        # handler "must be safe to run more than once" — zombie recovery re-runs
+        # one that committed without being marked done — and a re-run without
+        # this claim puts a second visible comment on the customer's post.
+        logger.info("Instagram: comment row %s already has its public reply.", row.pk)
         return
     try:
         reply_to_comment(access_token(connection), row.comment_id, text)
