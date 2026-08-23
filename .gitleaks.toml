@@ -66,3 +66,26 @@ paths = [
     '''apps/api/tests/test_delivery\.py''',
     '''docs/api/v1\.md''',
 ]
+
+# The email channel's credential-shaped fixtures (issue #21).
+#
+# `test_email_scrubbing.py` holds a Resend key, a Svix signing secret and an SES
+# key pair shaped like the real things, because that file exists to prove the log
+# scrubber's patterns fire — and a pattern written for a token shaped like a token
+# proves nothing against a string shaped like "secret". It is the same argument
+# `test_logging.py` is allowlisted under, one app over.
+#
+# The SNS fixture carries the confirmation `Token` AWS puts in a
+# SubscriptionConfirmation payload: a long opaque string, and a recorded shape
+# rather than a live one. It authorises confirming a subscription to a topic in
+# an AWS account nobody owns.
+#
+# Both are literals in test files, never read from an environment, and grant
+# access to nothing.
+[[allowlists]]
+description = "Synthetic email-provider test fixtures"
+targetRules = ["generic-api-key"]
+paths = [
+    '''apps/channels/tests/test_email_scrubbing\.py''',
+    '''apps/channels/tests/fixtures/email/.*\.json''',
+]

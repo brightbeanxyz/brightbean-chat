@@ -36,3 +36,9 @@ class ChannelsConfig(AppConfig):
         register_preview()
         # SPEC §6.6's STOP/HELP/START, at contract 6's hard_optout stage.
         register_sms_hooks()
+        # The send_email runtime (#21). Contract 5's node registry is additive
+        # and `apps/flows/engine/nodes/__init__.py` says L5-D/E register from
+        # their own apps — so this import, not an entry in that package. L5-D
+        # put `send_sms` in that package instead; both register correctly, and
+        # reconciling the two is not this branch's to do.
+        from apps.channels import nodes  # noqa: F401  (registration side effect)

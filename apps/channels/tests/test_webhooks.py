@@ -305,13 +305,14 @@ class TestIdIndistinguishability:
     def test_a_real_and_an_unknown_id_look_identical_without_an_adapter(
         self, client: Client, connection: ChannelConnection, platform: str
     ) -> None:
-        """The state a platform ships in before its adapter lands.
+        """The other half: 503 to every id while the platform has no adapter.
 
-        Email is still genuinely in it (#21). SMS is not, since #20 — so the
-        empty slot has to be asked for now rather than assumed, which is better
-        anyway: "this assertion depends on there being no adapter" used to be
-        invisible. ``unregistered`` restores whatever was there, so the rest of
-        the run still has its adapter.
+        Neither of these is in that state any more — SMS got an adapter in #20
+        and email in #21, as Telegram did in #12 — so the empty slot is now
+        something the test arranges rather than inherits. That is better anyway:
+        "this assertion depends on there being no adapter" used to be invisible.
+        ``unregistered`` restores whatever was there, so the rest of the run
+        still has its adapter.
         """
         real = ChannelConnection(
             workspace=connection.workspace,

@@ -20,7 +20,15 @@ from apps.flows import events
 from apps.flows.engine import Continue, End, Fail, FlowNotRunnableError, Wait, start_flow
 from apps.flows.models import ExecutionStatus, FlowExecution, StartedBy
 from apps.flows.services import archive_flow, create_flow, latest_version, save_draft
-from apps.flows.tests.support import contact_for, edge, graph, node, node_runtime, published_flow
+from apps.flows.tests.support import (
+    contact_for,
+    edge,
+    graph,
+    node,
+    node_runtime,
+    published_flow,
+    without_node_runtime,
+)
 
 TAG_ACTION = {"actions": [{"verb": "add_tag", "tag": "seen"}]}
 SECOND_TAG_ACTION = {"actions": [{"verb": "add_tag", "tag": "two"}]}
@@ -182,19 +190,21 @@ class TestRefusals:
 @pytest.mark.django_db
 class TestBrokenGraphs:
     def test_a_node_type_with_no_runtime_fails_the_run(self, tenancy):
-        """``send_email`` has a schema (L2-D) and no runtime until L5-E.
+        """A graph naming a node the registry cannot run fails the execution.
 
-        It was ``send_sms`` until #20 shipped that runtime. The remaining
-        schema-without-runtime type is pinned in
-        ``test_engine_registry.EXPECTED_WITHOUT_RUNTIME``; when L5-E lands, this
-        test needs a type that is deliberately unregistered rather than one
-        that happens to be.
+        The missing runtime is now arranged rather than borrowed. This test used
+        to name whichever schema type was still waiting for one — ``send_sms``
+        until #20, then ``send_email`` until #21 — and broke each time somebody
+        shipped it, which is what the note left here in #20 predicted. Every type
+        has a runtime now (``EXPECTED_WITHOUT_RUNTIME`` is empty), so the hole is
+        made on purpose.
         """
         graph_json = graph([node("a", "send_email", {"subject": "hi", "html_body": "<p>hi</p>"})])
         flow = published_flow(tenancy.workspace, graph_json)
         contact = contact_for(tenancy.workspace)
 
-        execution = start_flow(contact, flow, started_by=StartedBy.API)
+        with without_node_runtime("send_email"):
+            execution = start_flow(contact, flow, started_by=StartedBy.API)
 
         assert execution.status == ExecutionStatus.FAILED
         assert "no runtime is registered for 'send_email'" in execution.last_error
@@ -402,7 +412,10 @@ class TestCompletionEvent:
             graph_json = graph([node("a", "send_email", {"subject": "hi", "html_body": "<p>hi</p>"})])
             flow = published_flow(tenancy.workspace, graph_json)
             contact = contact_for(tenancy.workspace)
-            start_flow(contact, flow, started_by=StartedBy.API)
+            # Deliberately unrunnable, so the execution fails — see
+            # `test_a_node_type_with_no_runtime_fails_the_run`.
+            with without_node_runtime("send_email"):
+                start_flow(contact, flow, started_by=StartedBy.API)
         finally:
             events.execution_completed.disconnect(_receiver)
 

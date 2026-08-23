@@ -113,6 +113,14 @@ _PLACEHOLDER_RE = re.compile(PLACEHOLDER_PATTERN)
 #: A rendered block is going to a messaging API with its own limits, and a
 #: hostile field value should not be able to turn a 20-character template into a
 #: megabyte of outbound body. Applied after substitution, to the whole string.
+#:
+#: The default, not the only value: :func:`render` takes ``max_chars`` because
+#: one caller legitimately needs a wider bound. An email ``html_body`` is capped
+#: by its own schema at 100 000 characters (``apps.flows.schema.nodes``) and by
+#: the platform's ``Capabilities.max_text_len`` at the same number, so rendering
+#: it against 20 000 truncated a long-but-legal email — and truncating HTML cuts
+#: mid-tag, which is worse than the size it was avoiding. The per-value cap
+#: below is what actually bounds a hostile *value*; this one bounds the result.
 MAX_RENDERED_CHARS = 20_000
 
 #: Per-value cap, applied before the value is spliced in. Together with the
@@ -245,13 +253,18 @@ _ENCODERS: dict[str, Any] = {
 }
 
 
-def render(template: Any, context: RenderContext, *, mode: str = "text") -> str:
+def render(template: Any, context: RenderContext, *, mode: str = "text", max_chars: int | None = None) -> str:
     """Substitute ``{{tokens}}`` in ``template`` from ``context``.
 
     ``mode="html"`` escapes each substituted value and ``mode="url"``
     percent-encodes it; the template itself is left as authored in both. See the
     module docstring for why that asymmetry is the correct one and not an
     oversight.
+
+    ``max_chars`` bounds the *result*, defaulting to :data:`MAX_RENDERED_CHARS`.
+    Raise it only where the destination's own limit is genuinely higher — the
+    email body is the one such caller — and never to accommodate a bigger value,
+    which :data:`MAX_VALUE_CHARS` bounds separately and deliberately.
 
     A non-string template renders as the empty string rather than raising: node
     config is user-authored JSON that has been through schema validation, but
@@ -261,6 +274,7 @@ def render(template: Any, context: RenderContext, *, mode: str = "text") -> str:
     """
     if not isinstance(template, str) or not template:
         return ""
+    limit = MAX_RENDERED_CHARS if max_chars is None else max(0, max_chars)
     if mode not in _ENCODERS:
         raise ValueError(f"render() mode must be one of {', '.join(sorted(_ENCODERS))}, not {mode!r}.")
     encode = _ENCODERS[mode]
@@ -282,9 +296,9 @@ def render(template: Any, context: RenderContext, *, mode: str = "text") -> str:
         return str(encode(text))
 
     rendered = _PLACEHOLDER_RE.sub(_replace, template)
-    if len(rendered) > MAX_RENDERED_CHARS:
-        logger.warning("Rendered text exceeded %s characters and was truncated.", MAX_RENDERED_CHARS)
-        rendered = rendered[:MAX_RENDERED_CHARS]
+    if len(rendered) > limit:
+        logger.warning("Rendered text exceeded %s characters and was truncated.", limit)
+        rendered = rendered[:limit]
     return rendered
 
 

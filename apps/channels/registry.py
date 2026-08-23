@@ -58,8 +58,9 @@ CONNECT_ROUTES: dict[str, str] = {
     Platform.TELEGRAM.value: "channels:telegram_connect",
     Platform.INSTAGRAM.value: "channels:instagram_connect",
     Platform.MESSENGER.value: "channels:messenger_connect",
-    Platform.SMS.value: "channels:sms_connect",
     Platform.WHATSAPP.value: "channels:whatsapp_connect",
+    Platform.SMS.value: "channels:sms_connect",
+    Platform.EMAIL.value: "channels:email_connect",
 }
 
 

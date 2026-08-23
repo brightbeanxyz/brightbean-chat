@@ -557,6 +557,16 @@ jobs:
       # is checked and an empty range fails the job loudly; `set -euo pipefail`
       # does the same for a ref that does not resolve at all.
       - name: Run gitleaks
+        # Scoped to the ref under test. Without a range `gitleaks detect` walks
+        # every commit in the clone, and `fetch-depth: 0` above brings down every
+        # remote branch — so one branch carrying an un-allowlisted fixture failed
+        # the secret scan on every *other* open PR. Two Layer-5 branches hit this
+        # independently, which is how it reached main from both directions.
+        #
+        # Neither range gives up what .gitleaks.toml's header depends on when it
+        # explains why allowlists are path-based rather than inline
+        # `# gitleaks:allow` markers: a secret is still caught at every commit
+        # that carries it, within the work actually under test.
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}

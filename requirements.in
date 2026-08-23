@@ -47,6 +47,14 @@ django-storages[s3]==1.14.6
 # extracted.
 Pillow==12.3.0
 
+# Amazon SES, for the email channel's SES backend (issue #21). Already present
+# transitively via django-storages[s3]; named here because apps/channels/providers/
+# email_backends.py imports it directly, and an undeclared direct import is one
+# `django-storages` release away from vanishing. The import is deferred inside
+# the one function that builds a client, so an SMTP-only or Resend-only
+# deployment never loads botocore.
+boto3==1.43.76
+
 # Monitoring (inert unless SENTRY_DSN is set)
 sentry-sdk[django]==2.68.0
 

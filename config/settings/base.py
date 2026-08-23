@@ -412,6 +412,22 @@ WEBHOOK_EVENT_LOG_RETENTION_DAYS = env.int("WEBHOOK_EVENT_LOG_RETENTION_DAYS", d
 # checks is load-bearing.
 EXTERNAL_REQUEST_ALLOW_PRIVATE = env.bool("EXTERNAL_REQUEST_ALLOW_PRIVATE", default=False)
 
+# Whether an email channel may relay through a host on this machine or this
+# private network (issue #21). Its own flag rather than the one above, because
+# the two answer genuinely different questions.
+#
+# For an HTTP integration, loopback is never a legitimate target — it is a
+# documented SSRF payload and nothing else, which is why the guard denies it
+# whatever EXTERNAL_REQUEST_ALLOW_PRIVATE says. For SMTP it is the opposite: a
+# local postfix, or a relay sidecar in the same compose file, is one of the
+# commonest mail setups there is.
+#
+# So the default stays closed — on a multi-tenant install `manage_channels` is a
+# *workspace* permission, and an unguarded SMTP host field is an internal port
+# scanner with a form in front of it — and a single-tenant deployment that
+# relays locally turns this on deliberately.
+EMAIL_SMTP_ALLOW_INTERNAL = env.bool("EMAIL_SMTP_ALLOW_INTERNAL", default=False)
+
 # How much of a response body the guard will read, with a streaming cutoff. A
 # flow variable is not a place to put a megabyte, and the request runs with the
 # contact's advisory lock held.

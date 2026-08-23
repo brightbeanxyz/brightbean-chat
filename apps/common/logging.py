@@ -78,7 +78,7 @@ _AUTH_SCHEMES = r"Bearer|Basic|Token|Digest"
 # URL path prefixes whose next segment is a bearer credential. Extend this when
 # a new unauthenticated token route lands; the shared signer's docstring
 # (apps/common/signing.py) lists the ones still to come.
-_TOKEN_PATH_PREFIXES = r"invite"  # noqa: S105 - URL prefixes, not a credential
+_TOKEN_PATH_PREFIXES = r"invite|u"  # noqa: S105 - URL prefixes, not a credential
 
 # Ordered: the first pattern that matches a region wins.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -159,6 +159,12 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # on. The trailing group is deliberately not anchored to exactly 8 hex
     # characters: a truncated key in a log line is still key material.
     (re.compile(r"\bbb_[A-Za-z0-9_\-]{20,}"), REDACTED),
+    # Resend API keys and Svix webhook signing secrets (issue #21). Both reach a
+    # log the same way an AWS key does — pasted into a support ticket, or echoed
+    # by a provider's own error text — and neither is caught by the key=value
+    # rule when it appears bare.
+    (re.compile(r"\bre_[A-Za-z0-9_\-]{16,}"), REDACTED),
+    (re.compile(r"\bwhsec_[A-Za-z0-9+/=_\-]{16,}"), REDACTED),
     # Telegram bot tokens: <bot_id>:<35-char secret>.
     #
     # The `/bot` alternative is not decoration. A bot token's one appearance at
@@ -186,7 +192,9 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # runserver's access log prints every path at INFO, and django.request logs
     # the path on a 500. Neither is a place a live credential belongs
     # (SECURITY-BASELINE §5). Registered here rather than in the members app so
-    # every later token route (/u/, /c/, /o/) can add its prefix in one place.
+    # every later token route can add its prefix in one place; `/u/` joined it
+    # with issue #21, and an unsubscribe token is the same kind of capability —
+    # anyone holding it can withdraw somebody else's consent.
     (re.compile(rf"(?i)(/(?:{_TOKEN_PATH_PREFIXES})/)[A-Za-z0-9._~+/=\-]{{8,}}"), rf"\1{REDACTED}"),
 )
 
