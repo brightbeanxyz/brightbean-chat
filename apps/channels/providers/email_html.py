@@ -14,11 +14,15 @@ client as markup. What it deliberately does not touch is the *template* — the
 markup the flow author wrote — because escaping that would deliver an email as
 source code.
 
-So the author's own HTML is what this module bounds. That is a smaller threat
-than contact input: the author is a workspace member with ``edit_flows``, not a
-stranger, and our own UI never renders this string as HTML (the inbox escapes
-message bodies — L4-D's hostile-content suite). The reasons to sanitize anyway
-are the ordinary ones for email:
+So the author's own HTML is what this module bounds. It is a smaller threat than
+contact input — the author is a workspace member with ``edit_flows``, not a
+stranger — but **not** because nothing renders it: the flow builder's body editor
+writes it into a ``contentEditable``, so an Editor's markup reaches an Admin's
+browser. That is why the same allowlist runs on the *write* path as well
+(``apps.flows.schema.sanitize``, from ``services.save_draft``); this module is
+the send-time half of one rule, not the only place it is enforced.
+
+The reasons to sanitize here specifically are the ordinary ones for email:
 
 * a ``<script>`` or an ``onclick=`` is dead weight in every mail client and a
   spam signal in most, and ``graph_json`` can be hand-edited past the builder;

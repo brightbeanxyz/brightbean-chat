@@ -80,6 +80,14 @@ describe("sanitizeHtml", () => {
     expect(sanitizeHtml('<p style="color:red" id="x">a</p>')).toBe("<p>a</p>");
   });
 
+  it("strips Alpine directives, which the CSP would otherwise let run", () => {
+    // script-src grants 'unsafe-eval' for Alpine, so an x-* attribute is the
+    // one way injected markup executes on this deployment.
+    expect(sanitizeHtml('<div x-data x-init="steal()">hi</div>')).toBe("<div>hi</div>");
+    expect(sanitizeHtml('<p @click="steal()">hi</p>')).toBe("<p>hi</p>");
+    expect(sanitizeHtml('<p :class="steal()">hi</p>')).toBe("<p>hi</p>");
+  });
+
   it("keeps an image with an https src", () => {
     expect(sanitizeHtml('<img src="https://cdn.test/a.png" alt="A" />')).toBe(
       '<img src="https://cdn.test/a.png" alt="A">',
@@ -95,6 +103,25 @@ describe("RichTextEditor", () => {
   it("renders the value into the editable surface", () => {
     renderEditor("<p>Hello</p>");
     expect(screen.getByRole("textbox", { name: "Email body" }).innerHTML).toBe("<p>Hello</p>");
+  });
+
+  it("does not write hostile markup from the stored value into the DOM", () => {
+    // The load path renders a value somebody ELSE authored. Before this was
+    // sanitized, an Editor could store `<div x-data x-init="...">` in a
+    // send_email node and have Alpine execute it in an Admin's session when the
+    // Admin opened the flow.
+    renderEditor('<p>hi</p><div x-data x-init="steal()"></div><img src=x onerror="steal()">');
+    const surface = screen.getByRole("textbox", { name: "Email body" });
+
+    expect(surface.innerHTML).not.toContain("x-init");
+    expect(surface.innerHTML).not.toContain("x-data");
+    expect(surface.innerHTML).not.toContain("onerror");
+    expect(surface.innerHTML).toContain("<p>hi</p>");
+  });
+
+  it("sanitizes the stored value even when the canvas is read-only", () => {
+    renderEditor('<div x-data x-init="steal()"></div>', { readOnly: true });
+    expect(screen.getByRole("textbox", { name: "Email body" }).innerHTML).not.toContain("x-init");
   });
 
   it("issues the right command for each toolbar button", () => {
@@ -210,6 +237,24 @@ describe("RichTextEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit the HTML directly" }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "<p>Edited</p>" } });
     expect(written.at(-1)?.value).toBe("<p>Edited</p>");
+  });
+
+  it("leaves half-typed markup alone while the source view has focus", () => {
+    // Sanitizing per keystroke would delete the author's work in front of them:
+    // `<a href="https://x` parses to nothing until the tag is closed.
+    const written = renderEditor("<p>Hello</p>");
+    fireEvent.click(screen.getByRole("button", { name: "Edit the HTML directly" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: '<a href="https://x' } });
+    expect(written.at(-1)?.value).toBe('<a href="https://x');
+  });
+
+  it("sanitizes what the source view typed, on blur", () => {
+    const written = renderEditor("<p>Hello</p>");
+    fireEvent.click(screen.getByRole("button", { name: "Edit the HTML directly" }));
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: '<p onclick="x()">hi</p><script>steal()</script>' } });
+    fireEvent.blur(textarea, { target: { value: '<p onclick="x()">hi</p><script>steal()</script>' } });
+    expect(written.at(-1)?.value).toBe("<p>hi</p>");
   });
 
   it("is not editable when the canvas is read-only", () => {

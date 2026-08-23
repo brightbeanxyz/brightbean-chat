@@ -150,13 +150,16 @@ export function RichTextEditor(props: FieldProps) {
   //: mounted shows nothing whatever the value says.
   const written = useRef<HTMLDivElement | null>(null);
 
-  const push = useCallback(
+  const store = useCallback(
     (next: string) => {
       lastSent.current = next;
       set(path, next, `html:${path.join(".")}`);
     },
     [set, path],
   );
+
+  /** Store a value that has been through the allowlist. */
+  const push = useCallback((next: string) => store(sanitizeHtml(next)), [store]);
 
   useEffect(() => {
     const element = surface.current;
@@ -170,7 +173,12 @@ export function RichTextEditor(props: FieldProps) {
     // over the top of the real value. Tracking which element was written to is
     // what tells "the value changed" apart from "the surface is new".
     if (html !== lastSent.current || element !== written.current) {
-      element.innerHTML = html;
+      // Sanitized on the way IN, not just on the way out. This value was
+      // authored by somebody else — the server normalizes it on save, and this
+      // is the second half of that: whatever reaches `innerHTML` has been
+      // through the allowlist in this process too, so a document stored before
+      // that normalization existed cannot execute in this member's browser.
+      element.innerHTML = sanitizeHtml(html);
       lastSent.current = html;
       written.current = element;
     }
@@ -198,11 +206,14 @@ export function RichTextEditor(props: FieldProps) {
   const onInput = useCallback(() => {
     const element = surface.current;
     if (element) {
-      // Not sanitized here: cleaning on every keystroke would rewrite innerHTML
-      // under the caret. Paste is where untrusted markup actually arrives, and
-      // that is sanitized below; a blur pass catches anything else.
-      lastSent.current = element.innerHTML;
-      set(path, element.innerHTML, `html:${path.join(".")}`);
+      // The DOM is deliberately NOT rewritten here — cleaning on every keystroke
+      // would move the caret to the start — but what is *stored* is still the
+      // sanitized form. Typing can only produce markup `execCommand` made, so
+      // the two agree in practice; when they do not, the store holds the safe
+      // one and the next blur reconciles the surface.
+      const cleaned = sanitizeHtml(element.innerHTML);
+      lastSent.current = cleaned;
+      set(path, cleaned, `html:${path.join(".")}`);
     }
   }, [set, path]);
 
@@ -338,7 +349,14 @@ export function RichTextEditor(props: FieldProps) {
           value={html}
           disabled={readOnly}
           maxLength={schema.maxLength}
-          onChange={(event) => push(event.target.value)}
+          // Raw while typing, sanitized on blur. Sanitizing each keystroke
+          // would delete the author's work in front of them: half-typed markup
+          // like `<a href="https://x` parses to nothing, so the allowlist would
+          // empty the box before they finished the tag. Storing raw between
+          // keystrokes is safe because the surface below never renders it
+          // unsanitized and `save_draft` normalizes it server-side anyway.
+          onChange={(event) => store(event.target.value)}
+          onBlur={(event) => push(event.target.value)}
         />
       ) : (
         <div

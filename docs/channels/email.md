@@ -263,6 +263,14 @@ override on another domain is ignored and the connection's own address is used.
 on the way into the email, so a contact whose name is `<img src="…">` arrives as
 words rather than as a tracking pixel nobody configured.
 
+**The body is normalised when it is saved, not only when it is sent.** It is the
+one field in the product that stores markup, and the flow builder renders it as
+markup while you edit — so a body saved by one member is markup another member's
+browser runs when they open the node. `save_draft` puts it through the same
+allowlist the email uses, on every write path including the API, so what is
+stored is already what will be sent. Anything outside the allowlist is dropped
+rather than the save being refused; reopening the node shows you what survived.
+
 **A message with no subject of its own gets one.** `send_email` always has a
 subject; an inbox reply has no field for one, because on every other platform a
 subject is meaningless. Those are sent as "Message from &lt;your from-name&gt;",

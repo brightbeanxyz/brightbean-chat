@@ -26,6 +26,7 @@ from django.db import transaction
 from apps.flows.capabilities import connected_platforms
 from apps.flows.models import Flow, FlowStatus, FlowVersion
 from apps.flows.schema import ValidationResult, empty_graph, validate_graph
+from apps.flows.schema.sanitize import sanitize_graph
 
 __all__ = [
     "FlowValidationError",
@@ -186,7 +187,16 @@ def save_draft(flow: Flow, graph_json: Any, *, user: Any = None) -> FlowVersion:
 
     The lock is the point: without it, two concurrent saves both read the same
     "latest" and race to allocate the same version number.
+
+    **Markup is normalised here**, before the document is stored, because this
+    is the one write path every client shares. A node config field declared as
+    HTML (``NodeSpec.html_fields`` — today only ``send_email``'s ``html_body``)
+    goes through the same allowlist the email adapter applies at send time, so
+    what is stored can never be markup that the builder's body editor would
+    then write into another member's browser. Doing it in the editor alone
+    would leave the API's ``PUT`` open, and ``edit_flows`` is enough to call it.
     """
+    graph_json = sanitize_graph(graph_json)
     locked = Flow.objects.for_workspace(flow.workspace_id).select_for_update().get(pk=flow.pk)
     latest = _versions(locked).order_by("-version").first()
 

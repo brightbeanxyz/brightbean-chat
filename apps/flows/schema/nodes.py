@@ -82,6 +82,20 @@ class NodeSpec:
     #: Extra ``$defs`` this node contributes to the exported document.
     defs: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    #: Config keys whose value is **author-written HTML** rather than text.
+    #:
+    #: Declared here because storing markup changes who has to be careful about
+    #: it. Every other config string is escaped wherever it is rendered; a field
+    #: named here is markup by design, so it is normalised through an allowlist
+    #: on the way *in* (``apps.flows.schema.sanitize.sanitize_graph``, called by
+    #: ``services.save_draft``) instead. Anything that then reads it — the email
+    #: adapter, the builder's editor — is reading a document that has already
+    #: been through the allowlist.
+    #:
+    #: Empty for every node but ``send_email``, and it should stay that way
+    #: unless a node genuinely needs to store markup.
+    html_fields: tuple[str, ...] = ()
+
 
 #: The palette drawers, in the order the builder shows them (issue #10). Both
 #: the order and the labels are exported, so the frontend reads one file rather
@@ -585,6 +599,8 @@ register_node_type(
             required=["subject", "html_body"],
         ),
         handles=("default", "error"),
+        # The one field in the product that stores markup. See `html_fields`.
+        html_fields=("html_body",),
     )
 )
 
