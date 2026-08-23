@@ -22,7 +22,7 @@ from apps.channels.registry import (
     registered_platforms,
     unregister_adapter,
 )
-from apps.channels.tests.fake_adapter import fake_adapter_for, registered
+from apps.channels.tests.fake_adapter import fake_adapter_for, registered, unregistered
 from apps.common.platforms import Platform
 
 
@@ -58,29 +58,59 @@ class TestContractFieldsAreExactlyAsWritten:
     def test_needs_tag_fields(self) -> None:
         assert {f.name for f in dataclasses.fields(NeedsTag)} == {"tags", "allowed_use_text"}
 
+    #: SPEC §6.1 writes the capability list out in full. Every one of these must
+    #: exist, under this name, or L2-D's builder warnings read a field that is
+    #: not there.
+    SPEC_6_1_FLAGS = {
+        "text",
+        "image",
+        "audio",
+        "video",
+        "file",
+        "card",
+        "gallery",
+        "buttons",
+        "quick_replies",
+        "url_buttons",
+        "typing_indicator",
+        "proactive_send",
+        "window_hours",
+        "tags_supported",
+        "max_buttons",
+        "max_quick_replies",
+        "max_text_len",
+        "broadcast_allowed",
+        "inbound",
+    }
+
+    #: Beyond §6.1, and deliberately. Issue #19 folded
+    #: ``apps.media_library.platform_limits``'s own per-platform byte table into
+    #: this one, which is what its ``TODO(#4)`` asked for — the alternative was
+    #: two tables answering one question, and they had already drifted.
+    MEDIA_CEILING_FIELDS = {"max_image_bytes", "max_audio_bytes", "max_video_bytes", "max_file_bytes"}
+
     def test_capabilities_carries_every_spec_6_1_flag(self) -> None:
         fields = {f.name for f in dataclasses.fields(Capabilities)}
-        assert fields == {
-            "text",
-            "image",
-            "audio",
-            "video",
-            "file",
-            "card",
-            "gallery",
-            "buttons",
-            "quick_replies",
-            "url_buttons",
-            "typing_indicator",
-            "proactive_send",
-            "window_hours",
-            "tags_supported",
-            "max_buttons",
-            "max_quick_replies",
-            "max_text_len",
-            "broadcast_allowed",
-            "inbound",
-        }
+        assert fields == self.SPEC_6_1_FLAGS | self.MEDIA_CEILING_FIELDS
+
+    def test_a_media_ceiling_is_published_only_for_a_kind_the_platform_takes(self) -> None:
+        """A ceiling on an unsupported kind is the drift #19 removed.
+
+        The old table gave SMS a 5 MB image ceiling while this one said SMS
+        carries no images at all, and the picker answered from whichever it
+        happened to read first.
+        """
+        for platform in Platform.values:
+            capabilities = capabilities_for(platform)
+            for kind in ("image", "audio", "video", "file"):
+                if capabilities.max_bytes_for(kind):
+                    assert capabilities.supports_block(kind), f"{platform} caps {kind} it cannot send"
+
+    def test_max_bytes_for_answers_only_about_media_kinds(self) -> None:
+        # Same containment supports_block() has: the lookup is by name, and an
+        # unconstrained getattr would answer for a field that is not a kind.
+        assert capabilities_for(Platform.WHATSAPP).max_bytes_for("text") == 0
+        assert capabilities_for(Platform.WHATSAPP).max_bytes_for("text_len") == 0
 
     def test_tables_are_frozen(self) -> None:
         # Module-level singletons shared by every request in the worker.
@@ -165,16 +195,25 @@ class TestSupportsBlock:
 
 class TestRegistry:
     def test_entry_is_complete_without_an_adapter(self) -> None:
-        """The property L2-D depends on: policy and capabilities today, adapters later."""
-        entry = entry_for(Platform.WHATSAPP)
-        assert entry.adapter_cls is None
-        assert entry.policy is policy_for(Platform.WHATSAPP)
-        assert entry.capabilities is capabilities_for(Platform.WHATSAPP)
+        """The property L2-D depends on: policy and capabilities today, adapters later.
+
+        ``unregistered`` rather than naming a platform that happens to have no
+        adapter yet: every Layer-5 issue fills one more slot, and a test that
+        picked whichever was still empty would have to be rewritten five times
+        and would silently stop testing anything on the sixth.
+        """
+        with unregistered(Platform.WHATSAPP):
+            entry = entry_for(Platform.WHATSAPP)
+            assert entry.adapter_cls is None
+            assert entry.policy is policy_for(Platform.WHATSAPP)
+            assert entry.capabilities is capabilities_for(Platform.WHATSAPP)
 
     def test_register_and_resolve(self) -> None:
         with registered(Platform.TELEGRAM) as adapter_cls:
             assert has_adapter(Platform.TELEGRAM)
-            assert registered_platforms() == (Platform.TELEGRAM,)
+            # Membership rather than equality: every Layer-5 adapter adds one
+            # more, and the claim under test is that this one is registered.
+            assert Platform.TELEGRAM in registered_platforms()
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
         # Restored, not cleared. Telegram has a real adapter since issue #12 and
@@ -186,7 +225,7 @@ class TestRegistry:
     def test_missing_adapter_raises_rather_than_returning_none(self) -> None:
         # On the webhook path, None would read as "nothing to do" — a silently
         # dropped delivery.
-        with pytest.raises(AdapterNotRegisteredError):
+        with unregistered(Platform.WHATSAPP), pytest.raises(AdapterNotRegisteredError):
             adapter_for(Platform.WHATSAPP)
 
     def test_unknown_platform_cannot_be_registered(self) -> None:

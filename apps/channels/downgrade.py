@@ -107,7 +107,12 @@ def downgrade(outbound: OutboundMessage, capabilities: Capabilities) -> Downgrad
 
     # 3. Text: numbering appended, then the length cap — in that order, because
     #    the numbering is text too.
-    return state.finish(tag=outbound.tag, template_ref=outbound.template_ref, node_id=outbound.node_id)
+    return state.finish(
+        tag=outbound.tag,
+        template_ref=outbound.template_ref,
+        template_variables=outbound.template_variables,
+        node_id=outbound.node_id,
+    )
 
 
 class _State:
@@ -244,7 +249,14 @@ class _State:
 
     # -- assembly -----------------------------------------------------------
 
-    def finish(self, *, tag: str | None, template_ref: str | None, node_id: str = "") -> DowngradeResult:
+    def finish(
+        self,
+        *,
+        tag: str | None,
+        template_ref: str | None,
+        template_variables: tuple[tuple[str, str], ...] = (),
+        node_id: str = "",
+    ) -> DowngradeResult:
         """Append trailers, apply the length cap, and freeze into messages.
 
         Every field of the input that is not itself a downgrade decision has to
@@ -266,6 +278,7 @@ class _State:
                     quick_replies=tuple(pending.quick_replies),
                     tag=tag,
                     template_ref=template_ref,
+                    template_variables=template_variables,
                     node_id=node_id,
                 )
             )

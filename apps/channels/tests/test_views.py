@@ -62,11 +62,13 @@ class TestPermissions:
 
 
 class TestCreate:
-    def test_creating_a_connection_shows_its_secret_once(self, tenancy: Any, client_for: Any) -> None:
+    def test_creating_a_connection_shows_its_secret_once(
+        self, tenancy: Any, client_for: Any, ungated_platform: str
+    ) -> None:
         client = client_for(tenancy.owner)
         response = client.post(
             url_for("create", tenancy),
-            {"platform": Platform.WHATSAPP, "display_name": "Support bot", "external_id": "bot-123"},
+            {"platform": ungated_platform, "display_name": "Support bot", "external_id": "bot-123"},
         )
         assert response.status_code == 200
 
@@ -80,39 +82,43 @@ class TestCreate:
         for page in (url_for("list", tenancy), url_for("detail", tenancy, connection)):
             assert connection.webhook_secret not in client.get(page).content.decode()
 
-    def test_the_secret_does_not_travel_through_the_session(self, tenancy: Any, client_for: Any) -> None:
+    def test_the_secret_does_not_travel_through_the_session(
+        self, tenancy: Any, client_for: Any, ungated_platform: str
+    ) -> None:
         """django.contrib.messages is a database table in this project."""
         client = client_for(tenancy.owner)
         client.post(
             url_for("create", tenancy),
-            {"platform": Platform.WHATSAPP, "display_name": "Bot", "external_id": "bot-123"},
+            {"platform": ungated_platform, "display_name": "Bot", "external_id": "bot-123"},
         )
         connection = ChannelConnection.objects.for_workspace(tenancy.workspace).get()
         stored_session = "".join(str(value) for value in client.session.items())
         assert connection.webhook_secret not in stored_session
 
-    def test_the_secret_never_reaches_a_log(self, tenancy: Any, client_for: Any, caplog: Any) -> None:
+    def test_the_secret_never_reaches_a_log(
+        self, tenancy: Any, client_for: Any, caplog: Any, ungated_platform: str
+    ) -> None:
         with caplog.at_level(logging.DEBUG):
             client_for(tenancy.owner).post(
                 url_for("create", tenancy),
-                {"platform": Platform.WHATSAPP, "display_name": "Bot", "external_id": "bot-123"},
+                {"platform": ungated_platform, "display_name": "Bot", "external_id": "bot-123"},
             )
         connection = ChannelConnection.objects.for_workspace(tenancy.workspace).get()
         assert connection.webhook_secret not in caplog.text
 
     def test_a_duplicate_account_is_refused_without_naming_the_other_workspace(
-        self, tenancy: Any, other_tenancy: Any, client_for: Any
+        self, tenancy: Any, other_tenancy: Any, client_for: Any, ungated_platform: str
     ) -> None:
         """SPEC §5's constraint is deployment-wide; the message must not leak across it."""
         ChannelConnection.objects.create(
             workspace=other_tenancy.workspace,
-            platform=Platform.WHATSAPP,
+            platform=ungated_platform,
             display_name="Rival bot",
             external_id="contested",
         )
         response = client_for(tenancy.owner).post(
             url_for("create", tenancy),
-            {"platform": Platform.WHATSAPP, "display_name": "Mine", "external_id": "contested"},
+            {"platform": ungated_platform, "display_name": "Mine", "external_id": "contested"},
         )
         body = response.content.decode()
 
@@ -123,7 +129,7 @@ class TestCreate:
         assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
 
     def test_losing_the_insert_race_is_a_form_error_not_a_500(
-        self, tenancy: Any, other_tenancy: Any, client_for: Any, monkeypatch: Any
+        self, tenancy: Any, other_tenancy: Any, client_for: Any, monkeypatch: Any, ungated_platform: str
     ) -> None:
         """The form's duplicate check is a read, so it is check-then-insert.
 
@@ -140,7 +146,7 @@ class TestCreate:
 
         ChannelConnection.objects.create(
             workspace=other_tenancy.workspace,
-            platform=Platform.WHATSAPP,
+            platform=ungated_platform,
             display_name="Winner",
             external_id="contested",
         )
@@ -150,7 +156,7 @@ class TestCreate:
 
         response = client_for(tenancy.owner).post(
             url_for("create", tenancy),
-            {"platform": Platform.WHATSAPP, "display_name": "Loser", "external_id": "contested"},
+            {"platform": ungated_platform, "display_name": "Loser", "external_id": "contested"},
         )
         body = response.content.decode()
 
@@ -162,14 +168,14 @@ class TestCreate:
         assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
 
     def test_the_request_survives_the_failed_insert(
-        self, tenancy: Any, other_tenancy: Any, client_for: Any, monkeypatch: Any
+        self, tenancy: Any, other_tenancy: Any, client_for: Any, monkeypatch: Any, ungated_platform: str
     ) -> None:
         """The savepoint keeps the poisoned transaction from taking the page down."""
         from apps.channels.forms import ChannelConnectionForm
 
         ChannelConnection.objects.create(
             workspace=other_tenancy.workspace,
-            platform=Platform.WHATSAPP,
+            platform=ungated_platform,
             display_name="Winner",
             external_id="contested",
         )
@@ -179,20 +185,20 @@ class TestCreate:
         client = client_for(tenancy.owner)
         client.post(
             url_for("create", tenancy),
-            {"platform": Platform.WHATSAPP, "display_name": "Loser", "external_id": "contested"},
+            {"platform": ungated_platform, "display_name": "Loser", "external_id": "contested"},
         )
 
         # A query in the same request cycle would fail on a poisoned transaction.
         assert client.get(url_for("list", tenancy)).status_code == 200
 
     def test_the_new_connection_belongs_to_the_current_workspace(
-        self, tenancy: Any, other_tenancy: Any, client_for: Any
+        self, tenancy: Any, other_tenancy: Any, client_for: Any, ungated_platform: str
     ) -> None:
         """A posted workspace field must not be able to redirect ownership."""
         client_for(tenancy.owner).post(
             url_for("create", tenancy),
             {
-                "platform": Platform.WHATSAPP,
+                "platform": ungated_platform,
                 "display_name": "Bot",
                 "external_id": "bot-123",
                 "workspace": str(other_tenancy.workspace.pk),

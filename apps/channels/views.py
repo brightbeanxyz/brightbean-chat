@@ -54,13 +54,32 @@ PLATFORM_LABELS = dict(Platform.choices)
 #: placeholder panels so an operator looking at an empty page knows whether they
 #: have misconfigured something or are simply early.
 CONNECT_FLOW_ISSUES: dict[str, str] = {
-    # Telegram is absent: #12 shipped its guided flow, and the list template
-    # links to it instead of naming an issue.
+    # Telegram and WhatsApp are absent: #12 and #19 shipped their guided flows,
+    # and the list template links to those instead of naming an issue.
     Platform.INSTAGRAM: "#17 (L5-A)",
     Platform.MESSENGER: "#18 (L5-B)",
-    Platform.WHATSAPP: "#19 (L5-C)",
     Platform.SMS: "#20 (L5-D)",
     Platform.EMAIL: "#21 (L5-E)",
+}
+
+#: One sentence per guided connect flow, because the flows are not alike: a
+#: BotFather token is one field and Meta's Cloud API is three plus a
+#: subscription. The list page used to carry Telegram's wording inline, which
+#: silently became wrong for the second platform that got a flow.
+CONNECT_HINTS: dict[str, str] = {
+    Platform.TELEGRAM: "paste a BotFather token and we do the rest.",
+    Platform.WHATSAPP: "paste your Cloud API ids and system user token; we verify them with Meta first.",
+}
+
+#: Extra settings pages a platform brings with it, as ``(label, route)`` pairs.
+#: A dict rather than a per-platform ``if`` in the template, for the same reason
+#: ``CONNECT_ROUTES`` is one: the next adapter adds a line here instead of
+#: teaching the list page about itself.
+PLATFORM_EXTRA_LINKS: dict[str, tuple[tuple[str, str], ...]] = {
+    Platform.WHATSAPP: (
+        ("Message templates", "channels:whatsapp_templates"),
+        ("Cost estimates", "channels:whatsapp_cost_hints"),
+    ),
 }
 
 #: Statuses an operator may set by hand. ``needs_reauth`` is absent because an
@@ -212,6 +231,11 @@ def connection_list(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
                     # only one today (#12); each Layer-5 adapter adds its own
                     # here rather than the template growing a per-platform if.
                     "connect_url": _connect_url(value, workspace_id),
+                    "connect_hint": CONNECT_HINTS.get(value, ""),
+                    "extra_links": [
+                        {"label": label, "url": reverse(route, kwargs={"workspace_id": workspace_id})}
+                        for label, route in PLATFORM_EXTRA_LINKS.get(value, ())
+                    ],
                 }
                 for value, label in Platform.choices
             ],

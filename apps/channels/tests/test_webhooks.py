@@ -22,7 +22,7 @@ from django.urls import NoReverseMatch, reverse
 
 from apps.channels import ingest
 from apps.channels.models import ChannelConnection, WebhookEventLog, WebhookEventStatus
-from apps.channels.tests.fake_adapter import SECRET_HEADER, SIGNATURE_HEADER, registered, sign
+from apps.channels.tests.fake_adapter import SECRET_HEADER, SIGNATURE_HEADER, registered, sign, unregistered
 from apps.common.platforms import Platform
 
 pytestmark = pytest.mark.django_db
@@ -896,8 +896,15 @@ class TestDispatchSeam:
 
 class TestNoAdapter:
     def test_a_platform_with_no_adapter_answers_503(self, client: Client, secret: str) -> None:
-        """The shipped state for every platform. Retryable, and not a 403."""
-        response = post(client, "/webhooks/whatsapp/", body_for("e1"), secret=secret)
+        """A platform whose adapter has not shipped. Retryable, and not a 403.
+
+        The empty slot is now something a test has to arrange: WhatsApp got its
+        adapter with issue #19, and every remaining Layer-5 issue fills another.
+        ``unregistered`` says so out loud instead of the assertion depending on
+        which platform happens to be next.
+        """
+        with unregistered(Platform.WHATSAPP):
+            response = post(client, "/webhooks/whatsapp/", body_for("e1"), secret=secret)
         assert response.status_code == 503
 
     def test_an_unknown_platform_is_404(self, client: Client) -> None:

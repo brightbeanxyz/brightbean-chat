@@ -11,6 +11,25 @@ from apps.common.platforms import Platform
 
 
 @pytest.fixture
+def ungated_platform() -> str:
+    """A platform the generic "Add a channel" form still offers.
+
+    Every Layer-5 issue adds a guided connect flow, and a platform with one is
+    refused by that form (``apps.channels.forms``) — so a test that hard-coded a
+    platform to exercise the generic path started failing the moment that
+    platform got its flow, which is what happened to six of them when #19
+    landed. Asking ``CONNECT_ROUTES`` keeps the test about the form rather than
+    about which adapters happen to exist.
+    """
+    from apps.channels.registry import CONNECT_ROUTES
+
+    for value in Platform.values:
+        if value not in CONNECT_ROUTES:
+            return value
+    pytest.skip("Every platform has a guided connect flow; the generic form has nothing left to offer.")
+
+
+@pytest.fixture
 def connection(tenancy: Any) -> ChannelConnection:
     """An active Telegram connection in the victim tenancy, secret already set."""
     obj = ChannelConnection(

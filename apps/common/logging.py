@@ -119,6 +119,13 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
+    # Meta access tokens, which every Graph-based adapter carries: an "EAA"
+    # prefix followed by a long base64url body. The Cloud API adapter (#19)
+    # keeps its token in an Authorization header, which the scheme rule above
+    # already covers — this catches the other ways one reaches a log: an
+    # operator pasting a token into a support thread, a form error rendering the
+    # submitted value, a traceback from the credential form.
+    (re.compile(r"\bEAA[A-Za-z0-9]{20,}"), REDACTED),
     # Telegram bot tokens: <bot_id>:<35-char secret>.
     #
     # The `/bot` alternative is not decoration. A bot token's one appearance at

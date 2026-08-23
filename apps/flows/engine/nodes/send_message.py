@@ -76,7 +76,14 @@ class SendMessageNode(Node):
             logger.warning("Execution %s: node %s has nothing to send.", ctx.execution.pk, ctx.node_id)
             return Continue("default")
 
-        outbound = OutboundMessage(blocks=tuple(blocks), buttons=tuple(buttons), quick_replies=tuple(quick_replies))
+        template_ref, template_variables = _whatsapp_template(ctx)
+        outbound = OutboundMessage(
+            blocks=tuple(blocks),
+            buttons=tuple(buttons),
+            quick_replies=tuple(quick_replies),
+            template_ref=template_ref,
+            template_variables=template_variables,
+        )
         try:
             outcome = deliver(ctx.execution, outbound, node_id=ctx.node_id)
         except FacadeUnavailableError as exc:
@@ -104,6 +111,40 @@ class SendMessageNode(Node):
         # contact until the 30-day sweep — and since SPEC §22 allows one live
         # execution per contact, that is every other flow dead for a month.
         return Continue("default")
+
+
+def _whatsapp_template(ctx: NodeContext) -> tuple[str | None, tuple[tuple[str, str], ...]]:
+    """The approved template this node was pointed at, and its filled slots.
+
+    Still not a platform branch. The key is optional config that a *builder*
+    only offers for a WhatsApp-targeted flow, and what it produces —
+    ``template_ref`` plus ``template_variables`` — is the platform-neutral pair
+    :class:`~apps.channels.events.OutboundMessage` already carries for exactly
+    this purpose. An adapter with no templates simply ignores both, and
+    ``compliance.can_send`` reads ``template_ref`` as data (SPEC §8's
+    ``TEMPLATE_SUPPLIED``) without knowing which platform supplied it.
+
+    **The values are rendered here**, through ``ctx.render``, and that placement
+    is the security property: a template slot is filled with contact data, and
+    the substitution has to happen where the one shared renderer is
+    (SECURITY-BASELINE §3). By the time the adapter sees these pairs they are
+    finished strings, and its docstring says it must never render them again.
+    """
+    config = ctx.config.get("whatsapp_template")
+    if not isinstance(config, dict):
+        return None, ()
+    reference = config.get("reference")
+    if not isinstance(reference, str) or not reference:
+        return None, ()
+
+    variables: list[tuple[str, str]] = []
+    for item in config.get("variables") or []:
+        if not isinstance(item, dict):
+            continue
+        slot = item.get("slot")
+        if isinstance(slot, str) and slot:
+            variables.append((slot, ctx.render(item.get("value"))))
+    return reference, tuple(variables)
 
 
 # ---------------------------------------------------------------------------
