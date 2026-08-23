@@ -303,6 +303,48 @@ class TestStop:
         assert outbound_bodies(connection) == ["Bye from Acme."]
 
 
+class TestProviderDetectedOptOut:
+    """An opt-out we discovered rather than one the contact asked for."""
+
+    def test_it_suppresses_without_sending_anything(
+        self, client: Any, connection: ChannelConnection, twilio: FakeTwilio, tenancy: Tenancy
+    ) -> None:
+        """Twilio rejects a send with 21610, the adapter raises an opt-out, and
+        the hook must not answer it: the confirmation would go to somebody
+        Twilio rejects with 21610, raising another opt-out from inside the
+        failing send. Asserted end to end through the real routing stages.
+        """
+        from apps.channels.events import OutboundMessage, TextBlock
+        from apps.channels.providers.exceptions import APIError
+        from apps.channels.providers.sms import TwilioAdapter
+        from apps.messaging.identities import resolve_identity
+
+        identity = resolve_identity(connection, CONTACT_NUMBER).identity
+        twilio.reply("Messages.json", Reply({"code": 21610, "message": "unsubscribed"}, status=400))
+
+        class _Id:
+            platform_user_id = CONTACT_NUMBER
+
+        with pytest.raises(APIError):
+            TwilioAdapter().send(connection, _Id(), OutboundMessage(blocks=(TextBlock(text="Hi"),)))
+
+        identity.refresh_from_db()
+        assert identity.opted_out_at is not None
+        # Exactly one Twilio call: the send that failed. No confirmation chased
+        # it, so nothing can chase that either.
+        assert len(twilio.forms("Messages.json")) == 1
+        assert outbound_bodies(connection) == []
+
+    def test_a_contact_initiated_stop_is_still_confirmed(
+        self, client: Any, connection: ChannelConnection, twilio: FakeTwilio
+    ) -> None:
+        """The marker is what tells the two apart, so the other half has to keep
+        working — otherwise the fix is just "never confirm"."""
+        signed_post(client, connection, load_payload("inbound_stop"))
+
+        assert outbound_bodies(connection) == [DEFAULT_OPT_OUT_TEXT]
+
+
 class TestHelp:
     def test_help_is_answered_and_consumed(
         self, client: Any, connection: ChannelConnection, twilio: FakeTwilio

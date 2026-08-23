@@ -191,9 +191,7 @@ class TestSending:
         (call,) = facade.named("send_outbound")
         assert call["idempotency_key"] == f"exec:{execution.pk}:node:sms:0"
 
-    def test_it_picks_the_oldest_active_connection(self, tenancy: Any, monkeypatch: Any) -> None:
-        """The same tie-break ``services.upsert_contact_identity`` uses, so the
-        connection this node picks is the one that call attached an identity to."""
+    def test_it_sends_on_the_connection_the_identity_is_bound_to(self, tenancy: Any, monkeypatch: Any) -> None:
         facade = FakeFacade().install(monkeypatch)
         first = sms_connection(tenancy.workspace, external_id="+15550001111")
         sms_connection(tenancy.workspace, external_id="+15550002222")
@@ -204,17 +202,66 @@ class TestSending:
 
         assert facade.named("send_outbound")[0]["connection"] == first
 
+    def test_a_contact_known_only_on_the_newer_number_still_gets_the_message(
+        self, tenancy: Any, monkeypatch: Any
+    ) -> None:
+        """Choosing a connection before looking for the identity meant a contact
+        who had only ever texted the *newer* number followed the error edge,
+        with a perfectly good active connection and phone identity in the same
+        workspace. The two have to be resolved together."""
+        facade = FakeFacade().install(monkeypatch)
+        sms_connection(tenancy.workspace, external_id="+15550001111")
+        newer = sms_connection(tenancy.workspace, external_id="+15550002222")
+        contact = contact_for(tenancy.workspace)
+        phone_identity(tenancy.workspace, contact, newer)
+
+        start_flow(contact, sms_flow(tenancy.workspace), started_by=StartedBy.API)
+
+        assert facade.named("send_outbound")[0]["connection"] == newer
+        assert tags(contact) == {"sent"}
+
+    def test_a_bound_identity_beats_a_pending_one(self, tenancy: Any, monkeypatch: Any) -> None:
+        """A number the contact has demonstrably used is a better answer than one
+        captured before any connection existed."""
+        facade = FakeFacade().install(monkeypatch)
+        oldest = sms_connection(tenancy.workspace, external_id="+15550001111")
+        newer = sms_connection(tenancy.workspace, external_id="+15550002222")
+        contact = contact_for(tenancy.workspace)
+        phone_identity(tenancy.workspace, contact, None, address="+15557770000")
+        phone_identity(tenancy.workspace, contact, newer)
+
+        start_flow(contact, sms_flow(tenancy.workspace), started_by=StartedBy.API)
+
+        assert facade.named("send_outbound")[0]["connection"] == newer
+        assert facade.named("send_outbound")[0]["connection"] != oldest
+
+    def test_several_bound_identities_resolve_to_the_oldest_connection(self, tenancy: Any, monkeypatch: Any) -> None:
+        """Stable rather than row-order dependent."""
+        facade = FakeFacade().install(monkeypatch)
+        oldest = sms_connection(tenancy.workspace, external_id="+15550001111")
+        newer = sms_connection(tenancy.workspace, external_id="+15550002222")
+        contact = contact_for(tenancy.workspace)
+        phone_identity(tenancy.workspace, contact, newer)
+        phone_identity(tenancy.workspace, contact, oldest, address="+15557779999")
+
+        start_flow(contact, sms_flow(tenancy.workspace), started_by=StartedBy.API)
+
+        assert facade.named("send_outbound")[0]["connection"] == oldest
+
     def test_a_pending_identity_counts(self, tenancy: Any, monkeypatch: Any) -> None:
         """Captured before any SMS connection existed, so ``channel_connection``
-        is NULL. Contract 1 upgrades exactly those at first send."""
+        is NULL. Contract 1 upgrades exactly those at first send, onto the
+        oldest active connection — which is the one chosen here, so the facade's
+        lazy upgrade lands where this node predicted."""
         facade = FakeFacade().install(monkeypatch)
-        sms_connection(tenancy.workspace)
+        oldest = sms_connection(tenancy.workspace, external_id="+15550001111")
+        sms_connection(tenancy.workspace, external_id="+15550002222")
         contact = contact_for(tenancy.workspace)
         phone_identity(tenancy.workspace, contact, None)
 
         start_flow(contact, sms_flow(tenancy.workspace), started_by=StartedBy.API)
 
-        assert facade.named("send_outbound")
+        assert facade.named("send_outbound")[0]["connection"] == oldest
 
 
 class TestTheErrorHandle:

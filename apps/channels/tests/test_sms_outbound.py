@@ -324,6 +324,33 @@ class TestTwilioSideOptOut:
         assert identity.opted_out_at is not None
         assert identity.opt_in is False
 
+    def test_a_provider_opt_out_is_never_confirmed(self, tenancy: Tenancy) -> None:
+        """The loop this guard exists to break.
+
+        Confirming a suppression Twilio already held means sending to somebody
+        Twilio rejects with 21610 — which raises another opt-out event from
+        inside the failing send, mints a fresh event id and idempotency key on
+        the next second boundary, and (when the bucket defers the reply) gets
+        picked up again by the worker. Nobody wrote to us, so there is nothing
+        to confirm.
+        """
+        from apps.channels.providers.sms import KEYWORD_OPT_OUT, OPT_OUT_SOURCE_KEY
+
+        connection = sms_connection(tenancy.workspace)
+        seen: list[Any] = []
+        channels_ingest.register_processor(lambda _c, events: seen.extend(events), name="capture")
+        fake = FakeTwilio()
+        fake.reply("Messages.json", Reply({"code": 21610, "message": "unsubscribed"}, status=400))
+
+        with fake_twilio(fake), pytest.raises(APIError):
+            TwilioAdapter().send(connection, _Identity(), text("Hi"))
+
+        (event,) = seen
+        assert event.type == "opt_out"
+        assert event.platform_user_id == CONTACT_NUMBER
+        # No marker, so the hook suppresses without replying.
+        assert event.payload.extra.get(OPT_OUT_SOURCE_KEY) != KEYWORD_OPT_OUT
+
     def test_any_other_error_records_nothing(self, tenancy: Tenancy, monkeypatch: Any) -> None:
         from apps.messaging.ingest import PERSISTENCE_PROCESSOR, persist_events
         from apps.messaging.models import ContactChannelIdentity

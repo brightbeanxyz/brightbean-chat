@@ -207,6 +207,27 @@ INBOUND_STATUS = "received"
 #: send here again, and continuing to try is what gets a number blocked.
 UNSUBSCRIBED_RECIPIENT_CODE = "21610"
 
+#: Where an opt-out event records **who asked**, and the value meaning "the
+#: contact texted a keyword at us".
+#:
+#: SPEC §6.6 requires a confirmation for a contact-initiated STOP and says
+#: nothing about one for an opt-out we merely *discovered*, which is the whole
+#: reason this marker exists. ``apps.channels.sms_compliance`` confirms only a
+#: marked event, and the absence of the marker is what stops the following loop:
+#: a send rejected with ``21610`` raises an opt-out event, the hook answers it
+#: with a confirmation, Twilio rejects *that* with ``21610`` as well, and the
+#: rejection raises another opt-out event. Each round trip crosses a second
+#: boundary often enough to mint a fresh event id and a fresh idempotency key —
+#: and when the connection's bucket defers a reply instead of sending it, the
+#: worker picks the chain up again later. The result is an unbounded run of
+#: failed compliance replies to somebody who never wrote to us.
+#:
+#: Read positively rather than negatively — the hook asks "was this a keyword?"
+#: rather than "was this Twilio?" — so an opt-out path added later is silent by
+#: default and has to opt *in* to messaging somebody.
+OPT_OUT_SOURCE_KEY = "opt_out_source"
+KEYWORD_OPT_OUT = "keyword"
+
 
 # ---------------------------------------------------------------------------
 # Credentials
@@ -642,9 +663,21 @@ def _media_urls(params: dict[str, str]) -> tuple[str, ...]:
     so it bounds the loop only after being clamped: a payload claiming a
     thousand attachments gets ten reads, not a thousand.
 
-    The URLs are **recorded, never fetched**. SECURITY-BASELINE §6 forbids a
-    server-side fetch of a platform-supplied URL outside the SSRF guard, and
-    these particular ones need the account's own credentials to retrieve.
+    These go in ``EventPayload.media_ids``, **not** ``attachments``, and the
+    distinction is the same one ``telegram._media_ids`` documents: ``attachments``
+    is specified as URLs a consumer may use, and a Twilio ``MediaUrl`` is not
+    one. It addresses a REST resource under the account, so on an account with
+    authenticated media it answers 401 to anyone without the Account SID and
+    Auth Token — which is every browser rendering an inbox thread, because
+    ``messaging.ingest`` turns ``attachments`` into ``{"type": "file", "url": …}``
+    blocks and ``apps.inbox.rendering`` emits them as links. On an account
+    *without* it the URL resolves for anyone at all, which is a contact's
+    picture messages behind a link we handed out. Neither is an attachment.
+
+    Storing the address and resolving it on demand — through something holding
+    the credentials — is the honest shape, and it keeps this clear of
+    SECURITY-BASELINE §6, which forbids fetching a platform-supplied URL
+    server-side outside the SSRF guard.
     """
     try:
         count = int(params.get("NumMedia") or 0)
@@ -765,7 +798,7 @@ class TwilioAdapter(Adapter):
             platform_user_id=sender,
             provider_event_id=provider_event_id,
             timestamp=now,
-            payload=EventPayload(text=body, attachments=media, extra=_extra(params)),
+            payload=EventPayload(text=body, media_ids=media, extra=_extra(params)),
             raw=dict(params),
         )
         if keyword(body) not in OPT_OUT_KEYWORDS:
@@ -804,7 +837,9 @@ class TwilioAdapter(Adapter):
                 platform_user_id=sender,
                 provider_event_id=f"sms:optout:{provider_event_id}",
                 timestamp=now,
-                payload=EventPayload(text=body, extra=_extra(params)),
+                # Marked as the contact's own doing, which is what earns it a
+                # confirmation. See OPT_OUT_SOURCE_KEY.
+                payload=EventPayload(text=body, extra={**_extra(params), OPT_OUT_SOURCE_KEY: KEYWORD_OPT_OUT}),
                 raw=dict(params),
             ),
         ]
@@ -918,6 +953,13 @@ class TwilioAdapter(Adapter):
         contract 3). It raises the event the pipeline already knows how to apply
         and hands it to the same dispatch a webhook would, which also lets the
         ``hard_optout`` hook and anything else on the seam see it.
+
+        The event is deliberately **not** marked with :data:`OPT_OUT_SOURCE_KEY`.
+        Nobody wrote to us — we discovered a suppression Twilio already held —
+        so there is nothing to confirm, and confirming it would be a message to
+        somebody who cannot receive it. That absence is also what keeps this
+        from recursing: the confirmation would be rejected with the same
+        ``21610`` and raise another opt-out event from inside this very handler.
         """
         if exc.code != UNSUBSCRIBED_RECIPIENT_CODE:
             return

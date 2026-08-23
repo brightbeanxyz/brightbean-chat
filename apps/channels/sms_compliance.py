@@ -62,7 +62,14 @@ from typing import Any
 
 from apps.channels.events import EventType
 from apps.channels.models import SmsSettings
-from apps.channels.providers.sms import HELP_KEYWORDS, OPT_IN_KEYWORDS, OPT_OUT_KEYWORDS, keyword
+from apps.channels.providers.sms import (
+    HELP_KEYWORDS,
+    KEYWORD_OPT_OUT,
+    OPT_IN_KEYWORDS,
+    OPT_OUT_KEYWORDS,
+    OPT_OUT_SOURCE_KEY,
+    keyword,
+)
 from apps.common.platforms import Platform
 from apps.flows.triggers.hooks import Consumed, HookOutcome, Passed, Stage, register_hook
 
@@ -115,8 +122,25 @@ def sms_keywords(context: Any) -> HookOutcome:
 
     event = context.event
     if event.type == EventType.OPT_OUT:
-        # Persistence has already suppressed this identity. All that is left is
-        # to say so — and then to let ``opt_out_event`` consume the event.
+        # Persistence has already suppressed this identity either way. The only
+        # question left is whether anybody is owed an answer, and that is true
+        # exactly when the contact asked — SPEC §6.6 requires a confirmation for
+        # a STOP and says nothing about one for a suppression we discovered.
+        #
+        # Read as a positive check on the marker rather than a negative one on
+        # the provider, so an opt-out path added later stays silent until it
+        # opts in. It also breaks a loop: the adapter raises an opt-out event
+        # when Twilio rejects a send with 21610, and confirming *that* would be
+        # a message Twilio rejects with 21610, raising another opt-out event
+        # from inside the failing send. See ``providers.sms.OPT_OUT_SOURCE_KEY``.
+        extra = getattr(event.payload, "extra", None)
+        asked_for_it = isinstance(extra, dict) and extra.get(OPT_OUT_SOURCE_KEY) == KEYWORD_OPT_OUT
+        if not asked_for_it:
+            logger.info(
+                "SMS: opt-out on connection %s did not come from a keyword; suppressing without a reply.",
+                connection.pk,
+            )
+            return Passed("opt-out, not contact-initiated")
         _reply(context, "optout", _settings_for(connection).opt_out_reply)
         return Passed("opt-out confirmed")
 

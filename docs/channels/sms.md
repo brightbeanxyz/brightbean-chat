@@ -130,11 +130,22 @@ verification and short codes are out of scope.
 | | |
 |---|---|
 | Text | Yes, up to 1600 characters (Twilio's concatenated ceiling) |
-| Images (MMS) | Yes |
+| Images (MMS) | Outbound yes; inbound recorded but not yet viewable (see below) |
 | Audio, video, files | No |
 | Buttons, quick replies | No — they become numbered options in the text |
 | Messaging window | None. Opt-out is the only gate. |
 | Send rate | 1 per second per connection, Twilio's long-code throughput |
+
+**Inbound MMS is recorded, not yet rendered.** Twilio delivers picture messages
+as `MediaUrl` values pointing at a REST resource under your account, which is not
+a link a browser can follow: on an account with authenticated media it answers
+401 to anyone without the Account SID and Auth Token, and on an account without
+it, it answers to *anyone at all* — a contact's picture messages behind a URL we
+would be handing out. So they are stored as media identifiers rather than as
+attachments, which is the same call the Telegram adapter makes about its
+`file_id`s, and neither channel resolves them yet. The message text arrives
+normally; the picture is on the message row and needs a credentialed fetch to
+display. Resolving them for both channels is its own piece of work.
 
 A flow with buttons still works on SMS. The shared downgrade renderer
 (`apps/channels/downgrade.py`) appends "Reply 1 for …" to the message, and a

@@ -234,16 +234,35 @@ class TestInboundMessages:
         assert event.platform_user_id == CONTACT_NUMBER
         assert event.provider_event_id == "SM11111111111111111111111111111111"
         assert event.payload.text == "Hello there"
-        assert event.payload.attachments == ()
+        assert event.payload.media_ids == ()
         assert event.payload.extra == {"city": "NEW YORK", "state": "NY", "country": "US"}
         assert event.connection == connection
 
-    def test_an_mms_carries_its_media_urls(self, connection: ChannelConnection) -> None:
+    def test_an_mms_carries_its_media_as_ids_not_attachments(self, connection: ChannelConnection) -> None:
+        """``attachments`` is specified as URLs a consumer may use, and a Twilio
+        ``MediaUrl`` is not one: it addresses a REST resource under the account,
+        so with authenticated media it answers 401 to a browser and without it
+        it answers to anyone at all. ``messaging.ingest`` turns ``attachments``
+        into ``{"type": "file", "url": …}`` blocks that ``apps.inbox.rendering``
+        emits as links, so putting them there would hand out one or the other.
+        Same call ``telegram._media_ids`` makes."""
         (event,) = parse(connection, load_payload("inbound_mms"))
 
         assert event.payload.text == "Look at these"
-        assert len(event.payload.attachments) == 2
-        assert all(url.startswith("https://api.twilio.com/") for url in event.payload.attachments)
+        assert event.payload.attachments == ()
+        assert len(event.payload.media_ids) == 2
+        assert all(url.startswith("https://api.twilio.com/") for url in event.payload.media_ids)
+
+    def test_media_never_reaches_the_thread_as_a_browser_link(self, connection: ChannelConnection) -> None:
+        """The property that matters downstream, asserted against the real
+        serialiser rather than inferred from the field name."""
+        from apps.messaging.ingest import _inbound_body
+
+        (event,) = parse(connection, load_payload("inbound_mms"))
+        body = _inbound_body(event)
+
+        assert [block["type"] for block in body["blocks"]] == ["text"]
+        assert "api.twilio.com" not in str(body)
 
     def test_media_alone_is_still_a_message(self, connection: ChannelConnection) -> None:
         params = {**load_payload("inbound_mms"), "Body": ""}
@@ -251,7 +270,7 @@ class TestInboundMessages:
         (event,) = parse(connection, params)
 
         assert event.type == EventType.MESSAGE
-        assert event.payload.attachments
+        assert event.payload.media_ids
 
     def test_an_empty_callback_produces_nothing(self, connection: ChannelConnection) -> None:
         params = {**load_payload("inbound_text"), "Body": "", "NumMedia": "0"}
@@ -427,8 +446,8 @@ class TestHostilePayloads:
         """9999 attachments claimed, two supplied — and ten is the ceiling."""
         (event,) = parse(connection, load_payload("hostile_types"))
 
-        assert len(event.payload.attachments) == 2
-        assert len(event.payload.attachments) <= MAX_MEDIA
+        assert len(event.payload.media_ids) == 2
+        assert len(event.payload.media_ids) <= MAX_MEDIA
 
     @pytest.mark.parametrize("value", ["", "  ", "abc", "-1", "1e400", "null"])
     def test_an_unparseable_num_media_yields_no_attachments(self, connection: ChannelConnection, value: str) -> None:
@@ -436,7 +455,7 @@ class TestHostilePayloads:
 
         (event,) = parse(connection, params)
 
-        assert event.payload.attachments == ()
+        assert event.payload.media_ids == ()
 
     def test_a_callback_with_no_sender_is_dropped(self, connection: ChannelConnection) -> None:
         assert parse(connection, load_payload("hostile_no_sender")) == []

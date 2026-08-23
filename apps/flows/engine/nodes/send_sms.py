@@ -82,16 +82,8 @@ class SendSmsNode(Node):
             logger.warning("Execution %s: node %s has no SMS body.", ctx.execution.pk, ctx.node_id)
             return Continue("error")
 
-        connection = _sms_connection(ctx)
+        connection = _sms_target(ctx)
         if connection is None:
-            logger.info("Execution %s: node %s found no SMS channel in this workspace.", ctx.execution.pk, ctx.node_id)
-            return Continue("error")
-
-        identity = _sms_identity(ctx, connection)
-        if identity is None:
-            logger.info(
-                "Execution %s: node %s found no phone identity for this contact.", ctx.execution.pk, ctx.node_id
-            )
             return Continue("error")
 
         blocks: list[Any] = []
@@ -131,70 +123,73 @@ class SendSmsNode(Node):
         return Continue("default")
 
 
-def _sms_connection(ctx: NodeContext) -> Any:
-    """The workspace's SMS channel, oldest active first, or ``None``.
+def _sms_target(ctx: NodeContext) -> Any:
+    """The SMS connection to send this contact's message on, or ``None``.
 
-    Oldest-first rather than "the one the run is on", because the run is very
-    likely not on an SMS connection at all — and it is the same tie-break
-    ``apps.messaging.services.upsert_contact_identity`` uses when a workspace
-    runs more than one number, so the connection this node picks is the one that
-    call would have attached an identity to.
+    **Resolved together with the identity, not before it.** Picking a connection
+    first and then asking whether the contact has a number on it was wrong the
+    moment a workspace ran two numbers: a contact who has only ever texted the
+    *newer* one has their identity attached to that connection alone, so
+    choosing the oldest and looking there found nothing and followed the
+    ``error`` edge — with a perfectly good active connection and phone identity
+    sitting in the same workspace. The question the node actually has is "where
+    can I reach this person", and that is one query over identities, not two
+    queries that have to agree.
 
-    Imported inside the function, matching ``apps.flows.handlers._connection``:
-    every other engine module reaches ``apps.channels`` for its *data* tables
-    (capabilities, the event schema) and none of them import its models, so
-    keeping the model import local keeps that shape visible.
+    Preference order, and each step is a decision rather than a tie-break:
+
+    1. an identity already bound to an **active** SMS connection — that is a
+       number the contact has demonstrably used, and its connection is the one
+       the send should go out on;
+    2. failing that, a *pending* identity (captured before any SMS connection
+       existed, so ``channel_connection`` is NULL) sent on the workspace's
+       oldest active connection — the same connection
+       ``services.upsert_contact_identity`` would have bound it to, so the
+       facade's own lazy upgrade lands where this node predicted;
+    3. failing that, nothing, and the caller takes the ``error`` handle.
+
+    Among several bound identities the oldest connection wins, so a contact who
+    has used both numbers gets a stable answer rather than one that depends on
+    row order.
+
+    This still duplicates a lookup ``send_outbound`` makes, and the extra query
+    buys the same thing it did before: the facade answers "no identity" by
+    opening a conversation and writing a ``failed`` row into it, which for a
+    flow that texts whoever it can would file an empty SMS thread in the inbox
+    for every contact without a number.
     """
+    from django.db.models import F, Q
+
     from apps.channels.models import ChannelConnection, ConnectionStatus
 
-    return (
+    connections = list(
         ChannelConnection.objects.for_workspace(ctx.workspace_id)
         .filter(platform=Platform.SMS.value, status=ConnectionStatus.ACTIVE)
         .order_by("created_at")
-        .first()
     )
-
-
-def _sms_identity(ctx: NodeContext, connection: Any) -> Any:
-    """This contact's number for ``connection``, or ``None``.
-
-    A **read**, deliberately: it never creates an identity from
-    ``contact.phone``. A number typed into a CRM field is not consent to text it
-    — SPEC §11.8 makes ``opt_in_source`` part of the audit and this node has
-    nothing truthful to put there — and fabricating one would route straight
-    past the compliance engine's ``no_opt_in`` rule. A contact with no SMS
-    identity follows the ``error`` handle, which is what SPEC §11.9 asks for.
-
-    **This duplicates a check ``send_outbound`` also makes**, and the extra query
-    buys something specific: the facade answers "no identity" by opening a
-    conversation and writing a ``failed`` message row into it. For a node that
-    can legitimately run against contacts who have never given a phone number —
-    a flow that texts whoever it can and carries on — that would file an empty
-    SMS thread in the inbox for every one of them. Checking first keeps the
-    ``error`` handle free of that side effect. The facade's own check stays as
-    the authority; this is a pre-filter, not a second opinion.
-
-    A *pending* identity — captured before any SMS connection existed, so
-    ``channel_connection`` is NULL — counts, because contract 1 upgrades exactly
-    those at first send. It is preferred **last**: a row already attached to this
-    connection is the one the send will use, and ``nulls_last`` says so rather
-    than relying on Postgres' default ordering for NULLs.
-
-    Reached through :func:`apps.flows.compat.installed_model` rather than an
-    import, unlike the connection above: ``apps.flows`` never imports
-    ``apps.messaging`` at module scope — that is the whole point of contract 1's
-    seam in :mod:`apps.flows.messaging` — and this is the same lookup
-    ``apps/flows/triggers/context.py`` makes.
-    """
-    from django.db.models import F, Q
+    if not connections:
+        logger.info("Execution %s: node %s found no SMS channel in this workspace.", ctx.execution.pk, ctx.node_id)
+        return None
 
     model = installed_model("messaging", "apps.messaging", "ContactChannelIdentity")
     if model is None:  # pragma: no cover - messaging is installed in every deployment
         return None
-    return (
+
+    identity = (
         model.objects.for_workspace(ctx.workspace_id)
-        .filter(Q(channel_connection=connection) | Q(channel_connection__isnull=True))
+        .filter(Q(channel_connection__in=connections) | Q(channel_connection__isnull=True))
         .filter(contact=ctx.contact, platform=Platform.SMS.value)
-        .order_by(F("channel_connection_id").asc(nulls_last=True), "created_at")
+        # A bound identity beats a pending one — ``nulls_last`` says so rather
+        # than leaving it to Postgres' default ordering for NULLs — and among
+        # bound ones the oldest connection wins.
+        .order_by(F("channel_connection__created_at").asc(nulls_last=True), "created_at")
+        .select_related("channel_connection")
         .first()
     )
+    if identity is None:
+        logger.info("Execution %s: node %s found no phone identity for this contact.", ctx.execution.pk, ctx.node_id)
+        return None
+
+    # A bound identity names its own connection; a pending one is upgraded by
+    # the facade at first send, onto the connection chosen here.
+    return identity.channel_connection or connections[0]
