@@ -64,6 +64,7 @@ import logging
 from typing import Any
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 
 from apps.channels.capabilities import capabilities_for
 from apps.channels.events import OutboundMessage, TextBlock
@@ -205,9 +206,16 @@ def _ensure_identity(ctx: NodeContext, connection: Any) -> Any:
     """
     from apps.messaging.models import ContactChannelIdentity
 
+    # Scoped to the connection this node is about to send on — plus a pending
+    # row, which the facade upgrades at first send. An unscoped "any email
+    # identity for this contact" check answered yes for an identity on a
+    # *different* email connection, so the node proceeded and `send_outbound`
+    # then failed the message with `no_identity`, reporting a missing
+    # prerequisite down the `default` edge instead of `error`.
     existing = (
         ContactChannelIdentity.objects.for_workspace(ctx.workspace_id)
         .filter(contact=ctx.contact, platform=Platform.EMAIL.value)
+        .filter(Q(channel_connection=connection) | Q(channel_connection__isnull=True))
         .order_by("created_at")
         .first()
     )

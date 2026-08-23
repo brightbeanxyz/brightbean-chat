@@ -31,6 +31,7 @@ class _Handler(socketserver.StreamRequestHandler):
 
     def handle(self) -> None:
         server: Any = self.server
+        server.connections += 1
         self._say("220 localhost BrightBean test SMTP")
         in_data = False
         awaiting_auth = False
@@ -119,6 +120,9 @@ class DummySMTPServer:
     max_size: int = 10_000_000
     messages: list[str] = field(default_factory=list)
     recipients: list[str] = field(default_factory=list)
+    #: Conversations opened, so a test can prove the backend is pooled rather
+    #: than reconnecting per message.
+    connections: int = 0
     _server: Any = None
     _thread: Any = None
 
@@ -132,11 +136,13 @@ class DummySMTPServer:
         self._server.rcpt_reply = self.rcpt_reply
         self._server.auth_reply = self.auth_reply
         self._server.max_size = self.max_size
+        self._server.connections = 0
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         return self
 
     def __exit__(self, *exc: Any) -> None:
+        self.connections = self._server.connections
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(timeout=5)

@@ -310,6 +310,57 @@ class TestSendTestEmail:
         path = " ".join(parsed["List-Unsubscribe"].split()).strip("<>").split("/u/", 1)[1]
         assert client.get(f"/u/{path}").status_code == 404
 
+    def test_the_header_and_the_footer_carry_the_same_link(self, admin_client: Client, tenancy: Any) -> None:
+        """Two mints produced two tokens, so the two could disagree.
+
+        That is exactly the comparison an operator makes when a provider looks
+        like it is mangling the header.
+        """
+        with DummySMTPServer() as server:
+            connection = self._connection(tenancy, server.credentials())
+            admin_client.post(f"/w/{tenancy.workspace.pk}/settings/channels/{connection.pk}/test-email/")
+
+        import email as email_module
+
+        parsed = email_module.message_from_string(server.messages[0])
+        header_link = " ".join(parsed["List-Unsubscribe"].split()).strip("<>")
+        body = server.messages[0]
+        assert header_link in body
+
+    def test_the_headers_come_from_the_adapters_own_builder(self) -> None:
+        """One implementation of "on every message", not two that can drift."""
+        from apps.channels.providers.email import compliance_headers
+        from apps.channels.views_email import _test_envelope
+
+        connection = ChannelConnection(
+            workspace=None,
+            platform=Platform.EMAIL.value,
+            display_name="x",
+            external_id="sender.test",
+        )
+        connection.credentials = {"provider": "smtp", "from_address": "hello@sender.test"}  # type: ignore[assignment]
+        envelope = _test_envelope(connection, "me@example.test")
+        link = envelope.headers["List-Unsubscribe"].strip("<>")
+
+        assert envelope.headers == compliance_headers(link)
+
+    def test_repeated_tests_are_rate_limited(self, admin_client: Client, tenancy: Any) -> None:
+        """A test send puts a real message on the deployment's sending domain."""
+        from apps.channels.views_email import TEST_EMAIL_LIMIT
+
+        with DummySMTPServer() as server:
+            connection = self._connection(tenancy, server.credentials())
+            url = f"/w/{tenancy.workspace.pk}/settings/channels/{connection.pk}/test-email/"
+            for _ in range(TEST_EMAIL_LIMIT):
+                assert admin_client.post(url).json()["ok"] is True
+            refused = admin_client.post(url)
+
+        assert refused.status_code == 200
+        assert refused.json()["ok"] is False
+        assert "Too many" in refused.json()["message"]
+        # The refused one never reached the wire.
+        assert len(server.messages) == TEST_EMAIL_LIMIT
+
     def test_a_failure_is_a_200_with_ok_false(self, admin_client: Client, tenancy: Any) -> None:
         """The request succeeded; what it reports is somebody's mail configuration."""
         connection = self._connection(

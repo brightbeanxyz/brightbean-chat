@@ -101,6 +101,7 @@ that does not exist.
 |---|---|
 | Access key ID / secret | An IAM user or role with `ses:SendEmail` |
 | Region | The SES region your domain is verified in, e.g. `eu-west-1` |
+| Bounce topic ARN | Optional. See "which topic is yours" below |
 
 New SES accounts are in the **sandbox**, where you may only send to addresses you
 have verified and are capped at a low daily rate. Request production access
@@ -129,6 +130,20 @@ certificate. The certificate URL in the payload has to match
 `https://sns.<region>.amazonaws.com/SimpleNotificationService-*.pem` exactly and
 is fetched through the deployment's SSRF guard, so a forged notification naming
 a certificate you control is refused rather than trusted.
+
+#### Which topic is yours
+
+A valid signature proves **AWS** sent a notification. It does not prove *your*
+topic did — anyone can create a topic in their own AWS account, publish a
+message whose body is a bounce notification naming somebody else's address, and
+have AWS sign it for them. So notifications are also checked against the topic
+this channel listens to.
+
+Set the ARN when you connect and it is enforced from the very first delivery.
+Leave it blank and the first subscription this channel confirms is pinned
+instead, and enforced from then on — a later confirmation cannot re-point it,
+because that would be the same hole with extra steps. Either way, once the ARN
+is set, a notification from any other topic is ignored.
 
 ## Unsubscribe is not optional
 
@@ -213,6 +228,12 @@ these limits are enforced in one place rather than per platform.
 when the body is built, because for email a "button" is a hyperlink. A *postback*
 button becomes a numbered option, which is honest but not useful — an email
 cannot receive a reply, so do not put postback buttons in one.
+
+**A from-override must stay on the sending domain.** SPEC §11.10's optional
+per-message From address is there for `billing@` rather than `hello@`, and that
+is as far as it goes: node config is written by anyone with `edit_flows`, while
+what this channel sends *as* is `manage_channels`, which is admin-only. An
+override on another domain is ignored and the connection's own address is used.
 
 **The plain-text alternative is generated**, from the same HTML the recipient
 gets. You do not write it twice, and the two cannot drift apart: links keep their

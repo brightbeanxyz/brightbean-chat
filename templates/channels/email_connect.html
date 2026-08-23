@@ -127,6 +127,15 @@
         <label for="region">Region</label><br />
         <input type="text" id="region" name="region" value="{{ form.region }}" placeholder="eu-west-1" spellcheck="false" required />
       </p>
+      <p>
+        <label for="topic_arn">Bounce topic ARN</label><br />
+        <input type="text" id="topic_arn" name="topic_arn" value="{{ form.topic_arn }}"
+               placeholder="arn:aws:sns:eu-west-1:123456789012:bounces" spellcheck="false" />
+        <span class="muted">
+          Optional. Set it and only that topic's notifications are accepted; leave it blank and the
+          first subscription this channel confirms is pinned instead.
+        </span>
+      </p>
       <p class="muted">
         The key needs <code>ses:SendEmail</code>, and <code>sns:ConfirmSubscription</code> if you want
         bounce handling. See <code>docs/channels/email.md</code>.

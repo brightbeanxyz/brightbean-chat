@@ -45,6 +45,7 @@ it — including, on a bad-credential path, the credential.
 import logging
 import smtplib
 import ssl
+import threading
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
@@ -268,6 +269,67 @@ def _header_safe(value: Any) -> str:
     return "".join(char for char in str(value) if char not in "\r\n\x00")
 
 
+#: One open SMTP backend per worker thread, keyed by connection.
+#:
+#: Building a fresh one per message meant a TCP connect, a TLS handshake and an
+#: AUTH round trip for **every** email — ten of each per second at the platform's
+#: default rate, paid inside the worker slot the token bucket is holding, and
+#: enough rapid reconnecting for some relays to start refusing. Django's SMTP
+#: backend is happy to stay open across sends, so it is kept and reused.
+#:
+#: Thread-local rather than a shared pool because ``smtplib.SMTP`` is not
+#: thread-safe, and each worker thread sends serially.
+_SMTP_POOL = threading.local()
+
+
+def _pool_key(connection: Any) -> tuple[Any, ...]:
+    """What has to be equal for a cached backend to still be the right socket.
+
+    The connection id is **not** enough. An operator editing the host, the port,
+    the encryption or the username changes where this backend should be talking
+    without changing which row it belongs to, and a pool keyed on the id alone
+    would go on using the old socket until something else evicted it. The
+    password is deliberately absent: it does not select a destination, and the
+    key is held in memory for the life of the thread.
+    """
+    settings = _smtp_settings(connection)
+    return (
+        str(connection.pk),
+        settings["host"],
+        settings["port"],
+        settings["use_tls"],
+        settings["use_ssl"],
+        settings["username"],
+    )
+
+
+def _pooled_smtp(connection: Any) -> Any:
+    """This thread's open backend for ``connection``, opening or replacing it as needed."""
+    key = _pool_key(connection)
+    cached = getattr(_SMTP_POOL, "entry", None)
+    if cached is not None:
+        cached_key, backend = cached
+        if cached_key == key and getattr(backend, "connection", None) is not None:
+            return backend
+        _close_pooled()
+    backend = smtp_connection(connection)
+    backend.open()
+    _SMTP_POOL.entry = (key, backend)
+    return backend
+
+
+def _close_pooled() -> None:
+    """Drop this thread's backend. Never raises: closing a dead socket is fine."""
+    cached = getattr(_SMTP_POOL, "entry", None)
+    _SMTP_POOL.entry = None
+    if cached is None:
+        return
+    try:
+        cached[1].close()
+    except Exception:  # noqa: BLE001 - a connection being closed is already going away
+        logger.debug("Closing a pooled SMTP connection raised; dropping it anyway.")
+
+
 def _deliver_smtp(connection: Any, envelope: Envelope) -> str:
     """Hand the message to the configured relay. Returns our own Message-ID.
 
@@ -275,35 +337,60 @@ def _deliver_smtp(connection: Any, envelope: Envelope) -> str:
     which is why SPEC §6.7 says the row goes to ``sent`` on SMTP accept. Our
     ``Message-ID`` is returned so the row still carries something an operator can
     grep a mail log for.
+
+    The connection is pooled per thread (see :data:`_SMTP_POOL`). A relay that
+    has silently dropped an idle connection is indistinguishable from one that
+    is down until the write fails, so a **transport** failure is retried once on
+    a fresh connection; a failure carrying an SMTP reply code is the relay
+    talking and is never retried here — the send pipeline owns that decision.
     """
+    try:
+        return _send_smtp_once(connection, envelope, reuse=True)
+    except (smtplib.SMTPException, ssl.SSLError, OSError) as exc:
+        if _smtp_code(exc) is not None:
+            raise _smtp_error(exc) from exc
+        _close_pooled()
+    try:
+        return _send_smtp_once(connection, envelope, reuse=False)
+    except (smtplib.SMTPException, ssl.SSLError, OSError) as exc:
+        _close_pooled()
+        raise _smtp_error(exc) from exc
+
+
+def _smtp_error(exc: Exception) -> APIError:
+    """Map an smtplib failure onto this project's error vocabulary."""
+    code = _smtp_code(exc)
+    if code is None:
+        # A relay that could not be reached at all, or an error carrying no
+        # reply code. Retryable: the pipeline treats a missing status as
+        # transient.
+        return APIError(f"The mail server could not be reached: {type(exc).__name__}")
+    # SMTP's own permanent/transient split, which lines up exactly with the
+    # HTTP one `apps.messaging.services._record_api_error` already applies:
+    # 5xx is "do not try this again", 4xx is "try later". Mapped onto HTTP
+    # status codes so the pipeline needs no SMTP knowledge at all — and note
+    # the inversion, because SMTP numbers them the opposite way from HTTP.
+    status = 400 if 500 <= code < 600 else 503
+    return APIError("The mail server refused the message.", status_code=status, code=str(code))
+
+
+def _send_smtp_once(connection: Any, envelope: Envelope, *, reuse: bool) -> str:
     from django.core.mail import EmailMultiAlternatives
 
+    if not reuse:
+        _close_pooled()
+    backend = _pooled_smtp(connection)
     message = EmailMultiAlternatives(
         subject=_header_safe(envelope.subject),
         body=envelope.text or " ",
         from_email=_header_safe(envelope.sender()),
         to=[_header_safe(envelope.to)],
-        connection=smtp_connection(connection),
+        connection=backend,
         headers={_header_safe(name): _header_safe(value) for name, value in _smtp_headers(envelope).items()},
     )
     if envelope.html:
         message.attach_alternative(envelope.html, "text/html")
-    try:
-        sent = message.send()
-    except (smtplib.SMTPException, ssl.SSLError, OSError) as exc:
-        code = _smtp_code(exc)
-        if code is None:
-            # A relay that could not be reached at all, or an error carrying no
-            # reply code. Retryable: the pipeline treats a missing status as
-            # transient.
-            raise APIError(f"The mail server could not be reached: {type(exc).__name__}") from exc
-        # SMTP's own permanent/transient split, which lines up exactly with the
-        # HTTP one `apps.messaging.services._record_api_error` already applies:
-        # 5xx is "do not try this again", 4xx is "try later". Mapped onto HTTP
-        # status codes so the pipeline needs no SMTP knowledge at all — and note
-        # the inversion, because SMTP numbers them the opposite way from HTTP.
-        status = 400 if 500 <= code < 600 else 503
-        raise APIError("The mail server refused the message.", status_code=status, code=str(code)) from exc
+    sent = message.send()
     if not sent:
         raise APIError("The mail server accepted no recipients.", status_code=400, code="no_recipients")
     return envelope.message_id

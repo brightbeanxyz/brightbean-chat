@@ -106,7 +106,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["CONFIRM_SUBSCRIPTION_ACTION", "EmailAdapter", "SUPPRESSION_PROCESSOR", "compose"]
+__all__ = ["CONFIRM_SUBSCRIPTION_ACTION", "EmailAdapter", "SUPPRESSION_PROCESSOR", "compliance_headers", "compose"]
 
 _CAPABILITIES: Capabilities = capabilities_for(Platform.EMAIL)
 
@@ -135,6 +135,15 @@ _RESEND_HARD_BOUNCE = frozenset({"hard", "hardbounce", "permanent", "suppressed"
 #: Cap on any string read out of a provider payload before it is stored or
 #: logged (SECURITY-BASELINE §2).
 _MAX_FIELD_CHARS = 200
+
+#: An SNS topic ARN gets its own, wider cap: ``arn:aws:sns:<region>:<account>:<name>``
+#: with a name of up to 256 characters does not fit in the generic one.
+MAX_TOPIC_ARN_CHARS = 512
+
+#: How many recipients one notification may name before the rest are ignored.
+#: A bounce for more than this is not a bounce, and the cap bounds the work an
+#: unauthenticated delivery can ask for (SECURITY-BASELINE §2).
+MAX_RECIPIENTS = 50
 
 
 # ---------------------------------------------------------------------------
@@ -172,32 +181,59 @@ def compose(
     rendered = downgrade(outbound, _CAPABILITIES)
 
     html_parts: list[str] = []
-    text_parts: list[str] = []
     for message in rendered.messages:
         html_parts.extend(_blocks_to_html(message))
     body_html = email_html.sanitize("\n".join(part for part in html_parts if part))
-    body_text = email_html.to_plain_text(body_html)
-    text_parts.append(body_text)
-
     body_html, body_text = email_html.with_unsubscribe_footer(
-        body_html, "\n".join(text_parts).strip(), unsubscribe_link
+        body_html, email_html.to_plain_text(body_html).strip(), unsubscribe_link
     )
 
-    from_address = normalize_email(outbound.from_override) or str(credentials.get("from_address") or "")
+    from_address = _sender_address(connection, credentials, outbound.from_override)
     domain = from_address.partition("@")[2]
     return email_backends.Envelope(
-        to=str(getattr(identity, "platform_user_id", "") or ""),
-        subject=(outbound.subject or str(credentials.get("default_subject") or ""))[:MAX_SUBJECT_CHARS],
+        # Normalised, and by the same function the suppression gate used. Left
+        # raw, the address that was checked against the suppression list and the
+        # address actually mailed could be two different strings.
+        to=normalize_email(str(getattr(identity, "platform_user_id", "") or "")),
+        subject=outbound.subject[:MAX_SUBJECT_CHARS],
         html=body_html,
         text=body_text,
         from_address=from_address,
         from_name=str(credentials.get("from_name") or ""),
-        headers=_compliance_headers(unsubscribe_link),
+        headers=compliance_headers(unsubscribe_link),
         message_id=email_backends.new_message_id(domain),
     )
 
 
-def _compliance_headers(unsubscribe_link: str) -> dict[str, str]:
+def _sender_address(connection: ChannelConnection, credentials: dict[str, Any], override: str) -> str:
+    """The From address for one send: the override when it is allowed, else the connection's.
+
+    **An override may only use the connection's own sending domain.** Composing
+    a message is reached from the ``send_email`` node, whose config any holder of
+    ``edit_flows`` may write — and ``manage_channels``, the permission that
+    decides what this channel sends *as*, is admin-only
+    (``apps.members.roles._ADMIN_ONLY_KEYS``). Without this check an Editor
+    could pick any From address at all, which is both a spoofing primitive on a
+    permissive relay and a way around ``external_id`` being deployment-unique
+    precisely so one domain has one owner.
+
+    Same-domain overrides are the case SPEC §11.10 exists for — ``billing@``
+    rather than ``hello@`` — and they stay allowed.
+    """
+    configured = normalize_email(str(credentials.get("from_address") or ""))
+    wanted = normalize_email(override)
+    if not wanted:
+        return configured
+    if wanted.partition("@")[2] == str(connection.external_id or "").strip().lower():
+        return wanted
+    logger.warning(
+        "Connection %s: refused a from-override outside the sending domain; using the connection's address.",
+        connection.pk,
+    )
+    return configured
+
+
+def compliance_headers(unsubscribe_link: str) -> dict[str, str]:
     """``List-Unsubscribe`` and its RFC 8058 partner. On every message.
 
     The pair, never one of them: ``List-Unsubscribe-Post`` without a
@@ -389,17 +425,17 @@ class EmailAdapter(Adapter):
         data = payload.get("data")
         if not isinstance(data, dict):
             return []
-        address = _first_recipient(data.get("to"))
+        addresses = _recipients(data.get("to"))
         provider_message_id = _text(data.get("email_id"))
         occurred_at = _timestamp(payload.get("created_at"))
         event_id = _text(payload.get("id")) or channels_ingest.synthetic_event_id(payload, prefix="resend")
 
         if event_type == "email.delivered":
-            return _delivery_only(connection, address, provider_message_id, event_id, occurred_at, "delivered")
+            return _delivery_only(connection, addresses, provider_message_id, event_id, occurred_at, "delivered")
         if event_type == "email.complained":
             return _bounce_events(
                 connection,
-                address,
+                addresses,
                 provider_message_id,
                 event_id,
                 occurred_at,
@@ -412,7 +448,7 @@ class EmailAdapter(Adapter):
             subtype = _text(bounce.get("type") if isinstance(bounce, dict) else "").lower()
             return _bounce_events(
                 connection,
-                address,
+                addresses,
                 provider_message_id,
                 event_id,
                 occurred_at,
@@ -430,6 +466,9 @@ class EmailAdapter(Adapter):
 
     def _from_sns(self, connection: ChannelConnection, payload: dict[str, Any]) -> list[NormalizedEvent]:
         envelope_type = _text(payload.get("Type"))
+        topic_arn = _text(payload.get("TopicArn"), limit=MAX_TOPIC_ARN_CHARS)
+        if not _topic_is_ours(connection, topic_arn):
+            return []
         if envelope_type == "SubscriptionConfirmation":
             self._schedule_subscription_confirmation(connection, payload)
             return []
@@ -447,14 +486,14 @@ class EmailAdapter(Adapter):
         occurred_at = _timestamp(payload.get("Timestamp"))
 
         if notification == "Delivery":
-            address = _first_recipient((message.get("delivery") or {}).get("recipients"))
-            return _delivery_only(connection, address, provider_message_id, event_id, occurred_at, "delivered")
+            addresses = _recipients((message.get("delivery") or {}).get("recipients"))
+            return _delivery_only(connection, addresses, provider_message_id, event_id, occurred_at, "delivered")
         if notification == "Complaint":
             complaint = message.get("complaint")
-            address = _sns_recipient(complaint, "complainedRecipients")
+            addresses = _sns_recipients(complaint, "complainedRecipients")
             return _bounce_events(
                 connection,
-                address,
+                addresses,
                 provider_message_id,
                 event_id,
                 occurred_at,
@@ -464,12 +503,12 @@ class EmailAdapter(Adapter):
             )
         if notification == "Bounce":
             bounce = message.get("bounce")
-            address = _sns_recipient(bounce, "bouncedRecipients")
+            addresses = _sns_recipients(bounce, "bouncedRecipients")
             bounce_type = _text(bounce.get("bounceType") if isinstance(bounce, dict) else "")
             subtype = _text(bounce.get("bounceSubType") if isinstance(bounce, dict) else "")
             return _bounce_events(
                 connection,
-                address,
+                addresses,
                 provider_message_id,
                 event_id,
                 occurred_at,
@@ -492,7 +531,11 @@ class EmailAdapter(Adapter):
         Queued rather than done inline because SPEC §21 asks for a webhook ack
         p95 under 500 ms and an AWS round trip inside the ack does not fit.
         """
-        topic_arn = _text(payload.get("TopicArn"))
+        # Its own limit: an SNS topic name may be 256 characters, so a real ARN
+        # routinely exceeds the generic 200-character field cap — and a
+        # truncated one names no topic, leaving the subscription pending
+        # forever with only a queue failure to show for it.
+        topic_arn = _text(payload.get("TopicArn"), limit=MAX_TOPIC_ARN_CHARS)
         token = _text(payload.get("Token"), limit=2000)
         if not topic_arn or not token:
             return
@@ -513,31 +556,59 @@ class EmailAdapter(Adapter):
 # ---------------------------------------------------------------------------
 
 
+def _topic_is_ours(connection: ChannelConnection, topic_arn: str) -> bool:
+    """Whether this notification came from the topic this connection listens to.
+
+    **A valid SNS signature proves AWS sent the payload, not that *your* topic
+    did.** Anyone can create a topic in their own AWS account and publish a
+    message whose body is a bounce notification naming somebody else's address;
+    AWS signs it with a genuine certificate from ``sns.<region>.amazonaws.com``,
+    so :func:`email_signatures.verify_sns` passes it. Without this check that
+    payload would suppress arbitrary addresses in whichever workspace's
+    connection id it was posted to.
+
+    The expected ARN is stored on the connection. An operator can set it when
+    connecting; otherwise it is recorded from the first subscription
+    confirmation and enforced from then on, so the window in which anything is
+    accepted is the one before the topic is wired up at all.
+    """
+    expected = str(email_backends.credentials_of(connection).get("topic_arn") or "").strip()
+    if not expected:
+        return True
+    if topic_arn == expected:
+        return True
+    logger.warning("Connection %s: refused an SNS delivery from an unexpected topic.", connection.pk)
+    return False
+
+
 def _delivery_only(
     connection: ChannelConnection,
-    address: str,
+    addresses: list[str],
     provider_message_id: str,
     event_id: str,
     occurred_at: datetime,
     status: str,
 ) -> list[NormalizedEvent]:
-    if not address or not provider_message_id:
+    if not provider_message_id:
         return []
     return [
         NormalizedEvent(
             type=EventType.DELIVERY_STATUS,
             connection=connection,
             platform_user_id=address,
-            provider_event_id=event_id,
+            # One log row per recipient, so a notification naming three
+            # mailboxes is not deduplicated down to one.
+            provider_event_id=event_id if index == 0 else f"{event_id}:{index}",
             timestamp=occurred_at,
             payload=EventPayload(extra={"provider_message_id": provider_message_id, "status": status}),
         )
+        for index, address in enumerate(addresses)
     ]
 
 
 def _bounce_events(
     connection: ChannelConnection,
-    address: str,
+    addresses: list[str],
     provider_message_id: str,
     event_id: str,
     occurred_at: datetime,
@@ -554,40 +625,41 @@ def _bounce_events(
     ``opted_out_at`` — ROADMAP contract 3 reserves that column to itself, so an
     adapter that wrote it directly would fail the build's AST scan.
     """
-    if not address:
-        return []
     events: list[NormalizedEvent] = []
-    if provider_message_id:
-        events.append(
-            NormalizedEvent(
-                type=EventType.DELIVERY_STATUS,
-                connection=connection,
-                platform_user_id=address,
-                provider_event_id=event_id,
-                timestamp=occurred_at,
-                payload=EventPayload(
-                    extra={
-                        "provider_message_id": provider_message_id,
-                        "status": "failed",
-                        "error": detail[:_MAX_FIELD_CHARS],
-                    }
-                ),
+    for index, address in enumerate(addresses):
+        # Every id is distinct: the delivery and opt-out halves are two rows in
+        # the event log, and so is each recipient of a multi-recipient bounce.
+        # Sharing one would make the later rows look like duplicates and be
+        # dropped by the `(connection, provider_event_id)` constraint.
+        suffix = "" if index == 0 else f":{index}"
+        if provider_message_id:
+            events.append(
+                NormalizedEvent(
+                    type=EventType.DELIVERY_STATUS,
+                    connection=connection,
+                    platform_user_id=address,
+                    provider_event_id=f"{event_id}{suffix}",
+                    timestamp=occurred_at,
+                    payload=EventPayload(
+                        extra={
+                            "provider_message_id": provider_message_id,
+                            "status": "failed",
+                            "error": detail[:_MAX_FIELD_CHARS],
+                        }
+                    ),
+                )
             )
-        )
-    if hard:
-        events.append(
-            NormalizedEvent(
-                type=EventType.OPT_OUT,
-                connection=connection,
-                platform_user_id=address,
-                # A distinct id from the delivery half: they are two rows in the
-                # event log, and sharing one would make the second look like a
-                # duplicate of the first and be dropped.
-                provider_event_id=f"{event_id}:optout",
-                timestamp=occurred_at,
-                payload=EventPayload(extra={"suppression_reason": reason, "detail": detail[:_MAX_FIELD_CHARS]}),
+        if hard:
+            events.append(
+                NormalizedEvent(
+                    type=EventType.OPT_OUT,
+                    connection=connection,
+                    platform_user_id=address,
+                    provider_event_id=f"{event_id}{suffix}:optout",
+                    timestamp=occurred_at,
+                    payload=EventPayload(extra={"suppression_reason": reason, "detail": detail[:_MAX_FIELD_CHARS]}),
+                )
             )
-        )
     return events
 
 
@@ -601,28 +673,36 @@ def _text(value: Any, limit: int = _MAX_FIELD_CHARS) -> str:
     return security.scrub_nulls(value)[:limit] if isinstance(value, str) else ""
 
 
-def _first_recipient(value: Any) -> str:
-    """The first address in a provider's recipient list, normalised."""
-    if isinstance(value, str):
-        return normalize_email(value)
-    if isinstance(value, list):
-        for item in value:
-            if isinstance(item, str) and (address := normalize_email(item)):
-                return address
-    return ""
+def _recipients(value: Any) -> list[str]:
+    """Every address in a provider's recipient list, normalised and deduplicated.
+
+    All of them, not the first: one notification legitimately names several
+    mailboxes — a send that fanned out, or a complaint feedback loop — and
+    suppressing only the first leaves the rest being mailed and bouncing, which
+    is the pattern that gets a sending domain blocklisted.
+    """
+    items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    found: list[str] = []
+    for item in items[:MAX_RECIPIENTS]:
+        address = normalize_email(item) if isinstance(item, str) else ""
+        if address and address not in found:
+            found.append(address)
+    return found
 
 
-def _sns_recipient(container: Any, key: str) -> str:
+def _sns_recipients(container: Any, key: str) -> list[str]:
     """SES nests recipients as ``[{"emailAddress": "…"}]``."""
     if not isinstance(container, dict):
-        return ""
+        return []
     entries = container.get(key)
     if not isinstance(entries, list):
-        return ""
-    for entry in entries:
-        if isinstance(entry, dict) and (address := normalize_email(str(entry.get("emailAddress") or ""))):
-            return address
-    return ""
+        return []
+    found: list[str] = []
+    for entry in entries[:MAX_RECIPIENTS]:
+        address = normalize_email(str(entry.get("emailAddress") or "")) if isinstance(entry, dict) else ""
+        if address and address not in found:
+            found.append(address)
+    return found
 
 
 def _timestamp(value: Any) -> datetime:
@@ -701,9 +781,26 @@ def confirm_sns_subscription(payload: dict[str, Any], action: Any) -> None:
     if connection is None:
         logger.info("SNS confirmation for connection %s: it is gone.", connection_id)
         return
+    topic_arn = str(payload.get("topic_arn") or "")
     client = email_backends.ses_client(connection, service="sns")
-    client.confirm_subscription(TopicArn=payload.get("topic_arn"), Token=payload.get("token"))
+    client.confirm_subscription(TopicArn=topic_arn, Token=payload.get("token"))
+    _remember_topic(connection, topic_arn)
     logger.info("Confirmed an SNS bounce-topic subscription for connection %s.", connection.pk)
+
+
+def _remember_topic(connection: ChannelConnection, topic_arn: str) -> None:
+    """Pin the confirmed topic on the connection, once.
+
+    This is what turns :func:`_topic_is_ours` from permissive into enforcing. It
+    only ever writes the first one: overwriting on a later confirmation would
+    let anyone who can reach the webhook re-point the connection at their own
+    topic, which is the check's whole purpose.
+    """
+    credentials = email_backends.credentials_of(connection)
+    if not topic_arn or credentials.get("topic_arn"):
+        return
+    connection.credentials = {**credentials, "topic_arn": topic_arn}  # type: ignore[assignment]
+    connection.save(update_fields=["credentials", "updated_at"])
 
 
 register_adapter(Platform.EMAIL, EmailAdapter)

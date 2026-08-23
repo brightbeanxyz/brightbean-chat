@@ -73,6 +73,18 @@ class TestProviderResolution:
         assert email_backends.credentials_of(Broken()) == {}
 
 
+@pytest.fixture(autouse=True)
+def _empty_smtp_pool() -> Any:
+    """No pooled SMTP connection may cross a test boundary.
+
+    The pool is thread-local and deliberately long-lived, so without this a
+    backend opened against one test's dummy server would be found by the next.
+    """
+    email_backends._close_pooled()
+    yield
+    email_backends._close_pooled()
+
+
 class TestSMTP:
     def test_a_send_round_trips_over_a_socket(self) -> None:
         with DummySMTPServer() as server:
@@ -124,6 +136,59 @@ class TestSMTP:
     def test_no_host_is_refused_before_a_socket_is_opened(self) -> None:
         with pytest.raises(APIError, match="no SMTP host"):
             email_backends.deliver(Connection({"provider": "smtp"}), envelope())
+
+    def test_the_connection_is_reused_across_sends(self) -> None:
+        """One TCP connect, TLS handshake and AUTH for the whole batch.
+
+        A fresh connection per message meant all three per email — ten of each
+        per second at the platform's default rate, paid inside the worker slot
+        the token bucket is holding.
+        """
+        with DummySMTPServer() as server:
+            connection = Connection(server.credentials())
+            for _ in range(3):
+                email_backends.deliver(connection, envelope())
+            email_backends._close_pooled()
+
+        assert len(server.messages) == 3
+        # Three messages, one conversation: the dummy records one RCPT line per
+        # message but the greeting is what counts a connection, and a reused
+        # backend issues exactly one.
+        assert server.connections == 1
+
+    def test_changed_settings_do_not_keep_the_old_socket(self) -> None:
+        """The pool key is the settings, not just the connection id.
+
+        An operator editing the host changes where this backend should be
+        talking without changing which row it belongs to.
+        """
+        with DummySMTPServer() as first:
+            connection = Connection(first.credentials())
+            email_backends.deliver(connection, envelope())
+
+        with DummySMTPServer() as second:
+            # Same pk, different port — exactly what editing the connection does.
+            connection.credentials = second.credentials()
+            email_backends.deliver(connection, envelope())
+            email_backends._close_pooled()
+
+        assert len(first.messages) == 1
+        assert len(second.messages) == 1
+
+    def test_a_dropped_connection_is_retried_once_on_a_fresh_one(self) -> None:
+        """An idle socket a relay has quietly closed looks like a dead one."""
+        with DummySMTPServer() as server:
+            connection = Connection(server.credentials())
+            email_backends.deliver(connection, envelope())
+            # Kill the pooled socket behind the backend's back, the way a relay
+            # timing out an idle connection does.
+            _, backend = email_backends._SMTP_POOL.entry
+            backend.connection.close()
+
+            email_backends.deliver(connection, envelope())
+            email_backends._close_pooled()
+
+        assert len(server.messages) == 2
 
     def test_verify_opens_and_closes_a_connection(self) -> None:
         with DummySMTPServer() as server:

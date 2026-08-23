@@ -148,8 +148,14 @@ MAX_HTML_CHARS = 100_000
 #: (``apps/common/logging.py`` makes the same point about its own patterns).
 _BARE_URL = re.compile(r"\bhttps?://[^\s<>\"']{2,2000}")
 
-#: Trailing characters that are punctuation rather than part of the URL.
-_URL_TRAILING = ".,;:!?)]}'\""
+#: Trailing characters that end a sentence rather than a URL. Closing brackets
+#: are handled separately, by :func:`_trim_url`, because whether one belongs to
+#: the URL depends on what came before it.
+_URL_TRAILING = ".,;:!?'\""
+
+#: Closing bracket -> its opening partner. A trailing ``)`` is only punctuation
+#: when the URL does not open one itself.
+_URL_BRACKETS = {")": "(", "]": "[", "}": "{"}
 
 #: Block-level tags that become a line break in the text alternative.
 _TEXT_BREAKS: frozenset[str] = frozenset(
@@ -161,11 +167,19 @@ class _Sanitizer(HTMLParser):
     """Rebuild the document from the tokens that survive the allowlist."""
 
     def __init__(self) -> None:
-        # convert_charrefs=False so entities arrive as their own tokens and are
-        # re-emitted verbatim. With the default the parser unescapes them into
-        # data, and re-escaping on the way out would turn an author's ``&nbsp;``
-        # into a literal ``&amp;nbsp;``.
-        super().__init__(convert_charrefs=False)
+        # convert_charrefs=True: the parser resolves character references into
+        # text, and :meth:`handle_data` escapes on the way out, so the document
+        # round-trips through one decode/encode pair.
+        #
+        # The hand-rolled alternative — convert_charrefs=False plus
+        # ``handle_entityref``/``handle_charref`` re-emitting ``f"&{name};"`` —
+        # looked like it preserved the author's markup and instead corrupted it.
+        # ``html.parser`` reports ``&b`` in ``?a=1&b=2`` as an entityref named
+        # "b" even though no semicolon followed it, so re-emitting with one
+        # turned an ordinary query string into ``&b;=2``: wrong visible text and
+        # a truncated link, on the commonest input there is. Letting the parser
+        # decode and escaping once is the version that cannot invent characters.
+        super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         #: Tags opened and kept, so a stray ``</p>`` for a tag we unwrapped does
         #: not close something it never opened.
@@ -195,9 +209,21 @@ class _Sanitizer(HTMLParser):
         self.parts.append(f"<{tag}{rendered}>")
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """``<tag/>``. Only void elements may actually close themselves.
+
+        HTML parsers ignore a trailing slash on a non-void element, so emitting
+        ``<a href="…" />`` left the anchor **open** and every remaining word of
+        the message became part of that link — and because this path never
+        pushed to ``_open``, :meth:`result`'s balancing tail could not close it
+        either. A non-void tag is written as an explicit empty pair instead.
+        """
         if self._suppressed or tag in _DROP_WITH_CONTENT or tag not in ALLOWED_TAGS:
             return
-        self.parts.append(f"<{tag}{_attributes(tag, attrs)} />")
+        rendered = _attributes(tag, attrs)
+        if tag in _VOID_TAGS:
+            self.parts.append(f"<{tag}{rendered} />")
+            return
+        self.parts.append(f"<{tag}{rendered}></{tag}>")
 
     def handle_endtag(self, tag: str) -> None:
         if tag in _DROP_WITH_CONTENT:
@@ -235,14 +261,6 @@ class _Sanitizer(HTMLParser):
         # author already wrote is never nested inside a second one.
         self.parts.append(escaped if self._in_anchor else _linkify(escaped))
 
-    def handle_entityref(self, name: str) -> None:
-        if not self._suppressed:
-            self.parts.append(f"&{name};")
-
-    def handle_charref(self, name: str) -> None:
-        if not self._suppressed:
-            self.parts.append(f"&#{name};")
-
     # Comments, declarations and processing instructions are dropped entirely.
     # A conditional comment is how a body smuggles markup past a naive filter,
     # and nothing in an email needs one.
@@ -274,16 +292,36 @@ def _linkify(escaped: str) -> str:
     """
 
     def _wrap(match: "re.Match[str]") -> str:
-        url = match.group(0)
-        trailing = ""
-        while url and url[-1] in _URL_TRAILING:
-            trailing = url[-1] + trailing
-            url = url[:-1]
+        url, trailing = _trim_url(match.group(0))
         if not url:
             return match.group(0)
         return f'<a href="{url}" rel="noopener noreferrer">{url}</a>{trailing}'
 
     return _BARE_URL.sub(_wrap, escaped)
+
+
+def _trim_url(url: str) -> tuple[str, str]:
+    """Split a matched URL into the URL and the punctuation that followed it.
+
+    Balanced brackets stay in. ``https://en.wikipedia.org/wiki/Foo_(bar)`` is
+    the shape that makes this necessary: stripping every trailing ``)`` broke
+    the closing paren off a URL that opened one, and the link 404s. A ``)`` is
+    only punctuation when there is no unclosed ``(`` to its left.
+    """
+    trailing = ""
+    while url:
+        last = url[-1]
+        if last in _URL_TRAILING:
+            trailing = last + trailing
+            url = url[:-1]
+            continue
+        opener = _URL_BRACKETS.get(last)
+        if opener is not None and url.count(opener) < url.count(last):
+            trailing = last + trailing
+            url = url[:-1]
+            continue
+        break
+    return url, trailing
 
 
 def _attributes(tag: str, attrs: list[tuple[str, str | None]]) -> str:

@@ -184,6 +184,27 @@ describe("RichTextEditor", () => {
     expect(textarea.value).toBe("<p>Hello</p>");
   });
 
+  it("still shows the body after coming back from the source view", () => {
+    // Leaving the source view mounts a FRESH contenteditable, which shows
+    // nothing whatever the value says. Comparing values alone concluded it was
+    // already showing the body, so the editor came back blank — and the next
+    // keystroke would then push that emptiness over the real value.
+    renderEditor("<p>Hello</p>");
+    const toggle = screen.getByRole("button", { name: "Edit the HTML directly" });
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(screen.getByRole("textbox", { name: "Email body" }).innerHTML).toBe("<p>Hello</p>");
+  });
+
+  it("does not report the empty surface as an edit after a source round trip", () => {
+    const written = renderEditor("<p>Hello</p>");
+    const toggle = screen.getByRole("button", { name: "Edit the HTML directly" });
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    fireEvent.input(screen.getByRole("textbox", { name: "Email body" }));
+    expect(written.at(-1)?.value).toBe("<p>Hello</p>");
+  });
+
   it("writes what the source view types", () => {
     const written = renderEditor("<p>Hello</p>");
     fireEvent.click(screen.getByRole("button", { name: "Edit the HTML directly" }));

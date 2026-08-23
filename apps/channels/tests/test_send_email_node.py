@@ -151,6 +151,63 @@ class TestPrerequisites:
         result, _ = run_node(tenancy, contact, CONFIG)
         assert result == Continue("error")
 
+    def test_an_identity_on_another_email_connection_is_not_mistaken_for_one(
+        self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]
+    ) -> None:
+        """The node's check and the facade's resolution have to agree.
+
+        An unscoped "any email identity for this contact" check said yes for an
+        identity belonging to a *different* email connection, so the node
+        proceeded and `send_outbound` then failed the message with `no_identity`
+        — reporting a missing prerequisite down `default` instead of `error`.
+        """
+        newer = ChannelConnection(
+            workspace=tenancy.workspace,
+            platform=Platform.EMAIL.value,
+            display_name="Second sender",
+            external_id="second.test",
+        )
+        newer.credentials = {"provider": "smtp", "host": "mail.test", "from_address": "hi@second.test"}  # type: ignore[assignment]
+        newer.save()
+
+        # No `contact.email`, so there is no address to fall back to and the
+        # only identity in play is the one on the wrong connection.
+        contact = create_contact(tenancy.workspace, source="manual")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=newer,
+            platform=Platform.EMAIL.value,
+            platform_user_id="reader@example.test",
+            opt_in=True,
+            opt_in_at=timezone.now(),
+            opt_in_source="data_collection",
+        )
+
+        result, _ = run_node(tenancy, contact, CONFIG)
+
+        assert result == Continue("error")
+        assert sent == []
+
+    def test_a_pending_identity_counts(
+        self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]
+    ) -> None:
+        """A connection-less row is upgraded by the facade at first send."""
+        contact = create_contact(tenancy.workspace, source="manual", email="reader@example.test")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=None,
+            platform=Platform.EMAIL.value,
+            platform_user_id="reader@example.test",
+            opt_in=True,
+            opt_in_at=timezone.now(),
+            opt_in_source="data_collection",
+        )
+
+        result, _ = run_node(tenancy, contact, CONFIG)
+
+        assert result == Continue("default")
+        assert len(sent) == 1
+
     def test_the_node_runs_on_a_connectionless_execution(
         self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]
     ) -> None:
@@ -283,7 +340,7 @@ class TestRendering:
         # A header is not an HTML context, so the ampersand stays an ampersand.
         assert sent[0].subject == "Hello Ada & Bob"
 
-    def test_a_from_override_reaches_the_envelope(
+    def test_a_from_override_on_the_sending_domain_reaches_the_envelope(
         self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]
     ) -> None:
         contact = create_contact(tenancy.workspace, source="manual", email="reader@example.test")
@@ -292,6 +349,17 @@ class TestRendering:
         run_node(tenancy, contact, {**CONFIG, "from_override": "billing@sender.test"})
 
         assert sent[0].from_address == "billing@sender.test"
+
+    def test_a_from_override_cannot_leave_the_sending_domain(
+        self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]
+    ) -> None:
+        """Node config is written with `edit_flows`; the From address is `manage_channels`."""
+        contact = create_contact(tenancy.workspace, source="manual", email="reader@example.test")
+        identity_for(tenancy, email_connection, contact)
+
+        run_node(tenancy, contact, {**CONFIG, "from_override": "ceo@bank.test"})
+
+        assert sent[0].from_address == "hello@sender.test"
 
     def test_a_long_body_is_not_truncated_at_the_chat_limit(
         self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]

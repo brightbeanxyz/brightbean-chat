@@ -18,7 +18,7 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from cryptography import x509
@@ -361,6 +361,102 @@ class TestSNSClassification:
     ) -> None:
         assert self._deliver(client, ses_connection, sns_keypair, "ses_delivery").status_code == 200
         assert suppressed(ses_connection.workspace) == set()
+
+    def test_every_recipient_of_a_multi_recipient_bounce_is_suppressed(
+        self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any
+    ) -> None:
+        """One notification legitimately names several mailboxes.
+
+        Suppressing only the first left the rest being mailed and bouncing,
+        which is the pattern that gets a sending domain blocklisted.
+        """
+        assert self._deliver(client, ses_connection, sns_keypair, "ses_bounce_multi").status_code == 200
+        assert suppressed(ses_connection.workspace) == {
+            "one@example.test",
+            "two@example.test",
+            "three@example.test",
+        }
+
+
+class TestTheTopicIsBound:
+    """A valid signature proves AWS sent it, not that *your* topic did."""
+
+    @staticmethod
+    def _pin(connection: ChannelConnection, topic_arn: str) -> None:
+        # `credentials` is an EncryptedJSONField over a TextField, so
+        # django-stubs types it as `str`; every writer in the project carries the
+        # same ignore.
+        credentials = cast(dict[str, Any], connection.credentials)
+        connection.credentials = {**credentials, "topic_arn": topic_arn}  # type: ignore[assignment]
+        connection.save(update_fields=["credentials", "updated_at"])
+
+    @staticmethod
+    def _pinned(connection: ChannelConnection) -> str:
+        connection.refresh_from_db()
+        return str(cast(dict[str, Any], connection.credentials).get("topic_arn") or "")
+
+    def test_a_notification_from_another_topic_is_ignored(
+        self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any
+    ) -> None:
+        """Anyone can publish an AWS-signed bounce from a topic they own.
+
+        Without this check that payload would suppress arbitrary addresses in
+        whichever workspace's connection id it was posted to.
+        """
+        self._pin(ses_connection, "arn:aws:sns:eu-west-1:123456789012:ours")
+        payload = sns_envelope(
+            fixture("ses_bounce_hard"),
+            sns_keypair,
+            TopicArn="arn:aws:sns:eu-west-1:999999999999:attacker",
+        )
+
+        # Still a 200 — the signature was valid, so this is not a forgery to
+        # refuse, it is a delivery that is none of our business.
+        assert post(client, ses_connection, "ses", payload).status_code == 200
+        assert suppressed(ses_connection.workspace) == set()
+
+    def test_the_pinned_topic_is_accepted(
+        self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any
+    ) -> None:
+        ours = "arn:aws:sns:eu-west-1:123456789012:brightbean-bounces"
+        self._pin(ses_connection, ours)
+        payload = sns_envelope(fixture("ses_bounce_hard"), sns_keypair, TopicArn=ours)
+
+        assert post(client, ses_connection, "ses", payload).status_code == 200
+        assert suppressed(ses_connection.workspace) == {"gone@example.test"}
+
+    def test_an_unpinned_connection_accepts_and_then_pins(
+        self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Trust on first confirmation, enforced from then on."""
+        from apps.channels.providers import email_backends
+        from apps.channels.providers.email import CONFIRM_SUBSCRIPTION_ACTION, confirm_sns_subscription
+        from apps.channels.tests.email_support import FakeSESClient
+        from apps.queueing.models import ScheduledAction
+
+        monkeypatch.setattr(email_backends, "ses_client", lambda *a, **k: FakeSESClient())
+        payload = sign_sns({**fixture("sns_subscription_confirmation"), "SigningCertURL": CERT_URL}, sns_keypair)
+        assert post(client, ses_connection, "ses", payload).status_code == 200
+
+        action = ScheduledAction.objects.unscoped().filter(type=CONFIRM_SUBSCRIPTION_ACTION).first()
+        assert action is not None
+        confirm_sns_subscription(action.payload, action)
+
+        assert self._pinned(ses_connection) == payload["TopicArn"]
+
+    def test_a_later_confirmation_cannot_repoint_the_connection(
+        self, client: Client, ses_connection: ChannelConnection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Otherwise anyone reaching the webhook could rebind it to their topic."""
+        from apps.channels.providers import email_backends
+        from apps.channels.providers.email import _remember_topic
+        from apps.channels.tests.email_support import FakeSESClient
+
+        monkeypatch.setattr(email_backends, "ses_client", lambda *a, **k: FakeSESClient())
+        self._pin(ses_connection, "arn:aws:sns:eu-west-1:123456789012:ours")
+        _remember_topic(ses_connection, "arn:aws:sns:eu-west-1:999999999999:attacker")
+
+        assert self._pinned(ses_connection) == "arn:aws:sns:eu-west-1:123456789012:ours"
 
 
 class TestSubscriptionConfirmation:

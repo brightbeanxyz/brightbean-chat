@@ -53,10 +53,12 @@ from django.views.decorators.http import require_POST
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.models import ChannelConnection
 from apps.channels.providers import email_backends, email_html
+from apps.channels.providers.email import MAX_TOPIC_ARN_CHARS, compliance_headers
 from apps.channels.providers.exceptions import APIError
 from apps.channels.unsubscribe import unsubscribe_url
 from apps.common.addresses import normalize_email
 from apps.common.platforms import Platform
+from apps.common.ratelimit import hit, window_key
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
@@ -80,6 +82,15 @@ REJECTED_MESSAGES = {
         "key is allowed to use SES."
     ),
 }
+
+#: How many test emails one connection may send per window, and how long that
+#: window is. A test send puts a real message on the deployment's sending
+#: domain, so an unbounded button is a way for any workspace admin to spend the
+#: deployment's sending reputation — the recipient is fixed to the caller's own
+#: address, so this is abuse rather than spam, but it is not their reputation.
+#: Generous enough that an operator debugging a mail setup never notices.
+TEST_EMAIL_LIMIT = 10
+TEST_EMAIL_WINDOW_SECONDS = 60 * 10
 
 #: What a test send says. Fixed copy, because the point of the test is to prove
 #: the transport works, and anything configurable here would be one more thing
@@ -130,7 +141,17 @@ def _echoed(request: WorkspaceRequest) -> dict[str, str]:
         return {}
     return {
         name: (request.POST.get(name) or "").strip()
-        for name in ("display_name", "from_address", "from_name", "host", "port", "security", "username", "region")
+        for name in (
+            "display_name",
+            "from_address",
+            "from_name",
+            "host",
+            "port",
+            "security",
+            "username",
+            "region",
+            "topic_arn",
+        )
     }
 
 
@@ -197,7 +218,17 @@ def _credentials(request: WorkspaceRequest, provider: str, from_address: str) ->
         region = (request.POST.get("region") or "").strip().lower()
         if not key_id or not secret or not region:
             return "Enter the access key, the secret and the AWS region."
-        return {**common, "access_key_id": key_id, "secret_access_key": secret, "region": region}
+        return {
+            **common,
+            "access_key_id": key_id,
+            "secret_access_key": secret,
+            "region": region,
+            # Optional, and pinned from the first subscription confirmation when
+            # it is left blank. Set here it is enforced from the very first
+            # delivery — an AWS signature proves AWS sent a notification, not
+            # that this connection's topic did.
+            "topic_arn": (request.POST.get("topic_arn") or "").strip()[:MAX_TOPIC_ARN_CHARS],
+        }
 
     host = (request.POST.get("host") or "").strip()
     if not host:
@@ -244,6 +275,17 @@ def send_test_email(request: WorkspaceRequest, workspace_id: str, connection_id:
     if not recipient:
         return JsonResponse({"ok": False, "message": "Your account has no email address to send a test to."})
 
+    # Per connection rather than per user: the thing being protected is the
+    # sending domain's reputation, and that belongs to the connection.
+    if hit(
+        window_key("email_test", str(connection.pk), window_seconds=TEST_EMAIL_WINDOW_SECONDS),
+        limit=TEST_EMAIL_LIMIT,
+        window_seconds=TEST_EMAIL_WINDOW_SECONDS,
+    ):
+        return JsonResponse(
+            {"ok": False, "message": "Too many test emails for this channel just now. Try again shortly."}
+        )
+
     envelope = _test_envelope(connection, recipient)
     if not envelope.from_address:
         return JsonResponse({"ok": False, "message": "This connection has no from-address stored."})
@@ -273,9 +315,12 @@ def _test_envelope(connection: ChannelConnection, recipient: str) -> email_backe
     """
     credentials = email_backends.credentials_of(connection)
     from_address = str(credentials.get("from_address") or "")
-    html, text = email_html.with_unsubscribe_footer(
-        TEST_BODY, email_html.to_plain_text(TEST_BODY), _test_unsubscribe_link()
-    )
+    # Minted once. Two calls produced two independently signed tokens, so the
+    # header and the footer of one message could point at different URLs — the
+    # exact comparison an operator makes when a provider looks like it is
+    # mangling the header.
+    link = _test_unsubscribe_link()
+    html, text = email_html.with_unsubscribe_footer(TEST_BODY, email_html.to_plain_text(TEST_BODY), link)
     return email_backends.Envelope(
         to=recipient,
         subject=TEST_SUBJECT,
@@ -283,10 +328,10 @@ def _test_envelope(connection: ChannelConnection, recipient: str) -> email_backe
         text=text,
         from_address=from_address,
         from_name=str(credentials.get("from_name") or ""),
-        headers={
-            "List-Unsubscribe": f"<{_test_unsubscribe_link()}>",
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
+        # The adapter's own builder, not a second copy: this is the path an
+        # operator uses to confirm their provider preserves these headers, so it
+        # has to be sending the shape the product actually sends.
+        headers=compliance_headers(link),
         message_id=email_backends.new_message_id(from_address.partition("@")[2]),
     )
 

@@ -41,6 +41,9 @@ class Connection:
         }
         self.workspace_id = "ws"
         self.pk = "conn"
+        #: SPEC §5's sending domain, which is what a from-override is checked
+        #: against.
+        self.external_id = "sender.test"
 
 
 def envelope_for(message: OutboundMessage, **credentials: Any) -> Any:
@@ -152,6 +155,50 @@ class TestSanitizer:
     def test_sanitize(self, raw: str, expected: str) -> None:
         assert email_html.sanitize(raw) == expected
 
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            # The one that made this a bug rather than a nicety: html.parser
+            # reports `&b` as an entityref named "b" even with no semicolon
+            # after it, so re-emitting `f"&{name};"` invented a character and
+            # turned an ordinary query string into `&b;=2`.
+            ("<p>?a=1&b=2</p>", "<p>?a=1&amp;b=2</p>"),
+            ("<p>Tom & Jerry</p>", "<p>Tom &amp; Jerry</p>"),
+            ("<p>a &amp; b</p>", "<p>a &amp; b</p>"),
+            ("<p>5 &lt; 6</p>", "<p>5 &lt; 6</p>"),
+            ("<p>&#65;</p>", "<p>A</p>"),
+        ],
+        ids=["bare ampersand before a letter", "bare ampersand", "entity", "escaped lt", "charref"],
+    )
+    def test_ampersands_round_trip_without_gaining_characters(self, raw: str, expected: str) -> None:
+        assert email_html.sanitize(raw) == expected
+
+    def test_a_query_string_survives_linkifying(self) -> None:
+        """The button-downgrade path produces exactly this shape."""
+        cleaned = email_html.sanitize("<p>https://x.test/?a=1&b=2</p>")
+        assert 'href="https://x.test/?a=1&amp;b=2"' in cleaned
+        assert "&b;" not in cleaned
+
+    @pytest.mark.parametrize(
+        ("raw", "expected_href"),
+        [
+            ("See https://en.wikipedia.org/wiki/Foo_(bar) now", "https://en.wikipedia.org/wiki/Foo_(bar)"),
+            ("(see https://x.test/a).", "https://x.test/a"),
+            ("go to https://x.test/a.", "https://x.test/a"),
+            ("https://x.test/a?b=1!", "https://x.test/a?b=1"),
+        ],
+        ids=["balanced parens kept", "unbalanced paren dropped", "full stop", "exclamation"],
+    )
+    def test_linkify_balances_brackets(self, raw: str, expected_href: str) -> None:
+        """Stripping every trailing `)` broke the commonest URL shape there is."""
+        assert f'href="{expected_href}"' in email_html.sanitize(f"<p>{raw}</p>")
+
+    def test_a_self_closing_anchor_does_not_swallow_the_message(self) -> None:
+        """Parsers ignore the slash on a non-void tag, leaving the anchor open."""
+        cleaned = email_html.sanitize('<a href="https://evil.test"/>The rest of the email')
+        assert cleaned.endswith("The rest of the email")
+        assert "</a>The rest" in cleaned
+
     def test_a_link_gets_noopener_once(self) -> None:
         cleaned = email_html.sanitize('<a href="https://x.test" rel="opener">x</a>')
         assert cleaned.count("rel=") == 1
@@ -183,13 +230,30 @@ class TestHtmlInjectionViaPlaceholders:
 
 
 class TestComposition:
-    def test_the_from_override_wins_over_the_connection(self) -> None:
+    def test_a_from_override_on_the_sending_domain_wins(self) -> None:
         message = OutboundMessage(blocks=(TextBlock(text="<p>x</p>"),), subject="s", from_override="other@sender.test")
         assert envelope_for(message).from_address == "other@sender.test"
+
+    def test_a_from_override_on_another_domain_is_refused(self) -> None:
+        """`edit_flows` writes this config; `manage_channels` decides what the channel sends as.
+
+        The two are different permissions (`roles._ADMIN_ONLY_KEYS`), so an
+        Editor must not be able to pick a From address on a domain the channel
+        was never configured for.
+        """
+        message = OutboundMessage(blocks=(TextBlock(text="<p>x</p>"),), subject="s", from_override="ceo@bank.test")
+        assert envelope_for(message).from_address == "hello@sender.test"
 
     def test_a_malformed_from_override_falls_back(self) -> None:
         message = OutboundMessage(blocks=(TextBlock(text="<p>x</p>"),), subject="s", from_override="not an address")
         assert envelope_for(message).from_address == "hello@sender.test"
+
+    def test_the_recipient_is_normalised(self) -> None:
+        """The address mailed must be the one the suppression gate checked."""
+        connection = cast(Any, Connection())
+        identity = Identity("  Reader@Example.TEST  ")
+        envelope = compose(connection, identity, text_message("<p>x</p>"), unsubscribe_link=UNSUBSCRIBE)
+        assert envelope.to == "reader@example.test"
 
     def test_the_message_id_uses_the_sending_domain(self) -> None:
         assert envelope_for(text_message("<p>x</p>")).message_id.endswith("@sender.test>")

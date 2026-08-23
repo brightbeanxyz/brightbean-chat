@@ -146,6 +146,9 @@ export function RichTextEditor(props: FieldProps) {
   // this with the value made the effect below think it was already showing and
   // left the editor blank for every node that had a body already.
   const lastSent = useRef<string | null>(null);
+  //: The element `lastSent` describes. A contenteditable that has just been
+  //: mounted shows nothing whatever the value says.
+  const written = useRef<HTMLDivElement | null>(null);
 
   const push = useCallback(
     (next: string) => {
@@ -160,10 +163,16 @@ export function RichTextEditor(props: FieldProps) {
     if (!element || source) {
       return;
     }
-    if (html !== lastSent.current) {
-      // The value changed from outside — undo, or a different node selected.
+    // `element !== written.current` catches the remount. Leaving the source
+    // view destroys the old contenteditable div and mounts a fresh, empty one,
+    // and comparing values alone concluded it was already showing the body —
+    // so the editor came back blank and the next keystroke pushed that emptiness
+    // over the top of the real value. Tracking which element was written to is
+    // what tells "the value changed" apart from "the surface is new".
+    if (html !== lastSent.current || element !== written.current) {
       element.innerHTML = html;
       lastSent.current = html;
+      written.current = element;
     }
   }, [html, source]);
 
