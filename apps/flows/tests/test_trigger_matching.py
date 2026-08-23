@@ -252,13 +252,80 @@ class TestEligibleTriggers:
         assert default_reply_trigger_for(context).pk == wanted.pk
 
 
+@pytest.mark.django_db
+class TestStoryAndFollowTriggers:
+    """The three types that were stubs until #17 (L5-A) shipped Instagram.
+
+    Nothing here is Instagram-specific — that is the point. What the adapter adds
+    is a parser that emits ``story_mention``/``story_reply``/``follow`` events;
+    the deciding is these matchers, and they read only the normalised event.
+    """
+
+    @pytest.fixture
+    def ig(self, tenancy):
+        return connection_for(tenancy.workspace, platform=Platform.INSTAGRAM, external_id="ig-matching")
+
+    def test_a_story_mention_needs_no_configuration(self, tenancy, ig):
+        """SPEC §10 gives it no config at all: the event arriving is the match."""
+        trigger = _trigger(_flow(tenancy.workspace, "Mentions"), TriggerType.STORY_MENTION, {}, connection=ig)
+        found = match(_context(ig, kind=EventType.STORY_MENTION, user="ig-1"))
+        assert found is not None
+        assert found.trigger.pk == trigger.pk
+
+    def test_a_follow_needs_no_configuration(self, tenancy, ig):
+        trigger = _trigger(_flow(tenancy.workspace, "Followers"), TriggerType.FOLLOW, {}, connection=ig)
+        found = match(_context(ig, kind=EventType.FOLLOW, user="ig-1"))
+        assert found is not None
+        assert found.trigger.pk == trigger.pk
+
+    def test_a_story_reply_with_no_keywords_matches_everything(self, tenancy, ig):
+        """SPEC §10: "optional keywords"."""
+        trigger = _trigger(_flow(tenancy.workspace, "Replies"), TriggerType.STORY_REPLY, {}, connection=ig)
+        found = match(_context(ig, kind=EventType.STORY_REPLY, text="anything at all", user="ig-1"))
+        assert found is not None
+        assert found.trigger.pk == trigger.pk
+
+    def test_a_story_reply_with_keywords_matches_only_those(self, tenancy, ig):
+        config = {"keywords": [{"text": "link", "mode": "contains"}]}
+        _trigger(_flow(tenancy.workspace, "Replies"), TriggerType.STORY_REPLY, config, connection=ig)
+        assert match(_context(ig, kind=EventType.STORY_REPLY, text="send me the link", user="ig-1")) is not None
+        assert match(_context(ig, kind=EventType.STORY_REPLY, text="nice one", user="ig-1")) is None
+
+    def test_a_story_trigger_does_not_fire_on_an_ordinary_message(self, tenancy, ig):
+        """``EVENT_TRIGGER_TYPES`` is the filter: a message can never select one."""
+        _trigger(_flow(tenancy.workspace, "Replies"), TriggerType.STORY_REPLY, {}, connection=ig)
+        assert match(_context(ig, text="hello", user="ig-1")) is None
+
+    def test_an_unbound_story_trigger_only_fires_on_instagram(self, tenancy, connection):
+        """SPEC §10's Channels column, applied to a trigger bound to no connection."""
+        _trigger(_flow(tenancy.workspace, "Replies"), TriggerType.STORY_REPLY, {})
+        # ``connection`` is the shared Telegram one.
+        assert match(_context(connection, kind=EventType.STORY_REPLY, text="hi")) is None
+
+
 class TestTheRegistryItself:
     def test_the_stub_types_are_registered_and_decline(self):
         """A pin, like engine.registry.types_without_runtime(): a type leaving
-        this set is L5-A's deliberate act with a test to update, not a silent
-        behaviour change on somebody else's branch."""
-        assert {TriggerType.STORY_MENTION, TriggerType.STORY_REPLY, TriggerType.FOLLOW} == STUB_TYPES
+        this set is a deliberate act with a test to update, not a silent
+        behaviour change on somebody else's branch.
+
+        It is **empty** since #17 (L5-A) gave story_mention, story_reply and
+        follow real matchers. The assertion stays because the mechanism does: a
+        later type whose platform signal has not landed goes in here, and this
+        is where that has to be admitted.
+        """
+        assert frozenset() == STUB_TYPES
         assert set(registered_matchers()) >= STUB_TYPES
+
+    def test_every_event_driven_type_has_a_matcher(self):
+        """The other half of the same pin, and the one that has teeth now.
+
+        A type in ``EVENT_TRIGGER_TYPES`` with no matcher is silently unfireable:
+        :func:`match` skips it and the next candidate in priority order wins
+        instead, which looks exactly like a mis-configured trigger.
+        """
+        selectable = {value for types in EVENT_TRIGGER_TYPES.values() for value in types}
+        assert selectable <= set(registered_matchers())
 
     def test_api_has_no_matcher(self):
         """SPEC §10: fired only through the public flow-start endpoint."""

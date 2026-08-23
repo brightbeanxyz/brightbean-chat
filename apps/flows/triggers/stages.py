@@ -28,6 +28,7 @@ from apps.flows.engine import FlowNotRunnableError, start_flow
 from apps.flows.engine.waits import Consumed as ResumeConsumed
 from apps.flows.engine.waits import attempt_resume
 from apps.flows.models import ExecutionStatus, FlowExecution, StartedBy, Trigger, TriggerType
+from apps.flows.triggers import comments
 from apps.flows.triggers.context import RoutingContext
 from apps.flows.triggers.guards import claim_default_reply, may_claim_comment, record_comment
 from apps.flows.triggers.hooks import Consumed, HookOutcome, Passed, Stage, register_hook
@@ -112,11 +113,11 @@ def trigger_match(context: RoutingContext) -> HookOutcome:
 
     if context.contact is None:
         # A comment. The trigger matched, but there is nobody to run a flow for
-        # until a private reply opens a DM thread — L5-A and L5-B own that half.
-        # What *this* layer owes is the guard: claim the comment now, so a
-        # redelivery and a second comment from the same person on the same post
-        # are refused by the database rather than by a platform matcher nobody
-        # has written yet.
+        # until a private reply opens a DM thread, which only the platform's
+        # adapter can do. What *this* layer owes is the guard: claim the comment
+        # first, so a redelivery and a second comment from the same person on
+        # the same post are refused by the database rather than by whatever the
+        # adapter remembers to check.
         return _claim_comment(context, found.trigger)
 
     if not _start(context, found.trigger, found.variables):
@@ -195,9 +196,17 @@ def _claim_comment(context: RoutingContext, trigger: Trigger) -> HookOutcome:
     if row is None:
         return Passed("this comment is already handled")
 
-    # The row id is what L5-A's private reply picks up: it names the comment to
-    # answer, the trigger whose flow to run, and the deadline to answer inside.
+    # The row id is what the platform's private reply picks up: it names the
+    # comment to answer, the trigger whose flow to run, and the deadline to
+    # answer inside.
     context.notes["handled_comment_id"] = str(row.pk)
+    # ...and this is the hand-off itself. The claim is ours; posting a public
+    # reply and opening a DM thread are things only the platform's adapter can
+    # do, so they are called through the responder registry rather than being
+    # reimplemented per platform here (:mod:`apps.flows.triggers.comments`).
+    # It never raises: a responder that did would unwind the savepoint this
+    # claim was written in and hand the guard straight back.
+    comments.respond(context, trigger, row)
     return Consumed(f"{trigger.type} trigger, awaiting a contact")
 
 
