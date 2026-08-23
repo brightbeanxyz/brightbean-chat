@@ -396,6 +396,26 @@ WEBHOOK_SIGNATURE_BAN_SECONDS = env.int("WEBHOOK_SIGNATURE_BAN_SECONDS", default
 WEBHOOK_EVENT_LOG_RETENTION_DAYS = env.int("WEBHOOK_EVENT_LOG_RETENTION_DAYS", default=30)
 
 # ---------------------------------------------------------------------------
+# Outbound HTTP to user-supplied URLs (issue #15; SPEC §11.7, SECURITY-BASELINE §6)
+# ---------------------------------------------------------------------------
+# Consumed by apps.common.outbound.guarded_request, which is the ONLY path in
+# this project allowed to fetch a URL a user, flow author or contact supplied.
+#
+# The guard denies loopback, link-local (the cloud metadata service),
+# multicast, reserved and unspecified addresses, and the deployment's own host,
+# always. This flag relaxes the *private-range* rule alone (RFC1918,
+# fc00::/7), which an on-prem deployment whose partner services live on
+# 10.0.0.0/8 genuinely needs. Turning it on does not open loopback or the
+# metadata service — see apps/common/outbound.py for why the order of those
+# checks is load-bearing.
+EXTERNAL_REQUEST_ALLOW_PRIVATE = env.bool("EXTERNAL_REQUEST_ALLOW_PRIVATE", default=False)
+
+# How much of a response body the guard will read, with a streaming cutoff. A
+# flow variable is not a place to put a megabyte, and the request runs with the
+# contact's advisory lock held.
+EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = env.int("EXTERNAL_REQUEST_MAX_RESPONSE_BYTES", default=1024 * 1024)
+
+# ---------------------------------------------------------------------------
 # Deployment-level platform credentials — the bottom of the SPEC §4 chain
 # ---------------------------------------------------------------------------
 # PLATFORM_<PLATFORM>_<KEY> in the environment, e.g.

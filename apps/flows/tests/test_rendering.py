@@ -76,7 +76,7 @@ class TestSubstitution:
         assert render(template, ctx()) == ""
 
     def test_an_unknown_mode_is_a_programming_error(self):
-        with pytest.raises(ValueError, match="must be 'text' or 'html'"):
+        with pytest.raises(ValueError, match="mode must be one of"):
             render("x", ctx(), mode="markdown")
 
 
@@ -260,6 +260,51 @@ class TestContextForAContact:
 
     def test_no_contact_is_allowed(self):
         assert render("{{code}}", context_for(None, {"code": "9"})) == "9"
+
+
+class TestUrlMode:
+    """SPEC §11.7's External Request URL (L4-E).
+
+    The claim is narrow and worth stating exactly: a substituted value becomes
+    **one** URL component and cannot become a second one. Every character that
+    separates components — ``/``, ``?``, ``#``, ``&``, ``=``, ``:`` — is encoded
+    out of the value, and none of them is touched in the template.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("plain", "plain"),
+            ("../../admin", "..%2F..%2Fadmin"),
+            ("a?b=c", "a%3Fb%3Dc"),
+            ("a&b", "a%26b"),
+            ("a#frag", "a%23frag"),
+            ("host:8000", "host%3A8000"),
+            ("with space", "with%20space"),
+            ("a+b", "a%2Bb"),
+            ("Grüße", "Gr%C3%BC%C3%9Fe"),
+            ("@evil.test", "%40evil.test"),
+        ],
+    )
+    def test_a_value_becomes_one_component(self, value, expected):
+        rendered = render("https://api.test/x/{{first_name}}", ctx(system={"first_name": value}), mode="url")
+        assert rendered == f"https://api.test/x/{expected}"
+
+    def test_the_template_itself_is_left_alone(self):
+        """Encoding the template would percent-encode the ``://`` out of the address."""
+        template = "https://api.test/orders?id={{first_name}}&format=json"
+        rendered = render(template, ctx(system={"first_name": "42"}), mode="url")
+        assert rendered == "https://api.test/orders?id=42&format=json"
+
+    @pytest.mark.parametrize("hostile", HOSTILE_VALUES)
+    def test_no_hostile_value_survives_as_url_syntax(self, hostile):
+        rendered = render("https://api.test/{{first_name}}", ctx(system={"first_name": hostile}), mode="url")
+        assert rendered.startswith("https://api.test/")
+        for character in ("/", "?", "#", "&", ":", "@"):
+            assert character not in rendered[len("https://api.test/") :]
+
+    def test_an_unknown_token_still_renders_empty(self):
+        assert render("https://api.test/{{nope}}", ctx(), mode="url") == "https://api.test/"
 
 
 class TestRenderJson:

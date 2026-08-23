@@ -27,6 +27,7 @@ from django.conf import settings
 from django.http import HttpRequest
 from django.utils import timezone
 
+from apps.common.jsonlimits import DEFAULT_MAX_JSON_DEPTH, max_json_depth
 from apps.common.net import get_client_ip
 from apps.common.ratelimit import RateLimitCounter, hit, window_key
 
@@ -55,9 +56,9 @@ __all__ = [
 # unauthenticated caller from making the process allocate megabytes per request.
 DEFAULT_MAX_BODY_BYTES = 256 * 1024
 
-#: Nesting past this is a bomb, not a payload. Meta's deepest real structure is
-#: about six levels.
-DEFAULT_MAX_JSON_DEPTH = 20
+#: Nesting past this is a bomb, not a payload. Re-exported from
+#: :mod:`apps.common.jsonlimits`, where it sits beside the scanner so the
+#: outbound guard (#15) can share both rather than growing a second copy.
 
 #: How many signature failures from one source before it is banned, and for how
 #: long. Small: a legitimate platform never fails a signature check, so any
@@ -240,38 +241,6 @@ def verify_signature_header(
 
 
 # --- 4. shape ---------------------------------------------------------------
-
-
-def max_json_depth(raw: bytes) -> int:
-    """Deepest bracket nesting in ``raw``, without parsing it.
-
-    A linear scan over bytes, string-aware so a ``{`` inside a quoted value does
-    not count. Deliberately done **before** ``json.loads``: Python's parser
-    recurses, and a deeply nested document is a stack overflow — a crash, not an
-    exception you can catch reliably — so the cap has to apply to the input
-    rather than to the result.
-    """
-    depth = 0
-    deepest = 0
-    in_string = False
-    escaped = False
-    for byte in raw:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif byte == 0x5C:  # backslash
-                escaped = True
-            elif byte == 0x22:  # closing quote
-                in_string = False
-            continue
-        if byte == 0x22:
-            in_string = True
-        elif byte in (0x7B, 0x5B):  # { [
-            depth += 1
-            deepest = max(deepest, depth)
-        elif byte in (0x7D, 0x5D):  # } ]
-            depth -= 1
-    return deepest
 
 
 def scrub_nulls(value: Any) -> Any:

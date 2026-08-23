@@ -183,7 +183,7 @@ def node_runtime(
             register_node(original, replace=True)
         else:
             # No runtime to put back: the type is one a later PR or layer owns
-            # (send_message until #9's PR 2, external_request until L4-E), so
+            # (send_message until #9's PR 2, send_sms until L5-D), so
             # leaving the stub would tell the next test module this deployment
             # implements it.
             unregister_node(node_type)
