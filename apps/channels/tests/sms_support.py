@@ -90,9 +90,19 @@ class Reply:
 
 @dataclass
 class FakeTwilio:
-    """A recording fake. ``calls`` is ``(method, path, form)`` in order sent."""
+    """A recording fake. ``calls`` is ``(method, path, form)`` in order sent.
+
+    ``queries`` records the **query string** of each call alongside it, keyed the
+    same way ``forms`` is. Without it nothing could tell whether
+    ``fetch_number`` actually sends ``PhoneNumber`` — and a version that dropped
+    the parameter would still pass the ownership tests, because the canned reply
+    is keyed on the path alone and Twilio would have answered with the account's
+    first number for any input.
+    """
 
     calls: list[tuple[str, str, dict[str, list[str]]]] = field(default_factory=list)
+    #: ``(path, {param: value})`` per call, in order.
+    queries: list[tuple[str, dict[str, str]]] = field(default_factory=list)
     #: Keyed on the last path segment, e.g. ``Messages.json``.
     replies: dict[str, Reply] = field(default_factory=dict)
     default: Reply = field(default_factory=lambda: Reply({"sid": "SM00000000000000000000000000000001"}))
@@ -107,6 +117,10 @@ class FakeTwilio:
         """The form bodies posted to ``resource``, in order."""
         return [form for _method, path, form in self.calls if path.rsplit("/", 1)[-1] == resource]
 
+    def params(self, resource: str) -> list[dict[str, str]]:
+        """The query parameters sent to ``resource``, in order."""
+        return [query for path, query in self.queries if path.rsplit("/", 1)[-1] == resource]
+
     def handle(self, request: httpx.Request) -> httpx.Response:
         form: dict[str, list[str]] = {}
         if request.content:
@@ -116,6 +130,7 @@ class FakeTwilio:
                 key, _, value = pair.partition("=")
                 form.setdefault(unquote_plus(key), []).append(unquote_plus(value))
         self.calls.append((request.method, request.url.path, form))
+        self.queries.append((request.url.path, dict(request.url.params)))
         self.authorizations.append(request.headers.get("authorization", ""))
         resource = request.url.path.rsplit("/", 1)[-1]
         return self.replies.get(resource, self.default).response()

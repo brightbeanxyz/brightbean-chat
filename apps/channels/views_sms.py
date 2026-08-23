@@ -27,6 +27,7 @@ Three routes:
 """
 
 import logging
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -68,6 +69,20 @@ SENDER_MESSAGE = (
     "Those credentials work, but that account does not hold that number or messaging service. "
     "Check the number is in E.164 form (+15551234567), or paste the messaging service SID (MG…)."
 )
+
+#: Twilio's own identifier shapes, checked before either is interpolated into a
+#: request path. Without this an operator string containing ``/``, ``..`` or
+#: ``?`` re-points the validation call at a different resource on the Twilio
+#: host and can store a connection whose send URL is wrong (SECURITY-BASELINE
+#: §7). ``views_telegram.BOT_USERNAME`` sets the precedent: check the shape
+#: before building a URL out of it.
+ACCOUNT_SID_PATTERN = re.compile(r"^AC[0-9a-fA-F]{32}$")
+MESSAGING_SERVICE_PATTERN = re.compile(r"^MG[0-9a-fA-F]{32}$")
+
+#: E.164: a leading ``+`` and up to fifteen digits, first one non-zero. Twilio
+#: rejects anything else outright, so refusing it here only moves the error
+#: earlier — and keeps the value out of a query string in the meantime.
+E164_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
 
 #: The longest a settings field may be. Generous — a HELP reply has to fit a
 #: segment or two, not a page — and the point is that it is bounded at all
@@ -144,6 +159,18 @@ def _connect(
         # ``MessagingServiceSid`` and refuses both, so a row holding both would
         # be a connection whose every send is rejected.
         return "Give either a from-number or a messaging service SID — not both, and not neither."
+
+    # Shape-checked before any of these reaches a URL. Both SIDs are
+    # interpolated into request paths — by ``sms._account_url`` and
+    # ``sms.fetch_messaging_service`` — and the number goes into a query
+    # string, so this is the boundary where an operator typo stops being a
+    # confusing 404 and a hostile string stops being a re-pointed request.
+    if not ACCOUNT_SID_PATTERN.match(account_sid):
+        return "That does not look like an Account SID. It starts with AC and is 34 characters long."
+    if messaging_service_sid and not MESSAGING_SERVICE_PATTERN.match(messaging_service_sid):
+        return "That does not look like a Messaging Service SID. It starts with MG and is 34 characters long."
+    if from_number and not E164_PATTERN.match(from_number):
+        return "Give the number in E.164 form, with the country code and no spaces: +15551234567."
 
     try:
         sms.fetch_account(account_sid, token)
@@ -228,12 +255,57 @@ def sms_settings_update(request: WorkspaceRequest, workspace_id: str) -> HttpRes
     row.help_text_body = (request.POST.get("help_text_body") or "").strip()[:MAX_SETTINGS_CHARS]
     row.opt_out_confirmation = (request.POST.get("opt_out_confirmation") or "").strip()[:MAX_SETTINGS_CHARS]
     row.opt_in_confirmation = (request.POST.get("opt_in_confirmation") or "").strip()[:MAX_SETTINGS_CHARS]
-    row.per_segment_cost = _cost(request.POST.get("per_segment_cost"))
     row.a2p_brand_registered = bool(request.POST.get("a2p_brand_registered"))
     row.a2p_campaign_approved = bool(request.POST.get("a2p_campaign_approved"))
-    row.save()
-    messages.success(request, "SMS settings saved.")
+
+    cost, cost_ok = _cost(request.POST.get("per_segment_cost"))
+    if cost_ok:
+        row.per_segment_cost = cost
+    # else: the previous price stands. Overwriting it with None would be a
+    # typo silently deleting a stored value under a "saved" message.
+
+    _save_settings(row)
+    if cost_ok:
+        messages.success(request, "SMS settings saved.")
+    else:
+        messages.warning(
+            request,
+            "SMS settings saved, but the price per segment was not a number "
+            f"between 0 and {MAX_SEGMENT_COST} and was left unchanged.",
+        )
     return redirect(reverse("channels:sms_settings", kwargs={"workspace_id": workspace_id}))
+
+
+def _save_settings(row: SmsSettings) -> None:
+    """Save, tolerating another request having created the row first.
+
+    ``SmsSettings`` is unique per workspace and :func:`_settings_row` hands back
+    an *unsaved* instance when there is none yet, so two admins submitting this
+    page at the same moment both insert and the loser hits the constraint. The
+    savepoint is what keeps that ``IntegrityError`` from poisoning the rest of
+    the request — the same call ``views.connection_create`` and :func:`_connect`
+    make — and the retry re-reads the winner's row and applies this submission
+    on top, because the operator pressed Save and is owed the write rather than
+    a 500.
+    """
+    try:
+        with transaction.atomic():
+            row.save()
+        return
+    except IntegrityError:
+        logger.info("SMS settings for workspace %s were created concurrently; re-applying.", row.workspace_id)
+
+    winner = SmsSettings.objects.for_workspace(row.workspace_id).get()
+    for field in (
+        "help_text_body",
+        "opt_out_confirmation",
+        "opt_in_confirmation",
+        "per_segment_cost",
+        "a2p_brand_registered",
+        "a2p_campaign_approved",
+    ):
+        setattr(winner, field, getattr(row, field))
+    winner.save()
 
 
 @login_required
@@ -297,24 +369,55 @@ def _settings_row(request: WorkspaceRequest) -> SmsSettings:
     return row or SmsSettings(workspace=request.workspace)
 
 
-def _cost(raw: Any) -> Decimal | None:
-    """A per-segment price, or None for "not set".
+#: What the column can hold: ``max_digits=8, decimal_places=5`` leaves three
+#: digits before the point, so the largest storable value is 999.99999.
+MAX_SEGMENT_COST = Decimal("999.99999")
 
-    None rather than zero for an unparseable value: a blank field and a typo
-    both mean "we do not know what this costs", and rendering an estimate of
-    0.00 would be a confident wrong answer. Negative prices are refused for the
-    same reason.
+#: The precision the column stores at.
+COST_PRECISION = Decimal("0.00001")
+
+
+def _cost(raw: Any) -> tuple[Decimal | None, bool]:
+    """``(price, ok)`` for the submitted cost field.
+
+    Two outcomes have to be told apart, which is why this returns a pair rather
+    than an optional. A **blank** field means "clear it" and is a legitimate
+    edit; an **unparseable** one means the operator mistyped, and silently
+    storing None there would wipe a price they had already set and report
+    success — so ``ok=False`` sends the caller down an error path instead.
+
+    Three rejections, each of which used to be a 500:
+
+    ``NaN``
+        ``Decimal("NaN")`` parses *successfully*, so the ``except`` below never
+        sees it — and every ordering comparison against a NaN then signals
+        ``InvalidOperation``. ``is_finite()`` is checked before any comparison
+        for exactly that reason; ``Infinity`` compares fine but is equally not a
+        price.
+    a value that rounds over the ceiling
+        Quantizing happens **before** the bound is checked. The other order let
+        ``999.999999`` — genuinely below 1000 — round half-even up to
+        ``1000.00000``, nine significant digits against the column's eight, and
+        the ``DataError`` surfaced as a 500 at save time.
+    a negative price
+        Not a price.
     """
     text = (raw or "").strip() if isinstance(raw, str) else ""
     if not text:
-        return None
+        return None, True
     try:
         value = Decimal(text)
     except (InvalidOperation, ValueError):
-        return None
-    if value < 0 or value >= Decimal("1000"):
-        # max_digits=8, decimal_places=5 leaves three digits before the point;
-        # a larger value would be refused by the column as a 500 rather than as
-        # the "we do not know" this returns.
-        return None
-    return value.quantize(Decimal("0.00001"))
+        return None, False
+    # Before any comparison: ordering against a NaN raises rather than answering.
+    if not value.is_finite():
+        return None, False
+    # Quantize first, then bound-check what will actually be stored.
+    try:
+        rounded = value.quantize(COST_PRECISION)
+    except InvalidOperation:
+        # The value has more integer digits than the context can represent.
+        return None, False
+    if rounded < 0 or rounded > MAX_SEGMENT_COST:
+        return None, False
+    return rounded, True

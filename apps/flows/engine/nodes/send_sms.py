@@ -67,7 +67,14 @@ class SendSmsNode(Node):
         # is either a draft or a placeholder that rendered to nothing, and
         # Twilio would charge a segment for delivering it.
         text = ctx.render(ctx.config.get("text")).strip()
-        media_url = ctx.render(ctx.config.get("media_url")).strip()
+        # ``mode="url"`` percent-encodes each *substituted value*, never the
+        # template, so ``https://cdn.example/{{first_name}}.jpg`` keeps its shape
+        # while a contact called ``../private/secret`` becomes a path segment
+        # rather than a path traversal. Twilio fetches this URL server-side, so
+        # the encoding is the difference between a placeholder and an injection
+        # point (SECURITY-BASELINE §3); ``external_request`` renders its URL the
+        # same way and for the same reason.
+        media_url = ctx.render(ctx.config.get("media_url"), mode="url").strip()
         if not text and not media_url:
             # The schema requires ``text``, so this is a draft, a hand-edited
             # graph, or a placeholder that rendered empty. The error handle is
@@ -157,6 +164,15 @@ def _sms_identity(ctx: NodeContext, connection: Any) -> Any:
     nothing truthful to put there — and fabricating one would route straight
     past the compliance engine's ``no_opt_in`` rule. A contact with no SMS
     identity follows the ``error`` handle, which is what SPEC §11.9 asks for.
+
+    **This duplicates a check ``send_outbound`` also makes**, and the extra query
+    buys something specific: the facade answers "no identity" by opening a
+    conversation and writing a ``failed`` message row into it. For a node that
+    can legitimately run against contacts who have never given a phone number —
+    a flow that texts whoever it can and carries on — that would file an empty
+    SMS thread in the inbox for every one of them. Checking first keeps the
+    ``error`` handle free of that side effect. The facade's own check stays as
+    the authority; this is a pre-filter, not a second opinion.
 
     A *pending* identity — captured before any SMS connection existed, so
     ``channel_connection`` is NULL — counts, because contract 1 upgrades exactly

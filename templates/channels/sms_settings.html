@@ -47,24 +47,6 @@
     </p>
 
     <h2>Cost hint</h2>
-    <p class="muted">
-      Try a message here to see what it will cost to send. The same counter runs
-      in the Send SMS panel and in the broadcast composer.
-    </p>
-    <p>
-      {% comment %}
-      Its own field, named `text`, and hx-params scopes the POST to it: the
-      preview endpoint counts one message body and has no business receiving the
-      rest of this form. hx-post rather than hx-get keeps draft message text out
-      of URLs and access logs.
-      {% endcomment %}
-      <label for="segment_preview">Segment preview</label><br />
-      <textarea id="segment_preview" name="text" rows="2" maxlength="1600"
-                hx-post="{{ preview_url }}" hx-trigger="keyup changed delay:400ms"
-                hx-params="text" hx-target="#segment-preview-output"></textarea><br />
-      <span id="segment-preview-output"></span>
-    </p>
-
     <p>
       <label for="per_segment_cost">Price per segment</label><br />
       <input type="text" id="per_segment_cost" name="per_segment_cost" inputmode="decimal"
@@ -98,6 +80,26 @@
 
     <button type="submit">Save</button>
   </form>
+
+  {% comment %}
+  Outside the form above, deliberately. This field is named `text` for the
+  preview endpoint, and while `hx-params` scopes the HTMX request correctly, a
+  field nested in the settings form would still be posted to the save URL and
+  would submit the whole page when someone pressed Enter in it. hx-post rather
+  than hx-get keeps draft message text out of URLs and access logs.
+  {% endcomment %}
+  <h2>Segment preview</h2>
+  <p class="muted">
+    Try a message here to see what it will cost to send. The same counter runs in
+    the Send SMS panel and in the broadcast composer.
+  </p>
+  <p>
+    <label for="segment_preview">Message</label><br />
+    <textarea id="segment_preview" name="text" rows="2" maxlength="1600"
+              hx-post="{{ preview_url }}" hx-trigger="keyup changed delay:400ms"
+              hx-params="text" hx-target="#segment-preview-output"></textarea><br />
+    <span id="segment-preview-output"></span>
+  </p>
 
   <p><a href="{{ list_url }}">Back to channels</a></p>
 {% endblock %}

@@ -202,6 +202,26 @@ class TestSignature:
 
         assert TwilioAdapter().verify_webhook(request, connection) is True
 
+    @pytest.mark.parametrize("host", ["évil.example", "mail.ｅxample.com", "host_with_underscore\u0131"])
+    def test_a_non_ascii_forwarded_host_is_refused(self, connection: ChannelConnection, host: str) -> None:
+        """``isalnum()`` alone is true for every Unicode letter and digit, so
+        the allowlist read as ASCII-only and was not. Even from a trusted peer,
+        a homograph host must not become a candidate URL."""
+        params = load_payload("inbound_text")
+        forged = f"https://{host}" + webhook_path(connection)
+
+        with override_settings(TRUSTED_PROXIES=["10.0.0.0/8"], APP_URL="https://not-the-one-twilio-has"):
+            request = request_for(
+                connection,
+                params,
+                signature=signature_for(params, url=forged),
+                HTTP_X_FORWARDED_HOST=host,
+                HTTP_X_FORWARDED_PROTO="https",
+                REMOTE_ADDR="10.1.2.3",
+            )
+
+            assert TwilioAdapter().verify_webhook(request, connection) is False
+
     def test_the_header_name_is_the_documented_one(self) -> None:
         assert SIGNATURE_HEADER == "X-Twilio-Signature"
 
@@ -248,13 +268,44 @@ class TestInboundMessages:
 
 class TestOptOutClassification:
     @pytest.mark.parametrize(
-        "word", ["STOP", "stop", " Stop ", "STOP.", "unsubscribe", "CANCEL", "End", "quit", "stopall"]
+        "word",
+        [
+            "STOP",
+            "stop",
+            " Stop ",
+            "STOP.",
+            "STOP!",
+            # ``strip(punctuation)`` halts on the space it exposes, so this one
+            # used to come back as "stop " and match nothing.
+            "STOP .",
+            "STOP !",
+            '"STOP"',
+            "unsubscribe",
+            "CANCEL",
+            "End",
+            "quit",
+            "stopall",
+        ],
     )
     def test_a_keyword_becomes_an_opt_out_event(self, connection: ChannelConnection, word: str) -> None:
         """The whole of the adapter's opt-out job (ROADMAP contract 3)."""
-        (event,) = parse(connection, {**load_payload("inbound_text"), "Body": word})
+        events = parse(connection, {**load_payload("inbound_text"), "Body": word})
 
-        assert event.type == EventType.OPT_OUT
+        assert [event.type for event in events] == [EventType.MESSAGE, EventType.OPT_OUT]
+
+    def test_a_stop_is_a_thread_message_as_well_as_an_opt_out(self, connection: ChannelConnection) -> None:
+        """``ingest`` writes no message row for an opt-out, so without the
+        message half the conversation would show our confirmation and nothing
+        the contact said."""
+        message, opt_out = parse(connection, load_payload("inbound_stop"))
+
+        assert message.type == EventType.MESSAGE
+        assert message.payload.text.strip() == "Stop."
+        assert opt_out.type == EventType.OPT_OUT
+        # Distinct ids, or the event log's unique (connection, provider_event_id)
+        # would drop the second as a duplicate delivery.
+        assert message.provider_event_id != opt_out.provider_event_id
+        assert opt_out.provider_event_id.endswith(message.provider_event_id)
 
     @pytest.mark.parametrize(
         "text",
@@ -276,9 +327,7 @@ class TestOptOutClassification:
         assert event.type == EventType.MESSAGE
 
     def test_the_recorded_stop_fixture_is_an_opt_out(self, connection: ChannelConnection) -> None:
-        (event,) = parse(connection, load_payload("inbound_stop"))
-
-        assert event.type == EventType.OPT_OUT
+        assert EventType.OPT_OUT in [event.type for event in parse(connection, load_payload("inbound_stop"))]
 
     def test_help_is_an_ordinary_message_at_this_layer(self, connection: ChannelConnection) -> None:
         """HELP has no event type of its own — the hook reads the text. Making

@@ -382,6 +382,20 @@ class TestNoThrottle:
         }
         assert "sleep" not in called
 
+    def test_the_client_is_pooled_across_calls(self) -> None:
+        """``request_json`` closes a client it created itself, so returning None
+        would mean a fresh TCP connection and TLS handshake per call — paid on
+        every message, on every part of a split one, and on the STOP/HELP
+        confirmation that goes out inside the webhook request against SPEC
+        §7.1's 1.5 s budget. ``telegram._client`` pools for the same reason."""
+        from apps.channels.providers import sms as sms_module
+
+        first = sms_module._client()
+        second = sms_module._client()
+
+        assert first is not None
+        assert first is second
+
     def test_the_policy_row_carries_twilios_long_code_rate(self) -> None:
         from apps.channels.policy import policy_for
 

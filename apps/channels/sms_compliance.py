@@ -61,13 +61,8 @@ import logging
 from typing import Any
 
 from apps.channels.events import EventType
-from apps.channels.models import (
-    DEFAULT_HELP_TEXT,
-    DEFAULT_OPT_IN_TEXT,
-    DEFAULT_OPT_OUT_TEXT,
-    SmsSettings,
-)
-from apps.channels.providers.sms import HELP_KEYWORDS, OPT_IN_KEYWORDS, keyword
+from apps.channels.models import SmsSettings
+from apps.channels.providers.sms import HELP_KEYWORDS, OPT_IN_KEYWORDS, OPT_OUT_KEYWORDS, keyword
 from apps.common.platforms import Platform
 from apps.flows.triggers.hooks import Consumed, HookOutcome, Passed, Stage, register_hook
 
@@ -129,6 +124,17 @@ def sms_keywords(context: Any) -> HookOutcome:
         return Passed()
 
     word = keyword(getattr(event.payload, "text", "") or "")
+    if word in OPT_OUT_KEYWORDS:
+        # The message half of a STOP. The adapter emits it so the contact's own
+        # words land in the thread (``providers.sms._inbound`` explains why),
+        # and the opt-out half beside it is what suppresses the identity and
+        # carries the confirmation — so there is nothing to *do* here, only
+        # something to stop. Consuming it keeps it away from trigger matching,
+        # where a keyword trigger on "STOP" would start a flow at somebody who
+        # just unsubscribed. ``stages.opt_out_event`` does the same job for the
+        # opt-out half; this is the other end of that guarantee.
+        return Consumed("sms opt-out")
+
     if word in HELP_KEYWORDS:
         _reply(context, "help", _settings_for(connection).help_reply)
         return Consumed("sms help")
@@ -146,20 +152,19 @@ def _settings_for(connection: Any) -> SmsSettings:
 
     Unsaved rather than created on demand: the reply has to go out whether or not
     anybody has visited the settings page, and a hook that wrote a row would be a
-    write on the inbound path for a workspace that changed nothing. The three
-    ``*_reply`` properties fall back to the module defaults on their own, so an
-    empty instance is a complete answer.
+    write on the inbound path for a workspace that changed nothing.
+
+    A **bare** instance, with no fields set. ``help_reply`` and its two siblings
+    are already ``self.<field>.strip() or DEFAULT_…``, so passing the defaults in
+    here would put the same fallback in two places — and the one that drifts is
+    always the copy.
     """
     try:
         existing = SmsSettings.objects.for_workspace(connection.workspace_id).first()
     except Exception:
         logger.exception("SMS: could not read the settings for workspace %s.", connection.workspace_id)
         existing = None
-    return existing or SmsSettings(
-        help_text_body=DEFAULT_HELP_TEXT,
-        opt_out_confirmation=DEFAULT_OPT_OUT_TEXT,
-        opt_in_confirmation=DEFAULT_OPT_IN_TEXT,
-    )
+    return existing or SmsSettings()
 
 
 def _resubscribe(context: Any) -> None:

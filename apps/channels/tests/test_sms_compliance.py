@@ -182,6 +182,36 @@ class TestStop:
         assert confirmation.status == MessageStatus.SENT
         assert confirmation.error == ""
 
+    def test_the_contacts_stop_lands_in_the_thread(
+        self, client: Any, connection: ChannelConnection, twilio: FakeTwilio
+    ) -> None:
+        """``ingest`` writes no message row for an opt-out and returns early, so
+        without the adapter also emitting the message half an agent opening the
+        conversation saw our confirmation with nothing above it explaining why.
+        """
+        signed_post(client, connection, load_payload("inbound_stop"))
+
+        inbound = Message.objects.for_workspace(connection.workspace_id).filter(direction=MessageDirection.IN)
+        assert inbound.count() == 1
+        assert inbound.get().body["blocks"][0]["text"].strip() == "Stop."
+
+    def test_the_stop_message_still_never_starts_a_flow(
+        self, client: Any, connection: ChannelConnection, twilio: FakeTwilio, tenancy: Tenancy
+    ) -> None:
+        """The message half reaches the routing stages like any other, so the
+        hook has to consume it — otherwise putting the STOP in the thread would
+        have re-opened the exact hole ``stages.opt_out_event`` closes."""
+        flow = _published_flow(tenancy, "Stop flow", "You said stop")
+        _keyword_trigger(flow, "stop")
+        _keyword_trigger(_published_flow(tenancy, "Catch-all", "Hello there"), "sto")
+
+        signed_post(client, connection, load_payload("inbound_stop"))
+
+        from apps.flows.models import FlowExecution
+
+        assert not FlowExecution.objects.for_workspace(tenancy.workspace).exists()
+        assert outbound_bodies(connection) == [DEFAULT_OPT_OUT_TEXT]
+
     def test_a_later_send_is_blocked(self, client: Any, connection: ChannelConnection, twilio: FakeTwilio) -> None:
         from apps.channels.events import OutboundMessage, TextBlock
         from apps.messaging.services import send_outbound

@@ -105,6 +105,19 @@ class TestConnect:
         # does not work.
         assert fake.forms("IncomingPhoneNumbers.json") == []
 
+    def test_the_number_lookup_actually_filters_by_the_number(self, client: Client, tenancy: Tenancy) -> None:
+        """Without this the ownership check is decorative: Twilio would answer
+        with the account's *first* number for any input, and the refusal test
+        below would still pass because the fake is keyed on the path alone."""
+        with fake_twilio(happy_twilio()) as fake:
+            as_admin(client, tenancy).post(
+                url_for("sms_connect", tenancy),
+                {"account_sid": ACCOUNT_SID, "auth_token": AUTH_TOKEN, "from_number": FROM_NUMBER},
+            )
+
+        (query,) = fake.params("IncomingPhoneNumbers.json")
+        assert query["PhoneNumber"] == FROM_NUMBER
+
     def test_a_number_the_account_does_not_hold_is_refused(self, client: Client, tenancy: Tenancy) -> None:
         """Otherwise the connection fails on its first send, days later, in production."""
         fake = happy_twilio()
@@ -177,6 +190,38 @@ class TestConnect:
         body = response.content.decode()
         assert "already connected to this deployment" in body
         assert other_tenancy.workspace.name not in body
+
+    @pytest.mark.parametrize(
+        ("field", "value", "expected"),
+        [
+            ("account_sid", "not-a-sid", "does not look like an Account SID"),
+            ("account_sid", "AC" + "z" * 32, "does not look like an Account SID"),
+            # The shape that mattered: a value carrying path syntax would be
+            # interpolated into a request URL by ``sms._account_url``.
+            ("account_sid", "AC" + "0" * 32 + "/../../other", "does not look like an Account SID"),
+            ("messaging_service_sid", "MG../../Accounts", "does not look like a Messaging Service SID"),
+            ("messaging_service_sid", "MG" + "0" * 31, "does not look like a Messaging Service SID"),
+            ("from_number", "555-1234", "E.164 form"),
+            ("from_number", "+0155512345", "E.164 form"),
+            ("from_number", "15551234567", "E.164 form"),
+        ],
+    )
+    def test_a_malformed_identifier_is_refused_before_twilio_is_called(
+        self, client: Client, tenancy: Tenancy, field: str, value: str, expected: str
+    ) -> None:
+        """SECURITY-BASELINE §7. Both SIDs reach a request path and the number
+        reaches a query string, so the shape check belongs before the call."""
+        payload = {"account_sid": ACCOUNT_SID, "auth_token": AUTH_TOKEN, "from_number": FROM_NUMBER}
+        if field == "messaging_service_sid":
+            payload.pop("from_number")
+        payload[field] = value
+
+        with fake_twilio(happy_twilio()) as fake:
+            response = as_admin(client, tenancy).post(url_for("sms_connect", tenancy), payload)
+
+        assert expected in response.content.decode()
+        assert fake.calls == []
+        assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
 
     def test_the_page_never_echoes_the_token_back(self, client: Client, tenancy: Tenancy) -> None:
         fake = happy_twilio()
@@ -312,13 +357,103 @@ class TestSettings:
 
         assert SmsSettings.objects.for_workspace(tenancy.workspace).get().help_reply == DEFAULT_HELP_TEXT
 
-    @pytest.mark.parametrize("value", ["", "  ", "free", "-1", "1e999", "10000"])
-    def test_an_unusable_price_is_stored_as_not_set(self, client: Client, tenancy: Tenancy, value: str) -> None:
-        """None rather than zero: a blank field and a typo both mean "we do not
-        know what this costs", and 0.00 would be a confident wrong answer."""
-        as_admin(client, tenancy).post(url_for("sms_settings_update", tenancy), {"per_segment_cost": value})
+    @pytest.mark.parametrize("value", ["", "  "])
+    def test_a_blank_price_clears_it(self, client: Client, tenancy: Tenancy, value: str) -> None:
+        """Blank is a legitimate edit: the operator is saying "I do not know"."""
+        SmsSettings.objects.create(workspace=tenancy.workspace, per_segment_cost="0.0079")
+
+        response = as_admin(client, tenancy).post(
+            url_for("sms_settings_update", tenancy), {"per_segment_cost": value}, follow=True
+        )
 
         assert SmsSettings.objects.for_workspace(tenancy.workspace).get().per_segment_cost is None
+        assert "was not a number" not in response.content.decode()
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "free",
+            "-1",
+            "0,0079",
+            # Parses as a Decimal, so the try/except never sees it — and every
+            # ordering comparison against a NaN then signals InvalidOperation.
+            "NaN",
+            "nan",
+            "-NaN",
+            "sNaN",
+            "Infinity",
+            "-Infinity",
+            "10000",
+            "1e999",
+            # Below the 1000 ceiling, but rounds up to nine significant digits
+            # against a max_digits=8 column.
+            "999.999999",
+            "999.999995",
+        ],
+    )
+    def test_an_unusable_price_is_refused_without_a_500(self, client: Client, tenancy: Tenancy, value: str) -> None:
+        """Every one of these used to be a 500 or a silent wipe.
+
+        ``NaN`` raised ``InvalidOperation`` out of the view from the ``value < 0``
+        comparison, and ``999.999999`` reached ``save()`` as ``1000.00000`` and
+        raised ``DataError`` from psycopg. Both now come back as a warning.
+        """
+        response = as_admin(client, tenancy).post(
+            url_for("sms_settings_update", tenancy), {"per_segment_cost": value}, follow=True
+        )
+
+        assert response.status_code == 200
+        assert "was not a number" in response.content.decode()
+        assert SmsSettings.objects.for_workspace(tenancy.workspace).get().per_segment_cost is None
+
+    def test_a_typo_leaves_the_stored_price_alone(self, client: Client, tenancy: Tenancy) -> None:
+        """Silently replacing it with None under a "saved" message is how a
+        stored value disappears without anybody noticing."""
+        SmsSettings.objects.create(workspace=tenancy.workspace, per_segment_cost="0.0079")
+
+        response = as_admin(client, tenancy).post(
+            url_for("sms_settings_update", tenancy),
+            {"per_segment_cost": "0,0079", "help_text_body": "Acme support."},
+            follow=True,
+        )
+
+        row = SmsSettings.objects.for_workspace(tenancy.workspace).get()
+        assert str(row.per_segment_cost) == "0.00790"
+        # The rest of the submission still saved.
+        assert row.help_text_body == "Acme support."
+        assert "was not a number" in response.content.decode()
+
+    def test_the_largest_storable_price_survives_a_round_trip(self, client: Client, tenancy: Tenancy) -> None:
+        as_admin(client, tenancy).post(url_for("sms_settings_update", tenancy), {"per_segment_cost": "999.99999"})
+
+        row = SmsSettings.objects.for_workspace(tenancy.workspace).get()
+        assert str(row.per_segment_cost) == "999.99999"
+
+    def test_a_concurrent_first_save_does_not_500(self, client: Client, tenancy: Tenancy) -> None:
+        """Two admins submitting a never-saved page both insert, and the loser
+        hits ``smssettings_unique_workspace``. Simulated by creating the row
+        between the view's read and its write."""
+        from apps.channels import views_sms
+
+        original = views_sms._settings_row
+
+        def _racing(request: Any) -> Any:
+            row = original(request)
+            # The other admin's submission lands right here.
+            if row.pk is None:
+                SmsSettings.objects.create(workspace=tenancy.workspace, help_text_body="Theirs")
+            return row
+
+        views_sms._settings_row = _racing
+        try:
+            response = as_admin(client, tenancy).post(
+                url_for("sms_settings_update", tenancy), {"help_text_body": "Ours"}
+            )
+        finally:
+            views_sms._settings_row = original
+
+        assert response.status_code == 302
+        assert SmsSettings.objects.for_workspace(tenancy.workspace).get().help_text_body == "Ours"
 
     def test_a_long_reply_is_bounded(self, client: Client, tenancy: Tenancy) -> None:
         as_admin(client, tenancy).post(url_for("sms_settings_update", tenancy), {"help_text_body": "x" * 5000})

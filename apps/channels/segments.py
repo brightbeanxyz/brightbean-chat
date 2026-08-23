@@ -106,11 +106,17 @@ class SegmentCount:
     #: Units available in each segment *of this message* — the single-segment
     #: limit for a one-segment message, the concatenated one otherwise.
     limit: int
+    #: Units used in the **last** segment. Carried rather than derived, because
+    #: ``segments * limit - units`` assumes every earlier part is exactly full
+    #: and the packer deliberately leaves one short whenever an escape or a
+    #: surrogate pair cannot straddle a boundary. For 153 euros that arithmetic
+    #: claimed 153 septets free in the third part when the true figure is 151.
+    used_in_last: int = 0
 
     @property
     def remaining(self) -> int:
-        """Units left before this message needs another segment."""
-        return max(0, self.segments * self.limit - self.units)
+        """Units left in the current segment before this message needs another."""
+        return max(0, self.limit - self.used_in_last)
 
 
 def segments_for(text: str) -> SegmentCount:
@@ -151,7 +157,14 @@ def _count(text: str, costs: list[int], encoding: str, single: int, concatenated
     """
     units = sum(costs)
     if units <= single:
-        return SegmentCount(encoding=encoding, characters=len(text), units=units, segments=1, limit=single)
+        return SegmentCount(
+            encoding=encoding,
+            characters=len(text),
+            units=units,
+            segments=1,
+            limit=single,
+            used_in_last=units,
+        )
 
     segments = 1
     used = 0
@@ -160,4 +173,14 @@ def _count(text: str, costs: list[int], encoding: str, single: int, concatenated
             segments += 1
             used = 0
         used += cost
-    return SegmentCount(encoding=encoding, characters=len(text), units=units, segments=segments, limit=concatenated)
+    return SegmentCount(
+        encoding=encoding,
+        characters=len(text),
+        units=units,
+        segments=segments,
+        limit=concatenated,
+        # What the loop actually put in the final part, which is not
+        # ``units % concatenated``: a part cut short by an indivisible pair
+        # leaves the remainder off by exactly the septets it discarded.
+        used_in_last=used,
+    )

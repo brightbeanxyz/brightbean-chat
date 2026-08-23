@@ -156,6 +156,30 @@ class TestSending:
         kinds = [getattr(block, "kind", "text") for block in call["outbound"].blocks]
         assert kinds == ["text", "image"]
 
+    def test_a_placeholder_in_the_media_url_is_percent_encoded(self, tenancy: Any, monkeypatch: Any) -> None:
+        """Twilio fetches this URL server-side, so a contact field substituted
+        into it is an injection point unless it is encoded (SECURITY-BASELINE
+        §3). ``mode="url"`` encodes the substituted value and leaves the
+        template alone, which is how ``external_request`` renders its URL."""
+        facade = FakeFacade().install(monkeypatch)
+        sms = sms_connection(tenancy.workspace)
+        contact = contact_for(tenancy.workspace, first_name="../private/secret")
+        phone_identity(tenancy.workspace, contact, sms)
+
+        start_flow(
+            contact,
+            sms_flow(
+                tenancy.workspace,
+                {"text": "Look", "media_url": "https://cdn.example/{{first_name}}.jpg"},
+            ),
+            started_by=StartedBy.API,
+        )
+
+        (call,) = facade.named("send_outbound")
+        media = next(block for block in call["outbound"].blocks if getattr(block, "kind", "") == "image")
+        assert media.url == "https://cdn.example/..%2Fprivate%2Fsecret.jpg"
+        assert "/private/secret" not in media.url
+
     def test_the_idempotency_key_is_specs(self, tenancy: Any, monkeypatch: Any) -> None:
         facade = FakeFacade().install(monkeypatch)
         sms = sms_connection(tenancy.workspace)

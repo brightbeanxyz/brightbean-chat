@@ -65,9 +65,11 @@ import base64
 import hashlib
 import hmac
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
+import httpx
 from django.conf import settings
 from django.urls import reverse
 from django.utils import timezone
@@ -287,18 +289,43 @@ def store_credentials(
 # ---------------------------------------------------------------------------
 
 
-def _client() -> Any:
+#: The process-wide connection pool. Built lazily and never closed: it lives as
+#: long as the process does, which is the point.
+_POOL: httpx.Client | None = None
+
+_POOL_LOCK = threading.Lock()
+
+
+def _client() -> httpx.Client | None:
     """The HTTP client every Twilio call goes through.
 
-    ``None`` means "let ``request_json`` build one per call", which is the right
-    default for an API this adapter talks to a handful of times per message
-    rather than per block — and it is the **test seam**, mirroring
-    ``request_json``'s own ``client=`` parameter and Telegram's ``_client``: a
-    test monkeypatches this to return an ``httpx.Client`` on a
-    ``MockTransport`` and the whole module — real error mapping, real 429
-    handling, real payload building — runs without a socket.
+    A **pooled** client, for the reason ``telegram._client`` spells out:
+    ``request_json``'s default of one client per call means a fresh TCP
+    connection and a fresh TLS handshake for every call — a hundred or more
+    milliseconds — and on this adapter that cost lands in three places that can
+    least afford it. Every outbound message pays it once; a message split across
+    the 1600-character cap pays it per part; and the STOP/HELP confirmation pays
+    it **inside the webhook request**, against SPEC §7.1's 1.5 s inline budget,
+    on the one interaction a carrier requires to be prompt.
+
+    Built lazily rather than at import, so a forked worker gets its own pool
+    rather than inheriting sockets opened before the fork. ``httpx.Client`` is
+    safe to share across threads; the lock only keeps two threads from building
+    two pools on the first call. Per-call timeouts still win — ``request_json``
+    passes ``timeout=`` to ``request()``, which overrides the client's own — so
+    the 30-second connect-time calls and the 2-second send are both unaffected.
+
+    **This is also the test seam**, mirroring ``request_json``'s ``client=``
+    parameter: a test replaces this function with one returning an
+    ``httpx.Client`` on a ``MockTransport``, and the whole module — real error
+    mapping, real 429 handling, real payload building — runs without a socket.
     """
-    return None
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                _POOL = httpx.Client(limits=httpx.Limits(max_keepalive_connections=4, max_connections=16))
+    return _POOL
 
 
 def call(
@@ -493,7 +520,10 @@ def _forwarded_origin(request: "HttpRequest") -> str:
     # The leftmost entry is the original client's, which for a host header is
     # the one the caller asked for.
     host = host.split(",")[0].strip()
-    if not host or not all(char.isalnum() or char in ".-:[]" for char in host):
+    # ``isascii()`` as well as ``isalnum()``: the latter alone is true for every
+    # Unicode letter and digit, so "évil.example" and a fullwidth-"e" homograph
+    # both passed a check that reads as an ASCII allowlist and was not one.
+    if not host or not all((char.isascii() and char.isalnum()) or char in ".-:[]" for char in host):
         return ""
 
     scheme = (request.META.get("HTTP_X_FORWARDED_PROTO") or "").split(",")[0].strip().lower()
@@ -596,8 +626,13 @@ def keyword(body: str) -> str:
 
     Surrounding punctuation is stripped because "STOP." and "STOP!" are the same
     request and a carrier would treat them as such.
+
+    Whitespace is stripped **again afterwards**, and that is not belt-and-braces:
+    ``strip(chars)`` stops at the first character outside its set, so "STOP ."
+    lost the dot and then halted on the space it exposed, leaving "stop " — a
+    string that matches no keyword and quietly left the contact subscribed.
     """
-    return body.strip().strip(".!?,;:'\"").casefold()
+    return body.strip().strip(".!?,;:'\"").strip().casefold()
 
 
 def _media_urls(params: dict[str, str]) -> tuple[str, ...]:
@@ -719,27 +754,59 @@ class TwilioAdapter(Adapter):
         # a delivery without one falls back to a digest of the payload, which is
         # what ``synthetic_event_id`` documents itself as existing for.
         provider_event_id = message_sid or channels_ingest.synthetic_event_id(params, prefix="sms:")
+        # Twilio's form posts carry no trustworthy timestamp for the message
+        # itself, and SPEC §8's window is computed from our own clock regardless
+        # (``apps.messaging.ingest``: "the clock is ours, not the platform's").
+        now = timezone.now()
 
-        # The whole of this adapter's opt-out job. ROADMAP contract 3 gives
-        # ``opted_out_at`` one write site and it is not here; classifying the
-        # event is what lets ``apps.messaging.ingest`` apply it and
-        # ``apps.channels.sms_compliance`` answer it. See the module docstring.
-        event_type = EventType.OPT_OUT if keyword(body) in OPT_OUT_KEYWORDS else EventType.MESSAGE
+        message = NormalizedEvent(
+            type=EventType.MESSAGE,
+            connection=connection,
+            platform_user_id=sender,
+            provider_event_id=provider_event_id,
+            timestamp=now,
+            payload=EventPayload(text=body, attachments=media, extra=_extra(params)),
+            raw=dict(params),
+        )
+        if keyword(body) not in OPT_OUT_KEYWORDS:
+            return [message]
 
+        # A STOP is **two** events, in this order, and the pairing is the whole
+        # of this adapter's opt-out job. ROADMAP contract 3 gives
+        # ``opted_out_at`` one write site and it is not here; emitting
+        # ``EventType.OPT_OUT`` is what lets ``apps.messaging.ingest`` apply it
+        # and ``apps.channels.sms_compliance`` answer it.
+        #
+        # The message half is not decoration. ``ingest._persist_one`` handles an
+        # opt-out by stamping the column and returning **before** it writes a
+        # thread row, so an opt-out alone left the conversation showing the
+        # confirmation we send with nothing above it explaining why — an agent
+        # reading the thread could not see that the contact had asked. Emitting
+        # the message first puts the STOP in the thread and updates recency; the
+        # opt-out then suppresses the identity in the same delivery, which is
+        # what SPEC §21 requires.
+        #
+        # Their ids differ, or the event log's unique ``(connection,
+        # provider_event_id)`` would drop the second as a duplicate delivery.
+        # The message keeps the bare ``MessageSid`` so a redelivery still
+        # deduplicates against the row it wrote.
+        #
+        # ``sms_compliance.sms_keywords`` consumes the message half at the
+        # ``hard_optout`` stage, so it never reaches trigger matching — without
+        # that, a keyword trigger on the word "STOP" would start a flow at
+        # somebody who just unsubscribed, which is the exact failure
+        # ``stages.opt_out_event`` exists to prevent for the other half.
         return [
+            message,
             NormalizedEvent(
-                type=event_type,
+                type=EventType.OPT_OUT,
                 connection=connection,
                 platform_user_id=sender,
-                provider_event_id=provider_event_id,
-                # Twilio's form posts carry no trustworthy timestamp for the
-                # message itself, and SPEC §8's window is computed from our own
-                # clock regardless (``apps.messaging.ingest``: "the clock is
-                # ours, not the platform's").
-                timestamp=timezone.now(),
-                payload=EventPayload(text=body, attachments=media, extra=_extra(params)),
+                provider_event_id=f"sms:optout:{provider_event_id}",
+                timestamp=now,
+                payload=EventPayload(text=body, extra=_extra(params)),
                 raw=dict(params),
-            )
+            ),
         ]
 
     def _delivery_status(

@@ -97,6 +97,12 @@ message. "STOP" unsubscribes; "please stop sending these on Sundays" does not.
 That is deliberate: only the contact can undo a suppression, and they have not
 been told how, so a substring match would be an unrecoverable mistake.
 
+All three keywords land in the conversation as ordinary inbound messages, so an
+agent reading the thread sees what the contact wrote and the reply it produced.
+None of them starts a flow: they are consumed before trigger matching, so a
+keyword trigger on the word "STOP" cannot fire at somebody who just
+unsubscribed.
+
 The three replies are configurable at *Settings → Channels → SMS settings*
 (`/w/<workspace>/settings/channels/sms/settings/`). Emptying a box restores the
 default wording rather than sending nothing — the replies themselves cannot be
