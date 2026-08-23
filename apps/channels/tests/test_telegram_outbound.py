@@ -35,6 +35,8 @@ from apps.channels.providers.telegram import (
     MAX_CAPTION_CHARS,
     MAX_TEXT_CHARS,
     TelegramAdapter,
+    _button_id,
+    store_bot_token,
     wire_calls,
 )
 from apps.channels.tests.telegram_support import BOT_TOKEN, Reply, fake_bot_api
@@ -187,7 +189,9 @@ class TestCallbackData:
         message = OutboundMessage(blocks=(TextBlock(text="x"),), buttons=(Button(id="yes", label="Y"),), node_id=node)
         (_method, payload) = rendered(message)[0]
         data = payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-        assert data == "yes"
+        # The separator survives even with nothing in front of it, so the
+        # decoding stays unambiguous — see _callback_data.
+        assert data == ":yes"
         assert len(data.encode()) <= MAX_CALLBACK_DATA_BYTES
 
     def test_a_button_id_that_cannot_fit_at_all_is_left_out(self) -> None:
@@ -202,7 +206,17 @@ class TestCallbackData:
         """An agent reply or an API send has no node behind it."""
         message = OutboundMessage(blocks=(TextBlock(text="x"),), buttons=(Button(id="yes", label="Y"),))
         (_method, payload) = rendered(message)[0]
-        assert payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == "yes"
+        assert payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == ":yes"
+
+    def test_a_button_id_containing_a_colon_round_trips(self) -> None:
+        """The graph schema forbids a colon in an id; a hand-built message from
+        the inbox or the public API is not bound by it. Emitting the separator
+        unconditionally is what keeps `a:b` from coming back as `b`."""
+        message = OutboundMessage(blocks=(TextBlock(text="x"),), buttons=(Button(id="a:b", label="Y"),))
+        (_method, payload) = rendered(message)[0]
+        data = payload["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+        assert data == ":a:b"
+        assert _button_id(data) == "a:b"
 
 
 class TestDowngrades:
@@ -252,7 +266,7 @@ class TestDowngrades:
 class TestSend:
     @pytest.fixture
     def telegram_connection(self, connection: ChannelConnection) -> ChannelConnection:
-        connection.credentials = {"bot_token": BOT_TOKEN}
+        store_bot_token(connection, BOT_TOKEN)
         connection.save(update_fields=["credentials", "updated_at"])
         return connection
 
@@ -340,7 +354,7 @@ class TestSend:
             TelegramAdapter().send_typing(telegram_connection, Identity())
 
     def test_a_connection_with_no_token_fails_before_any_call(self, telegram_connection: ChannelConnection) -> None:
-        telegram_connection.credentials = {}
+        store_bot_token(telegram_connection, "")
         telegram_connection.save(update_fields=["credentials", "updated_at"])
         with fake_bot_api() as fake, pytest.raises(APIError):
             TelegramAdapter().send(telegram_connection, Identity(), OutboundMessage(blocks=(TextBlock(text="hi"),)))

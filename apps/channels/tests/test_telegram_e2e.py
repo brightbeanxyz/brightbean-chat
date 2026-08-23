@@ -42,7 +42,7 @@ from django.utils import timezone
 from apps.channels import ingest as channels_ingest
 from apps.channels.events import EventType
 from apps.channels.models import ChannelConnection
-from apps.channels.providers.telegram import SECRET_HEADER
+from apps.channels.providers.telegram import ANSWER_CALLBACK_ACTION, SECRET_HEADER, store_bot_token
 from apps.channels.tests.telegram_support import BOT_TOKEN, Reply, fake_bot_api, load_update
 from apps.common.platforms import Platform
 from apps.flows.engine import Consumed, attempt_resume, start_flow
@@ -91,8 +91,8 @@ def telegram_connection(tenancy: Tenancy) -> ChannelConnection:
         platform=Platform.TELEGRAM,
         display_name="@acme_bot",
         external_id="777000",
-        credentials={"bot_token": BOT_TOKEN},
     )
+    store_bot_token(connection, BOT_TOKEN)
     connection.rotate_webhook_secret()
     connection.save()
     return connection
@@ -197,8 +197,9 @@ class TestTheWholeLoop:
         assert fake.payloads("sendMessage")[-1]["text"] == "Great to have you back."
         execution.refresh_from_db()
         assert execution.current_node_id == "said_yes"
-        # And the spinner on the pressed button was cleared.
-        assert "answerCallbackQuery" in fake.methods()
+        # And the spinner on the pressed button was queued to be cleared, off
+        # the webhook's own ack path.
+        assert ScheduledAction.objects.unscoped().filter(type=ANSWER_CALLBACK_ACTION).exists()
 
     def test_the_other_button_takes_the_other_edge(
         self, client: Client, tenancy: Tenancy, telegram_connection: ChannelConnection, bot_secret: str

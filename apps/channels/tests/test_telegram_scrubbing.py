@@ -22,7 +22,7 @@ import pytest
 from apps.channels.events import OutboundMessage, TextBlock
 from apps.channels.models import ChannelConnection
 from apps.channels.providers.exceptions import APIError
-from apps.channels.providers.telegram import TelegramAdapter, call
+from apps.channels.providers.telegram import TelegramAdapter, call, store_bot_token
 from apps.channels.tests.telegram_support import BOT_TOKEN, Reply, fake_bot_api
 from apps.common.logging import scrub
 
@@ -38,7 +38,7 @@ class Identity:
 
 @pytest.fixture
 def telegram_connection(connection: ChannelConnection) -> ChannelConnection:
-    connection.credentials = {"bot_token": BOT_TOKEN}
+    store_bot_token(connection, BOT_TOKEN)
     connection.save(update_fields=["credentials", "updated_at"])
     return connection
 

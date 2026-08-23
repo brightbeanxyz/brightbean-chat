@@ -26,13 +26,17 @@ from apps.channels import ingest as channels_ingest
 from apps.channels import preview
 from apps.channels.events import EventPayload, EventType, NormalizedEvent
 from apps.channels.models import ChannelConnection, ConnectionStatus, FlowPreviewLink
+from apps.channels.providers.telegram import store_bot_token
 from apps.channels.tests.telegram_support import BOT_TOKEN, fake_bot_api
 from apps.common.encryption import hmac_digest
 from apps.common.platforms import Platform
-from apps.flows.models import FlowExecution
+from apps.flows.engine import start_flow
+from apps.flows.models import LIVE_STATUSES, FlowExecution
 from apps.flows.services import create_flow, publish, save_draft
-from apps.flows.tests.support import graph, node
+from apps.flows.tests.support import contact_for, graph, node
 from apps.members.roles import WorkspaceRole
+from apps.messaging.models import OptInSource
+from apps.messaging.services import upsert_contact_identity
 from tests.support import Tenancy
 
 pytestmark = pytest.mark.django_db
@@ -51,8 +55,8 @@ def telegram_connection(tenancy: Tenancy) -> ChannelConnection:
         platform=Platform.TELEGRAM,
         display_name="@acme_bot",
         external_id="777000",
-        credentials={"bot_token": BOT_TOKEN},
     )
+    store_bot_token(connection, BOT_TOKEN)
     connection.rotate_webhook_secret()
     connection.save()
     return connection
@@ -378,3 +382,171 @@ class TestConnectionsMadeByHand:
         payload = client.post(self.url(tenancy, drafted_flow)).json()
         assert payload["ok"] is False
         assert payload["reason"] == "no_username"
+
+
+class TestAlongsideRouting:
+    """The interaction the stage's position exists for.
+
+    apps/channels/preview.py argues that running before routing would let the
+    resume stage hand the very /start that opened the preview to the execution
+    the preview had just created — a draft waiting on a button falling straight
+    through its own first question. Asserting the registry order proves where
+    the stage sits; this proves what that buys.
+    """
+
+    @pytest.fixture
+    def with_routing(self, telegram_connection: ChannelConnection) -> Iterator[list[str]]:
+        """A resume-then-trigger stand-in for L4-A, in the routing slot."""
+        from apps.flows.engine import Consumed, attempt_resume
+        from apps.flows.models import LIVE_STATUSES
+
+        seen: list[str] = []
+
+        def route(connection: Any, events: Any) -> None:
+            from apps.messaging.models import ContactChannelIdentity
+
+            for event in events:
+                identity = (
+                    ContactChannelIdentity.objects.unscoped()
+                    .filter(channel_connection=connection, platform_user_id=event.platform_user_id)
+                    .select_related("contact")
+                    .first()
+                )
+                if identity is None:
+                    continue
+                live = (
+                    FlowExecution.objects.unscoped().filter(contact=identity.contact, status__in=LIVE_STATUSES).first()
+                )
+                if live is not None and isinstance(attempt_resume(live, event), Consumed):
+                    seen.append("resumed")
+
+        channels_ingest.register_processor(route, name="routing")
+        yield seen
+
+    def test_routing_cannot_consume_the_start_that_opened_the_preview(
+        self,
+        tenancy: Tenancy,
+        telegram_connection: ChannelConnection,
+        drafted_flow: Any,
+        with_routing: list[str],
+    ) -> None:
+        _link, handle = preview.mint(flow=drafted_flow, connection=telegram_connection, user=tenancy.owner)
+
+        with fake_bot_api() as fake:
+            deliver(telegram_connection, preview.start_payload(handle))
+
+        # Routing ran first and had no live execution to offer the event to, so
+        # the draft starts clean and stays at its first node.
+        assert with_routing == []
+        assert fake.payloads("sendMessage")[0]["text"] == "DRAFT"
+        execution = FlowExecution.objects.unscoped().get(flow=drafted_flow)
+        assert execution.preview is True
+
+    def test_the_preview_supersedes_whatever_routing_had_running(
+        self,
+        tenancy: Tenancy,
+        telegram_connection: ChannelConnection,
+        drafted_flow: Any,
+        with_routing: list[str],
+    ) -> None:
+        """ "While linked, the draft version runs" — even mid-flow."""
+        published = create_flow(workspace=tenancy.workspace, name="Published")
+        save_draft(published, one_message_graph("OTHER"))
+        publish(published)
+        published.refresh_from_db()
+
+        contact = contact_for(tenancy.workspace)
+        upsert_contact_identity(contact, Platform.TELEGRAM, CHAT, source=OptInSource.MESSAGE_IN, opt_in=True)
+        with fake_bot_api():
+            start_flow(contact, published, started_by="trigger", connection=telegram_connection)
+
+        _link, handle = preview.mint(flow=drafted_flow, connection=telegram_connection, user=tenancy.owner)
+        with fake_bot_api() as fake:
+            deliver(telegram_connection, preview.start_payload(handle))
+
+        # The draft ran, and it ran last: the preview took the contact over
+        # rather than the published flow keeping them.
+        assert fake.payloads("sendMessage")[-1]["text"] == "DRAFT"
+        newest = FlowExecution.objects.unscoped().order_by("-created_at").first()
+        assert newest is not None
+        assert newest.flow_id == drafted_flow.pk
+        assert newest.preview is True
+        # And nothing is left running for the flow it displaced.
+        assert not FlowExecution.objects.unscoped().filter(flow=published, status__in=LIVE_STATUSES).exists()
+
+
+class TestTheLinkIsBoundToItsBot:
+    """A handle only works on the connection it was minted for.
+
+    The claim query has to be unscoped — an inbound webhook has no session and
+    therefore no workspace — so without this clause it spans every bot in the
+    deployment, and a handle presented to the wrong one would claim the row,
+    burn it for the tester it was minted for, and only then fail on a workspace
+    mismatch deeper in the engine.
+    """
+
+    @pytest.fixture
+    def second_bot(self, other_tenancy: Tenancy) -> ChannelConnection:
+        connection = ChannelConnection(
+            workspace=other_tenancy.workspace,
+            platform=Platform.TELEGRAM,
+            display_name="@rival_bot",
+            external_id="888000",
+        )
+        store_bot_token(connection, BOT_TOKEN)
+        connection.rotate_webhook_secret()
+        connection.save()
+        return connection
+
+    def test_another_bot_cannot_use_the_link(
+        self,
+        tenancy: Tenancy,
+        telegram_connection: ChannelConnection,
+        drafted_flow: Any,
+        second_bot: ChannelConnection,
+    ) -> None:
+        link, handle = preview.mint(flow=drafted_flow, connection=telegram_connection, user=tenancy.owner)
+
+        with fake_bot_api() as fake:
+            deliver(second_bot, preview.start_payload(handle))
+
+        assert fake.calls == []
+        assert not FlowExecution.objects.unscoped().filter(flow=drafted_flow).exists()
+        # And crucially: still unclaimed, so the tester it was minted for can
+        # still use it. Burning it would be a denial of service on the feature.
+        link.refresh_from_db()
+        assert link.chat_id == ""
+
+    def test_the_rightful_tester_still_works_afterwards(
+        self,
+        tenancy: Tenancy,
+        telegram_connection: ChannelConnection,
+        drafted_flow: Any,
+        second_bot: ChannelConnection,
+    ) -> None:
+        _link, handle = preview.mint(flow=drafted_flow, connection=telegram_connection, user=tenancy.owner)
+
+        with fake_bot_api() as fake:
+            deliver(second_bot, preview.start_payload(handle))
+            deliver(telegram_connection, preview.start_payload(handle))
+
+        assert fake.payloads("sendMessage")[0]["text"] == "DRAFT"
+
+    def test_an_engine_failure_never_escapes_the_stage(
+        self, tenancy: Tenancy, telegram_connection: ChannelConnection, drafted_flow: Any, monkeypatch: Any
+    ) -> None:
+        """A processor that raises makes process_events return False, which
+        marks every event-log row in the delivery FAILED — so one bad preview
+        would have an operator investigating messages that persisted fine."""
+        from apps.flows.engine import runner
+
+        def explode(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("the engine fell over")
+
+        monkeypatch.setattr(runner, "start_flow", explode)
+        monkeypatch.setattr("apps.flows.engine.start_flow", explode)
+        _link, handle = preview.mint(flow=drafted_flow, connection=telegram_connection, user=tenancy.owner)
+
+        assert channels_ingest.process_events(
+            telegram_connection, (referral(telegram_connection, preview.start_payload(handle)),)
+        )

@@ -28,6 +28,7 @@ from typing import Any
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -37,6 +38,7 @@ from apps.channels.capabilities import capabilities_for
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR, ChannelConnectionForm
 from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEventLog
 from apps.channels.policy import policy_for
+from apps.channels.providers.base import Adapter
 from apps.channels.providers.exceptions import AdapterError
 from apps.channels.registry import AdapterNotRegisteredError, adapter_for, has_adapter
 from apps.common.platforms import Platform
@@ -69,6 +71,10 @@ SETTABLE_STATUSES = frozenset({ConnectionStatus.ACTIVE, ConnectionStatus.DISABLE
 #: The email webhook's provider segment when the connection does not name one.
 #: SMTP is the only transport that needs no provider-specific parsing.
 DEFAULT_EMAIL_PROVIDER = "smtp"
+
+#: Sentinel for "the caller has not looked this up". Distinct from None, which
+#: is the real answer "this connection has never received anything".
+_UNFETCHED = object()
 
 
 def _webhook_url(request: WorkspaceRequest, connection: ChannelConnection) -> str:
@@ -113,7 +119,12 @@ def _email_provider(connection: ChannelConnection) -> str:
     return provider.lower()
 
 
-def _connection_context(request: WorkspaceRequest, connection: ChannelConnection) -> dict[str, Any]:
+def _connection_context(
+    request: WorkspaceRequest,
+    connection: ChannelConnection,
+    *,
+    last_event_at: Any = _UNFETCHED,
+) -> dict[str, Any]:
     """Everything one connection's row or detail panel needs.
 
     Capabilities and policy come from the static tables rather than the adapter,
@@ -128,7 +139,10 @@ def _connection_context(request: WorkspaceRequest, connection: ChannelConnection
         "policy": policy_for(connection.platform),
         "adapter_ready": has_adapter(connection.platform),
         "connect_flow_issue": CONNECT_FLOW_ISSUES.get(connection.platform, ""),
-        "last_event_at": _last_event_at(connection),
+        # Passed in by the list view, which reads every row's in one grouped
+        # query; fetched here for the single-connection pages, where one query
+        # is the whole cost anyway.
+        "last_event_at": _last_event_at(connection) if last_event_at is _UNFETCHED else last_event_at,
     }
 
 
@@ -136,10 +150,27 @@ def _connection_context(request: WorkspaceRequest, connection: ChannelConnection
 CONNECT_ROUTES: dict[str, str] = {Platform.TELEGRAM: "channels:telegram_connect"}
 
 
-def _connect_url(request: WorkspaceRequest, platform: str, workspace_id: str) -> str:
+def _connect_url(platform: str, workspace_id: str) -> str:
     """The guided connect route for ``platform``, or "" if it has none yet."""
     route = CONNECT_ROUTES.get(platform)
     return reverse(route, kwargs={"workspace_id": workspace_id}) if route else ""
+
+
+def _last_events_for(connections: list[ChannelConnection]) -> dict[Any, Any]:
+    """Newest ``received_at`` per connection, in one query.
+
+    The list page renders every connection a workspace has, and asking per row
+    made it an N+1 against a table the webhook endpoint writes to constantly.
+    One grouped aggregate answers the whole page.
+    """
+    if not connections:
+        return {}
+    rows = (
+        WebhookEventLog.objects.filter(connection__in=connections)
+        .values("connection_id")
+        .annotate(latest=Max("received_at"))
+    )
+    return {row["connection_id"]: row["latest"] for row in rows}
 
 
 def _last_event_at(connection: ChannelConnection) -> Any:
@@ -165,12 +196,16 @@ def _last_event_at(connection: ChannelConnection) -> Any:
 @require_GET
 def connection_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """Every channel this workspace has connected."""
-    connections = ChannelConnection.objects.for_workspace(request.workspace)
+    connections = list(ChannelConnection.objects.for_workspace(request.workspace))
+    latest = _last_events_for(connections)
     return render(
         request,
         "channels/list.html",
         {
-            "rows": [_connection_context(request, connection) for connection in connections],
+            "rows": [
+                _connection_context(request, connection, last_event_at=latest.get(connection.pk))
+                for connection in connections
+            ],
             "platforms": [
                 {
                     "value": value,
@@ -180,7 +215,7 @@ def connection_list(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
                     # A guided connect flow where one exists. Telegram's is the
                     # only one today (#12); each Layer-5 adapter adds its own
                     # here rather than the template growing a per-platform if.
-                    "connect_url": _connect_url(request, value, workspace_id),
+                    "connect_url": _connect_url(value, workspace_id),
                 }
                 for value, label in Platform.choices
             ],
@@ -263,13 +298,20 @@ def connection_rotate_secret(request: WorkspaceRequest, workspace_id: str, conne
     """Mint a new webhook secret and show it once.
 
     Rotating invalidates the old one immediately, which means inbound deliveries
-    fail with a 403 until the new secret is configured at the platform. The
-    template says so before the operator clicks.
+    fail with a 403 until the platform presents the new one.
+
+    For most platforms that means an operator pasting it into a console. For the
+    ones that hold the secret over their own API — Telegram sets it through
+    ``setWebhook`` — there is no console, so rotating without telling the
+    platform would leave a connection nothing could repair. ``_push_secret``
+    does the telling, and its result is what the template reports: an operator
+    has to know whether they still have work to do.
     """
     connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
     secret = connection.rotate_webhook_secret()
     connection.save(update_fields=["webhook_secret", "webhook_secret_digest", "updated_at"])
-    return _render_secret(request, connection, secret, created=False)
+    pushed = _push_secret(connection, secret)
+    return _render_secret(request, connection, secret, created=False, pushed=pushed)
 
 
 @login_required
@@ -292,6 +334,34 @@ def connection_delete(request: WorkspaceRequest, workspace_id: str, connection_i
     return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
 
 
+def _push_secret(connection: ChannelConnection, secret: str) -> bool | None:
+    """Hand the new secret to the platform. True/False, or None if it has no API for it.
+
+    None and True are different answers and the template renders them
+    differently: None means "now go and paste this into the console", True means
+    "already done, there is nothing left for you to do", and False means the
+    channel is down until this is retried.
+
+    The adapter's own ``on_webhook_secret_rotated`` is a no-op by default, which
+    is what None reports — checked by identity against the base implementation
+    rather than by a per-platform list, so a Layer-5 adapter that implements it
+    starts being reported correctly with no edit here.
+    """
+    try:
+        adapter = adapter_for(connection.platform)
+    except AdapterNotRegisteredError:
+        return None
+    if type(adapter).on_webhook_secret_rotated is Adapter.on_webhook_secret_rotated:
+        return None
+    try:
+        adapter.on_webhook_secret_rotated(connection, secret)
+    except Exception:
+        # No secret in the log: this is the one moment it is readable.
+        logger.exception("Could not push a rotated webhook secret to %s", connection.platform)
+        return False
+    return True
+
+
 def _notify_disconnect(connection: ChannelConnection) -> None:
     """Tell the platform to stop, and never let that stop the disconnect."""
     try:
@@ -312,8 +382,9 @@ def _render_secret(
     secret: str,
     *,
     created: bool,
+    pushed: bool | None = None,
 ) -> HttpResponse:
     """Render the one and only view of a webhook secret."""
     context = _connection_context(request, connection)
-    context.update({"secret": secret, "created": created})
+    context.update({"secret": secret, "created": created, "pushed": pushed})
     return render(request, "channels/secret.html", context)

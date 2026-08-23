@@ -12,7 +12,7 @@ backstop for our bugs, not a licence for the parser to throw.
 """
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from django.http import HttpRequest
@@ -20,8 +20,17 @@ from django.test import RequestFactory
 
 from apps.channels.events import EventType
 from apps.channels.models import ChannelConnection
-from apps.channels.providers.telegram import MAX_INBOUND_TEXT_CHARS, SECRET_HEADER, TelegramAdapter
-from apps.channels.tests.telegram_support import BOT_TOKEN, Reply, fake_bot_api, load_update
+from apps.channels.providers import telegram as telegram_module
+from apps.channels.providers.telegram import (
+    ANSWER_CALLBACK_ACTION,
+    MAX_INBOUND_TEXT_CHARS,
+    SECRET_HEADER,
+    TelegramAdapter,
+    store_bot_token,
+)
+from apps.channels.tests.telegram_support import BOT_TOKEN, fake_bot_api, load_update
+from apps.queueing.models import ScheduledAction
+from apps.queueing.registry import get_handler
 
 pytestmark = pytest.mark.django_db
 
@@ -36,6 +45,13 @@ def request_for(update: Any, *, secret: str = "not-the-real-one") -> HttpRequest
     return request
 
 
+def _answer_handler() -> Any:
+    """The registered handler for the deferred callback answer."""
+    handler = get_handler(ANSWER_CALLBACK_ACTION)
+    assert handler is not None, "the adapter module registers it on import"
+    return handler
+
+
 def parse(update: Any, connection: ChannelConnection) -> list[Any]:
     return TelegramAdapter().parse_events(request_for(update), connection)
 
@@ -43,7 +59,7 @@ def parse(update: Any, connection: ChannelConnection) -> list[Any]:
 @pytest.fixture
 def telegram_connection(connection: ChannelConnection) -> ChannelConnection:
     """The shared Telegram connection, with a bot token on it."""
-    connection.credentials = {"bot_token": BOT_TOKEN}
+    store_bot_token(connection, BOT_TOKEN)
     connection.save(update_fields=["credentials", "updated_at"])
     return connection
 
@@ -120,15 +136,52 @@ class TestRecordedShapes:
         assert event.payload.button_id == "btn_yes"
         assert event.payload.extra["callback_data"] == "node_ask:btn_yes"
         assert event.platform_user_id == "5150"
-        # The spinner on the pressed button stays until the bot answers.
-        assert fake.methods() == ["answerCallbackQuery"]
-        assert fake.payloads("answerCallbackQuery")[0]["callback_query_id"] == "4382bfdwdsb323b2d9"
+        # The spinner is answered off the ack path: an inline Bot API round trip
+        # here would sit inside SPEC §7.1's 1.5 s inline budget and the Layer-4
+        # gate's 500 ms webhook ack, on the commonest interaction there is.
+        assert fake.calls == []
+        queued = ScheduledAction.objects.unscoped().get(type=ANSWER_CALLBACK_ACTION)
+        assert queued.payload["callback_query_id"] == "4382bfdwdsb323b2d9"
 
-    def test_a_failed_callback_answer_does_not_lose_the_press(self, telegram_connection: ChannelConnection) -> None:
+    def test_the_queued_answer_actually_answers(self, telegram_connection: ChannelConnection) -> None:
+        """Deferring it is only worth anything if the worker completes it."""
+        with fake_bot_api():
+            parse(load_update("callback_query"), telegram_connection)
+        action = ScheduledAction.objects.unscoped().get(type=ANSWER_CALLBACK_ACTION)
+
+        with fake_bot_api() as fake:
+            _answer_handler()(action.payload, action)
+
+        assert fake.payloads("answerCallbackQuery") == [{"callback_query_id": "4382bfdwdsb323b2d9"}]
+
+    def test_a_redelivered_press_does_not_enqueue_a_second_answer(self, telegram_connection: ChannelConnection) -> None:
+        with fake_bot_api():
+            parse(load_update("callback_query"), telegram_connection)
+            parse(load_update("callback_query"), telegram_connection)
+        assert ScheduledAction.objects.unscoped().filter(type=ANSWER_CALLBACK_ACTION).count() == 1
+
+    def test_the_handler_ignores_a_payload_naming_no_connection(self) -> None:
+        """The ids in the row came from a webhook; the handler re-reads rather
+        than trusting, so a payload naming nothing does nothing."""
+        nowhere = cast(Any, None)
+        with fake_bot_api() as fake:
+            _answer_handler()(
+                {"connection_id": "01a02b7f-0000-7000-0000-000000000000", "callback_query_id": "x"}, nowhere
+            )
+            _answer_handler()({"callback_query_id": 17}, nowhere)
+        assert fake.calls == []
+
+    def test_a_failed_callback_answer_does_not_lose_the_press(
+        self, telegram_connection: ChannelConnection, monkeypatch: Any
+    ) -> None:
         """The spinner is cosmetic; the press is not. views_webhooks drops the
         whole delivery if parse_events raises, so this must not."""
-        with fake_bot_api(lambda fake: setattr(fake, "default", Reply(status=500))):
-            (event,) = parse(load_update("callback_query"), telegram_connection)
+
+        def explode(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("the queue is down")
+
+        monkeypatch.setattr(telegram_module, "queue_schedule", explode)
+        (event,) = parse(load_update("callback_query"), telegram_connection)
         assert event.payload.button_id == "btn_yes"
 
     def test_an_update_type_we_do_not_carry_is_dropped(self, telegram_connection: ChannelConnection) -> None:

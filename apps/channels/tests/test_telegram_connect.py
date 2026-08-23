@@ -7,6 +7,8 @@ transaction, because a bot Telegram will not deliver to is not a connection and
 must not sit in the list looking like one.
 """
 
+import logging
+import re
 from typing import Any
 
 import pytest
@@ -14,6 +16,7 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.channels.models import ChannelConnection, WebhookEventLog
+from apps.channels.providers.telegram import bot_token, store_bot_token
 from apps.channels.tests.telegram_support import BOT_TOKEN, Reply, fake_bot_api
 from apps.common.platforms import Platform
 from apps.members.roles import WorkspaceRole
@@ -26,6 +29,20 @@ BOT = {"id": 777000, "is_bot": True, "first_name": "Acme", "username": "acme_bot
 
 def connect_url(tenancy: Tenancy) -> str:
     return reverse("channels:telegram_connect", kwargs={"workspace_id": tenancy.workspace.pk})
+
+
+def _connected_bot(tenancy: Tenancy, external_id: str) -> ChannelConnection:
+    """A Telegram connection with a working token, as the connect flow leaves one."""
+    connection = ChannelConnection(
+        workspace=tenancy.workspace,
+        platform=Platform.TELEGRAM,
+        display_name="@acme_bot",
+        external_id=external_id,
+    )
+    store_bot_token(connection, BOT_TOKEN)
+    connection.rotate_webhook_secret()
+    connection.save()
+    return connection
 
 
 def as_admin(client: Client, tenancy: Tenancy) -> Client:
@@ -44,7 +61,9 @@ class TestConnect:
         assert connection.platform == Platform.TELEGRAM
         assert connection.external_id == "777000"
         assert connection.display_name == "@acme_bot"
-        assert connection.credentials["bot_token"] == BOT_TOKEN
+        # Through the accessor the adapter itself uses, rather than poking the
+        # encrypted column: that is the path a real send takes.
+        assert bot_token(connection) == BOT_TOKEN
 
         assert fake.methods() == ["getMe", "setWebhook"]
         (payload,) = fake.payloads("setWebhook")
@@ -127,13 +146,7 @@ class TestConnect:
 
 class TestDisconnect:
     def test_disconnecting_tells_telegram_to_stop(self, client: Client, tenancy: Tenancy) -> None:
-        connection = ChannelConnection.objects.create(
-            workspace=tenancy.workspace,
-            platform=Platform.TELEGRAM,
-            display_name="@acme_bot",
-            external_id="777000",
-            credentials={"bot_token": BOT_TOKEN},
-        )
+        connection = _connected_bot(tenancy, "777000")
         url = reverse("channels:delete", kwargs={"workspace_id": tenancy.workspace.pk, "connection_id": connection.pk})
         with fake_bot_api() as fake:
             as_admin(client, tenancy).post(url)
@@ -146,13 +159,7 @@ class TestDisconnect:
     ) -> None:
         """The operator asked to disconnect. Telegram being down is not a reason
         to refuse — the row goes and the failure is logged."""
-        connection = ChannelConnection.objects.create(
-            workspace=tenancy.workspace,
-            platform=Platform.TELEGRAM,
-            display_name="@acme_bot",
-            external_id="777001",
-            credentials={"bot_token": BOT_TOKEN},
-        )
+        connection = _connected_bot(tenancy, "777001")
         url = reverse("channels:delete", kwargs={"workspace_id": tenancy.workspace.pk, "connection_id": connection.pk})
         with fake_bot_api(lambda fake: fake.reply("deleteWebhook", Reply(status=500))):
             as_admin(client, tenancy).post(url)
@@ -189,3 +196,68 @@ class TestWebhookHealth:
         assert connect_url(tenancy) in body
         # And no longer tells the operator to wait for the issue that shipped it.
         assert "#12 (L4-B)" not in body
+
+
+class TestRotatingTheSecret:
+    """Telegram holds the secret over its own API, so rotating has to tell it.
+
+    Without the push, rotating mints a secret Telegram never learns, every later
+    delivery fails verification, and there is no screen an operator could fix it
+    from — the connection is bricked until it is deleted and rebuilt.
+    """
+
+    def url(self, tenancy: Tenancy, connection: ChannelConnection) -> str:
+        return reverse(
+            "channels:rotate_secret",
+            kwargs={"workspace_id": tenancy.workspace.pk, "connection_id": connection.pk},
+        )
+
+    def test_the_new_secret_is_pushed_to_telegram(self, client: Client, tenancy: Tenancy) -> None:
+        connection = _connected_bot(tenancy, "777010")
+        with fake_bot_api() as fake:
+            response = as_admin(client, tenancy).post(self.url(tenancy, connection))
+
+        assert response.status_code == 200
+        (payload,) = fake.payloads("setWebhook")
+        connection.refresh_from_db()
+        # The value Telegram was given is the value the connection now expects.
+        assert connection.verify_webhook_secret(payload["secret_token"])
+        assert "already been given this secret" in response.content.decode()
+
+    def test_a_failed_push_says_the_channel_is_down(self, client: Client, tenancy: Tenancy) -> None:
+        """Silence here would leave an operator believing they were done."""
+        connection = _connected_bot(tenancy, "777011")
+        with fake_bot_api(lambda fake: fake.reply("setWebhook", Reply(status=500))):
+            response = as_admin(client, tenancy).post(self.url(tenancy, connection))
+
+        body = response.content.decode()
+        assert "could not be given the new secret" in body
+        assert "reject every delivery" in body
+
+    def test_a_platform_with_no_such_api_still_says_paste_it(self, client: Client, tenancy: Tenancy) -> None:
+        """The three outcomes are genuinely different, and only one of them
+        means the operator has nothing left to do."""
+        connection = ChannelConnection.objects.create(
+            workspace=tenancy.workspace,
+            platform=Platform.WHATSAPP,
+            display_name="Support line",
+            external_id="wa-1",
+        )
+        with fake_bot_api() as fake:
+            response = as_admin(client, tenancy).post(self.url(tenancy, connection))
+
+        assert fake.calls == []
+        body = response.content.decode()
+        assert "Configure the platform to deliver events to" in body
+        assert "already been given this secret" not in body
+
+    def test_the_secret_never_reaches_the_log(self, client: Client, tenancy: Tenancy, caplog: Any) -> None:
+        caplog.set_level(logging.DEBUG)
+        connection = _connected_bot(tenancy, "777012")
+        with fake_bot_api(lambda fake: fake.reply("setWebhook", Reply(status=500))):
+            response = as_admin(client, tenancy).post(self.url(tenancy, connection))
+
+        secret = re.search(r"<code>([A-Za-z0-9_-]{40,})</code>", response.content.decode())
+        assert secret is not None
+        emitted = "\n".join(record.getMessage() for record in caplog.records)
+        assert secret.group(1) not in emitted

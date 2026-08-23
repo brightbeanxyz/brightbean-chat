@@ -18,6 +18,11 @@ class ChannelsConfig(AppConfig):
         the single place a registration is written down.
         """
         from apps.channels import housekeeping  # noqa: F401  (registration side effect)
+        from apps.channels.preview import register_processors as register_preview
         from apps.channels.providers import load_adapters
 
         load_adapters()
+        # SPEC §16's flow preview, on contract 6's seam. It declares that it
+        # runs late (apps.channels.ingest.LATE_ORDER) rather than relying on
+        # this app's position in INSTALLED_APPS, which is before messaging.
+        register_preview()

@@ -28,6 +28,8 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from apps.channels.capabilities import capabilities_for
+from apps.channels.downgrade import downgrade
 from apps.channels.events import Button, Card, CardBlock, GalleryBlock, MediaBlock, OutboundMessage, QuickReply
 from apps.channels.events import TextBlock as OutboundText
 from apps.flows.engine.context import NodeContext
@@ -91,7 +93,7 @@ class SendMessageNode(Node):
             quick_replies=ctx.config.get("quick_replies"),
             followup=ctx.config.get("followup"),
             retry_unmatched=ctx.config.get("retry_unmatched"),
-            labels=_labels(buttons, quick_replies),
+            labels=_labels(buttons, quick_replies) | _numbered_options(ctx, outbound),
         )
         if wait["handles"] or wait.get("timeout"):
             return Wait(wait)
@@ -234,6 +236,36 @@ def _quick_replies(ctx: NodeContext) -> list[QuickReply]:
         for reply in ctx.config.get("quick_replies") or []
         if isinstance(reply, dict) and isinstance(reply.get("id"), str)
     ]
+
+
+def _numbered_options(ctx: NodeContext, outbound: OutboundMessage) -> dict[str, str]:
+    """``{"1": reply_id}`` for anything the channel had to number (SPEC §6.1).
+
+    A platform that cannot carry every button appends the leftovers to the text
+    as "Reply 1 for ...", and the contact is then expected to type a number. The
+    adapter is where that rendering happens, but the answer key has to be in the
+    **wait config**, which is written here — and nothing carries a value back
+    from the send. So this recomputes it.
+
+    Recomputing is exact rather than approximate: ``downgrade`` is pure by
+    construction, documented as such, and reads only the static capability table
+    that the adapter passes it. Same message, same platform, same numbering.
+    Without this the numbered options are unreachable — ``_match_choice`` looks
+    a reply up by button id and then by label, and "11" is neither — so a
+    contact who does exactly what the message told them to do falls through to
+    the retry or the default edge.
+
+    Empty for the platforms and the messages where nothing overflowed, which is
+    almost all of them.
+    """
+    connection = ctx.execution.channel_connection
+    if connection is None:
+        return {}
+    try:
+        capabilities = capabilities_for(connection.platform)
+    except KeyError:
+        return {}
+    return downgrade(outbound, capabilities).numeric_replies
 
 
 def _labels(buttons: list[Button], quick_replies: list[QuickReply]) -> dict[str, str]:

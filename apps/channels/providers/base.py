@@ -286,6 +286,25 @@ class Adapter(ABC):
 
     # -- lifecycle ----------------------------------------------------------
 
+    def on_webhook_secret_rotated(self, connection: "ChannelConnection", secret: str) -> None:  # noqa: B027
+        """Push a freshly minted webhook secret to the platform.
+
+        For platforms that hold the secret themselves rather than having an
+        operator paste it into a console — Telegram's ``setWebhook`` takes a
+        ``secret_token`` over the API, so rotating without telling Telegram
+        leaves a connection that can never be verified again and no screen an
+        operator can fix it from.
+
+        ``secret`` is the plaintext, and it is passed rather than read off the
+        connection because this is the one moment it is readable. Implementations
+        must not log it.
+
+        Raising is meaningful here, unlike :meth:`on_disconnect`: the caller has
+        already stored the new secret, so a failure means the connection is
+        broken until it is rotated again, and it has to say so rather than
+        report success.
+        """
+
     def on_disconnect(self, connection: "ChannelConnection") -> None:  # noqa: B027
         """Tell the platform to stop sending, just before the row is deleted.
 

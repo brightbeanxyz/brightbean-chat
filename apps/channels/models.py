@@ -26,7 +26,7 @@ to hit.
 """
 
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
@@ -336,7 +336,3 @@ class FlowPreviewLink(WorkspaceScopedModel):
 
     def __str__(self) -> str:
         return f"preview of {self.flow_id} ({'claimed' if self.chat_id else 'unclaimed'})"
-
-    def is_live(self, *, now: datetime | None = None) -> bool:
-        """Whether this link may still start a preview."""
-        return self.expires_at > (now or timezone.now())

@@ -51,11 +51,15 @@ failed call and never the path, and ``apps.common.logging`` scrubs the
 (SECURITY-BASELINE §5).
 """
 
+import hashlib
 import logging
+import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urljoin
 
 import httpx
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.channels import ingest as channels_ingest
@@ -81,6 +85,8 @@ from apps.channels.providers.base import BACKGROUND_TIMEOUT, Adapter, request_js
 from apps.channels.providers.exceptions import APIError
 from apps.channels.registry import register_adapter
 from apps.common.platforms import Platform
+from apps.queueing.registry import register_handler
+from apps.queueing.registry import schedule as queue_schedule
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -96,6 +102,8 @@ __all__ = [
     "delete_webhook",
     "get_me",
     "set_webhook",
+    "store_bot_token",
+    "webhook_url",
     "wire_calls",
 ]
 
@@ -136,12 +144,20 @@ MAX_CALLBACK_DATA_BYTES = 64
 #: place (SECURITY-BASELINE §§2, 7).
 MAX_INBOUND_TEXT_CHARS = MAX_TEXT_CHARS
 
+#: The queued action that clears a pressed button's spinner. Registered at the
+#: foot of this module, beside the adapter itself.
+ANSWER_CALLBACK_ACTION = "telegram_answer_callback"
+
 #: A ``t.me/<bot>?start=<payload>`` payload is capped at 64 characters by
 #: Telegram, so a ref longer than that never came from a real deep link.
 MAX_REF_CHARS = 64
 
 #: Longest attacker-supplied display string we keep in ``payload.extra``.
 MAX_EXTRA_CHARS = 200
+
+#: The width of the ``platform_user_id`` column an id has to fit. Longer ones
+#: are hashed rather than cut — see :func:`_chat_id`.
+MAX_PLATFORM_ID_CHARS = 200
 
 #: The ``/start`` command, which SPEC §10 maps to two different triggers
 #: depending on whether it carries a payload.
@@ -176,19 +192,43 @@ _MEDIA_METHODS: dict[str, tuple[str, str]] = {
 # ---------------------------------------------------------------------------
 
 
+#: The process-wide connection pool. Built lazily and never closed: it lives as
+#: long as the process does, which is the point.
+_POOL: httpx.Client | None = None
+
+_POOL_LOCK = threading.Lock()
+
+
 def _client() -> httpx.Client | None:
     """The HTTP client every Bot API call goes through.
 
-    None means "one client per call", which is what
-    :func:`~apps.channels.providers.base.request_json` does by default.
+    A **pooled** client, kept for the life of the process, because
+    ``request_json``'s default of one client per call means a fresh TCP
+    connection and a fresh TLS handshake for every message sent — a hundred or
+    more milliseconds, inside SPEC §7.1's 1.5 s inline budget, paid again for
+    every message of a downgraded gallery. ``request_json`` takes a ``client``
+    precisely so a caller can avoid that, and this is the first adapter to have
+    a reason to.
 
-    **This is the test seam**, mirroring ``request_json``'s own ``client=``
+    Built lazily rather than at import, so a forked worker gets its own pool
+    rather than inheriting sockets opened before the fork. ``httpx.Client`` is
+    safe to share across threads; the lock is only to keep two threads from
+    building two pools on the first call. Per-call timeouts still win —
+    ``request_json`` passes ``timeout=`` to ``request()``, which overrides the
+    client's own.
+
+    **This is also the test seam**, mirroring ``request_json``'s ``client=``
     parameter: a test monkeypatches this function to return an
     ``httpx.Client(transport=httpx.MockTransport(...))`` and the whole module —
-    including the real error mapping, the real 429 handling and the real
-    payload building — runs without a socket.
+    including the real error mapping, the real 429 handling and the real payload
+    building — runs without a socket.
     """
-    return None
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                _POOL = httpx.Client(limits=httpx.Limits(max_keepalive_connections=8, max_connections=32))
+    return _POOL
 
 
 def bot_token(connection: ChannelConnection) -> str:
@@ -208,6 +248,20 @@ def bot_token(connection: ChannelConnection) -> str:
         return ""
     token = credentials.get(TOKEN_KEY)
     return token if isinstance(token, str) else ""
+
+
+def store_bot_token(connection: ChannelConnection, token: str) -> None:
+    """Put ``token`` on the connection's encrypted credentials column.
+
+    The inverse of :func:`bot_token`, and the only place a token is written.
+    Both exist so the encrypted-JSON column is reached through named functions
+    rather than raw attribute access: ``EncryptedJSONField`` subclasses
+    ``TextField``, so django-stubs types the attribute as ``str`` and every
+    direct ``connection.credentials = {...}`` is a type error even though the
+    column holds JSON. One suppression here beats one at each call site, and
+    beats teaching the field about django-stubs' private annotations.
+    """
+    connection.credentials = {TOKEN_KEY: token}  # type: ignore[assignment]
 
 
 def call(
@@ -284,6 +338,22 @@ def delete_webhook(token: str) -> None:
 def deep_link(username: str, payload: str) -> str:
     """A ``t.me`` deep link that opens the bot and sends ``/start <payload>``."""
     return f"https://t.me/{username.lstrip('@')}?start={payload}"
+
+
+def webhook_url() -> str:
+    """The absolute URL Telegram delivers this deployment's updates to.
+
+    ``APP_URL`` — the deployment's own configured address — rather than
+    ``request.build_absolute_uri``, following ``apps.media_library.delivery``:
+    the callers are a view (which has a request) and the secret-rotation hook
+    (which may run without one), and one source keeps them from drifting. A
+    rotation that re-pointed a live bot at a different host than the connect
+    flow used would be a very quiet outage.
+    """
+    from django.conf import settings
+
+    path = reverse("webhook_platform", kwargs={"platform": Platform.TELEGRAM.value})
+    return urljoin(settings.APP_URL.rstrip("/") + "/", path.lstrip("/"))
 
 
 # ---------------------------------------------------------------------------
@@ -433,26 +503,33 @@ def _label(item: Button | QuickReply) -> str:
 def _callback_data(node_id: str, button_id: str) -> str | None:
     """SPEC §6.2's ``node_id:button_id``, within Telegram's 64-byte cap.
 
-    The graph schema constrains both ids to ``[A-Za-z0-9_-]{1,64}``
-    (``apps.flows.schema.handles.HANDLE_PATTERN``), so neither can contain a
-    colon and :func:`_button_id` can split on the first one. Together they can
-    still exceed 64 bytes, and then the node id is what goes: it is
-    decoration — the engine matches a press on the button id against the
-    *waiting* node's handles, and a contact has one live execution — while the
-    button id is the part that has to survive.
+    **The separator is always present**, even when there is no node — a message
+    from the inbox or the public API has none, and it encodes as ``:<id>``. That
+    costs one byte and buys an unambiguous decoding: :func:`_button_id` can
+    split on the first colon and be right every time. Omitting it for the
+    no-node case looked tidier and was wrong, because a button id *may* contain
+    a colon: the graph schema forbids it
+    (``apps.flows.schema.handles.HANDLE_PATTERN``), but nothing constrains an
+    ``OutboundMessage`` built by hand, and ``"a:b"`` on the wire would come back
+    as ``"b"`` and match no handle.
 
-    None means the button cannot be sent at all. Only reachable for an id that
-    is over 64 bytes on its own, which the schema does not permit and an inbox
-    or API caller building an ``OutboundMessage`` by hand could still manage.
+    Over 64 bytes the node id is what goes: it is decoration — the engine
+    matches a press on the button id against the *waiting* node's handles, and a
+    contact has one live execution — while the button id has to survive.
+
+    None means the button cannot be represented and is left out of the keyboard
+    entirely, which is visible, rather than sent with a payload Telegram would
+    reject or that would come back unmatchable.
     """
     if not button_id:
         return None
-    combined = f"{node_id}:{button_id}" if node_id else button_id
+    combined = f"{node_id}:{button_id}"
     if len(combined.encode("utf-8")) <= MAX_CALLBACK_DATA_BYTES:
         return combined
-    if len(button_id.encode("utf-8")) <= MAX_CALLBACK_DATA_BYTES:
+    bare = f":{button_id}"
+    if len(bare.encode("utf-8")) <= MAX_CALLBACK_DATA_BYTES:
         logger.debug("Telegram: callback_data for %r dropped its node prefix to fit 64 bytes.", button_id)
-        return button_id
+        return bare
     logger.warning(
         "Telegram: button id is over %s bytes and cannot be sent as callback_data; "
         "the button was left out of the keyboard.",
@@ -476,13 +553,25 @@ def _chat_id(container: Any) -> str:
 
     Telegram sends chat ids as JSON numbers. ``bool`` is excluded explicitly
     because it is an ``int`` in Python and ``str(True)`` is a chat id nobody has.
+
+    An absurdly long id is **hashed, not truncated**, which is the rule this
+    codebase already applies to every other identifier — see
+    ``apps.messaging.identities.bounded_key`` and
+    ``apps.channels.views_webhooks._dedup_id``, both of which explain it at
+    length. Truncating narrows an identity key without saying so, and two ids
+    agreeing on their first 200 characters would become one person receiving
+    another's conversation. Not reachable from a real Telegram payload; the
+    point is that it cannot become reachable.
     """
     if not isinstance(container, dict):
         return ""
     raw = container.get("id")
     if isinstance(raw, bool) or not isinstance(raw, (int, str)):
         return ""
-    return str(raw)[:200]
+    value = str(raw)
+    if len(value) <= MAX_PLATFORM_ID_CHARS:
+        return value
+    return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
 def _timestamp(raw: Any) -> Any:
@@ -572,8 +661,13 @@ def _button_id(data: str) -> str:
     """The button half of ``callback_data``.
 
     Split on the **first** colon, because that is where :func:`_callback_data`
-    put it and because a node id can never contain one. Data with no colon is a
-    bare button id, which is what the length fallback produces.
+    put it and because a node id can never contain one — so everything after it
+    is the button id, colons and all.
+
+    Data with no colon at all is accepted as a bare button id. Nothing this
+    adapter sends looks like that any more, but a keyboard sent before the
+    separator became unconditional may still be live in somebody's chat, and a
+    press on it should still work.
     """
     return data.split(":", 1)[-1]
 
@@ -740,25 +834,41 @@ class TelegramAdapter(Adapter):
         ]
 
     def _answer_callback_query(self, connection: ChannelConnection, query_id: str) -> None:
-        """Clear the spinner on the pressed button (SPEC §6.2).
+        """Clear the spinner on the pressed button (SPEC §6.2), off the ack path.
 
-        This is an outbound call on the inbound path, which is unusual enough to
-        justify: Telegram leaves a progress indicator on the button until the
-        bot answers, and the only other way to answer is to put the method in
-        the webhook *response* body — which this framework's endpoint owns and
-        does not delegate. One extra request, only for button presses, inside
-        SPEC §7.1's budget.
+        Telegram leaves a progress indicator on the button until the bot
+        answers, so this has to happen — but it must not happen *here*. An
+        inline Bot API round trip would put a 2-second-timeout network call
+        inside the webhook request, against SPEC §7.1's 1.5 s budget for the
+        whole inline path and the Layer-4 gate's "webhook ack p95 < 500 ms", on
+        the single most common interaction in the product.
 
-        Failure is swallowed on purpose. The spinner clearing is cosmetic; the
-        press is not, and ``views_webhooks._parse_events`` drops the whole
-        delivery if this method raises.
+        So it is enqueued instead: one INSERT on a connection the request
+        already holds, against a TLS handshake and a round trip. The spinner
+        clears when the worker picks it up rather than instantly, which is the
+        right trade for a purely cosmetic acknowledgement — and Telegram is
+        content as long as the answer arrives.
+
+        Failure is swallowed. The spinner is cosmetic; the press is not, and
+        ``views_webhooks._parse_events`` drops the whole delivery if this raises.
         """
         if not query_id:
             return
         try:
-            call(bot_token(connection), "answerCallbackQuery", {"callback_query_id": query_id})
+            queue_schedule(
+                ANSWER_CALLBACK_ACTION,
+                timezone.now(),
+                {"connection_id": str(connection.pk), "callback_query_id": query_id},
+                workspace=connection.workspace,
+                # One answer per press. A redelivered update would otherwise
+                # enqueue a second call for a spinner already cleared.
+                idempotency_key=f"tg-answer:{connection.pk}:{query_id}",
+                # A spinner nobody cleared is a cosmetic defect; retrying it for
+                # an hour is not worth a queue slot.
+                max_attempts=2,
+            )
         except Exception:
-            logger.warning("Telegram: could not answer a callback query on connection %s.", connection.pk)
+            logger.warning("Telegram: could not enqueue a callback answer on connection %s.", connection.pk)
 
     # -- outbound -----------------------------------------------------------
 
@@ -854,6 +964,15 @@ class TelegramAdapter(Adapter):
 
     # -- lifecycle ----------------------------------------------------------
 
+    def on_webhook_secret_rotated(self, connection: ChannelConnection, secret: str) -> None:
+        """Re-run ``setWebhook`` so Telegram presents the new secret.
+
+        Telegram holds the secret itself — there is no console to paste one
+        into — so without this a rotation leaves a bot whose every delivery
+        fails verification, with nothing in the product able to repair it.
+        """
+        set_webhook(bot_token(connection), url=webhook_url(), secret_token=secret)
+
     def on_disconnect(self, connection: ChannelConnection) -> None:
         """``deleteWebhook``, so a removed bot stops delivering to a dead URL."""
         delete_webhook(bot_token(connection))
@@ -886,6 +1005,27 @@ def _start_ref(text: str) -> str | None:
     if stripped.startswith(f"{START_COMMAND} "):
         return stripped[len(START_COMMAND) :].strip()
     return None
+
+
+@register_handler(ANSWER_CALLBACK_ACTION)
+def _answer_callback(payload: dict[str, Any], action: Any) -> None:
+    """Run the deferred ``answerCallbackQuery`` (see ``_answer_callback_query``).
+
+    Reads the connection back by id rather than trusting anything in the
+    payload: the queue row is ours, but the ids in it were derived from an
+    inbound webhook, and a handler that took a chat or a token from a payload
+    would be a way to make the worker call an arbitrary bot.
+    """
+    query_id = payload.get("callback_query_id")
+    connection_id = payload.get("connection_id")
+    if not isinstance(query_id, str) or not isinstance(connection_id, str):
+        return
+    # Cross-tenant by necessity: a worker drains the whole deployment and has no
+    # session workspace. The row it is acting on named this connection.
+    connection = ChannelConnection.objects.unscoped().filter(pk=connection_id).first()
+    if connection is None:
+        return
+    call(bot_token(connection), "answerCallbackQuery", {"callback_query_id": query_id})
 
 
 register_adapter(Platform.TELEGRAM, TelegramAdapter)

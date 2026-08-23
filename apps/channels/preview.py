@@ -23,14 +23,10 @@ accepts an explicit ``flow_version`` and already sets ``execution.preview`` from
 "preview runs are excluded from stats" costs nothing here.
 
 --------------------------------------------------------------------------
-Why this stage runs last, and why that is registered from ``apps.flows``
+Why this stage runs last
 --------------------------------------------------------------------------
 
-Contract 6's processors run in registration order, and registration happens in
-``AppConfig.ready()`` — which runs in ``INSTALLED_APPS`` order. ``apps.channels``
-is listed *before* ``apps.messaging``, so a processor registered from
-``ChannelsConfig.ready()`` would run **before** persistence and before L4-A's
-routing tail. That is the wrong end of the pipeline for this stage, twice over:
+It has to follow persistence and L4-A's routing tail, twice over:
 
 * the contact and identity this preview runs against are created by
   persistence, so running first would mean resolving them ourselves and racing
@@ -40,15 +36,16 @@ routing tail. That is the wrong end of the pipeline for this stage, twice over:
   triggered the preview would immediately be offered to it as a reply — and a
   draft waiting on a button would fall straight through its own first question.
 
-So the registration call lives in ``apps.flows.apps.FlowsConfig.ready()``, which
-``INSTALLED_APPS`` runs after messaging. The resulting order —
-``persistence → routing → preview`` — also states the semantics correctly:
-starting the draft **supersedes** whatever the event would otherwise have done,
-which is exactly what "while linked, the draft version runs" means.
+That is declared, not arranged: it registers in
+:data:`apps.channels.ingest.LATE_ORDER`, so the position is a property of the
+stage rather than of where its app happens to sit in ``INSTALLED_APPS``. An
+earlier version of this module leaned on app-loading order instead and had to be
+registered from ``apps.flows`` to get it — which put the reason for the
+registration in a different app from the code.
 
-``apps/channels/tests/test_telegram_preview.py`` pins that order, so a future
-reshuffle of ``INSTALLED_APPS`` fails loudly instead of quietly resuming
-somebody's draft.
+The resulting order — ``persistence → routing → preview`` — also states the
+semantics correctly: starting the draft **supersedes** whatever the event would
+otherwise have done, which is what "while linked, the draft version runs" means.
 """
 
 import logging
@@ -83,8 +80,7 @@ __all__ = [
     "start_payload",
 ]
 
-#: The contract-6 stage name. Registered from ``apps.flows`` — see the module
-#: docstring for why it is not registered from this app's own ``ready()``.
+#: The contract-6 stage name.
 PREVIEW_PROCESSOR = "preview"
 
 #: What marks a ``/start`` payload as a preview link rather than an operator's
@@ -127,17 +123,10 @@ def mint(*, flow: Any, connection: ChannelConnection, user: Any, now: Any = None
 
 
 def register_processors() -> None:
-    """Register the preview stage on contract 6's seam.
-
-    Guarded the way ``apps.messaging.ingest.register_processors`` is: ``ready()``
-    can run more than once in a test process, and registering twice under the
-    same name is a replace rather than a duplicate, but the guard keeps the
-    *position* stable too.
-    """
+    """Register the preview stage on contract 6's seam, in the late band."""
     from apps.channels import ingest
 
-    if PREVIEW_PROCESSOR not in ingest.registered_processors():
-        ingest.register_processor(preview_events, name=PREVIEW_PROCESSOR)
+    ingest.register_processor(preview_events, name=PREVIEW_PROCESSOR, order=ingest.LATE_ORDER)
 
 
 def preview_events(connection: ChannelConnection, events: Sequence[NormalizedEvent]) -> None:
@@ -163,12 +152,12 @@ def preview_events(connection: ChannelConnection, events: Sequence[NormalizedEve
 
 
 def _start_preview(connection: ChannelConnection, handle: str, chat_id: str) -> None:
-    link = _claim(handle, chat_id)
+    link = _claim(connection, handle, chat_id)
     if link is None:
         return
 
     from apps.flows import services as flow_services
-    from apps.flows.engine import FlowNotRunnableError, start_flow
+    from apps.flows.engine import start_flow
     from apps.flows.models import StartedBy
 
     version = flow_services.latest_version(link.flow)
@@ -192,36 +181,62 @@ def _start_preview(connection: ChannelConnection, handle: str, chat_id: str) -> 
             flow_version=version,
             connection=connection,
         )
-    except FlowNotRunnableError:
-        # A draft is allowed to be half-wired — that is what a draft is — so a
-        # graph with no single entry node is an ordinary outcome here rather
-        # than an error. The builder's validation panel already says so; the
-        # tester gets silence, which is the same thing every other unmatched
-        # /start payload gets.
-        logger.info("Preview link %s names a draft that cannot start yet.", link.pk)
+    except Exception:
+        # Nothing this stage does may escape. A processor that raises makes
+        # `process_events` return False, which marks **every** event-log row in
+        # the delivery FAILED — so one bad preview link would have an operator
+        # investigating messages that were persisted perfectly well.
+        #
+        # The expected member of this set is FlowNotRunnableError: a draft is
+        # allowed to be half-wired, that is what a draft is, and a graph with no
+        # single entry node is an ordinary outcome here. The builder's
+        # validation panel already says so, and the tester gets silence — the
+        # same thing every other unmatched /start payload gets.
+        logger.info("Preview link %s could not start its draft.", link.pk, exc_info=True)
 
 
-def _claim(handle: str, chat_id: str) -> FlowPreviewLink | None:
+def _claim(connection: ChannelConnection, handle: str, chat_id: str) -> FlowPreviewLink | None:
     """Bind this link to ``chat_id``, or return None if it is not ours to use.
 
     A conditional ``UPDATE`` rather than a read followed by a write, so two
     chats presenting the same handle at the same moment cannot both be told they
-    won it. The predicate carries every rule at once: the digest has to match,
-    the link has to be unexpired, and the chat has to be either the first to
-    arrive or the one that already claimed it.
+    won it. The predicate carries every rule at once, and each clause is load
+    bearing:
 
-    Re-claiming from the same chat is allowed on purpose — an editor pressing
-    Test twice, or a tester tapping the link again to restart the draft, is the
-    normal way this feature is used.
+    ``handle_digest``
+        The handle is the credential. An equality match on a fixed-length HMAC
+        keyed on ``SECRET_KEY``.
+    ``channel_connection``
+        **The link only works on the bot it was minted for.** Without this the
+        lookup spans every connection in the deployment — the query has to be
+        unscoped, because an inbound webhook has no session and therefore no
+        workspace — so a handle presented to a *different* bot, including one in
+        another tenant, would claim the row, burn it for the tester it was
+        minted for, and then fail deeper in ``start_flow`` on a workspace
+        mismatch. Failing closed here means the wrong bot sees an unrecognised
+        ``/start`` payload and nothing else happens.
+    ``expires_at``
+        Enforced in SQL rather than after the read, so an expired link is not
+        claimed on its way to being rejected.
+    ``chat_id``
+        Either the first chat to arrive or the one that already holds it.
+        Re-claiming from the same chat is deliberate — an editor pressing Test
+        twice, or a tester tapping the link again to restart the draft, is the
+        normal way this is used.
     """
     if not handle or not chat_id:
         return None
     now = timezone.now()
     digest = hmac_digest(handle)
     # Cross-tenant by necessity: this runs on the inbound webhook path, which
-    # has no session and therefore no workspace. What bounds it is the handle —
-    # 192 bits of urandom, and the digest is keyed on SECRET_KEY.
-    rows = FlowPreviewLink.objects.unscoped().filter(handle_digest=digest, expires_at__gt=now)
+    # has no session and therefore no workspace. What bounds it is the pair of
+    # the handle — 192 bits of urandom, digest keyed on SECRET_KEY — and the
+    # connection the delivery was verified against.
+    rows = FlowPreviewLink.objects.unscoped().filter(
+        handle_digest=digest,
+        channel_connection=connection,
+        expires_at__gt=now,
+    )
     with transaction.atomic():
         claimed = rows.filter(Q(chat_id="") | Q(chat_id=chat_id)).update(
             chat_id=chat_id,
@@ -230,13 +245,10 @@ def _claim(handle: str, chat_id: str) -> FlowPreviewLink | None:
         )
         if not claimed:
             return None
-        # Cross-tenant for the same reason as the filter above.
-        link = (
-            FlowPreviewLink.objects.unscoped()
-            .select_related("flow", "flow__workspace", "channel_connection")
-            .filter(handle_digest=digest)
-            .first()
-        )
+        # Cross-tenant for the same reason as the filter above. Re-read through
+        # the same predicate, so a row that stopped matching between the two
+        # statements is not resurrected here.
+        link = rows.select_related("flow", "flow__workspace", "channel_connection").first()
     if link is None or link.channel_connection.status == ConnectionStatus.DISABLED:
         return None
     return link

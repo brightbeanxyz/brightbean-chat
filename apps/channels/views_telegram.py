@@ -108,9 +108,10 @@ def telegram_connect(request: WorkspaceRequest, workspace_id: str) -> HttpRespon
         "channels/telegram_connect.html",
         {
             "error": error,
-            "webhook_url": request.build_absolute_uri(
-                reverse("webhook_platform", kwargs={"platform": Platform.TELEGRAM.value})
-            ),
+            # The URL the connect actually configures, not one derived from
+            # this request — so what the page promises and what Telegram is told
+            # cannot disagree on a deployment behind a proxy.
+            "webhook_url": telegram.webhook_url(),
             "list_url": reverse("channels:list", kwargs={"workspace_id": workspace_id}),
         },
     )
@@ -138,24 +139,41 @@ def _connect(request: WorkspaceRequest, token: str) -> str:
         platform=Platform.TELEGRAM.value,
         display_name=f"@{username}"[:200],
         external_id=str(bot_id),
-        credentials={telegram.TOKEN_KEY: token},
     )
+    telegram.store_bot_token(connection, token)
     secret = connection.rotate_webhook_secret()
-    webhook_url = request.build_absolute_uri(reverse("webhook_platform", kwargs={"platform": Platform.TELEGRAM.value}))
 
     try:
+        # The savepoint is not optional and is not about setWebhook: an
+        # IntegrityError marks the surrounding transaction unusable, so without
+        # atomic() here a duplicate bot would poison every query for the rest of
+        # the request rather than becoming the form error below. Same reason
+        # ``views.connection_create`` wraps its insert.
         with transaction.atomic():
             connection.save()
-            # Inside the transaction on purpose: a bot Telegram will not deliver
-            # to is not a connection, and the row must not outlive the failure.
-            telegram.set_webhook(token, url=webhook_url, secret_token=secret)
     except IntegrityError:
         # SPEC §5's unique (platform, external_id) is deployment-wide, so this
         # can be another workspace's row. The wording never says which — same
         # message the form's own pre-check uses (SECURITY-BASELINE §1).
         return DUPLICATE_ACCOUNT_ERROR
+
+    # setWebhook runs **outside** the savepoint above, and deliberately. It is
+    # a network round trip with a 30-second timeout; holding a transaction open
+    # across it would pin a database connection from the pool for that long,
+    # and a handful of operators connecting bots while Telegram is degraded
+    # would exhaust the pool and take unrelated requests down with it.
+    #
+    # The cost of moving it out is that the row exists for the duration, so the
+    # failure path has to clean up rather than roll back. It deletes: a bot
+    # Telegram will not deliver to is not a connection, and one left in the list
+    # looking connected while nothing ever arrives is the worse outcome. A
+    # delete that itself fails leaves a row the operator can remove by hand,
+    # which is recoverable; a wedged pool is not.
+    try:
+        telegram.set_webhook(token, url=telegram.webhook_url(), secret_token=secret)
     except APIError:
         logger.info("Telegram connect: setWebhook failed for workspace %s.", request.workspace.pk)
+        connection.delete()
         return WEBHOOK_FAILED
 
     messages.success(request, f"Connected @{username}. Send it /start to check it works.")

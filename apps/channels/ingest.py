@@ -24,6 +24,7 @@ those get a webhook disabled at the provider's end.
 """
 
 import hashlib
+import itertools
 import json
 import logging
 from collections.abc import Callable, Sequence
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DEFAULT_ORDER",
+    "LATE_ORDER",
     "Processor",
     "process_events",
     "register_processor",
@@ -49,32 +52,63 @@ __all__ = [
 #: processor rather than changing this signature.
 type Processor = Callable[["ChannelConnection", Sequence["NormalizedEvent"]], None]
 
-# Insertion-ordered, which dicts are. Registration order is dispatch order.
+#: The order band an ordinary stage registers in. Within one band, dispatch
+#: follows registration order, which is what keeps persistence ahead of the
+#: routing tail it feeds without either of them naming a number.
+DEFAULT_ORDER = 0
+
+#: For a stage that must run after everything else, whoever else registers and
+#: whatever order the apps happen to load in. SPEC §16's flow preview uses it:
+#: it needs the contact persistence created **and** it supersedes whatever the
+#: routing tail started, so "last" is a property of the stage rather than of
+#: where its app sits in ``INSTALLED_APPS``.
+LATE_ORDER = 100
+
 _PROCESSORS: dict[str, Processor] = {}
 
+#: name -> (order band, registration sequence). Dispatch sorts on this pair, so
+#: a stage's position is something it *declares* rather than something it
+#: inherits from ``INSTALLED_APPS``. That distinction is load-bearing: app
+#: readiness runs in ``INSTALLED_APPS`` order, ``apps.channels`` is listed
+#: before ``apps.messaging``, and a stage that must follow persistence therefore
+#: could not express that by registering from the app that owns its code.
+_ORDER: dict[str, tuple[int, int]] = {}
 
-def register_processor(processor: Processor, *, name: str) -> None:
+_SEQUENCE = itertools.count()
+
+
+def register_processor(processor: Processor, *, name: str, order: int = DEFAULT_ORDER) -> None:
     """Register ``processor`` under ``name``, replacing any previous holder.
 
     Replacement rather than refusal, unlike the adapter registry: a processor
     name identifies a *stage* ("persistence", "routing"), and a later layer
-    taking over a stage its predecessor stubbed is the intended lifecycle.
+    taking over a stage its predecessor stubbed is the intended lifecycle. A
+    replacement keeps the original stage's **position** — L4-A taking over the
+    routing tail must inherit the slot after persistence, not move to the end.
+
+    ``order`` is the band the stage runs in; ties break on registration order.
+    Leave it at :data:`DEFAULT_ORDER` unless the stage genuinely has to run
+    after stages it does not know the names of.
     """
     if not name:
         raise ValueError("A processor needs a name so it can be replaced or removed later.")
     if name in _PROCESSORS:
         logger.debug("Replacing inbound processor %r", name)
+        _ORDER[name] = (order, _ORDER[name][1])
+    else:
+        _ORDER[name] = (order, next(_SEQUENCE))
     _PROCESSORS[name] = processor
 
 
 def unregister_processor(name: str) -> None:
     """Remove a processor. Unknown names are ignored."""
     _PROCESSORS.pop(name, None)
+    _ORDER.pop(name, None)
 
 
 def registered_processors() -> tuple[str, ...]:
     """Registered processor names, in dispatch order."""
-    return tuple(_PROCESSORS)
+    return tuple(sorted(_PROCESSORS, key=lambda name: _ORDER[name]))
 
 
 def process_events(connection: "ChannelConnection", events: Sequence["NormalizedEvent"]) -> bool:
@@ -116,7 +150,8 @@ def process_events(connection: "ChannelConnection", events: Sequence["Normalized
     snapshot = tuple(events)
 
     ok = True
-    for name, processor in list(_PROCESSORS.items()):
+    for name in registered_processors():
+        processor = _PROCESSORS[name]
         try:
             processor(connection, snapshot)
         except Exception:

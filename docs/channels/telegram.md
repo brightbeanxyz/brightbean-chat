@@ -30,6 +30,12 @@ again. It is the entire credential: anyone holding it can read every message
 sent to the bot and send as the bot. To rotate it, revoke it with BotFather and
 reconnect.
 
+**Rotating the webhook secret** (Settings → Channels → the connection → Rotate
+secret) re-runs `setWebhook` for you, because Telegram holds the secret over its
+API rather than in a console you could paste into. The page after rotating says
+whether that worked; if it did not, the channel rejects every delivery until you
+rotate again.
+
 Disconnecting calls `deleteWebhook`, so a removed bot stops delivering. If that
 call fails — Telegram down, network gone — the connection is still removed and
 the failure is logged; the alternative is an operator who cannot disconnect.
@@ -60,7 +66,7 @@ refused at Telegram's end rather than delivered and discarded.
 | Sends text | `message` | |
 | Sends a photo, audio, voice note, video, video note, animation, document or sticker | `message` | `file_id`s land in `payload.media_ids`; the caption becomes the text |
 | Shares a contact or a location | `message` | Rendered as a sentence — SPEC §7.2 has no richer field |
-| Presses an inline button | `postback` | `payload.button_id` from `callback_data` |
+| Presses an inline button | `postback` | `payload.button_id` from `callback_data`; the button's spinner is cleared by a queued `answerCallbackQuery`, not inline, so it stays off the webhook's ack path |
 | Opens `t.me/<bot>?start=<ref>` | `referral` | `payload.ref` — SPEC §10's Ref URL trigger |
 | Sends a bare `/start` | `message` | `payload.extra["command"] == "start"` — see below |
 
@@ -91,12 +97,19 @@ these limits are enforced in one place rather than per platform.
 | Inline buttons | 10 | `capabilities.max_buttons`; Telegram documents no hard cap, this keeps a keyboard usable |
 
 Buttons become an **inline keyboard**, one button per row. A postback button's
-`callback_data` is `node_id:button_id` (SPEC §6.2); when the two together exceed
-64 bytes the node id is dropped, because the button id is the half the engine
-matches on. Quick replies alone become a **one-time reply keyboard**; when a
+`callback_data` is `node_id:button_id` (SPEC §6.2). The colon is always present,
+even for a message with no node behind it — an inbox reply or an API send
+encodes as `:button_id` — so the decoding is unambiguous whatever a button id
+contains. When the two ids together exceed 64 bytes the node id is dropped,
+because the button id is the half the engine matches on. Quick replies alone become a **one-time reply keyboard**; when a
 message has both, the quick replies join the inline keyboard, since Telegram
 allows only one `reply_markup` per message and a quick reply comes back as a
 `button_id` either way.
+
+Buttons beyond the tenth are appended to the text as numbered options ("Reply 1
+for ..."), and the number is matchable: the sending node records the same
+mapping in its wait config, so a contact who types "1" takes the branch they
+were offered.
 
 Cards and carousels have no native form here, so the downgrade renderer turns
 them into image + text messages before the adapter runs.
