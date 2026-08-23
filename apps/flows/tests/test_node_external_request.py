@@ -195,6 +195,23 @@ class TestTheHappyPath:
         assert internet.requests[0].headers["x-fine"] == "y"
         assert "rendered empty" in caplog.text
 
+    def test_a_header_rendered_from_an_accented_name_does_not_crash_the_step(self, tenancy, monkeypatch):
+        """A contact called Jörg in a header value used to raise
+        ``UnicodeEncodeError`` out of httpx, past ``except OutboundError``."""
+        internet = FakeInternet(serving({})).install(monkeypatch)
+        flow = branching_flow(
+            tenancy.workspace,
+            headers=[{"name": "X-Customer", "value": "{{first_name}}"}, {"name": "X-Fine", "value": "plain"}],
+        )
+
+        execution = run(tenancy.workspace, flow, first_name="Jörg")
+
+        assert execution.status == ExecutionStatus.COMPLETED
+        assert execution.current_node_id == "ok"
+        assert "x-customer" not in internet.requests[0].headers
+        assert internet.requests[0].headers["x-fine"] == "plain"
+        assert not ScheduledAction.objects.for_workspace(tenancy.workspace.pk).exists()
+
     def test_headers_are_rendered_and_sent(self, tenancy, monkeypatch):
         internet = FakeInternet(serving({})).install(monkeypatch)
         flow = branching_flow(
@@ -500,6 +517,31 @@ class TestResponseMappings:
 
         assert execution.variables["external_id"] == "u-1"
         assert execution.variables[summary_key("req")]["truncated"] is False
+
+    def test_a_deeply_nested_body_skips_mappings_without_crashing(self, tenancy, monkeypatch):
+        """``json.loads`` raises ``RecursionError`` on this, not ``ValueError``.
+
+        A few kilobytes, nowhere near the size cap, and the exception is not
+        what the node catches — so it escaped the no-raise contract, rolled the
+        step back and had the queue call the endpoint again.
+        """
+        bomb = b"[" * 10_000 + b"0" + b"]" * 10_000
+
+        def handler(request):
+            return httpx.Response(200, content=bomb, headers={"Content-Type": "application/json"})
+
+        FakeInternet(handler).install(monkeypatch)
+        flow = branching_flow(
+            tenancy.workspace,
+            response_mappings=[{"json_path": "$.a", "target_type": "variable", "target": "value"}],
+        )
+
+        execution = run(tenancy.workspace, flow)
+
+        assert execution.status == ExecutionStatus.COMPLETED
+        assert execution.current_node_id == "ok"
+        assert "value" not in execution.variables
+        assert not ScheduledAction.objects.for_workspace(tenancy.workspace.pk).exists()
 
     def test_a_non_json_body_skips_every_mapping(self, tenancy, monkeypatch):
         FakeInternet(serving(status=200, text="<html>fine, actually</html>")).install(monkeypatch)

@@ -451,6 +451,20 @@ class TestPrivateRangesAllowed:
         with pytest.raises(BlockedURLError, match="back at this deployment"):
             guarded_request("GET", "http://10.0.0.5:8000/internal/tick", client=transport(unreachable))
 
+    def test_the_v4_mapped_spelling_of_the_deployment_is_refused(self, monkeypatch: Any, settings: Any) -> None:
+        """The bypass this flag makes reachable.
+
+        The category rules unwrap ``::ffff:10.0.0.5`` before testing it, so with
+        private ranges allowed it passes them — and ``str()`` of that address is
+        ``'::ffff:a00:5'``, which matches no entry written as ``'10.0.0.5'``.
+        Both sides of the comparison are canonicalised now.
+        """
+        settings.APP_URL = "http://10.0.0.5:8000"
+        settings.ALLOWED_HOSTS = []
+        resolving({"10.0.0.5": ["10.0.0.5"], "sneaky.example.test": ["::ffff:10.0.0.5"]}, monkeypatch)
+        with pytest.raises(BlockedURLError, match="back at this deployment"):
+            guarded_request("GET", "http://sneaky.example.test/internal/tick", client=transport(unreachable))
+
 
 class TestResponseCap:
     def test_a_declared_oversize_body_is_never_read(self, monkeypatch: Any) -> None:
@@ -533,6 +547,166 @@ class TestResponseCap:
         response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
         assert len(response.content) == 64
         assert response.truncated is True
+
+
+class TestWireFormatAuthority:
+    """What goes in ``Host`` and SNI is the wire form, not the display form."""
+
+    def test_an_internationalized_host_is_sent_as_punycode(self, monkeypatch: Any) -> None:
+        """``URL.host`` decodes an IDN back to Unicode for humans to read.
+
+        Putting that in a header raises ``UnicodeEncodeError`` from inside
+        httpx — not an ``OutboundError``, so it escaped every caller's handler.
+        """
+        resolving({"xn--xample-9ua.com": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        response = guarded_request("GET", "https://éxample.com/p", client=transport(handler))
+
+        assert seen[0].headers["host"] == "xn--xample-9ua.com"
+        assert seen[0].extensions["sni_hostname"] == "xn--xample-9ua.com"
+        assert response.final_host == "xn--xample-9ua.com"
+
+    def test_an_ipv6_literal_keeps_its_brackets_in_host(self, monkeypatch: Any) -> None:
+        """``2606:2800::1:8443`` is not an authority — it is a host and a port
+        run together, which a server may reject or misparse."""
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", f"https://[{PUBLIC_V6}]:8443/p", client=transport(handler))
+
+        assert seen[0].headers["host"] == f"[{PUBLIC_V6}]:8443"
+
+    def test_an_ipv6_literal_without_a_port_is_still_bracketed(self, monkeypatch: Any) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", f"https://[{PUBLIC_V6}]/p", client=transport(handler))
+        assert seen[0].headers["host"] == f"[{PUBLIC_V6}]"
+
+    def test_a_mixed_case_host_is_lowercased_on_the_wire(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://API.Example.TEST/p", client=transport(handler))
+        assert seen[0].headers["host"] == "api.example.test"
+
+
+class TestDeadlineDuringStreaming:
+    """httpx's read timeout is per-read; a slow drip never trips it."""
+
+    def test_a_slow_drip_body_is_cut_off_by_the_wall_clock(self, monkeypatch: Any) -> None:
+        """The far end sends a chunk just inside the read timeout, forever.
+
+        Without a deadline check in the body loop this runs until the size cap
+        is reached — a nominally ten-second request holding a contact's advisory
+        lock for as long as the server cares to keep talking.
+        """
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        clock = iter(range(0, 100_000))
+        monkeypatch.setattr(outbound.time, "monotonic", lambda: float(next(clock)))
+
+        delivered = 0
+
+        def chunks() -> Any:
+            nonlocal delivered
+            for _ in range(10_000):
+                delivered += 1
+                yield b"x"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        with pytest.raises(OutboundTransportError, match="budget"):
+            guarded_request("GET", "https://api.example.test/", timeout=10, client=transport(handler))
+
+        assert delivered < 10_000, "the stream must be abandoned, not drained"
+
+    def test_a_prompt_body_is_unaffected(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        assert guarded_request("GET", "https://api.example.test/", client=transport(ok({"a": 1}))).ok
+
+
+class TestJsonDepth:
+    """SECURITY-BASELINE §7, applied to a body a stranger's server chose."""
+
+    def _response(self, raw: bytes) -> GuardedResponse:
+        return GuardedResponse(200, httpx.Headers({}), raw, False, 1, "https://api.example.test/", "api.example.test")
+
+    def test_a_deeply_nested_body_is_a_value_error_not_a_recursion_error(self) -> None:
+        """``json.loads`` raises ``RecursionError`` here, which is not a
+        ``ValueError`` and so is not what any caller is catching."""
+        bomb = b"[" * 10_000 + b"0" + b"]" * 10_000
+        assert len(bomb) < MAX_RESPONSE_BYTES, "a few kilobytes — nowhere near the size cap"
+        with pytest.raises(ValueError, match="nested"):
+            self._response(bomb).json()
+
+    def test_an_ordinary_document_still_parses(self) -> None:
+        assert self._response(b'{"a": {"b": [1, 2, {"c": 3}]}}').json() == {"a": {"b": [1, 2, {"c": 3}]}}
+
+    def test_the_cap_is_on_the_bytes_not_the_parse(self) -> None:
+        """Brackets inside a string are not nesting, so this must parse."""
+        assert self._response(b'{"a": "[[[[[[[[[[[[["}').json() == {"a": "[" * 13}
+
+
+class TestRedirectMethodRules:
+    """RFC 9110 §15.4: only POST is rewritten by 301 and 302."""
+
+    def _redirect_once(self, status: int, monkeypatch: Any) -> list[httpx.Request]:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(status, headers={"Location": "/moved"})
+            return httpx.Response(200, json={})
+
+        guarded_request("PUT", "https://api.example.test/start", json={"a": 1}, client=transport(handler))
+        return seen
+
+    @pytest.mark.parametrize("status", [301, 302])
+    def test_a_put_keeps_its_method_and_body(self, status: int, monkeypatch: Any) -> None:
+        """Rewriting this to GET would make a permanently-moved endpoint receive
+        a read where the flow author wrote a write, and appear to succeed."""
+        seen = self._redirect_once(status, monkeypatch)
+        assert [request.method for request in seen] == ["PUT", "PUT"]
+        assert seen[1].read() == b'{"a":1}'
+
+    def test_a_303_still_rewrites_a_put_to_get(self, monkeypatch: Any) -> None:
+        seen = self._redirect_once(303, monkeypatch)
+        assert [request.method for request in seen] == ["PUT", "GET"]
+        assert seen[1].read() == b""
+
+    @pytest.mark.parametrize("status", [301, 302])
+    def test_a_post_is_still_rewritten(self, status: int, monkeypatch: Any) -> None:
+        """The historical quirk this rule exists for."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.path == "/start":
+                return httpx.Response(status, headers={"Location": "/moved"})
+            return httpx.Response(200, json={})
+
+        guarded_request("POST", "https://api.example.test/start", json={"a": 1}, client=transport(handler))
+        assert [request.method for request in seen] == ["POST", "GET"]
 
 
 class TestCompressedBodies:
@@ -670,6 +844,29 @@ class TestHeaderHygiene:
         assert "x-evil" not in seen[0].headers
         assert "x-admin" not in seen[0].headers
         assert seen[0].headers["x-fine"] == "ok"
+
+    def test_a_non_ascii_header_value_is_dropped_rather_than_crashing(self, monkeypatch: Any) -> None:
+        """httpx ASCII-encodes header values when it builds the request and
+        raises ``UnicodeEncodeError`` — not an ``OutboundError``, so it escaped
+        the caller's handler. RFC 9110 §5.5 makes non-ASCII values obsolete and
+        there is no encoding to guess, so it is dropped like any other refusal."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        response = guarded_request(
+            "GET",
+            "https://api.example.test/",
+            headers={"X-Customer": "Jörg", "X-Fine": "plain"},
+            client=transport(handler),
+        )
+
+        assert response.ok
+        assert "x-customer" not in seen[0].headers
+        assert seen[0].headers["x-fine"] == "plain"
 
     def test_a_caller_cannot_override_host(self, monkeypatch: Any) -> None:
         """Overriding Host would point the pinned connection's virtual host elsewhere."""

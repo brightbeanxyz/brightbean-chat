@@ -65,11 +65,15 @@ before a limit on the decoded stream can fire. The guard asks for
 compressed anyway (:func:`_refuses_body`), so the bytes counted and the bytes
 allocated are the same bytes.
 
-**What ``timeout`` does not cover.** ``socket.getaddrinfo`` takes no timeout and
-cannot be interrupted, so name resolution is bounded by the OS resolver's
-configuration rather than by this module. The deadline is re-checked after every
-resolution and the deployment's own host is resolved from cache, but a caller
-needing a hard wall-clock bound needs one around :func:`guarded_request`.
+**``timeout`` is a wall clock, not a read timeout.** httpx's is per-read, so a
+server dripping one byte just inside it never trips it; the deadline is checked
+between hops *and on every chunk of the body*, which is what stops a nominally
+ten-second request from holding a contact's advisory lock for as long as the far
+end cares to keep talking. The one thing it does not cover is name resolution:
+``socket.getaddrinfo`` takes no timeout and cannot be interrupted, so that is
+bounded by the OS resolver's configuration. The deadline is re-checked after
+every resolution and the deployment's own host is resolved from cache, but a
+caller needing a bound on *that* needs one around :func:`guarded_request`.
 
 **Proving a call site uses this.** ``tests/ssrf.py`` exposes ``guard_required()``,
 which fails any HTTP request made inside its block that did not come from here.
@@ -89,11 +93,14 @@ from typing import Any
 import httpx
 from django.conf import settings
 
+from apps.common.jsonlimits import max_json_depth
+
 __all__ = [
     "CONNECT_TIMEOUT",
     "DEFAULT_TIMEOUT",
     "DEPLOYMENT_ADDRESS_TTL",
     "GUARD_EXTENSION",
+    "MAX_JSON_DEPTH",
     "MAX_REDIRECTS",
     "MAX_RESPONSE_BYTES",
     "BlockedURLError",
@@ -132,11 +139,24 @@ MAX_REDIRECTS = 3
 #: question with a mechanical answer rather than a reviewer's opinion.
 GUARD_EXTENSION = "brightbean_guarded"
 
-#: Redirects that turn the follow-up into a GET without a body, per RFC 9110.
-#: 307 and 308 are deliberately absent — they preserve both.
-_REWRITE_TO_GET = frozenset({301, 302, 303})
+#: RFC 9110 §15.4.4/15.4.8: a 303 turns *any* follow-up into a bodyless GET.
+_SEE_OTHER = 303
+
+#: 301 and 302 rewrite **POST** to GET, and only POST. That rewrite is a
+#: historical quirk browsers baked in for form submissions; RFC 9110 §15.4.2
+#: says it "is known to change the request method" for POST, and every other
+#: method keeps its semantics. Rewriting a PUT, PATCH or DELETE here would mean
+#: a permanently-moved endpoint silently receiving a *read* where the flow
+#: author wrote a write — the request would appear to succeed and do nothing.
+_REWRITE_POST_TO_GET = frozenset({301, 302})
 
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+#: Depth cap for a response body parsed as JSON (SECURITY-BASELINE §7). Applied
+#: to the bytes, before ``json.loads`` recurses through them — see
+#: :func:`apps.common.jsonlimits.max_json_depth` for why after is too late. Well
+#: above any real API's nesting and far below what exhausts a parser.
+MAX_JSON_DEPTH = 50
 
 #: Headers a caller may not set, because the guard owns them. ``Host`` is the
 #: dangerous one: overriding it would let a caller point the pinned connection's
@@ -268,9 +288,22 @@ class GuardedResponse:
         return candidate
 
     def json(self) -> Any:
-        """Parse the body as JSON. Raises ``ValueError`` like ``json.loads``."""
+        """Parse the body as JSON. Raises ``ValueError`` like ``json.loads``.
+
+        Depth-capped first, on the **bytes**. ``json.loads`` recurses, so a
+        document nested ten thousand deep — a few kilobytes, nowhere near the
+        size cap — raises ``RecursionError``, which is not a ``ValueError`` and
+        so is not what any caller of this method is catching. It would escape
+        the External Request node's no-raise contract, roll the flow step back
+        and have the queue call the same endpoint again. Whether it raises at
+        all depends on how much stack the caller had left, which is why the cap
+        is on the input rather than on the outcome.
+        """
         import json as _json
 
+        depth = max_json_depth(self.content)
+        if depth > MAX_JSON_DEPTH:
+            raise ValueError(f"JSON nested {depth} deep; this guard parses at most {MAX_JSON_DEPTH}.")
         return _json.loads(self.text)
 
 
@@ -457,7 +490,12 @@ def _resolved_deployment_addresses(app_host: str, _bucket: int) -> frozenset[str
     restart. Tests that swap :func:`resolve_host` must call
     :func:`reset_deployment_cache`.
     """
-    return frozenset(str(address) for address in resolve_host(app_host))
+    # Stored **unwrapped**, because that is how they are compared. Without it a
+    # deployment on 10.0.0.5 is reachable as ``::ffff:10.0.0.5``: the category
+    # rules unwrap before testing, so with EXTERNAL_REQUEST_ALLOW_PRIVATE on the
+    # address passes them, and ``str(::ffff:10.0.0.5)`` is ``'::ffff:a00:5'``,
+    # which matches no entry written as ``'10.0.0.5'``.
+    return frozenset(str(_unwrap(address)) for address in resolve_host(app_host))
 
 
 def reset_deployment_cache() -> None:
@@ -482,8 +520,11 @@ class _Target:
     logical: httpx.URL
     #: The same URL with the host replaced by the pinned literal address.
     pinned: httpx.URL
-    #: ``host`` or ``host:port``, for the ``Host`` header and TLS SNI.
+    #: The URL's authority in **wire** form — ASCII, IPv6 in brackets, port
+    #: included. What the ``Host`` header carries.
     authority: str
+    #: The ASCII (punycode) host on its own, no brackets and no port. What TLS
+    #: SNI carries, what logs name, and what ``origin`` compares.
     host: str
     origin: tuple[str, str, int]
 
@@ -504,15 +545,31 @@ def _validate(url: httpx.URL, *, own_hosts: frozenset[str], own_addresses: froze
     if url.userinfo:
         raise BlockedURLError("A URL carrying a username or password is not allowed; use a header instead.")
 
-    host = (url.host or "").strip()
-    if not host:
+    display = (url.host or "").strip().lower()
+    if not display:
         raise BlockedURLError("That URL has no host.")
-    lowered = host.lower()
 
-    if lowered in own_hosts:
+    # The **wire** forms, not the display ones. ``URL.host`` decodes an
+    # internationalized name back to Unicode for humans to read, and putting
+    # that in a ``Host`` header or a TLS SNI extension raises
+    # ``UnicodeEncodeError`` from inside httpx — which is not an OutboundError
+    # and so escapes every caller's handler. ``raw_host`` and ``netloc`` are
+    # what actually goes on the wire: punycode, lowercased, IPv6 bracketed and
+    # the port kept.
+    try:
+        lowered = url.raw_host.decode("ascii").lower()
+        authority = url.netloc.decode("ascii")
+    except (UnicodeDecodeError, AttributeError) as exc:  # pragma: no cover - httpx normalises to ASCII
+        raise BlockedURLError("That URL's host cannot be encoded for a request.") from exc
+    if not lowered:
+        raise BlockedURLError("That URL has no host.")
+
+    # Both spellings, so a deployment listed under either its Unicode or its
+    # punycode name is recognised under the other.
+    if lowered in own_hosts or display in own_hosts:
         raise BlockedURLError("That URL points back at this deployment.")
 
-    addresses = resolve_host(host)
+    addresses = resolve_host(lowered)
     if not addresses:
         raise BlockedURLError(f"{lowered} does not resolve.")
 
@@ -520,11 +577,10 @@ def _validate(url: httpx.URL, *, own_hosts: frozenset[str], own_addresses: froze
         refusal = _refusal(address)
         if refusal:
             raise BlockedURLError(f"{lowered} resolves to {refusal}.")
-        if str(address) in own_addresses:
+        if str(_unwrap(address)) in own_addresses:
             raise BlockedURLError("That URL points back at this deployment.")
 
     port = url.port
-    authority = f"{lowered}:{port}" if port is not None else lowered
     default_port = 443 if scheme == "https" else 80
     try:
         pinned = url.copy_with(host=str(addresses[0]))
@@ -620,8 +676,17 @@ def _clean_headers(headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None
             continue
         try:
             name.encode("ascii")
+            value.encode("ascii")
         except UnicodeEncodeError:
-            logger.warning("Outbound request: header %r is not an ASCII name and was dropped.", name)
+            # The *value* matters as much as the name and used to go
+            # unchecked: httpx ASCII-encodes it when building the request and
+            # raises ``UnicodeEncodeError``, which is not an OutboundError, so
+            # a header rendered from a contact called "Jörg" crashed the flow
+            # step instead of following its error path. RFC 9110 §5.5 makes
+            # non-ASCII field values obsolete, and there is no encoding to
+            # guess on the author's behalf — so it is dropped, loudly, like
+            # every other header this function refuses.
+            logger.warning("Outbound request: header %r is not ASCII and was dropped.", name)
             continue
         cleaned[name] = value
     return cleaned
@@ -652,16 +717,16 @@ def guarded_request(
     :class:`GuardedResponse` with that status, because the caller decides what
     a 404 means.
 
-    ``timeout`` is the budget for the **HTTP** phase of the whole call, redirects
-    included: three hops at ten seconds each would otherwise be a thirty-second
-    request behind a contact's advisory lock. It does **not** bound name
-    resolution — ``socket.getaddrinfo`` takes no timeout and cannot be
-    interrupted, so a blackholed nameserver is bounded by the OS resolver's own
-    configuration (``options timeout``/``attempts`` in ``resolv.conf``) and not
-    by this argument. The deadline is re-checked after every resolution, so a
-    slow lookup fails the call rather than also spending the HTTP budget, and the
-    deployment's own host is resolved from cache — but a caller that needs a hard
-    wall-clock bound needs one around ``guarded_request``, not inside it.
+    ``timeout`` is the wall-clock budget for the **HTTP** phase of the whole
+    call — every redirect hop and every chunk of the body, not a per-read
+    inactivity timeout. It does **not** bound name resolution:
+    ``socket.getaddrinfo`` takes no timeout and cannot be interrupted, so a
+    blackholed nameserver is bounded by the OS resolver's own configuration
+    (``options timeout``/``attempts`` in ``resolv.conf``). The deadline is
+    re-checked after every resolution, so a slow lookup fails the call rather
+    than also spending the HTTP budget, and the deployment's own host is
+    resolved from cache — but a caller needing a bound on resolution itself
+    needs one around ``guarded_request``.
 
     ``client`` is the test seam, the same one
     :func:`apps.channels.providers.base.request_json` offers — pass an
@@ -685,10 +750,6 @@ def guarded_request(
     try:
         target = _validate(_parsed(url), own_hosts=own_hosts, own_addresses=own_addresses)
         for hop in range(MAX_REDIRECTS + 1):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise OutboundTransportError(f"{target.host} timed out")
-
             status, response_headers, body, truncated = _send(
                 http,
                 target,
@@ -696,7 +757,7 @@ def guarded_request(
                 send_headers,
                 body_json,
                 body_content,
-                remaining=remaining,
+                deadline=deadline,
                 cap=cap,
             )
 
@@ -721,7 +782,7 @@ def guarded_request(
                 send_headers = {
                     name: value for name, value in send_headers.items() if name.lower() not in _ORIGIN_SCOPED_HEADERS
                 }
-            if status in _REWRITE_TO_GET and current_method not in ("GET", "HEAD"):
+            if status == _SEE_OTHER or (status in _REWRITE_POST_TO_GET and current_method == "POST"):
                 current_method = "GET"
                 body_json, body_content = None, None
             target = following
@@ -739,7 +800,7 @@ def _send(
     body_json: Any,
     body_content: bytes | str | None,
     *,
-    remaining: float,
+    deadline: float,
     cap: int,
 ) -> tuple[int, httpx.Headers, bytes, bool]:
     """One hop against the pinned address, with the body read under the cap.
@@ -756,10 +817,23 @@ def _send(
     A redirect carrying a ``Location`` has its body dropped unread: the caller
     never sees it, and reading it would spend the budget and the cap on a hop
     that is about to be replaced.
+
+    ``deadline`` rather than a duration, because the body loop has to check it.
+    httpx's read timeout is **per read**, not total: a server dripping one byte
+    every nine seconds never trips a ten-second read timeout, and a loop that
+    only checked the clock between hops would sit there until the size cap was
+    reached — a nominally ten-second request holding a contact's advisory lock
+    for as long as the far end cares to keep talking.
     """
     request_headers = dict(headers)
     request_headers["Host"] = target.authority
     request_headers["Accept-Encoding"] = _ACCEPT_ENCODING
+
+    def remaining() -> float:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise OutboundTransportError(f"{target.host} took longer than the request budget allows")
+        return left
 
     try:
         with http.stream(
@@ -768,7 +842,7 @@ def _send(
             headers=request_headers,
             json=body_json,
             content=body_content,
-            timeout=httpx.Timeout(remaining, connect=min(CONNECT_TIMEOUT, remaining)),
+            timeout=httpx.Timeout(remaining(), connect=min(CONNECT_TIMEOUT, remaining())),
             follow_redirects=False,
             extensions={"sni_hostname": target.host, GUARD_EXTENSION: True},
         ) as response:
@@ -802,6 +876,7 @@ def _send(
             size = 0
             truncated = False
             for chunk in response.iter_bytes():
+                remaining()  # the wall clock, not httpx's per-read inactivity timeout
                 chunks.append(chunk)
                 size += len(chunk)
                 # ``>``, not ``>=``: a body that is exactly ``cap`` bytes long
