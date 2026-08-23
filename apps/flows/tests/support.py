@@ -214,6 +214,7 @@ def inbound(
     kind: Any = None,
     ref: str = "",
     user: str = "tg-1",
+    comment_id: str = "",
     extra: dict[str, Any] | None = None,
 ) -> Any:
     """One inbound ``NormalizedEvent``, the shape L4-A hands ``attempt_resume``.
@@ -238,5 +239,11 @@ def inbound(
         platform_user_id=user,
         provider_event_id=event_id,
         timestamp=timezone.now(),
-        payload=EventPayload(text=text, button_id=button_id, ref=ref, extra=dict(extra or {})),
+        payload=EventPayload(
+            text=text,
+            button_id=button_id,
+            ref=ref,
+            comment_id=comment_id,
+            extra=dict(extra or {}),
+        ),
     )

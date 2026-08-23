@@ -58,6 +58,17 @@ class TestThePanel:
         response = client_for(tenancy.owner).get(_url("flows:trigger_panel", tenancy, flow))
 
         assert b"More than one" in response.content
+        # The label the rest of the panel uses, not the column value.
+        assert b"Default reply" in response.content
+        assert b"default_reply trigger" not in response.content
+
+    def test_every_trigger_type_can_be_created_from_the_panel(self, tenancy, client_for, flow):
+        """Including `api`: entrypoint_only means no webhook selects it, not that
+        nobody may make one — and #25's flow-start endpoint needs one to exist."""
+        response = client_for(tenancy.owner).get(_url("flows:trigger_panel", tenancy, flow))
+
+        for value in TriggerType.values:
+            assert f'value="{value}"'.encode() in response.content, value
 
     def test_keyword_text_is_escaped(self, tenancy, client_for, flow):
         """Keyword text is user-authored (SECURITY-BASELINE §2)."""
@@ -67,6 +78,51 @@ class TestThePanel:
 
         assert b"<script>alert(1)</script>" not in response.content
         assert b"&lt;script&gt;" in response.content
+
+
+@pytest.mark.django_db
+class TestTheForm:
+    """Every per-type form partial renders.
+
+    Without this the only reference to ``flows:trigger_form`` asserted a 404, so
+    the five form templates were never rendered by anything — a mistyped filter
+    argument or an unbalanced block tag in one of them would have passed CI and
+    500'd the first editor who clicked Add.
+    """
+
+    @pytest.mark.parametrize("trigger_type", list(TriggerType.values))
+    def test_the_create_form_renders_for_every_type(self, tenancy, client_for, flow, trigger_type):
+        response = client_for(tenancy.owner).get(_url("flows:trigger_form", tenancy, flow) + f"?type={trigger_type}")
+
+        assert response.status_code == 200
+        assert b"<form" in response.content
+
+    @pytest.mark.parametrize("trigger_type", [TriggerType.KEYWORD, TriggerType.REF_URL, TriggerType.COMMENT])
+    def test_the_edit_form_renders_a_stored_config(self, tenancy, client_for, flow, trigger_type):
+        from apps.flows.triggers.registry import spec_for
+
+        config = {"keywords": [{"text": "help", "mode": "exact"}]} if trigger_type == TriggerType.KEYWORD else None
+        if trigger_type == TriggerType.REF_URL:
+            config = {"ref": "promo"}
+        if trigger_type == TriggerType.COMMENT:
+            config = spec_for(trigger_type).default_config()
+        trigger = _trigger(flow, trigger_type, config)
+
+        response = client_for(tenancy.owner).get(_url("flows:trigger_form", tenancy, flow) + f"?trigger={trigger.pk}")
+
+        assert response.status_code == 200
+        assert b"<form" in response.content
+
+    def test_an_unknown_type_is_refused_without_a_500(self, tenancy, client_for, flow):
+        response = client_for(tenancy.owner).get(_url("flows:trigger_form", tenancy, flow) + "?type=teleport")
+
+        assert 200 <= response.status_code < 300
+        assert "triggersChanged" not in _events(response)
+
+    def test_a_malformed_trigger_id_is_404_not_500(self, tenancy, client_for, flow):
+        response = client_for(tenancy.owner).get(_url("flows:trigger_form", tenancy, flow) + "?trigger=not-a-uuid")
+
+        assert response.status_code == 404
 
 
 @pytest.mark.django_db

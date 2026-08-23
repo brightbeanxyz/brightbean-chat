@@ -39,7 +39,6 @@ class RoutingContext:
 
     event: NormalizedEvent
     connection: Any
-    workspace: Any
     budget: InlineBudget
     mode: RoutingMode
     identity: Any | None = None
@@ -60,6 +59,18 @@ class RoutingContext:
     stage: Stage = Stage.HARD_OPTOUT
     #: Free space for hooks to leave findings for later stages.
     notes: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def workspace(self) -> Any:
+        """The tenant this event belongs to.
+
+        A property rather than a field: the only reader is the hand-off, which
+        needs a ``Workspace`` instance because ``queueing.schedule`` refuses an
+        id. The connection arrives from ``resolve_connection`` without
+        ``select_related("workspace")``, so materialising it eagerly would spend
+        a query per event on a value most events never look at.
+        """
+        return self.connection.workspace
 
     @property
     def is_paused(self) -> bool:
@@ -101,13 +112,7 @@ def build_context(
     if not _belongs_to(connection, event):
         return None
 
-    context = RoutingContext(
-        event=event,
-        connection=connection,
-        workspace=connection.workspace,
-        budget=budget,
-        mode=mode,
-    )
+    context = RoutingContext(event=event, connection=connection, budget=budget, mode=mode)
 
     identity = _identity_for(connection, event)
     if identity is not None:

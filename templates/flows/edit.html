@@ -57,9 +57,15 @@ The Triggers drawer overlays the canvas rather than sitting beside it, so the
 mount div's box never changes size and React Flow is never asked to reflow.
 The body is fetched by htmx on first open and re-fetched on `triggersChanged`.
 {% endcomment %}
+{% comment %}
+Dispatching `triggers-opened` on the way open is what makes the panel's first
+fetch lazy: most visits to the builder never touch the drawer, and `load once`
+made every one of them pay for the panel query plus a channel query per ref
+trigger.
+{% endcomment %}
 <div class="flex-1 min-h-0 relative"
      x-data="{ triggersOpen: false }"
-     @toggle-triggers.window="triggersOpen = !triggersOpen"
+     @toggle-triggers.window="triggersOpen = !triggersOpen; if (triggersOpen) $dispatch('triggers-opened')"
      @keydown.escape.window="triggersOpen = false">
 <div id="flow-builder"
      class="fb-mount h-full rounded-xl border overflow-hidden"
@@ -96,7 +102,7 @@ The body is fetched by htmx on first open and re-fetched on `triggersChanged`.
        class="bb-drawer anim-collapse absolute inset-y-0 right-0 w-96 max-w-full z-30 overflow-y-auto">
     <div id="flow-triggers"
          hx-get="{% url 'flows:trigger_panel' workspace_id=request.workspace.id flow_id=flow.id %}"
-         hx-trigger="load once, triggersChanged from:body"
+         hx-trigger="triggers-opened from:body once, triggersChanged from:body"
          hx-swap="outerHTML">
         <p class="p-4 text-sm" style="color: var(--text-secondary);">Loading triggers…</p>
     </div>

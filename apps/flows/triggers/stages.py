@@ -21,21 +21,25 @@ platform-agnostic half.
 import logging
 from typing import Any
 
+from django.db import transaction
+
 from apps.channels.events import EventType
 from apps.flows.engine import FlowNotRunnableError, start_flow
 from apps.flows.engine.waits import Consumed as ResumeConsumed
 from apps.flows.engine.waits import attempt_resume
-from apps.flows.models import ExecutionStatus, FlowExecution, FlowStatus, StartedBy, Trigger, TriggerType
+from apps.flows.models import ExecutionStatus, FlowExecution, StartedBy, Trigger, TriggerType
 from apps.flows.triggers.context import RoutingContext
-from apps.flows.triggers.guards import claim_default_reply
+from apps.flows.triggers.guards import claim_default_reply, may_claim_comment, record_comment
 from apps.flows.triggers.hooks import Consumed, HookOutcome, Passed, Stage, register_hook
-from apps.flows.triggers.matching import MatchContext, match
+from apps.flows.triggers.matching import MatchContext, extra_value, match
+from apps.flows.triggers.types import COMMENT_POST_ID_KEY
 
 __all__ = [
     "DEFAULT_REPLY_EVENTS",
     "REPLY_EVENTS",
     "default_reply",
     "default_reply_trigger_for",
+    "waiting_execution_for",
     "opt_out_event",
     "register_builtin_hooks",
     "trigger_match",
@@ -90,7 +94,7 @@ def waiting_execution(context: RoutingContext) -> HookOutcome:
     if context.event.type not in REPLY_EVENTS or context.contact is None:
         return Passed("not a reply")
 
-    execution = _waiting_execution_for(context)
+    execution = waiting_execution_for(context)
     if execution is None:
         return Passed("nothing waiting")
 
@@ -109,12 +113,19 @@ def trigger_match(context: RoutingContext) -> HookOutcome:
     if context.contact is None:
         # A comment. The trigger matched, but there is nobody to run a flow for
         # until a private reply opens a DM thread — L5-A and L5-B own that half.
-        context.notes["matched_trigger_id"] = str(found.trigger.pk)
-        return Consumed(f"{found.trigger.type} matched, awaiting a contact")
+        # What *this* layer owes is the guard: claim the comment now, so a
+        # redelivery and a second comment from the same person on the same post
+        # are refused by the database rather than by a platform matcher nobody
+        # has written yet.
+        return _claim_comment(context, found.trigger)
 
     if not _start(context, found.trigger, found.variables):
         return Passed("the matched flow could not run")
     return Consumed(f"{found.trigger.type} trigger")
+
+
+class _StartFailedError(Exception):
+    """Internal: unwinds the savepoint holding an unspent default-reply claim."""
 
 
 def default_reply(context: RoutingContext) -> HookOutcome:
@@ -126,15 +137,68 @@ def default_reply(context: RoutingContext) -> HookOutcome:
     if trigger is None:
         return Passed("no default reply configured")
 
-    # Claimed before the flow starts and inside the caller's transaction, so a
-    # failure to start rolls the claim back with it rather than silently costing
-    # this contact their one reply for the day.
-    if not claim_default_reply(context.contact, context.connection):
-        return Passed("already answered within 24h")
-
-    if not _start(context, trigger, {"trigger_type": trigger.type}):
+    # The claim has to be taken *before* the send, or two events arriving
+    # together would both find the guard open. But a claim taken and then not
+    # spent is worse than no guard at all: it costs this contact their one reply
+    # for the next 24 hours and sends them nothing in exchange.
+    #
+    # So both live in one savepoint. ``_start`` turns the single failure it can
+    # diagnose into a return value rather than an exception — right for its other
+    # caller, wrong here — hence the private exception, whose only job is to
+    # unwind this block. Rolling back releases the claim, so the next message
+    # this contact sends is answered.
+    try:
+        with transaction.atomic():
+            if not claim_default_reply(context.contact, context.connection):
+                return Passed("already answered within 24h")
+            if not _start(context, trigger, {"trigger_type": trigger.type}):
+                raise _StartFailedError
+    except _StartFailedError:
         return Passed("the default-reply flow could not run")
     return Consumed("default reply")
+
+
+def _claim_comment(context: RoutingContext, trigger: Trigger) -> HookOutcome:
+    """Take SPEC §10's comment guards, and report whether this comment is ours.
+
+    Three refusals, all of them ``Passed`` rather than ``Consumed`` because a
+    comment we are not going to answer must leave the chain free for whatever a
+    later stage might do with it.
+
+    The claim lives here and not in the matcher on purpose: a matcher runs for
+    every candidate in priority order, so a matcher with a side effect would
+    leave a claim behind from a trigger that then *lost* the match.
+    """
+    payload = context.event.payload
+    comment_id = (payload.comment_id or "").strip()
+    if not comment_id:
+        # Nothing to key the guard on. L5-A and L5-B fill payload.comment_id and
+        # the extras named in apps.flows.triggers.types; until then a comment
+        # event carries no identity and must not start anything.
+        return Passed("the comment carries no id")
+
+    if not may_claim_comment(context.event.timestamp):
+        # SPEC §10 gives a private reply seven days from the comment. Past that
+        # the platform refuses it, so claiming would burn the once-per-post guard
+        # on a reply that can never be sent.
+        return Passed("past the private-reply deadline")
+
+    row = record_comment(
+        connection=context.connection,
+        trigger=trigger,
+        comment_id=comment_id,
+        post_id=extra_value(context.event, COMMENT_POST_ID_KEY),
+        commenter_ref=context.event.platform_user_id,
+        commented_at=context.event.timestamp,
+        once_per_contact_per_post=bool(trigger.config_json.get("once_per_contact_per_post", True)),
+    )
+    if row is None:
+        return Passed("this comment is already handled")
+
+    # The row id is what L5-A's private reply picks up: it names the comment to
+    # answer, the trigger whose flow to run, and the deadline to answer inside.
+    context.notes["handled_comment_id"] = str(row.pk)
+    return Consumed(f"{trigger.type} trigger, awaiting a contact")
 
 
 def register_builtin_hooks() -> None:
@@ -153,14 +217,21 @@ def register_builtin_hooks() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _waiting_execution_for(context: RoutingContext) -> FlowExecution | None:
+def waiting_execution_for(context: RoutingContext) -> FlowExecution | None:
     """The execution waiting for a reply from this contact, on this channel.
 
     SPEC §22 keeps at most one live execution per contact, so this is a
     ``.first()`` over what should be a single row rather than a ``.get()`` that
     would raise if that invariant ever slipped. ``-updated_at`` makes the choice
     deterministic in that case instead of leaving it to the planner.
+
+    Public, and the only spelling of this query: the inline-safety check asks
+    the same question a moment earlier, and two copies of "which execution does
+    this event belong to" is exactly how a safety check and the hook it guards
+    end up reasoning about different rows.
     """
+    if context.contact is None:
+        return None
     return (
         FlowExecution.objects.for_workspace(context.connection.workspace_id)
         .filter(
@@ -168,6 +239,7 @@ def _waiting_execution_for(context: RoutingContext) -> FlowExecution | None:
             status=ExecutionStatus.WAITING_REPLY,
             channel_connection=context.connection,
         )
+        .select_related("flow_version")
         .order_by("-updated_at")
         .first()
     )
@@ -176,32 +248,24 @@ def _waiting_execution_for(context: RoutingContext) -> FlowExecution | None:
 def default_reply_trigger_for(context: RoutingContext) -> Trigger | None:
     """The default-reply trigger covering this connection, lowest priority first.
 
-    A stage rather than a competitor in :func:`~apps.flows.triggers.matching.match`,
-    so it is queried here. Same candidate rules as every other type: bound to
-    this connection or unbound, enabled, on a live flow.
+    A stage rather than a competitor in :func:`~apps.flows.triggers.matching.match`
+    (SPEC §9.3 makes it step 4, after everything else declined), which is why it
+    is looked up here — but the *candidate* rules are identical to every other
+    type's, so they come from one place. A second copy of "enabled, on a live
+    flow, bound here or unbound on a matching platform" is a copy that drifts the
+    day one of those rules changes.
     """
-    from django.db.models import Exists, OuterRef, Q
+    from apps.flows.triggers.matching import eligible_triggers
 
-    from apps.flows.models import FlowVersion
-    from apps.flows.triggers.registry import spec_for
-
-    published = FlowVersion.objects.unscoped().filter(flow_id=OuterRef("flow_id"), published=True)
-    # .unscoped() with a reason (CONTRIBUTING.md): a correlated subquery inside
-    # a query that is already scoped, compiled rather than executed on its own.
-    candidates = (
-        Trigger.objects.for_workspace(context.connection.workspace_id)
-        .filter(type=TriggerType.DEFAULT_REPLY, enabled=True, flow__status=FlowStatus.ACTIVE)
-        .filter(Q(channel_connection=context.connection) | Q(channel_connection__isnull=True))
-        .filter(Exists(published))
-        .select_related("flow")
+    return next(
+        iter(
+            eligible_triggers(
+                MatchContext.from_event(context.connection, context.event, contact=context.contact),
+                (TriggerType.DEFAULT_REPLY,),
+            )
+        ),
+        None,
     )
-    spec = spec_for(TriggerType.DEFAULT_REPLY)
-    platform = context.connection.platform
-    for trigger in candidates:
-        if trigger.channel_connection_id is None and (spec is None or platform not in spec.platforms):
-            continue
-        return trigger
-    return None
 
 
 def _start(context: RoutingContext, trigger: Trigger, variables: dict[str, Any]) -> bool:

@@ -15,6 +15,7 @@ from apps.flows.triggers.guards import (
     PRIVATE_REPLY_WINDOW,
     claim_default_reply,
     mark_private_reply_sent,
+    may_claim_comment,
     may_private_reply,
     private_reply_deadline,
     record_comment,
@@ -164,6 +165,22 @@ class TestCommentGuard:
         row = self._comment(instagram, commented_at=now + timedelta(days=30), now=now)
 
         assert row.commented_at <= now
+
+    def test_the_deadline_is_checked_before_the_claim_is_spent(self, tenancy):
+        """Claiming a comment past the window would spend that person's one
+        claim on that post in exchange for a reply the platform refuses."""
+        now = timezone.now()
+
+        assert may_claim_comment(now) is True
+        assert may_claim_comment(now - PRIVATE_REPLY_WINDOW + timedelta(hours=1), now=now) is True
+        assert may_claim_comment(now - PRIVATE_REPLY_WINDOW - timedelta(hours=1), now=now) is False
+
+    def test_a_future_comment_cannot_extend_its_own_window(self, tenancy):
+        """The timestamp is clamped on both sides, so a forged date can move a
+        comment out of the window but never further into it."""
+        now = timezone.now()
+
+        assert may_claim_comment(now + timedelta(days=30), now=now) is True
 
     def test_the_deadline_is_seven_days_out(self, tenancy, instagram):
         row = self._comment(instagram)

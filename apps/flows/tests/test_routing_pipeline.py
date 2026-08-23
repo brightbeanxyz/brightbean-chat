@@ -266,6 +266,36 @@ class TestDefaultReply:
 
         assert len(adapter.sends) == 2
 
+    def test_a_flow_that_cannot_start_does_not_burn_the_guard(self, tenancy, connection, contact):
+        """A claim taken and not spent is worse than no guard: it costs the
+        contact their one reply for the day and sends them nothing. The claim and
+        the start share a savepoint, so a start that fails releases it."""
+        from apps.flows.models import DefaultReplyState, FlowStatus
+
+        flow = self._setup(tenancy, connection, contact)
+        # Archived after the trigger was made: the candidate query still finds a
+        # published version, and start_flow then refuses it.
+        type(flow).all_objects.filter(pk=flow.pk).update(status=FlowStatus.ARCHIVED)
+
+        with routing_adapter(Platform.TELEGRAM) as adapter:
+            _route(connection, inbound(connection, text="one", event_id="e1"))
+
+        assert adapter.sends == []
+        assert not DefaultReplyState.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_the_guard_survives_a_reply_that_did_go_out(self, tenancy, connection, contact):
+        """The other half of the pair above — the savepoint must not roll back a
+        claim whose flow started fine."""
+        from apps.flows.models import DefaultReplyState
+
+        self._setup(tenancy, connection, contact)
+
+        with routing_adapter(Platform.TELEGRAM) as adapter:
+            _route(connection, inbound(connection, text="one", event_id="e1"))
+
+        assert len(adapter.sends) == 1
+        assert DefaultReplyState.objects.for_workspace(tenancy.workspace).count() == 1
+
     def test_a_postback_is_not_answered_with_a_default_reply(self, tenancy, connection, contact):
         """A button press is never "I didn't understand you"."""
         self._setup(tenancy, connection, contact)
@@ -274,6 +304,117 @@ class TestDefaultReply:
             _route(connection, inbound(connection, button_id="anything"))
 
         assert adapter.sends == []
+
+
+@pytest.mark.django_db
+class TestCommentGuard:
+    """SPEC §10's comment guards, claimed by the routing stage rather than by
+    a platform matcher nobody has written yet."""
+
+    def _instagram(self, tenancy):
+        from apps.flows.tests.support import connection_for
+
+        return connection_for(tenancy.workspace, platform=Platform.INSTAGRAM, external_id="ig-acme")
+
+    def _comment_trigger(self, tenancy, *, once=True):
+        from apps.flows.triggers.registry import spec_for
+
+        flow = _send_flow(tenancy.workspace, name="Comment flow")
+        config = spec_for(TriggerType.COMMENT).default_config()
+        config["once_per_contact_per_post"] = once
+        return _trigger(flow, TriggerType.COMMENT, config)
+
+    def _comment(self, connection, *, comment_id="c-1", user="ig-1", post="p-1"):
+        return inbound(
+            connection,
+            kind=EventType.COMMENT,
+            text="what is the price?",
+            event_id=f"evt-{comment_id or 'none'}",
+            user=user,
+            comment_id=comment_id,
+            extra={"post_id": post, "parent_comment_id": ""},
+        )
+
+    def test_a_matched_comment_is_claimed(self, tenancy):
+        from apps.flows.models import HandledComment
+
+        instagram = self._instagram(tenancy)
+        trigger = self._comment_trigger(tenancy)
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram))
+
+        row = HandledComment.objects.for_workspace(tenancy.workspace).get()
+        assert row.comment_id == "c-1"
+        assert row.post_id == "p-1"
+        assert row.commenter_ref == "ig-1"
+        assert row.trigger_id == trigger.pk
+
+    def test_a_second_comment_from_the_same_person_is_not_claimed_again(self, tenancy):
+        from apps.flows.models import HandledComment
+
+        instagram = self._instagram(tenancy)
+        self._comment_trigger(tenancy)
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram, comment_id="c-1"))
+            _route(instagram, self._comment(instagram, comment_id="c-2"))
+
+        assert HandledComment.objects.for_workspace(tenancy.workspace).count() == 1
+
+    def test_the_setting_lets_a_second_comment_through(self, tenancy):
+        from apps.flows.models import HandledComment
+
+        instagram = self._instagram(tenancy)
+        self._comment_trigger(tenancy, once=False)
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram, comment_id="c-1"))
+            _route(instagram, self._comment(instagram, comment_id="c-2"))
+
+        assert HandledComment.objects.for_workspace(tenancy.workspace).count() == 2
+
+    def test_a_comment_past_the_deadline_is_not_claimed(self, tenancy):
+        """Claiming would spend the once-per-post guard on a reply the platform
+        will refuse."""
+        from apps.flows.models import HandledComment
+        from apps.flows.triggers.guards import PRIVATE_REPLY_WINDOW
+
+        instagram = self._instagram(tenancy)
+        self._comment_trigger(tenancy)
+        event = self._comment(instagram)
+        object.__setattr__(event, "timestamp", timezone.now() - PRIVATE_REPLY_WINDOW - timedelta(hours=1))
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, event)
+
+        assert not HandledComment.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_comment_with_no_id_is_not_claimed(self, tenancy):
+        """L5-A and L5-B fill payload.comment_id; until then there is nothing to
+        key the guard on and nothing may be started."""
+        from apps.flows.models import HandledComment
+
+        instagram = self._instagram(tenancy)
+        self._comment_trigger(tenancy)
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram, comment_id=""))
+
+        assert not HandledComment.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_claiming_creates_no_contact(self, tenancy):
+        """apps/messaging/ingest.py's rule: one viral post must not become a
+        contact-spam amplifier."""
+        from apps.contacts.models import Contact
+
+        instagram = self._instagram(tenancy)
+        self._comment_trigger(tenancy)
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram))
+
+        assert Contact.objects.for_workspace(tenancy.workspace).count() == 0
 
 
 @pytest.mark.django_db

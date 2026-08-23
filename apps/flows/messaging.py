@@ -219,18 +219,41 @@ def resolve_identity(connection: Any, platform_user_id: str, *, occurred_at: Any
 
 
 def send_bucket_tokens(connection: Any) -> float | None:
-    """How many send tokens this connection has, **without spending one**.
+    """How many send tokens this connection has, **without touching the row**.
 
-    ``cost=0.0`` is a peek by construction rather than by convention: the bucket
-    refills by elapsed time and then debits nothing, so the caller learns what is
-    there and the one real debit stays in ``send_outbound``. Gating the inline
-    path with a debiting acquire would charge every inline send twice.
+    ``buckets.try_acquire(cost=0.0)`` reports the same number and debits nothing,
+    but it gets there through ``SELECT … FOR UPDATE`` and an ``UPDATE`` — so
+    every inbound event would take an exclusive lock on the one bucket row for
+    its connection before the contact lock was even attempted, and a busy bot's
+    events would queue on it inside SPEC §7.1's 1.5-second budget.
 
-    ``None`` means messaging is not installed, which the caller reads as "do not
-    let a missing app block routing".
+    This is advisory and unlocked, which is the right shape for a gate: the
+    authoritative debit is still ``send_outbound``'s own non-blocking acquire,
+    which SPEC §8 already requires to fall back to the queue when the bucket is
+    empty. All this decides is whether to *start* an inline reply on a connection
+    that has clearly run out.
+
+    The refill arithmetic mirrors ``buckets._spend`` and reads the rate through
+    the same public ``rate_for``/``capacity_for``, so a changed
+    ``DEFAULT_SEND_RATE_OVERRIDES`` takes effect here at the same moment it takes
+    effect there. ``None`` means messaging is not installed, which the caller
+    reads as "do not let a missing app block routing".
     """
     buckets = _module(_BUCKETS_MODULE)
     if buckets is None:  # pragma: no cover - messaging is installed everywhere
         return None
-    acquisition = buckets.try_acquire(connection, cost=0.0)
-    return float(getattr(acquisition, "tokens_left", 0.0))
+
+    rate = buckets.rate_for(connection.platform)
+    row = (
+        buckets.SendBucket.objects.annotate(db_now=buckets.ClockTimestamp())
+        .filter(connection=connection)
+        .values("tokens", "refilled_at", "db_now")
+        .first()
+    )
+    if row is None:
+        # No row yet means nothing has ever been sent on this connection, and
+        # the bucket is created full at the first send.
+        return buckets.capacity_for(rate)
+
+    elapsed = max(0.0, (row["db_now"] - row["refilled_at"]).total_seconds())
+    return float(min(buckets.capacity_for(rate), row["tokens"] + elapsed * rate))

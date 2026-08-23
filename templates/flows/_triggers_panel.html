@@ -25,9 +25,9 @@ name) is attacker-adjacent user text and is rendered escaped. No mark_safe, no
         What starts this flow. Lower numbers run first, and the first match wins.
     </p>
 
-    {% for type in duplicate_stage_types %}
+    {% for label in duplicate_stage_labels %}
     <div class="alert-error text-xs mb-3">
-        More than one {{ type }} trigger is enabled on this flow. Only the one with the
+        More than one “{{ label }}” trigger is enabled on this flow. Only the one with the
         lowest number will ever run.
     </div>
     {% endfor %}

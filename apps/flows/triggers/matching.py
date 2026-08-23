@@ -16,7 +16,7 @@ all, so "this type exists but cannot fire yet" is visible in
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -43,6 +43,8 @@ __all__ = [
     "MatchContext",
     "TriggerMatch",
     "candidates",
+    "eligible_triggers",
+    "extra_value",
     "match",
     "register_matcher",
     "register_welcome_signal",
@@ -101,7 +103,7 @@ class MatchContext:
         now: datetime | None = None,
     ) -> "MatchContext":
         payload = event.payload
-        text = payload.text or _extra(event, COMMENT_TEXT_KEY)
+        text = payload.text or extra_value(event, COMMENT_TEXT_KEY)
         return cls(
             event=event,
             connection=connection,
@@ -115,12 +117,12 @@ class MatchContext:
     @property
     def post_id(self) -> str:
         """The post a comment was left on. See ``triggers.types`` for the contract."""
-        return _extra(self.event, COMMENT_POST_ID_KEY)
+        return extra_value(self.event, COMMENT_POST_ID_KEY)
 
     @property
     def is_top_level_comment(self) -> bool:
         """A comment with no parent. Absent means top level, not unknown."""
-        return not _extra(self.event, COMMENT_PARENT_ID_KEY)
+        return not extra_value(self.event, COMMENT_PARENT_ID_KEY)
 
 
 @dataclass(frozen=True)
@@ -190,20 +192,35 @@ def candidates(context: MatchContext, types: tuple[str, ...]) -> Any:
     )
 
 
+def eligible_triggers(context: MatchContext, types: tuple[str, ...]) -> Iterator[Trigger]:
+    """Candidates this connection can actually fire, in match order.
+
+    :func:`candidates` answers the database's half of the question and this adds
+    the one part it cannot express: SPEC §5's null connection means "all
+    connections of *matching* platform", and "matching" is SPEC §10's Channels
+    column, which lives in :data:`apps.flows.triggers.types.PLATFORMS_FOR_TYPE`
+    rather than in a column the query could filter on.
+
+    Both halves in one generator because both the matcher and the default-reply
+    stage need exactly this list, and a second copy of the platform gate would be
+    a second place to fix the day a type's channel set changes.
+    """
+    if not types:
+        return
+    platform = context.connection.platform
+    for trigger in candidates(context, types):
+        if trigger.channel_connection_id is not None:
+            yield trigger
+            continue
+        spec = spec_for(trigger.type)
+        if spec is not None and platform in spec.platforms:
+            yield trigger
+
+
 def match(context: MatchContext) -> TriggerMatch | None:
     """The first trigger that fires for this event, or ``None``."""
     types = EVENT_TRIGGER_TYPES.get(context.event.type, ())
-    if not types:
-        return None
-
-    platform = context.connection.platform
-    for trigger in candidates(context, types):
-        if trigger.channel_connection_id is None:
-            # SPEC §5: a null connection means "all connections of *matching*
-            # platform", and matching is SPEC §10's Channels column.
-            spec = spec_for(trigger.type)
-            if spec is None or platform not in spec.platforms:
-                continue
+    for trigger in eligible_triggers(context, types):
         matcher = _MATCHERS.get(trigger.type)
         if matcher is None:
             continue
@@ -309,7 +326,14 @@ def _variables(trigger: Trigger, context: MatchContext) -> dict[str, Any]:
     return variables
 
 
-def _extra(event: NormalizedEvent, key: str) -> str:
+def extra_value(event: NormalizedEvent, key: str) -> str:
+    """One of the documented ``payload.extra`` keys, trimmed, or empty.
+
+    Public because the comment guard needs the same reading of the same
+    contract (:mod:`apps.flows.triggers.types`) that the comment matcher uses —
+    two spellings of "is this key present and a string" is how a matcher and a
+    guard end up disagreeing about which post a comment was left on.
+    """
     value = event.payload.extra.get(key)
     return value.strip() if isinstance(value, str) else ""
 

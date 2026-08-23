@@ -33,6 +33,7 @@ __all__ = [
     "REF_LINK_TEMPLATES",
     "RefLink",
     "register_handle_resolver",
+    "covers",
     "ref_link",
     "ref_links_for",
     "registered_handle_resolvers",
@@ -131,6 +132,22 @@ def ref_link(connection: Any, ref: str, *, trigger: Any = None) -> RefLink:
             ),
         )
     return RefLink(connection, connection.platform, template.format(handle=handle, ref=ref))
+
+
+def covers(trigger: Any, connection: Any) -> bool:
+    """Whether this trigger fires on this connection.
+
+    The same rule :func:`~apps.flows.triggers.matching.eligible_triggers` applies
+    at match time — a bound trigger covers its own connection, an unbound one
+    covers every connection of a matching platform — so a link the panel offers
+    and a link the matcher would honour cannot disagree.
+    """
+    from apps.flows.triggers.registry import spec_for
+
+    if trigger.channel_connection_id is not None:
+        return str(trigger.channel_connection_id) == str(connection.pk)
+    spec = spec_for(trigger.type)
+    return spec is not None and connection.platform in spec.platforms
 
 
 def ref_links_for(trigger: Any) -> list[RefLink]:

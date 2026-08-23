@@ -20,6 +20,7 @@ __all__ = [
     "DEFAULT_REPLY_INTERVAL",
     "PRIVATE_REPLY_WINDOW",
     "claim_default_reply",
+    "may_claim_comment",
     "may_private_reply",
     "mark_private_reply_sent",
     "private_reply_deadline",
@@ -149,3 +150,19 @@ def mark_private_reply_sent(row: HandledComment, *, contact: Any = None, now: da
         row.contact = contact
         fields.append("contact")
     row.save(update_fields=fields)
+
+
+def may_claim_comment(commented_at: datetime, *, now: datetime | None = None) -> bool:
+    """Is this comment still inside SPEC §10's seven-day private-reply window?
+
+    Checked *before* :func:`record_comment` rather than after, because claiming
+    is what spends the once-per-commenter-per-post guard: a comment that surfaces
+    eight days late would otherwise consume the one claim that person had on that
+    post, in exchange for a reply the platform will refuse.
+
+    The clock is ours on both sides — the incoming timestamp is clamped to "not
+    in the future" on write, and compared here against ``now`` — so a forged date
+    can move a comment out of the window but never further into it.
+    """
+    moment = now or timezone.now()
+    return min(commented_at, moment) + PRIVATE_REPLY_WINDOW >= moment

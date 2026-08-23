@@ -213,6 +213,45 @@ class TestPerTypeMatchers:
         assert match(comment("price?", parent="c-9")) is None
 
 
+@pytest.mark.django_db
+class TestEligibleTriggers:
+    """The one place the SPEC §5 platform gate lives.
+
+    Both the matcher and the default-reply stage read this, so a second copy of
+    "unbound means every connection of a *matching* platform" cannot drift.
+    """
+
+    def test_it_applies_the_platform_gate(self, tenancy, connection):
+        from apps.flows.triggers.matching import eligible_triggers
+
+        flow = _flow(tenancy.workspace, "Flow")
+        _trigger(flow, TriggerType.WELCOME)
+        sms = connection_for(tenancy.workspace, platform=Platform.SMS, external_id="+15559990")
+
+        assert list(eligible_triggers(_context(connection), (TriggerType.WELCOME,))) != []
+        assert list(eligible_triggers(_context(sms), (TriggerType.WELCOME,))) == []
+
+    def test_no_types_yields_nothing_without_touching_the_manager(self, tenancy, connection):
+        """An empty type tuple must not reach an unscoped queryset — the
+        workspace-scoped manager refuses even ``.none()``."""
+        from apps.flows.triggers.matching import eligible_triggers
+
+        assert list(eligible_triggers(_context(connection), ())) == []
+
+    def test_the_default_reply_stage_uses_it(self, tenancy, connection):
+        from apps.flows.triggers.budget import InlineBudget
+        from apps.flows.triggers.context import RoutingMode, build_context
+        from apps.flows.triggers.stages import default_reply_trigger_for
+
+        flow = _flow(tenancy.workspace, "Fallback")
+        wanted = _trigger(flow, TriggerType.DEFAULT_REPLY, {})
+        context = build_context(
+            connection, inbound(connection, text="hi"), InlineBudget.start(), mode=RoutingMode.INLINE
+        )
+
+        assert default_reply_trigger_for(context).pk == wanted.pk
+
+
 class TestTheRegistryItself:
     def test_the_stub_types_are_registered_and_decline(self):
         """A pin, like engine.registry.types_without_runtime(): a type leaving

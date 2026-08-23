@@ -14,8 +14,9 @@ import logging
 from typing import Any
 
 from apps.flows.engine import Graph, synchronous_safe
-from apps.flows.models import ExecutionStatus, FlowExecution, FlowVersion, Trigger
+from apps.flows.models import FlowExecution, FlowVersion, TriggerType
 from apps.flows.triggers.hooks import Stage
+from apps.flows.triggers.stages import waiting_execution_for
 
 __all__ = ["first_step_is_safe", "resume_first_step_is_safe", "trigger_first_step_is_safe"]
 
@@ -29,7 +30,7 @@ def first_step_is_safe(context: Any, stage: Stage) -> bool:
     ``False`` only ever means "let the worker do it", which is always correct.
     """
     if stage is Stage.RESUME:
-        execution = _waiting_execution(context)
+        execution = waiting_execution_for(context)
         if execution is not None:
             return resume_first_step_is_safe(execution)
         # Nothing is waiting, so this event will fall through to the trigger
@@ -40,29 +41,52 @@ def first_step_is_safe(context: Any, stage: Stage) -> bool:
 def trigger_first_step_is_safe(context: Any) -> bool:
     """Whether every flow a trigger could start here begins with a safe node.
 
-    It asks about *candidates* rather than re-running the match, because the
-    match has side-effect-free matchers but a real cost, and this runs before the
-    lock is taken. Requiring **all** candidates to be safe rather than the one
-    that will win is the conservative direction: the worst outcome is a flow that
-    could have replied in-request being answered a second later by the worker.
+    It asks about *candidates* rather than re-running the match, because this
+    runs before the lock is taken and a match is not free. Requiring **all**
+    candidates to be safe rather than the one that will win is the conservative
+    direction: the worst outcome is a flow that could have replied in-request
+    being answered a second later by the worker.
     """
-    from apps.flows.triggers.matching import EVENT_TRIGGER_TYPES, candidates
-    from apps.flows.triggers.matching import MatchContext as _MatchContext
+    from apps.flows.triggers.matching import EVENT_TRIGGER_TYPES, MatchContext, eligible_triggers
+    from apps.flows.triggers.stages import DEFAULT_REPLY_EVENTS
 
+    match_context = MatchContext.from_event(context.connection, context.event, contact=context.contact)
     types = EVENT_TRIGGER_TYPES.get(context.event.type, ())
-    match_context = _MatchContext.from_event(context.connection, context.event, contact=context.contact)
-    queryset = candidates(match_context, types) if types else Trigger.objects.none()
-    flows = [trigger.flow for trigger in queryset]
+    if context.contact is not None and context.event.type in DEFAULT_REPLY_EVENTS:
+        # The default reply is a stage rather than a candidate, but it is one
+        # more flow this pass could start — so it is judged in the same query
+        # rather than in a second one.
+        types = (*types, TriggerType.DEFAULT_REPLY)
 
-    default = _default_reply_flow(context)
-    if default is not None:
-        flows.append(default)
-
+    flows = {trigger.flow_id: trigger.flow for trigger in eligible_triggers(match_context, types)}
     if not flows:
-        # Nothing to start. Cheap and safe, and going inline means the stages
-        # run, find nothing, and return — which is what should happen.
+        # Nothing to start. Going inline means the stages run, find nothing and
+        # return, which is exactly what should happen.
         return True
-    return all(_flow_entry_is_safe(flow) for flow in flows)
+    return all(_entry_is_safe(graph) for graph in _published_graphs(flows.values()))
+
+
+def _published_graphs(flows: Any) -> list[Graph]:
+    """Every candidate's published graph, in **one** query rather than one each.
+
+    ``eligible_triggers`` has already established that each of these flows has a
+    published version — its candidate query filters on ``Exists(published)`` — so
+    this is a fetch, not a check, and fetching them one flow at a time would put
+    an N+1 on the path SPEC §7.1 budgets at 1.5 seconds.
+    """
+    flows = list(flows)
+    if not flows:
+        return []
+    versions = FlowVersion.objects.for_workspace(flows[0].workspace_id).filter(flow__in=flows, published=True)
+    return [Graph(version.graph_json) for version in versions]
+
+
+def _entry_is_safe(graph: Graph) -> bool:
+    entry = graph.entry_node_id()
+    if entry is None:
+        # An empty graph starts nothing, so it cannot start anything unsafe.
+        return True
+    return synchronous_safe(graph.node_type(entry))
 
 
 def resume_first_step_is_safe(execution: FlowExecution) -> bool:
@@ -93,45 +117,3 @@ def _outgoing_targets(version: FlowVersion, node_id: str) -> list[str]:
         for edge in edges
         if isinstance(edge, dict) and edge.get("source") == node_id and edge.get("target")
     ]
-
-
-def _flow_entry_is_safe(flow: Any) -> bool:
-    version = _published_version(flow)
-    if version is None:
-        # Cannot start at all, so it cannot start anything unsafe. The candidate
-        # query already excludes these; this is the belt to that braces.
-        return True
-    graph = Graph(version.graph_json)
-    entry = graph.entry_node_id()
-    if entry is None:
-        return True
-    return synchronous_safe(graph.node_type(entry))
-
-
-def _published_version(flow: Any) -> FlowVersion | None:
-    return FlowVersion.objects.for_workspace(flow.workspace_id).filter(flow=flow, published=True).first()
-
-
-def _default_reply_flow(context: Any) -> Any | None:
-    from apps.flows.triggers.stages import DEFAULT_REPLY_EVENTS, default_reply_trigger_for
-
-    if context.event.type not in DEFAULT_REPLY_EVENTS or context.contact is None:
-        return None
-    trigger = default_reply_trigger_for(context)
-    return trigger.flow if trigger is not None else None
-
-
-def _waiting_execution(context: Any) -> FlowExecution | None:
-    if context.contact is None:
-        return None
-    return (
-        FlowExecution.objects.for_workspace(context.connection.workspace_id)
-        .filter(
-            contact=context.contact,
-            status=ExecutionStatus.WAITING_REPLY,
-            channel_connection=context.connection,
-        )
-        .select_related("flow_version")
-        .order_by("-updated_at")
-        .first()
-    )

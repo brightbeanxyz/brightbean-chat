@@ -218,8 +218,14 @@ def trigger_qr(
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
     trigger = get_scoped_object_or_404(Trigger, request.workspace, pk=trigger_id, flow=flow, type=TriggerType.REF_URL)
 
-    link = next((item for item in links.ref_links_for(trigger) if str(item.connection.pk) == str(connection_id)), None)
-    if link is None or not link.available:
+    # Resolved directly rather than by scanning ref_links_for(): an unbound ref
+    # trigger covers every connection of a matching platform, and the panel
+    # renders one <img> per covered connection — so building the whole list to
+    # answer one request would make opening the drawer quadratic in the number
+    # of connected accounts.
+    connection = get_scoped_object_or_404(_connection_model(), request.workspace, pk=connection_id)
+    link = links.ref_link(connection, (trigger.config_json or {}).get("ref") or "", trigger=trigger)
+    if not links.covers(trigger, connection) or not link.available:
         # 404 rather than an explanation: a connection this trigger does not
         # cover, one whose handle is unknown, and one that does not exist should
         # all be indistinguishable from outside.
@@ -254,8 +260,12 @@ def _panel_context(request: WorkspaceRequest, flow: Flow) -> dict[str, Any]:
     return {
         "flow": flow,
         "triggers": [_row(trigger) for trigger in rows],
-        "trigger_types": [spec for spec in TRIGGER_TYPES.values() if not spec.entrypoint_only],
-        "duplicate_stage_types": _duplicate_stage_types(rows),
+        # Every type, api included. ``entrypoint_only`` means "no webhook ever
+        # selects this", not "nobody may create one" — and filtering it out here
+        # made SPEC §10's api trigger uncreatable, so the public flow-start
+        # endpoint (#25) would have had nothing to fire.
+        "trigger_types": list(TRIGGER_TYPES.values()),
+        "duplicate_stage_labels": _duplicate_stage_labels(rows),
         "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
     }
 
@@ -270,7 +280,7 @@ def _row(trigger: Trigger) -> dict[str, Any]:
     }
 
 
-def _duplicate_stage_types(rows: list[Trigger]) -> list[str]:
+def _duplicate_stage_labels(rows: list[Trigger]) -> list[str]:
     """Types where a second enabled trigger can never fire, so the panel can say so.
 
     ``default_reply`` and ``welcome`` are answered by whichever has the lower
@@ -281,16 +291,26 @@ def _duplicate_stage_types(rows: list[Trigger]) -> list[str]:
     for trigger in rows:
         if trigger.enabled and trigger.type in {TriggerType.DEFAULT_REPLY, TriggerType.WELCOME}:
             seen[trigger.type] = seen.get(trigger.type, 0) + 1
-    return sorted(trigger_type for trigger_type, count in seen.items() if count > 1)
+    labels = []
+    for trigger_type, count in seen.items():
+        if count > 1:
+            spec = spec_for(trigger_type)
+            labels.append(spec.label if spec is not None else trigger_type)
+    return sorted(labels)
+
+
+def _connection_model() -> Any:
+    from apps.flows.compat import installed_model
+
+    return installed_model("channels", "apps.channels", "ChannelConnection")
 
 
 def _connection_options(request: WorkspaceRequest, spec: Any) -> list[dict[str, str]]:
     """The connections this type can bind to. A convenience, never a gate."""
-    from apps.flows.compat import installed_model
 
     if not spec.bindable:
         return []
-    model = installed_model("channels", "apps.channels", "ChannelConnection")
+    model = _connection_model()
     if model is None:  # pragma: no cover - channels is always installed
         return []
     rows = (
@@ -306,12 +326,11 @@ def _connection_options(request: WorkspaceRequest, spec: Any) -> list[dict[str, 
 
 def _connection(request: WorkspaceRequest, spec: Any) -> Any:
     """The chosen connection, scoped. Blank means "every matching platform"."""
-    from apps.flows.compat import installed_model
 
     raw_id = (request.POST.get("channel_connection") or "").strip()
     if not raw_id or not spec.bindable:
         return None
-    model = installed_model("channels", "apps.channels", "ChannelConnection")
+    model = _connection_model()
     if model is None:  # pragma: no cover
         return None
     return get_scoped_object_or_404(model, request.workspace, pk=raw_id)
