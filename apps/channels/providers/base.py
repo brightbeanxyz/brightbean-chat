@@ -182,9 +182,16 @@ def _seconds(raw: Any) -> float | None:
 def _error_code(response: httpx.Response) -> str:
     """The platform's machine-readable error code, best effort.
 
-    Meta nests it at ``error.code``; Telegram uses ``error_code``. Anything
-    unparseable yields an empty string — this is decoration on an error path and
-    must never raise on top of the failure it is describing.
+    Meta nests it at ``error.code``; Telegram uses ``error_code``; Twilio puts a
+    bare ``code`` at the top level (``21610`` is "unsubscribed recipient",
+    ``21408`` "not permitted to this region"). Anything unparseable yields an
+    empty string — this is decoration on an error path and must never raise on
+    top of the failure it is describing.
+
+    The bare ``code`` is read **last**, after both nested spellings, because it
+    is the least specific key of the three: a platform that happens to put
+    something else under ``code`` alongside a real ``error.code`` should still
+    have the real one win.
     """
     try:
         body = response.json()
@@ -197,6 +204,8 @@ def _error_code(response: httpx.Response) -> str:
         return str(error["code"])[:64]
     if body.get("error_code") is not None:
         return str(body["error_code"])[:64]
+    if body.get("code") is not None:
+        return str(body["code"])[:64]
     return ""
 
 

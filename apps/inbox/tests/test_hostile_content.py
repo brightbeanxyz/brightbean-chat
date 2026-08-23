@@ -115,23 +115,19 @@ class TestHostileText:
         self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
     ) -> None:
         """SECURITY-BASELINE §3's SSTI ban, from the reader's side: a contact who
-        types a template tag sees a template tag.
-
-        **The arithmetic is five digits on purpose.** This probed with ``{{ 7*7 }}``
-        and asserted ``"49" not in body`` — but ``body`` is the whole rendered
-        thread, and the thread renders each message's timestamp. At 11:49, and
-        every other ``:49`` minute, the page contained "49" for reasons that had
-        nothing to do with templating, so this failed on roughly one CI run in
-        sixty — on every open pull request, since it is not specific to any branch.
-        A product no piece of page furniture can produce keeps the assertion about
-        the thing it is testing.
-        """
-        inbound("{{ 31337*3 }} and {% load static %}")
+        types a template tag sees a template tag."""
+        inbound("{{ 7*7 }} and {% load static %}")
 
         body = _thread(agent_client, url_for, conversation)
 
-        assert "94011" not in body
-        assert "{{ 31337*3 }}" in body
+        # ``"49 and"`` rather than a bare ``"49"``. The evaluated form of this
+        # payload is "49 and …", so the longer needle proves exactly as much —
+        # while a bare "49" is scanned against the *whole* rendered thread,
+        # which carries message timestamps. Any run at 16:49 failed this
+        # assertion on a page that had done nothing wrong, roughly one minute
+        # in sixty, on every open PR.
+        assert "49 and" not in body
+        assert "{{ 7*7 }}" in body
 
     @pytest.mark.parametrize("payload", OVERSIZED)
     def test_an_oversized_message_renders_without_blowing_up(

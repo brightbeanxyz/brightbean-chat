@@ -1,0 +1,15 @@
+{
+  "NumMedia": "1",
+  "SmsStatus": "received",
+  "Body": "<script>alert('xss')</script>{{ 7*7 }}<img src=x onerror=alert(1)>",
+  "To": "+15550001111",
+  "MessageSid": "<script>alert('sid')</script>",
+  "SmsSid": "javascript:alert(1)",
+  "AccountSid": "'; DROP TABLE messages; --",
+  "From": "<b>+15557778888</b>",
+  "FromCity": "<svg onload=alert(1)>",
+  "FromState": "{{ config }}",
+  "FromCountry": "../../etc/passwd",
+  "MediaUrl0": "javascript:alert(document.cookie)",
+  "ApiVersion": "2010-04-01"
+}

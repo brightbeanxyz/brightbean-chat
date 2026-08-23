@@ -1,0 +1,23 @@
+{% comment %}
+The segment-count hint, rendered by channels:sms_segment_preview and swapped in
+by HTMX. A fragment with no layout: it is dropped into a panel in the flow
+builder and into L6-B's broadcast composer, and both own their own chrome.
+
+Everything here is escaped by Django's autoescaping as usual. The only value
+derived from what the author typed is a count.
+{% endcomment %}
+<span class="muted" data-sms-segments>
+  {{ count.characters }} character{{ count.characters|pluralize }} ·
+  {{ count.encoding }} ·
+  <strong>{{ count.segments }} segment{{ count.segments|pluralize }}</strong>
+  ({{ count.remaining }} left in this one)
+  {% if estimated_cost is not None %}
+    · about {{ estimated_cost|floatformat:4 }} per recipient
+  {% endif %}
+  {% if count.encoding == "UCS-2" %}
+    <br />
+    A character outside the GSM-7 alphabet — a curly quote or an emoji, often
+    pasted in — re-encodes the whole message and drops the segment from 160
+    characters to 70.
+  {% endif %}
+</span>

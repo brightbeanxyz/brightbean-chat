@@ -1,0 +1,99 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}Webhook · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Webhook endpoint</h1>{% endblock %}
+
+{% block content %}
+  <p><code>{{ webhook.url }}</code></p>
+
+  {% if not webhook.enabled and webhook.disabled_at %}
+    {% comment %}
+    Auto-disabled. Re-enabling clears the failure counter (see
+    apps/api/services.py::update_webhook) — without that it would switch itself
+    off again on the next failed delivery, which reads as "re-enabling is broken".
+    {% endcomment %}
+    <div class="alert-error">
+      <p>
+        <strong>Switched off after {{ failure_limit }} consecutive failed deliveries.</strong>
+        Fix the endpoint, then tick <em>Enabled</em> below to start delivering again.
+      </p>
+    </div>
+  {% endif %}
+
+  <h2>Settings</h2>
+  <form method="post" action="{% url 'api_webhooks:update' workspace_id=request.workspace.id webhook_id=webhook.id %}">
+    {% csrf_token %}
+    <label for="webhook-url">URL</label>
+    <input id="webhook-url" type="url" name="url" maxlength="500" required value="{{ webhook.url }}" />
+
+    <fieldset>
+      <legend>Events</legend>
+      {% for choice in event_choices %}
+        <label>
+          <input type="checkbox" name="events" value="{{ choice.value }}"
+                 {% if choice.checked %}checked{% endif %} />
+          {{ choice.label }} <code>{{ choice.value }}</code>
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <label>
+      <input type="checkbox" name="enabled" {% if webhook.enabled %}checked{% endif %} /> Enabled
+    </label>
+
+    <button type="submit">Save</button>
+  </form>
+
+  <h2>Signing secret</h2>
+  <p class="muted">
+    Every delivery carries an HMAC of the body over this secret. Rotating it
+    invalidates signatures immediately — update your receiver first, or
+    deliveries will start failing verification the moment you rotate.
+  </p>
+  <form method="post"
+        action="{% url 'api_webhooks:rotate_secret' workspace_id=request.workspace.id webhook_id=webhook.id %}">
+    {% csrf_token %}
+    <button type="submit">Rotate secret</button>
+  </form>
+
+  <h2>Test</h2>
+  <p class="muted">
+    Sends a <code>webhook.test</code> event to this endpoint right now. Test
+    deliveries are not retried and never count towards the auto-disable limit.
+  </p>
+  <form method="post" action="{% url 'api_webhooks:test' workspace_id=request.workspace.id webhook_id=webhook.id %}">
+    {% csrf_token %}
+    <button type="submit">Send test event</button>
+  </form>
+
+  <h2>Recent deliveries</h2>
+  {% if deliveries %}
+    <table>
+      <thead><tr><th>When</th><th>Event</th><th>Result</th><th>Code</th><th>Duration</th><th>Attempt</th></tr></thead>
+      <tbody>
+        {% for delivery in deliveries %}
+          <tr>
+            <td>{{ delivery.created_at }}</td>
+            <td><code>{{ delivery.event }}</code></td>
+            <td>
+              {{ delivery.get_status_display }}
+              {% if delivery.error %}<br /><span class="muted">{{ delivery.error }}</span>{% endif %}
+            </td>
+            <td>{{ delivery.response_code|default:"—" }}</td>
+            <td>{{ delivery.duration_ms }} ms</td>
+            <td>{{ delivery.attempt }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Nothing delivered yet.</p>
+  {% endif %}
+
+  <h2>Delete</h2>
+  <form method="post" action="{% url 'api_webhooks:delete' workspace_id=request.workspace.id webhook_id=webhook.id %}">
+    {% csrf_token %}
+    <button type="submit">Delete endpoint</button>
+  </form>
+
+  <p><a href="{% url 'api_webhooks:list' workspace_id=request.workspace.id %}">Back to webhooks</a></p>
+{% endblock %}
