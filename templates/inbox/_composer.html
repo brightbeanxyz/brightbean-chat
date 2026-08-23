@@ -23,7 +23,14 @@ could flip by hand.
     {% endcomment %}
     <input type="hidden" name="token" value="{{ compose_token }}">
     <label class="sr-only" for="reply-{{ conversation.id }}">Reply</label>
-    <textarea id="reply-{{ conversation.id }}" name="body" rows="2" required
+    {% comment %}
+      No `required`. It was right when text was the only thing a message could
+      carry; with the attachment button beside it a picture on its own is a
+      legitimate reply, and a browser-side `required` would refuse to submit one.
+      The server is the authority either way — _outbound_body raises
+      _ComposeError for a message with no blocks at all, and the toast says so.
+    {% endcomment %}
+    <textarea id="reply-{{ conversation.id }}" name="body" rows="2"
               maxlength="{{ max_chars }}"
               data-shortcut="reply"
               class="form-input-styled"

@@ -1065,7 +1065,9 @@ def bulk_label(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     tells the operator what actually happened either way.
     """
     label = _label_or_404(request, request.POST.get("label") or "")
-    wanted = request.POST.getlist("conversation")[:LIST_LIMIT_BULK]
+    # Bounded by what the list itself can show, stated where the post arrives
+    # rather than trusted from the DOM.
+    wanted = request.POST.getlist("conversation")[: selectors.LIST_LIMIT]
     conversations = list(
         Conversation.objects.for_workspace(request.workspace).filter(pk__in=[_uuid(v) for v in wanted if _uuid(v)])
     )
@@ -1088,12 +1090,6 @@ def bulk_label(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         title=f"Label {verb} {changed} conversation{'' if changed == 1 else 's'}",
         events=_refresh(),
     )
-
-
-#: How many conversations one bulk action may touch. The list itself never shows
-#: more than ``selectors.LIST_LIMIT``, so this is the same bound stated where the
-#: form post arrives rather than trusted from the DOM.
-LIST_LIMIT_BULK = selectors.LIST_LIMIT
 
 
 # ---------------------------------------------------------------------------
