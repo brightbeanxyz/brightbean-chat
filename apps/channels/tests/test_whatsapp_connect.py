@@ -260,6 +260,44 @@ class TestTemplatePages:
         assert response.status_code == 200
         assert not WhatsAppTemplate.objects.for_workspace(tenancy.workspace).exists()
 
+    def test_a_footer_with_a_variable_is_refused_in_the_form(
+        self, client: Client, tenancy: Tenancy, connection: ChannelConnection
+    ) -> None:
+        """Meta allows no variables in a footer and the help text says so, but
+        saying so is not enforcing it — the draft saved, the operator submitted,
+        and Meta refused one round trip later in a place that does not name the
+        field."""
+        response = as_admin(client, tenancy).post(
+            url("whatsapp_template_new", tenancy),
+            {
+                "channel_connection": str(connection.pk),
+                "name": "footer_var",
+                "language": "en_US",
+                "category": "utility",
+                "body_text": "Hi",
+                "footer_text": "Order {{1}}",
+            },
+        )
+        assert response.status_code == 200
+        assert "cannot contain variables" in response.content.decode()
+        assert not WhatsAppTemplate.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_plain_footer_is_accepted(self, client: Client, tenancy: Tenancy, connection: ChannelConnection) -> None:
+        response = as_admin(client, tenancy).post(
+            url("whatsapp_template_new", tenancy),
+            {
+                "channel_connection": str(connection.pk),
+                "name": "plain_footer",
+                "language": "en_US",
+                "category": "utility",
+                "body_text": "Hi",
+                "footer_text": "Reply STOP to opt out.",
+            },
+        )
+        assert response.status_code == 302
+        template = WhatsAppTemplate.objects.for_workspace(tenancy.workspace).get()
+        assert template.body_structure["footer"]["text"] == "Reply STOP to opt out."
+
     def test_another_tenants_connection_cannot_be_named(
         self, client: Client, tenancy: Tenancy, other_tenancy: Tenancy
     ) -> None:

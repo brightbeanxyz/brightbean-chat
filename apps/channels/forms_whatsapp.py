@@ -28,6 +28,7 @@ from apps.channels.models import (
     WhatsAppTemplate,
 )
 from apps.channels.whatsapp_templates import (
+    _SLOT_RE,
     MAX_BODY_CHARS,
     MAX_BUTTON_TEXT_CHARS,
     MAX_FOOTER_CHARS,
@@ -183,6 +184,19 @@ class WhatsAppTemplateForm(forms.ModelForm):
             elif quick_index < QUICK_REPLY_SLOTS:
                 self.fields[f"quick_reply_{quick_index}"].initial = button.get("text") or ""
                 quick_index += 1
+
+    def clean_footer_text(self) -> str:
+        """Meta allows no variables in a footer, and the help text says so.
+
+        Enforced rather than only described: without this the form accepted the
+        draft, the operator submitted it, and Meta refused the template — one
+        round trip later, in a place that does not explain which field was
+        wrong.
+        """
+        value = (self.cleaned_data.get("footer_text") or "").strip()
+        if value and _SLOT_RE.search(value):
+            raise forms.ValidationError("A footer cannot contain variables. Move it into the body.")
+        return value
 
     def clean_name(self) -> str:
         import re

@@ -456,6 +456,36 @@ class TestSending:
             result = WhatsAppAdapter().send(make_connection(tenancy.workspace), _Identity(), text("x" * 9000))
         assert result.provider_message_id == "wamid.A"
 
+    def test_a_gallery_plus_a_template_sends_the_template_once(self, tenancy: Any) -> None:
+        """The renderer turns a gallery into one message per card and copies
+        `template_ref` onto every one of them. Sending each would deliver the
+        same approved template three times — and bill for three, since each is a
+        separate conversation-initiating message."""
+        from apps.channels.events import Card, GalleryBlock
+
+        message = OutboundMessage(
+            blocks=(GalleryBlock(cards=(Card(title="A"), Card(title="B"), Card(title="C"))),),
+            template_ref="order_shipped/en_US",
+            template_variables=(("body.1", "Ada"),),
+        )
+        with fake_graph_api() as fake:
+            WhatsAppAdapter().send(make_connection(tenancy.workspace), _Identity(), message)
+
+        payloads = fake.payloads("messages")
+        assert len(payloads) == 1
+        assert payloads[0]["type"] == "template"
+
+    def test_a_template_send_skips_the_downgrade_renderer_entirely(self, tenancy: Any) -> None:
+        """There are no blocks to fit: Meta holds the approved copy."""
+        message = OutboundMessage(
+            blocks=(TextBlock(text="x" * 9000),),
+            template_ref="t/en_US",
+        )
+        with fake_graph_api() as fake:
+            WhatsAppAdapter().send(make_connection(tenancy.workspace), _Identity(), message)
+
+        assert [p["type"] for p in fake.payloads("messages")] == ["template"]
+
     def test_no_recipient_is_a_named_failure_not_an_exception(self, tenancy: Any) -> None:
         result = WhatsAppAdapter().send(make_connection(tenancy.workspace), _Identity(""), text("hi"))
         assert result.status == SendStatus.FAILED
@@ -473,6 +503,39 @@ class TestSending:
             with pytest.raises(RateLimitError) as caught:
                 WhatsAppAdapter().send(make_connection(tenancy.workspace), _Identity(), text("hi"))
         assert caught.value.retry_after == 30
+
+    def test_disconnecting_leaves_a_waba_another_number_still_uses(self, tenancy: Any) -> None:
+        """`DELETE /<waba_id>/subscribed_apps` unsubscribes the whole business
+        account, not the number being removed — so doing it while a sibling
+        number is still connected stops every webhook for that sibling, with no
+        error anywhere."""
+        keep = make_connection(tenancy.workspace, phone_number_id="111111111111111")
+        drop = make_connection(tenancy.workspace, phone_number_id="222222222222222")
+        assert keep.pk != drop.pk
+
+        with fake_graph_api() as fake:
+            WhatsAppAdapter().on_disconnect(drop)
+
+        assert not any(path.endswith("subscribed_apps") for path in fake.paths())
+
+    def test_disconnecting_the_last_number_does_unsubscribe(self, tenancy: Any) -> None:
+        connection = make_connection(tenancy.workspace)
+
+        with fake_graph_api() as fake:
+            WhatsAppAdapter().on_disconnect(connection)
+
+        assert any(path.endswith("subscribed_apps") for path in fake.paths())
+
+    def test_a_sibling_in_another_workspace_also_holds_the_subscription(self, tenancy: Any, other_tenancy: Any) -> None:
+        """A WABA subscription is deployment-wide state, so the check has to be
+        too: the other tenant's deliveries stop just as dead."""
+        make_connection(other_tenancy.workspace, phone_number_id="111111111111111")
+        drop = make_connection(tenancy.workspace, phone_number_id="222222222222222")
+
+        with fake_graph_api() as fake:
+            WhatsAppAdapter().on_disconnect(drop)
+
+        assert not any(path.endswith("subscribed_apps") for path in fake.paths())
 
     def test_a_rejection_carries_metas_code_and_not_its_prose(self, tenancy: Any) -> None:
         with fake_graph_api() as fake:

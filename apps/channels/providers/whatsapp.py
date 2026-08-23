@@ -438,8 +438,13 @@ def wire_calls(to: str, message: OutboundMessage) -> list[dict[str, Any]]:
     nothing else goes on the wire: a template *is* the message Meta approved,
     and appending the blocks beside it would send the same words twice — once
     inside the window's rules and once outside them. The engine renders the
-    template's own body into a text block so the inbox thread shows what the
-    contact saw; that block is for the thread, not for the wire.
+    template's own copy into that text block, so the inbox thread shows what the
+    contact saw; the block is for the thread, not for the wire.
+
+    Reached per *message*, so a caller that downgraded first would call it once
+    per downgraded message and send the template that many times.
+    :meth:`WhatsAppAdapter._payloads` is what stops that, and is where a real
+    send goes.
     """
     if message.template_ref:
         return [_template_payload(to, message)]
@@ -1280,10 +1285,7 @@ class WhatsAppAdapter(Adapter):
         token = credentials.get(ACCESS_TOKEN_KEY, "")
         phone_number_id = credentials.get(PHONE_NUMBER_ID_KEY, "") or connection.external_id
 
-        rendered = downgrade(outbound, self.capabilities)
-        payloads: list[dict[str, Any]] = []
-        for message in rendered.messages:
-            payloads.extend(wire_calls(to, message))
+        payloads = self._payloads(to, outbound)
         if not payloads:
             # Nothing sendable survived. Reported rather than silently counted
             # as sent, so contract 1's message row says what happened.
@@ -1295,6 +1297,27 @@ class WhatsAppAdapter(Adapter):
             provider_message_id = _sent_message_id(body) or provider_message_id
         return SendResult(status=SendStatus.SENT, provider_message_id=provider_message_id)
 
+    def _payloads(self, to: str, outbound: OutboundMessage) -> list[dict[str, Any]]:
+        """Everything this send puts on the wire, in order.
+
+        **A template send is exactly one payload, and does not go through the
+        downgrade renderer at all.** The renderer's job is to fit blocks into
+        what a platform can carry, and a template has no blocks to fit — Meta
+        holds the approved copy and we send a name plus parameters. Worse than
+        pointless: the renderer turns a gallery into one ``OutboundMessage`` per
+        card and copies ``template_ref`` onto every one of them, so a node with a
+        gallery *and* a template sent the same approved template once per card.
+        The contact received it three times and the account was billed three
+        times, because each is a separate conversation-initiating message.
+
+        Session sends keep the renderer, which is what they are for.
+        """
+        if outbound.template_ref:
+            return [_template_payload(to, outbound)]
+
+        rendered = downgrade(outbound, self.capabilities)
+        return [payload for message in rendered.messages for payload in wire_calls(to, message)]
+
     # `send_typing` and `mark_seen` stay the base class's no-ops. Both of
     # WhatsApp's equivalents are addressed to a specific inbound ``wamid``
     # rather than to a conversation, and SPEC §6.1's signature passes an
@@ -1305,11 +1328,49 @@ class WhatsAppAdapter(Adapter):
     # -- lifecycle ----------------------------------------------------------
 
     def on_disconnect(self, connection: ChannelConnection) -> None:
-        """Unsubscribe the app, so a removed number stops delivering to us."""
+        """Unsubscribe the app, so a removed number stops delivering to us.
+
+        **Only when no other connection still needs that subscription.** The
+        Graph call is ``DELETE /<waba_id>/subscribed_apps``, and the subscription
+        it removes belongs to the *WhatsApp Business Account*, not to the phone
+        number being disconnected. A WABA routinely carries several numbers, so
+        disconnecting one of them silently stopped every webhook for the others
+        — an outage with no error, on connections nobody touched, that would
+        look like Meta having gone quiet.
+
+        The check spans workspaces deliberately. A subscription is deployment-
+        wide state: two tenants can hold two numbers of the same WABA, and the
+        second one's deliveries stop just as dead. ``credentials`` is encrypted
+        and therefore cannot be filtered in SQL, so this reads the candidate
+        rows and compares in Python — bounded by the number of WhatsApp
+        connections a deployment has, on a path that runs once per disconnect.
+        """
         credentials = credentials_of(connection)
         waba_id = credentials.get(WABA_ID_KEY, "")
-        if waba_id:
-            unsubscribe_app(credentials.get(ACCESS_TOKEN_KEY, ""), waba_id)
+        if not waba_id:
+            return
+        if _waba_still_in_use(waba_id, excluding=connection):
+            logger.info(
+                "WhatsApp: leaving the subscription on WhatsApp Business Account %s in place; "
+                "another connected number still uses it.",
+                waba_id,
+            )
+            return
+        unsubscribe_app(credentials.get(ACCESS_TOKEN_KEY, ""), waba_id)
+
+
+def _waba_still_in_use(waba_id: str, *, excluding: ChannelConnection) -> bool:
+    """True when another connection is still attached to this WABA.
+
+    Cross-tenant on purpose, and greppably so (CONTRIBUTING): the webhook
+    subscription this guards is per WhatsApp Business Account, which is
+    deployment-wide state rather than a workspace's.
+    """
+    others = (
+        # Cross-tenant by necessity: a WABA subscription spans workspaces.
+        ChannelConnection.objects.unscoped().filter(platform=Platform.WHATSAPP.value).exclude(pk=excluding.pk)
+    )
+    return any(credentials_of(other).get(WABA_ID_KEY, "") == waba_id for other in others)
 
 
 def _sent_message_id(body: Any) -> str:

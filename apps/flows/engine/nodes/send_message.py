@@ -25,6 +25,7 @@ obeying:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -76,13 +77,15 @@ class SendMessageNode(Node):
             logger.warning("Execution %s: node %s has nothing to send.", ctx.execution.pk, ctx.node_id)
             return Continue("default")
 
-        template_ref, template_variables = _whatsapp_template(ctx)
+        template = _whatsapp_template(ctx)
         outbound = OutboundMessage(
-            blocks=tuple(blocks),
+            # A template send stores what the contact will actually read, not
+            # what the node's own blocks say — see _whatsapp_template.
+            blocks=tuple(template.blocks) if template.blocks else tuple(blocks),
             buttons=tuple(buttons),
             quick_replies=tuple(quick_replies),
-            template_ref=template_ref,
-            template_variables=template_variables,
+            template_ref=template.reference,
+            template_variables=template.variables,
         )
         try:
             outcome = deliver(ctx.execution, outbound, node_id=ctx.node_id)
@@ -113,8 +116,19 @@ class SendMessageNode(Node):
         return Continue("default")
 
 
-def _whatsapp_template(ctx: NodeContext) -> tuple[str | None, tuple[tuple[str, str], ...]]:
-    """The approved template this node was pointed at, and its filled slots.
+@dataclass(frozen=True)
+class _Template:
+    """What a resolved template contributes to the outgoing message."""
+
+    reference: str | None = None
+    variables: tuple[tuple[str, str], ...] = ()
+    #: The rendered copy, for the message row. Empty when no template resolved,
+    #: which leaves the node's own blocks standing.
+    blocks: tuple[Any, ...] = ()
+
+
+def _whatsapp_template(ctx: NodeContext) -> _Template:
+    """The approved template this node was pointed at, resolved and filled.
 
     Still not a platform branch. The key is optional config that a *builder*
     only offers for a WhatsApp-targeted flow, and what it produces —
@@ -124,6 +138,24 @@ def _whatsapp_template(ctx: NodeContext) -> tuple[str | None, tuple[tuple[str, s
     ``compliance.can_send`` reads ``template_ref`` as data (SPEC §8's
     ``TEMPLATE_SUPPLIED``) without knowing which platform supplied it.
 
+    **The reference is re-derived from the row, against the connection this run
+    is on.** Trusting the one the builder wrote is not safe: a template name is
+    scoped to a WhatsApp Business Account, so a flow that can run on two numbers
+    can carry a reference the second one does not have — and if that second WABA
+    holds a same-named template, Meta sends its words instead, to a real
+    contact, with nothing reporting a problem. ``whatsapp_templates.sendable``
+    is the check.
+
+    **Its rendered copy becomes the message body.** The adapter puts only the
+    template on the wire, so storing the node's own blocks would leave the inbox
+    showing a conversation that did not happen.
+
+    Failing to resolve is deliberate and quiet-ish: no reference is supplied, so
+    outside the window ``can_send`` refuses with ``needs_template`` and the node
+    follows ``default`` with the reason on the row (SPEC §8), while inside it the
+    author's own blocks still go. Both are better than sending words nobody
+    approved.
+
     **The values are rendered here**, through ``ctx.render``, and that placement
     is the security property: a template slot is filled with contact data, and
     the substitution has to happen where the one shared renderer is
@@ -132,19 +164,35 @@ def _whatsapp_template(ctx: NodeContext) -> tuple[str | None, tuple[tuple[str, s
     """
     config = ctx.config.get("whatsapp_template")
     if not isinstance(config, dict):
-        return None, ()
-    reference = config.get("reference")
-    if not isinstance(reference, str) or not reference:
-        return None, ()
+        return _Template()
 
-    variables: list[tuple[str, str]] = []
+    values: dict[str, str] = {}
     for item in config.get("variables") or []:
         if not isinstance(item, dict):
             continue
         slot = item.get("slot")
         if isinstance(slot, str) and slot:
-            variables.append((slot, ctx.render(item.get("value"))))
-    return reference, tuple(variables)
+            values[slot] = ctx.render(item.get("value"))
+
+    # Imported here rather than at module scope: this package is imported from
+    # AppConfig.ready(), and that module reaches into the ORM and the provider.
+    from apps.channels import whatsapp_templates
+
+    template = whatsapp_templates.sendable(config.get("template_id"), ctx.execution.channel_connection)
+    if template is None:
+        logger.warning(
+            "Execution %s node %s names a WhatsApp template that is not approved on this channel; sending without one.",
+            ctx.execution.pk,
+            ctx.node_id,
+        )
+        return _Template()
+
+    text = whatsapp_templates.rendered_text(template, values)
+    return _Template(
+        reference=template.reference,
+        variables=tuple(sorted(values.items())),
+        blocks=(OutboundText(text=text),) if text else (),
+    )
 
 
 # ---------------------------------------------------------------------------

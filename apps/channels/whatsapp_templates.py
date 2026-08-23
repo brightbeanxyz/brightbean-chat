@@ -81,7 +81,9 @@ __all__ = [
     "poll_pending",
     "preview",
     "refresh_status",
+    "rendered_text",
     "reset_to_draft",
+    "sendable",
     "slots_for",
     "submit",
     "variable_schema",
@@ -572,6 +574,47 @@ def _announce(template: WhatsAppTemplate) -> None:
 # ---------------------------------------------------------------------------
 # Selectors
 # ---------------------------------------------------------------------------
+
+
+def sendable(template_id: Any, connection: Any) -> WhatsAppTemplate | None:
+    """The approved template ``template_id`` names *on this connection*, or None.
+
+    Three conditions, and the third is the one that is easy to miss. A template
+    name is scoped to the **WhatsApp Business Account**, not to the deployment,
+    so a reference picked against one connection means nothing on another — and
+    the failure is not always a rejection. If the second WABA happens to hold a
+    template with the same name and language, Meta sends *that* one: the right
+    shape, approved, and the wrong words, to a real contact, with nothing
+    reporting a problem.
+
+    So a flow that can run on more than one WhatsApp number has to re-check the
+    pairing at send time rather than trusting the reference the builder wrote.
+    Returning None is a refusal the caller fails closed on.
+
+    The reference also comes from the row rather than from the config, so a
+    template renamed since the node was authored resolves to what it is now
+    instead of to what it was.
+    """
+    if not template_id or connection is None:
+        return None
+    return (
+        WhatsAppTemplate.objects.for_workspace(connection.workspace_id)
+        .filter(pk=template_id, channel_connection=connection, status=WhatsAppTemplateStatus.APPROVED)
+        .first()
+    )
+
+
+def rendered_text(template: WhatsAppTemplate, values: dict[str, str]) -> str:
+    """The template as the contact will read it, as one plain string.
+
+    What the *inbox* shows for a template send. The adapter puts only the
+    template on the wire — Meta holds the approved copy — so a message row that
+    stored the node's own block text would be a conversation history recording
+    something the contact never received. This is the same substitution the
+    preview uses, so all three agree by construction.
+    """
+    rendered = preview(template, values)
+    return "\n\n".join(part for part in (rendered.get("header"), rendered.get("body"), rendered.get("footer")) if part)
 
 
 def approved_templates_for(workspace: Any, *, connection: Any = None) -> list[WhatsAppTemplate]:

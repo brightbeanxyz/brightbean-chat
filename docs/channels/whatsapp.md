@@ -134,7 +134,17 @@ An interactive message's body caps at **1024** characters where a text message
 caps at 4096, so a long message with buttons goes out as ordinary text followed
 by the interactive part, in order, rather than being truncated.
 
-Outside the window, a **template message** and nothing else.
+Outside the window, a **template message** and nothing else — one message, once.
+A template is not downgraded: Meta holds the approved copy and the send carries
+a name plus parameters, so there is nothing for the block renderer to fit. The
+inbox stores the template's own rendered copy, not the node's blocks, so the
+thread shows what the contact actually received.
+
+A template is only sent through the number it was approved on. Template names
+are scoped to a WhatsApp Business Account, so a flow that can run on two numbers
+re-checks the pairing at send time; a template that does not belong to the
+number in use is refused rather than sent, and the send then fails with
+`needs_template` outside the window.
 
 ## The 24-hour window
 
@@ -164,6 +174,10 @@ as the same `needs_template` code, so the two paths read alike.
 A template is a message Meta reviews and approves in advance. Its changing parts
 are numbered placeholders — `{{1}}`, `{{2}}` — numbered **per section**, so a
 header's `{{1}}` and a body's `{{1}}` are two different values.
+
+Variables belong in the header, the body or a link button's URL. A **footer
+takes none** — Meta does not substitute there — and the form refuses one rather
+than letting the submission fail at review.
 
 Write one, save it as a draft, and submit it. The live preview shows exactly
 what a contact will see, rendered by the same substitution the send path uses —
@@ -210,6 +224,15 @@ refuses a send because of them (SPEC §22).
 There is deliberately no live pricing lookup. A number this product fetched
 would be wrong in a way that looked authoritative; a number you typed is wrong
 in a way you can see.
+
+## Disconnecting
+
+Removing a connection unsubscribes this app from the WhatsApp Business Account's
+webhooks — **but only when no other connected number belongs to that account**.
+The Graph call is account-level, not number-level, so unsubscribing while a
+sibling number is still connected would stop every webhook for it, silently and
+with no error to see. That check spans workspaces, because a subscription is
+deployment-wide state.
 
 ## Limits
 
