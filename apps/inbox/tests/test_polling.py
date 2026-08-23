@@ -379,3 +379,227 @@ class TestInternalNotesAndTheCounts:
         inbound("are you there?")
 
         assert unread_count_for(tenancy.workspace, tenancy.user_for("agent")) == 1
+
+
+class TestLabelsInTheListToken:
+    """Issue #24's ETag half: "labels + scheduled-reply indicators in the hash".
+
+    ``list_version`` hashes what the row *prints*, so these tests are about the
+    markup rather than about the tables — which is the whole reason that token
+    is built from the payload instead of from an aggregate.
+    """
+
+    def _label(self, workspace: Any, name: str = "Refunds", color: str = "#3B82F6") -> Any:
+        from apps.inbox.services import create_label
+
+        return create_label(workspace, name=name, color=color)
+
+    def test_applying_a_label_busts_the_tag(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        from apps.inbox.services import apply_label
+
+        inbound("hello")
+        url = url_for("rows")
+        first = _poll(agent_client, url)
+
+        apply_label(conversation, self._label(tenancy.workspace))
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 200
+
+    def test_renaming_a_label_busts_the_tag(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """Names, not ids. An id holds still through a rename — the same
+        argument the token already makes about the assignee chip."""
+        from apps.inbox.services import apply_label, update_label
+
+        inbound("hello")
+        label = self._label(tenancy.workspace)
+        apply_label(conversation, label)
+        url = url_for("rows")
+        first = _poll(agent_client, url)
+
+        update_label(label, name="Billing", color=label.color)
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 200
+
+    def test_recolouring_a_label_busts_the_tag(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        from apps.inbox.services import apply_label, update_label
+
+        inbound("hello")
+        label = self._label(tenancy.workspace)
+        apply_label(conversation, label)
+        url = url_for("rows")
+        first = _poll(agent_client, url)
+
+        update_label(label, name=label.name, color="#EF4444")
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 200
+
+    def test_scheduling_a_reply_busts_the_tag(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        from apps.inbox.services import schedule_reply
+
+        inbound("hello")
+        url = url_for("rows")
+        first = _poll(agent_client, url)
+
+        schedule_reply(
+            conversation,
+            body={"blocks": [{"type": "text", "text": "later"}]},
+            send_at=timezone.now() + timedelta(hours=1),
+        )
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 200
+
+    def test_the_list_ignores_a_countdown_moving(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """The row prints a glyph, not a due time. A countdown in this token
+        would refresh every row in the inbox once a minute for every open tab,
+        over markup that does not show it — which is why the *thread* token is
+        where the rendered strings go instead.
+        """
+        from apps.inbox.models import InboxReminder
+        from apps.inbox.services import schedule_reminder
+
+        inbound("hello")
+        reminder = schedule_reminder(
+            conversation,
+            recipient=tenancy.user_for("agent"),
+            remind_at=timezone.now() + timedelta(hours=2),
+        )
+        url = url_for("rows")
+        first = _poll(agent_client, url)
+
+        # Ninety minutes closer: "in 2 hours" becomes "in 30 minutes", and the
+        # list must not care.
+        InboxReminder.objects.for_workspace(tenancy.workspace).filter(pk=reminder.pk).update(
+            remind_at=timezone.now() + timedelta(minutes=30)
+        )
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 304
+
+
+class TestDeferredWorkInTheThreadToken:
+    def _remind(self, tenancy: Any, conversation: Conversation, **overrides: Any) -> Any:
+        from apps.inbox.services import schedule_reminder
+
+        values: dict[str, Any] = {
+            "recipient": tenancy.user_for("agent"),
+            "remind_at": timezone.now() + timedelta(hours=2),
+        }
+        values.update(overrides)
+        return schedule_reminder(conversation, **values)
+
+    def test_setting_a_reminder_busts_the_tag(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        inbound("hello")
+        url = url_for("messages", conversation_id=conversation.pk)
+        first = _poll(agent_client, url)
+
+        self._remind(tenancy, conversation)
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 200
+
+    def test_cancelling_one_busts_the_tag(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """Which is why cancelling sets a status rather than deleting the row: a
+        ``Max(updated_at)`` cannot see a row that is gone, and the ``Count`` is
+        the other half of the same pair."""
+        from apps.inbox.services import cancel_reminder
+
+        inbound("hello")
+        reminder = self._remind(tenancy, conversation)
+        url = url_for("messages", conversation_id=conversation.pk)
+        first = _poll(agent_client, url)
+
+        cancel_reminder(reminder)
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 200
+
+    def test_the_countdown_moving_busts_the_thread_tag(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """The thread prints "in 20 minutes", so a token that ignored it would
+        freeze the countdown on an open tab for ever — exactly the bug the pause
+        banner's own comment describes."""
+        from apps.inbox.models import InboxReminder
+
+        inbound("hello")
+        reminder = self._remind(tenancy, conversation)
+        url = url_for("messages", conversation_id=conversation.pk)
+        first = _poll(agent_client, url)
+
+        InboxReminder.objects.for_workspace(tenancy.workspace).filter(pk=reminder.pk).update(
+            remind_at=timezone.now() + timedelta(minutes=30)
+        )
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 200
+
+    def test_a_quiet_thread_with_a_reminder_still_304s(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """The other side of the trade. Folding the rendered string in must not
+        mean every poll is a render — it changes when the words do, about once a
+        minute, not every three seconds."""
+        inbound("hello")
+        self._remind(tenancy, conversation)
+        url = url_for("messages", conversation_id=conversation.pk)
+        first = _poll(agent_client, url)
+
+        assert _poll(agent_client, url, first.headers["ETag"]).status_code == 304
+
+
+class TestTheListStaysBounded:
+    def test_a_hundred_rows_with_labels_cost_a_bounded_number_of_queries(
+        self, tenancy: Any, agent_client: Any, url_for: Any, connection: Any, django_assert_max_num_queries: Any
+    ) -> None:
+        """Chips are one grouped query for the page, in the shape
+        ``last_messages_by_conversation`` already uses — not a prefetch on a
+        sliced queryset, which re-runs the slice as a subquery."""
+        from apps.inbox.services import apply_label, create_label
+
+        labels = [create_label(tenancy.workspace, name=f"L{index}") for index in range(3)]
+        for index in range(100):
+            conversation = open_conversation(
+                workspace=tenancy.workspace,
+                contact=Contact.objects.create(workspace=tenancy.workspace, first_name=f"C{index}"),
+                connection=connection,
+            )
+            for label in labels:
+                apply_label(conversation, label)
+
+        with django_assert_max_num_queries(25):
+            response = agent_client.get(url_for("rows"))
+
+        assert response.status_code == 200
+
+    def test_the_rendered_list_stays_small_with_many_labels(
+        self, tenancy: Any, agent_client: Any, url_for: Any, connection: Any
+    ) -> None:
+        """``LIST_CHIPS`` is a layout number with a payload consequence: the
+        hostile-content suite caps the whole rendered list at 20 kB, and a
+        hundred rows of unbounded chips is the shape that trips it."""
+        from apps.inbox.services import apply_label, create_label
+
+        labels = [create_label(tenancy.workspace, name=f"Label number {index}") for index in range(20)]
+        for index in range(100):
+            conversation = open_conversation(
+                workspace=tenancy.workspace,
+                contact=Contact.objects.create(workspace=tenancy.workspace, first_name=f"C{index}"),
+                connection=connection,
+            )
+            for label in labels:
+                apply_label(conversation, label)
+
+        body = agent_client.get(url_for("rows")).content
+
+        assert len(body) < 200_000
+        assert b"+17" in body

