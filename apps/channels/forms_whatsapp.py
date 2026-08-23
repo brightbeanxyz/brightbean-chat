@@ -26,7 +26,6 @@ from apps.channels.models import (
     ConnectionStatus,
     WhatsAppCostHint,
     WhatsAppTemplate,
-    WhatsAppTemplateCategory,
 )
 from apps.channels.whatsapp_templates import (
     MAX_BODY_CHARS,
@@ -150,8 +149,6 @@ class WhatsAppTemplateForm(forms.ModelForm):
             if workspace is not None
             else ChannelConnection.objects.none()
         )
-        self.fields["category"].choices = WhatsAppTemplateCategory.choices  # type: ignore[attr-defined]
-
         for index in range(QUICK_REPLY_SLOTS):
             self.fields[f"quick_reply_{index}"] = forms.CharField(
                 label=f"Quick reply {index + 1}",

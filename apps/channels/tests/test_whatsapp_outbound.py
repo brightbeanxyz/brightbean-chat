@@ -15,11 +15,14 @@ Two properties every case here is really about:
   and how ``template_variables`` becomes ``components``.
 """
 
+import json
 from typing import Any
 
 import httpx
 import pytest
 
+from apps.channels.capabilities import capabilities_for
+from apps.channels.downgrade import downgrade
 from apps.channels.events import (
     Button,
     MediaBlock,
@@ -43,6 +46,7 @@ from apps.channels.tests.whatsapp_support import (
     fake_graph_api,
     make_connection,
 )
+from apps.common.platforms import Platform
 
 TO = PLATFORM_USER_ID
 
@@ -156,9 +160,11 @@ class TestInteractiveShapes:
     def test_buttons_win_when_a_message_has_both(self) -> None:
         """One interactive shape per message, and buttons are the visible one.
 
-        The quick replies ride along as reply buttons rather than being dropped:
-        a QuickReply comes back as EventPayload.button_id exactly like a postback
-        button does, so the semantics survive the change of clothes.
+        A hand-built message's quick replies ride along as reply buttons rather
+        than being dropped: a QuickReply comes back as EventPayload.button_id
+        exactly like a postback button does, so the semantics survive the change
+        of clothes. A *downgraded* one never gets here — see
+        ``TestExclusiveInteraction``.
         """
         message = OutboundMessage(
             blocks=(TextBlock(text="Hi"),),
@@ -168,6 +174,15 @@ class TestInteractiveShapes:
         (payload,) = wire_calls(TO, message)
         assert payload["interactive"]["type"] == "button"
         assert [b["reply"]["id"] for b in payload["interactive"]["action"]["buttons"]] == ["a", "b"]
+
+    def test_an_over_long_id_is_refused_rather_than_trimmed(self) -> None:
+        """A trimmed id is sent, tapped, and comes back matching no handle."""
+        message = OutboundMessage(
+            blocks=(TextBlock(text="Hi"),),
+            buttons=(Button(id="x" * 300, label="A"), Button(id="ok", label="B")),
+        )
+        (payload,) = wire_calls(TO, message)
+        assert [b["reply"]["id"] for b in payload["interactive"]["action"]["buttons"]] == ["ok"]
 
     def test_an_over_long_row_title_is_clipped_and_kept_in_the_description(self) -> None:
         """Meta rejects the whole message on an over-long title, so the choice is
@@ -220,6 +235,58 @@ class TestInteractiveShapes:
         assert text["text"]["body"] == "Look:"
         assert image["type"] == "image"
         assert interactive["interactive"]["body"]["text"] == INTERACTIVE_BODY_FALLBACK
+
+
+class TestExclusiveInteraction:
+    """Buttons and a list cannot share a message, and nothing may be dropped.
+
+    WhatsApp's `interactive` message is a reply-button set *or* a list, never
+    both, while the shared renderer fills ``max_buttons`` and
+    ``max_quick_replies`` as two independent budgets. Declaring
+    ``interaction_is_exclusive`` is what reconciles the two — without it the
+    renderer handed over seven controls, the adapter could show three, and the
+    other four reached the contact in no form at all: not buttons, not rows, and
+    not numbered text, because the renderer believed they were native.
+    """
+
+    MESSAGE = OutboundMessage(
+        blocks=(TextBlock(text="Pick"),),
+        buttons=tuple(Button(id=f"b{i}", label=f"B{i}") for i in range(3)),
+        quick_replies=tuple(QuickReply(id=f"q{i}", label=f"Q{i}") for i in range(4)),
+    )
+
+    def rendered(self) -> Any:
+        return downgrade(self.MESSAGE, capabilities_for(Platform.WHATSAPP))
+
+    def test_every_control_reaches_the_contact(self) -> None:
+        result = self.rendered()
+        payloads = [p for message in result.messages for p in wire_calls(TO, message)]
+        wire = json.dumps(payloads)
+        for index in range(3):
+            assert f'"id": "b{index}"' in wire, f"button b{index} was dropped"
+        for index in range(4):
+            assert f"Q{index}" in wire, f"quick reply q{index} was dropped"
+
+    def test_the_quick_replies_are_numbered_so_a_reply_can_match(self) -> None:
+        """The mapping is what L4-A matches a numeric reply against; without it
+        the contact's answer resolves to no handle and the node waits forever."""
+        result = self.rendered()
+        assert result.numeric_replies == {"1": "q0", "2": "q1", "3": "q2", "4": "q3"}
+
+    def test_the_downgrade_says_what_it_did(self) -> None:
+        (note,) = self.rendered().notes
+        assert "cannot share a message with buttons" in note
+
+    def test_quick_replies_alone_still_get_the_full_list(self) -> None:
+        """The exclusivity bites only when buttons are present."""
+        message = OutboundMessage(
+            blocks=(TextBlock(text="Pick"),),
+            quick_replies=tuple(QuickReply(id=f"q{i}", label=f"Q{i}") for i in range(10)),
+        )
+        result = downgrade(message, capabilities_for(Platform.WHATSAPP))
+        assert result.numeric_replies == {}
+        (payload,) = wire_calls(TO, result.messages[0])
+        assert len(payload["interactive"]["action"]["sections"][0]["rows"]) == 10
 
 
 @pytest.mark.django_db
@@ -311,6 +378,32 @@ class TestTemplatePayloads:
         assert [c["type"] for c in components] == ["header", "body", "button"]
         assert components[2]["sub_type"] == "url"
         assert components[2]["index"] == "0"
+
+    def test_a_missing_slot_is_padded_so_later_values_keep_their_place(self) -> None:
+        """Meta binds parameters positionally, so a gap shifts everything after
+        it: supplying only {{2}} and sending one parameter delivers that value
+        in {{1}}'s place, to a real contact, with nothing reporting a problem."""
+        message = OutboundMessage(template_ref="t/en", template_variables=(("body.2", "SECOND"),))
+        (payload,) = wire_calls(TO, message)
+        assert payload["template"]["components"][0]["parameters"] == [
+            {"type": "text", "text": ""},
+            {"type": "text", "text": "SECOND"},
+        ]
+
+    def test_a_repeated_slot_collapses_to_one_parameter(self) -> None:
+        """Two parameters for one placeholder make the count disagree with the
+        template and Meta refuses the whole message."""
+        message = OutboundMessage(
+            template_ref="t/en",
+            template_variables=(("body.1", "first"), ("body.1", "second")),
+        )
+        (payload,) = wire_calls(TO, message)
+        assert payload["template"]["components"][0]["parameters"] == [{"type": "text", "text": "second"}]
+
+    def test_a_slot_numbered_zero_cannot_stretch_the_run(self) -> None:
+        message = OutboundMessage(template_ref="t/en", template_variables=(("body.0", "x"), ("body.1", "ok")))
+        (payload,) = wire_calls(TO, message)
+        assert payload["template"]["components"][0]["parameters"] == [{"type": "text", "text": "ok"}]
 
     def test_a_slot_that_does_not_parse_is_skipped_rather_than_fatal(self) -> None:
         message = OutboundMessage(template_ref="t/en", template_variables=(("nonsense", "x"), ("body.1", "ok")))

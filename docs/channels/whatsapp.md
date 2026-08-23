@@ -102,7 +102,9 @@ call and produces a link that expires, so it is resolved on demand instead.
 
 A contact is identified by their `wa_id`, which is an E.164 number. It is stored
 as `+` plus that number, which is what lets a WhatsApp contact link to one
-already captured over SMS or in the CRM (`apps/messaging/identities.py`).
+already captured over SMS or in the CRM (`apps/messaging/identities.py`). Their
+WhatsApp profile name is stored on the identity, so the inbox shows a name
+rather than a bare number.
 
 Everything a delivery carries — message text, profile names, Meta's own error
 prose — is attacker-controlled and is escaped on render, never trusted.
@@ -118,6 +120,12 @@ Inside the 24-hour window, ordinary **session messages**:
 | up to 3 buttons | `interactive` `type: button` — reply buttons |
 | up to 10 quick replies | `interactive` `type: list` — a list with 10 rows |
 | a 4th button, a URL button, a card, a gallery | numbered text options, produced by the shared downgrade renderer |
+
+**Buttons or a list, never both.** A WhatsApp `interactive` message carries one
+control set. A node that declares both gets its buttons natively and its quick
+replies as numbered text options ("Reply 1 for …"), which the contact answers by
+typing the number — the flow matches that back to the same handle. The flow
+builder warns about it at edit time rather than leaving it to be discovered.
 
 Link previews are off. Turning them on would make Meta fetch whatever URL a flow
 author put in the text and render a card from it.
@@ -158,7 +166,10 @@ are numbered placeholders — `{{1}}`, `{{2}}` — numbered **per section**, so 
 header's `{{1}}` and a body's `{{1}}` are two different values.
 
 Write one, save it as a draft, and submit it. The live preview shows exactly
-what a contact will see, rendered by the same substitution the send path uses.
+what a contact will see, rendered by the same substitution the send path uses —
+including the part that surprises people: only `{{1}}`-style placeholders are
+substituted, so `{{first_name}}` is literal text Meta shows verbatim and the
+preview shows it that way too.
 
 **Category decides both price and scrutiny:**
 
@@ -208,6 +219,7 @@ in a way you can see.
 | Interactive body | 1024 characters |
 | Reply buttons | 3, titles 20 characters |
 | List rows | 10, titles 24 characters |
+| Buttons **and** list rows on one message | not possible — see above |
 | Media caption | 1024 characters (audio carries none) |
 | Image | 5 MB |
 | Audio, video | 16 MB |

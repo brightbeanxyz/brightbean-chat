@@ -14,7 +14,6 @@ Meta under the workspace's own account.
 """
 
 import logging
-from decimal import Decimal
 from typing import Any
 
 from django.contrib import messages
@@ -246,11 +245,9 @@ def _edit(request: WorkspaceRequest, workspace_id: str, *, template: WhatsAppTem
         saved = form.save(commit=False)
         saved.workspace = request.workspace
         saved.body_structure = form.body_structure()
-        # Re-submitting a rejected template starts its review again, so the old
-        # verdict must not linger on the row an operator is looking at.
-        saved.status = WhatsAppTemplateStatus.DRAFT
-        saved.rejected_reason = ""
-        saved.meta_template_id = ""
+        # The transition belongs to the service, beside submit and delete — see
+        # its docstring for why clearing the Meta id is part of it.
+        whatsapp_templates.reset_to_draft(saved)
         try:
             with transaction.atomic():
                 saved.save()
@@ -379,10 +376,9 @@ def whatsapp_cost_hints(request: WorkspaceRequest, workspace_id: str) -> HttpRes
         whatsapp_templates.save_cost_hint(
             request.workspace,
             currency=form.cleaned_data["currency"],
-            amounts={
-                category: Decimal(form.cleaned_data[category])
-                for category in ("marketing", "utility", "authentication")
-            },
+            # Already Decimal: DecimalField.clean returns one, and the form's
+            # own clean_* methods substitute Decimal("0") for a blank.
+            amounts={category: form.cleaned_data[category] for category in ("marketing", "utility", "authentication")},
         )
         messages.success(request, "Saved the cost estimates.")
         return redirect(reverse("channels:whatsapp_cost_hints", kwargs={"workspace_id": workspace_id}))

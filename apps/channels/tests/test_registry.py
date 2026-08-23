@@ -89,9 +89,21 @@ class TestContractFieldsAreExactlyAsWritten:
     #: two tables answering one question, and they had already drifted.
     MEDIA_CEILING_FIELDS = {"max_image_bytes", "max_audio_bytes", "max_video_bytes", "max_file_bytes"}
 
+    #: Also beyond §6.1. ``interaction_is_exclusive`` says the two control kinds
+    #: share one budget, which the downgrade renderer has to know: filling
+    #: ``max_buttons`` and ``max_quick_replies`` independently on a platform
+    #: that can show only one of them produced a message whose extra options the
+    #: adapter could only drop, unnumbered and unreachable.
+    RENDERING_FIELDS = {"interaction_is_exclusive"}
+
     def test_capabilities_carries_every_spec_6_1_flag(self) -> None:
         fields = {f.name for f in dataclasses.fields(Capabilities)}
-        assert fields == self.SPEC_6_1_FLAGS | self.MEDIA_CEILING_FIELDS
+        assert fields == self.SPEC_6_1_FLAGS | self.MEDIA_CEILING_FIELDS | self.RENDERING_FIELDS
+
+    def test_only_whatsapp_has_an_exclusive_interaction(self) -> None:
+        """Every other platform shows buttons and quick replies together."""
+        exclusive = {p for p in Platform.values if capabilities_for(p).interaction_is_exclusive}
+        assert exclusive == {Platform.WHATSAPP}
 
     def test_a_media_ceiling_is_published_only_for_a_kind_the_platform_takes(self) -> None:
         """A ceiling on an unsupported kind is the drift #19 removed.

@@ -61,6 +61,24 @@ class Capabilities:
     window_hours: int | None = None
     #: Message tags that extend or replace the window, e.g. Meta's HUMAN_AGENT.
     tags_supported: tuple[str, ...] = ()
+
+    #: True when buttons and quick replies compete for **one** control set, so a
+    #: message may show one kind or the other but never both.
+    #:
+    #: Every other platform treats the two independently, which is why this
+    #: defaults to False: a Telegram message can carry an inline keyboard and
+    #: quick replies, and ``max_buttons`` and ``max_quick_replies`` are then two
+    #: separate budgets. WhatsApp is the exception — its `interactive` message
+    #: is *either* a reply-button set (3) *or* a list (10), and there is no
+    #: shape that is both.
+    #:
+    #: Without this the two budgets are filled independently and the adapter is
+    #: handed a message it cannot represent, whose extra options it can only
+    #: drop — silently, because the renderer already decided they were native
+    #: and so never numbered them into the text. Declaring the exclusivity here
+    #: is what lets :mod:`apps.channels.downgrade` number them instead, which is
+    #: the whole point of the renderer being shared.
+    interaction_is_exclusive: bool = False
     proactive_send: bool = False
     broadcast_allowed: bool = False
 
@@ -237,6 +255,10 @@ CAPABILITIES: dict[str, Capabilities] = {
         file=True,
         buttons=True,
         quick_replies=True,
+        # Reply buttons *or* a list, never both — see the field's own note.
+        # A message declaring both kinds gets the buttons natively and its
+        # quick replies as numbered text.
+        interaction_is_exclusive=True,
         # url_buttons False, and not an oversight. A WhatsApp *session* message
         # has no URL-button set: `interactive.button` rows are reply buttons
         # only, and the one shape that carries a link — `cta_url` — takes

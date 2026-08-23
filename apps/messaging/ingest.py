@@ -92,7 +92,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from django.db import IntegrityError, transaction
+from django.db import DataError, IntegrityError, transaction
 from django.utils import timezone
 
 from apps.channels import ingest as channels_ingest
@@ -257,6 +257,7 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
     resolution = resolve_identity(connection, address, occurred_at=now)
     identity = resolution.identity
     contact = resolution.contact
+    _record_display_fields(identity, event)
 
     if event.type == EventType.OPT_OUT:
         apply_opt_out(identity, now)
@@ -295,6 +296,66 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
             connection_id=connection.pk,
             platform=connection.platform,
         )
+
+
+#: Keys an adapter may put in ``payload.extra`` that describe *the person*
+#: rather than the event, and which therefore belong on the identity.
+#:
+#: SPEC §5 gives ``contact_channel_identity.extra`` the job — "username, profile
+#: pic url" — and every adapter already collects some of it: Telegram's
+#: ``_sender_extra`` builds a username and a display name, WhatsApp's parser
+#: reads ``contacts[].profile.name``. Until this existed none of it was stored,
+#: so the column stayed empty and the inbox showed a bare platform id for
+#: contacts whose display name had arrived with every message they sent.
+#:
+#: An **allowlist**, not a merge of everything: ``payload.extra`` is also where
+#: adapters put per-event detail (a callback payload, a media kind, a reply id),
+#: and copying that onto the identity would make the column a log. Adding a
+#: platform's key here is a one-line, platform-agnostic change — the point is
+#: that no branch in this module ever asks which platform it is looking at.
+DISPLAY_FIELDS = ("username", "first_name", "last_name", "profile_name", "profile_pic_url", "language_code")
+
+#: Longest display string kept. These are attacker-supplied (SECURITY-BASELINE
+#: §2) and land in a jsonb column, so they are bounded here as well as by the
+#: adapters that produce them.
+MAX_DISPLAY_CHARS = 200
+
+
+def _record_display_fields(identity: ContactChannelIdentity, event: NormalizedEvent) -> None:
+    """Merge the person-describing half of ``payload.extra`` onto the identity.
+
+    Merge rather than replace: an event that carries only a username must not
+    erase a profile picture an earlier one supplied. A key whose value is
+    unchanged writes nothing, so an established contact's every message does not
+    cost an UPDATE.
+
+    Never raises, and the guard around the write is what makes that true rather
+    than hopeful: a display name is decoration, and losing the message it
+    arrived with — this runs inside ``_persist_one``, so a raise here drops the
+    whole delivery — would be the wrong trade. ``_clean`` already removes the
+    NUL bytes a jsonb column refuses, so what is left is the exotic value
+    nobody predicted.
+    """
+    extra = event.payload.extra if isinstance(event.payload.extra, dict) else {}
+    incoming = {
+        key: _clean(extra[key], MAX_DISPLAY_CHARS)
+        for key in DISPLAY_FIELDS
+        if isinstance(extra.get(key), str) and _clean(extra[key], MAX_DISPLAY_CHARS)
+    }
+    if not incoming:
+        return
+
+    stored = identity.extra if isinstance(identity.extra, dict) else {}
+    if all(stored.get(key) == value for key, value in incoming.items()):
+        return
+
+    merged = {**stored, **incoming}
+    try:
+        identity.extra = merged
+        identity.save(update_fields=["extra", "updated_at"])
+    except (DataError, TypeError, ValueError):
+        identity.extra = stored
+        logger.warning("Could not store display fields on identity %s; the message is unaffected.", identity.pk)
 
 
 def _conversation_for(contact: Any, connection: Any) -> Conversation:

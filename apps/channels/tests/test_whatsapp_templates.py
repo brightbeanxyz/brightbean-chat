@@ -135,6 +135,43 @@ class TestPreview:
         assert hostile in rendered["body"]
         assert "49" not in rendered["body"]
 
+    def test_a_named_placeholder_is_shown_as_itself(self, tenancy: Any, connection: Any) -> None:
+        """Meta substitutes {{1}}-style placeholders and nothing else, so
+        {{first_name}} in an approved body is literal text it renders verbatim.
+
+        The shared renderer's grammar is wider, and left alone it resolved the
+        token against an empty context and deleted it — the operator approved
+        "Hi ," and the contact received "Hi {{first_name}}", which is exactly
+        the drift the preview exists to prevent.
+        """
+        template = make_template(
+            tenancy.workspace,
+            connection,
+            name="named_token",
+            body_structure={"body": {"text": "Hi {{first_name}}, order {{1}} shipped"}},
+        )
+        assert whatsapp_templates.preview(template, {"body.1": "42"})["body"] == ("Hi {{first_name}}, order 42 shipped")
+
+    def test_a_named_placeholder_is_still_not_a_slot(self, tenancy: Any, connection: Any) -> None:
+        """Showing it verbatim must not turn it into a value to ask the operator
+        for — it is text, not a parameter."""
+        template = make_template(
+            tenancy.workspace,
+            connection,
+            name="named_only",
+            body_structure={"body": {"text": "Hi {{first_name}}"}},
+        )
+        assert whatsapp_templates.slots_for(template) == ()
+
+    def test_a_supplied_value_still_wins_over_the_literal(self, tenancy: Any, connection: Any) -> None:
+        template = make_template(
+            tenancy.workspace,
+            connection,
+            name="both_kinds",
+            body_structure={"body": {"text": "{{first_name}} {{1}}"}},
+        )
+        assert whatsapp_templates.preview(template, {"body.1": "X"})["body"] == "{{first_name}} X"
+
     def test_a_slot_belongs_to_its_own_component(self, template: WhatsAppTemplate) -> None:
         """header.1 must not leak into the body's {{1}}."""
         rendered = whatsapp_templates.preview(template, {"header.1": "HEADER", "body.1": "BODY"})
@@ -163,6 +200,31 @@ class TestSubmissionPayload:
         )
         (body,) = whatsapp_templates.submission_components(template)
         assert "example" not in body
+
+    def test_slot_indices_match_metas_button_indices(self, tenancy: Any, connection: Any) -> None:
+        """A skipped button must not shift one numbering and not the other.
+
+        `slots_for` names a slot after its button's index and the adapter sends
+        that index to Meta, so walking the raw list here while the submission
+        builder skipped unusable buttons produced `index` values pointing at
+        buttons Meta does not have — a template that looks approved and fails
+        every send.
+        """
+        template = make_template(
+            tenancy.workspace,
+            connection,
+            name="skipped_button",
+            body_structure={
+                "body": {"text": "hi"},
+                "buttons": [
+                    {"type": "quick_reply", "text": ""},
+                    {"type": "url", "text": "Open", "url": "https://x.test/{{1}}"},
+                ],
+            },
+        )
+        assert whatsapp_templates.slots_for(template) == ("button.0.1",)
+        (buttons,) = [c for c in whatsapp_templates.submission_components(template) if c["type"] == "BUTTONS"]
+        assert [b["type"] for b in buttons["buttons"]] == ["URL"]
 
     def test_quick_reply_and_url_buttons_use_metas_own_names(self, template: WhatsAppTemplate) -> None:
         buttons = whatsapp_templates.submission_components(template)[3]["buttons"]
@@ -220,6 +282,32 @@ class TestSubmit:
             whatsapp_templates.submit(template)
         template.refresh_from_db()
         assert template.rejected_reason == ""
+
+
+class TestResetToDraft:
+    def test_it_clears_the_verdict_and_the_meta_id(self, tenancy: Any, connection: Any) -> None:
+        """A stale meta_template_id would keep the poll asking Meta about a
+        template that no longer matches what is stored here."""
+        template = make_template(
+            tenancy.workspace,
+            connection,
+            name="was_rejected",
+            status=WhatsAppTemplateStatus.REJECTED,
+            rejected_reason="INVALID_FORMAT",
+            meta_template_id="META_TPL_1",
+        )
+        whatsapp_templates.reset_to_draft(template)
+
+        assert template.status == WhatsAppTemplateStatus.DRAFT
+        assert template.rejected_reason == ""
+        assert template.meta_template_id == ""
+
+    def test_it_does_not_save(self, tenancy: Any, connection: Any) -> None:
+        """The caller is mid-``form.save(commit=False)`` and owns the write."""
+        template = make_template(tenancy.workspace, connection, status=WhatsAppTemplateStatus.REJECTED)
+        whatsapp_templates.reset_to_draft(template)
+        template.refresh_from_db()
+        assert template.status == WhatsAppTemplateStatus.REJECTED
 
 
 class TestPolling:

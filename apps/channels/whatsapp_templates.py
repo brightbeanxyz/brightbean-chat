@@ -65,7 +65,7 @@ from apps.channels.providers import whatsapp
 from apps.channels.providers.base import BACKGROUND_TIMEOUT
 from apps.channels.providers.exceptions import APIError
 from apps.common.platforms import Platform
-from apps.flows.rendering import RenderContext, render
+from apps.flows.rendering import PLACEHOLDER_PATTERN, RenderContext, render
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ __all__ = [
     "poll_pending",
     "preview",
     "refresh_status",
+    "reset_to_draft",
     "slots_for",
     "submit",
     "variable_schema",
@@ -152,12 +153,41 @@ def _component_texts(body_structure: Any) -> list[tuple[str, str]]:
     if isinstance(body, dict):
         found.append(("body", str(body.get("text") or "")))
 
-    buttons = body_structure.get("buttons")
-    if isinstance(buttons, list):
-        for index, button in enumerate(buttons):
-            if isinstance(button, dict) and button.get("type") == "url":
-                found.append((f"button.{index}", str(button.get("url") or "")))
+    for index, button in enumerate(effective_buttons(body_structure)):
+        if button.get("type") == "url":
+            found.append((f"button.{index}", str(button.get("url") or "")))
     return found
+
+
+def effective_buttons(body_structure: Any) -> list[dict[str, Any]]:
+    """The buttons that will actually be submitted, in submission order.
+
+    **One list, two readers**, and that is the whole reason it exists. A slot is
+    named for its button's *index*, and Meta addresses a button component by
+    that same index — so the numbering :func:`slots_for` hands the flow builder
+    and the numbering :func:`submission_components` sends Meta have to be the
+    same numbering. They were not: this walked the raw list while the submission
+    builder skipped buttons with no label (and URL buttons with no URL), so one
+    skipped button shifted every later index by one and the adapter then sent
+    ``index`` values pointing at buttons Meta does not have.
+
+    Filtering in one place makes the two agree by construction rather than by
+    both remembering the same rule.
+    """
+    if not isinstance(body_structure, dict):
+        return []
+    raw = body_structure.get("buttons")
+    if not isinstance(raw, list):
+        return []
+
+    usable: list[dict[str, Any]] = []
+    for button in raw:
+        if not isinstance(button, dict) or not str(button.get("text") or "").strip():
+            continue
+        if button.get("type") == "url" and not str(button.get("url") or "").strip():
+            continue
+        usable.append(button)
+    return usable
 
 
 def slots_for(template: WhatsAppTemplate) -> tuple[str, ...]:
@@ -216,25 +246,49 @@ def preview(template: WhatsAppTemplate, values: dict[str, str]) -> dict[str, str
     Unfilled slots render as empty rather than being left as ``{{1}}``. That is
     the shared renderer's own rule and it is the right one here too: showing the
     operator the gap is how they notice they have not supplied the value.
+
+    **A non-numeric placeholder is shown as itself**, because that is what the
+    contact will see. Meta substitutes ``{{1}}``-style placeholders and nothing
+    else, so ``{{first_name}}`` in an approved body is literal text it renders
+    verbatim — and :func:`slots_for` deliberately does not report it as a slot.
+    The shared renderer's grammar is wider than that, though, so left alone it
+    resolved the token against an empty context and deleted it: the operator
+    approved "Hi ," and the contact received "Hi {{first_name}}". Mapping every
+    such token to its own spelling makes the renderer reproduce it instead. The
+    substitution is still the one shared renderer — a replacement callable whose
+    output is never rescanned — so nothing here is evaluated.
     """
     rendered: dict[str, str] = {}
     for prefix, text in _component_texts(template.body_structure):
-        context = RenderContext(
-            variables={
-                # The renderer resolves a bare token, so "body.1" becomes "1"
-                # — the number Meta actually wrote in the text.
-                slot.rsplit(".", 1)[-1]: value
-                for slot, value in values.items()
-                if slot.startswith(f"{prefix}.")
-            }
-        )
-        rendered[prefix] = render(text, context)
+        # The renderer resolves a bare token, so "body.1" becomes "1" — the
+        # number Meta actually wrote in the text.
+        variables = {slot.rsplit(".", 1)[-1]: value for slot, value in values.items() if slot.startswith(f"{prefix}.")}
+        rendered[prefix] = render(text, RenderContext(variables={**_literal_tokens(text), **variables}))
 
     footer = template.body_structure.get("footer") if isinstance(template.body_structure, dict) else None
     if isinstance(footer, dict) and footer.get("text"):
         # No slots are allowed in a footer, so it is passed through untouched.
         rendered["footer"] = str(footer.get("text"))
     return rendered
+
+
+def _literal_tokens(text: str) -> dict[str, str]:
+    """``{token: "{{token}}"}`` for every placeholder Meta will not substitute.
+
+    Keyed case-folded because :meth:`RenderContext.lookup` folds the token
+    before looking it up, and valued with the token's own spelling so the
+    renderer puts back exactly what the author typed.
+
+    Numeric tokens are excluded: those are the real slots, and a caller's value
+    for one has to win. :func:`preview` merges this map *under* the supplied
+    values so that ordering is explicit rather than incidental.
+    """
+    literals: dict[str, str] = {}
+    for match in re.findall(PLACEHOLDER_PATTERN, text):
+        token = match.strip()
+        if token and not token.isdigit():
+            literals[token.casefold()] = f"{{{{{token}}}}}"
+    return literals
 
 
 # ---------------------------------------------------------------------------
@@ -279,29 +333,26 @@ def submission_components(template: WhatsAppTemplate) -> list[dict[str, Any]]:
     if isinstance(footer, dict) and footer.get("text"):
         components.append({"type": "FOOTER", "text": str(footer["text"])[:MAX_FOOTER_CHARS]})
 
-    buttons = _submission_buttons(structure.get("buttons"))
+    buttons = _submission_buttons(structure)
     if buttons:
         components.append({"type": "BUTTONS", "buttons": buttons})
     return components
 
 
-def _submission_buttons(raw: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw, list):
-        return []
+def _submission_buttons(body_structure: Any) -> list[dict[str, Any]]:
+    """Meta's ``buttons`` array, in the order :func:`effective_buttons` fixes.
+
+    Every filtering decision lives there, so this never drops a button on its
+    own — an index skipped here and kept there is the drift that function's
+    docstring describes.
+    """
     buttons: list[dict[str, Any]] = []
-    for button in raw:
-        if not isinstance(button, dict):
-            continue
+    for button in effective_buttons(body_structure):
         text = str(button.get("text") or "")[:MAX_BUTTON_TEXT_CHARS]
-        if not text:
-            continue
         if button.get("type") == "url":
             url = str(button.get("url") or "")
-            if not url:
-                continue
             entry: dict[str, Any] = {"type": "URL", "text": text, "url": url}
-            samples = _samples(url)
-            if samples:
+            if _samples(url):
                 entry["example"] = [_SLOT_RE.sub(lambda _: "example", url)]
             buttons.append(entry)
         else:
@@ -353,6 +404,27 @@ def submit(template: WhatsAppTemplate) -> WhatsAppTemplate:
     template.rejected_reason = ""
     template.save(update_fields=["meta_template_id", "status", "rejected_reason", "updated_at"])
     logger.info("WhatsApp template %s submitted for review.", template.pk)
+    return template
+
+
+def reset_to_draft(template: WhatsAppTemplate) -> WhatsAppTemplate:
+    """Return an edited template to ``draft``, discarding the last verdict.
+
+    Editing a rejected template starts its review over, so the old verdict must
+    not linger on the row an operator is reading — and the old ``meta_template_id``
+    must not either, or :func:`poll_pending` would keep asking Meta about a
+    template that no longer matches what is stored here.
+
+    Lives beside :func:`submit`, :func:`refresh_status` and
+    :func:`delete_template` because this module owns the state transitions, and
+    a second writer — the broadcast composer, the public API, a management
+    command — should not have to rediscover that clearing the id is part of the
+    reset. Does not save: the caller is mid-``form.save(commit=False)`` and owns
+    the write.
+    """
+    template.status = WhatsAppTemplateStatus.DRAFT
+    template.rejected_reason = ""
+    template.meta_template_id = ""
     return template
 
 

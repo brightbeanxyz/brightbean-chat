@@ -202,6 +202,51 @@ class TestInboundLandsAsAThread:
         assert sent.error == Denial.NEEDS_TEMPLATE.value
 
 
+class TestProfileNameReachesTheIdentity:
+    """SPEC §5 gives ``contact_channel_identity.extra`` the job of holding a
+    person's display detail, and the issue's scope says "profile name → identity
+    extra". The adapter's half is putting it in ``payload.extra``; the other
+    half is a platform-agnostic merge in the persistence stage, without which
+    the column stayed empty and the inbox showed a bare phone number.
+    """
+
+    def test_the_profile_name_is_stored(self, client: Client, connection: ChannelConnection) -> None:
+        post_delivery(client, load_delivery("message_text"))
+        assert identity_for(connection).extra["profile_name"] == "Ada Lovelace"
+
+    def test_a_later_event_without_it_does_not_erase_it(self, client: Client, connection: ChannelConnection) -> None:
+        """Merge, not replace: a delivery carrying no contacts array must not
+        blank a name an earlier one supplied."""
+        post_delivery(client, load_delivery("message_text"))
+
+        delivery = load_delivery("message_text")
+        value = delivery["entry"][0]["changes"][0]["value"]
+        del value["contacts"]
+        value["messages"][0]["id"] = "wamid.TEXT2"
+        post_delivery(client, delivery)
+
+        assert identity_for(connection).extra["profile_name"] == "Ada Lovelace"
+
+    def test_per_event_detail_is_not_copied_onto_the_identity(
+        self, client: Client, connection: ChannelConnection
+    ) -> None:
+        """``payload.extra`` also carries event detail — a reply id, a media
+        kind. An allowlist is what keeps the column from becoming a log."""
+        post_delivery(client, load_delivery("interactive_button_reply"))
+        assert "reply_id" not in identity_for(connection).extra
+
+    def test_a_renamed_contact_is_updated(self, client: Client, connection: ChannelConnection) -> None:
+        post_delivery(client, load_delivery("message_text"))
+
+        delivery = load_delivery("message_text")
+        value = delivery["entry"][0]["changes"][0]["value"]
+        value["contacts"][0]["profile"]["name"] = "Ada Byron"
+        value["messages"][0]["id"] = "wamid.TEXT3"
+        post_delivery(client, delivery)
+
+        assert identity_for(connection).extra["profile_name"] == "Ada Byron"
+
+
 class TestIdentityLinking:
     def test_a_wa_id_links_to_a_contact_captured_by_phone(
         self, client: Client, connection: ChannelConnection, tenancy: Tenancy

@@ -531,17 +531,31 @@ def _interactive_action(message: OutboundMessage) -> dict[str, Any] | None:
     reveals up to ten rows. One message may carry one of them.
 
     So: **buttons win**, because a flow author who declared buttons asked for
-    the shape a contact can see without tapping twice. Quick replies alongside
-    them are folded into the same reply-button set rather than dropped — a
+    the shape a contact can see without tapping twice. Quick replies alone get
+    the list.
+
+    A downgraded message never carries both: ``interaction_is_exclusive`` on
+    this platform's capability row tells the shared renderer that the two kinds
+    compete for one control set, so quick replies arriving beside buttons are
+    already numbered text by the time this runs. The fold below is the backstop
+    for an ``OutboundMessage`` built by hand — a
     :class:`~apps.channels.events.QuickReply` comes back as
     ``EventPayload.button_id`` exactly like a postback button does, so the
-    semantics survive the change of clothes — and anything past the third is
-    already a numbered text option by the time this runs, because
-    ``max_buttons=3`` is what the shared renderer enforced. Quick replies
-    **alone** get the list.
+    semantics survive the change of clothes — and if even that overflows, it
+    says so rather than dropping the overflow in silence.
     """
     if message.buttons:
         rows = [row for row in (_reply_button(item) for item in _pressable(message)) if row]
+        if len(rows) > _CAPABILITIES.max_buttons:
+            # Unreachable for a downgraded message; loud rather than silent,
+            # because the alternative is a contact who cannot answer and a node
+            # waiting on a handle nothing will ever fire.
+            logger.warning(
+                "WhatsApp: %s control(s) on one message exceed the %s reply buttons it can show; "
+                "the message was not downgraded first and the extras cannot be delivered.",
+                len(rows),
+                _CAPABILITIES.max_buttons,
+            )
         return {"type": "button", "action": {"buttons": rows[: _CAPABILITIES.max_buttons]}} if rows else None
     if message.quick_replies:
         rows = [row for row in (_list_row(item) for item in message.quick_replies) if row]
@@ -574,11 +588,24 @@ def _reply_button(button: Button) -> dict[str, Any] | None:
     ``label: url``. The check stays because an ``OutboundMessage`` built by hand
     is not obliged to have been downgraded, and a URL button silently sent as a
     postback would come back matching no handle.
+
+    An over-long id is **refused, not truncated**, which is the call
+    ``telegram._callback_data`` makes for the same situation and for the same
+    reason: a trimmed id is sent happily, tapped happily, and comes back
+    matching no handle on the waiting node, so the press is silently swallowed.
+    A button left out of the set is at least visible. The title is a different
+    matter — it is decoration, and clipping it loses nothing a contact needs.
     """
     label = _label(button)
     if not label or button.is_url or not button.id:
         return None
-    return {"type": "reply", "reply": {"id": button.id[:MAX_REPLY_ID_CHARS], "title": label[:MAX_BUTTON_TITLE_CHARS]}}
+    if len(button.id) > MAX_REPLY_ID_CHARS:
+        logger.warning(
+            "WhatsApp: button id is over %s characters and cannot be sent; it was left out of the set.",
+            MAX_REPLY_ID_CHARS,
+        )
+        return None
+    return {"type": "reply", "reply": {"id": button.id, "title": label[:MAX_BUTTON_TITLE_CHARS]}}
 
 
 def _list_row(item: QuickReply) -> dict[str, Any] | None:
@@ -593,7 +620,14 @@ def _list_row(item: QuickReply) -> dict[str, Any] | None:
     label = _label(item)
     if not label or not item.id:
         return None
-    row: dict[str, Any] = {"id": item.id[:MAX_REPLY_ID_CHARS], "title": label[:MAX_ROW_TITLE_CHARS]}
+    if len(item.id) > MAX_REPLY_ID_CHARS:
+        # Refused rather than trimmed, for the reason _reply_button gives.
+        logger.warning(
+            "WhatsApp: list row id is over %s characters and cannot be sent; the row was left out.",
+            MAX_REPLY_ID_CHARS,
+        )
+        return None
+    row: dict[str, Any] = {"id": item.id, "title": label[:MAX_ROW_TITLE_CHARS]}
     if len(label) > MAX_ROW_TITLE_CHARS:
         row["description"] = label[:MAX_ROW_DESCRIPTION_CHARS]
     return row
@@ -666,27 +700,38 @@ def _template_components(variables: tuple[tuple[str, str], ...]) -> list[dict[st
     The slot vocabulary is the platform-neutral one
     :class:`~apps.channels.events.OutboundMessage` documents — ``header.1``,
     ``body.2``, ``button.0.1`` — and this is the only place that knows what those
-    mean to WhatsApp. Order inside a component follows the slot number rather
-    than the order the pairs arrived in, because Meta positions parameters by
-    index: ``{{2}}`` is the second parameter whether or not it was filled second.
+    mean to WhatsApp.
+
+    **Meta binds parameters by position, not by name**, so ``{{2}}`` is whatever
+    the second parameter happens to be. That makes two things load-bearing, and
+    both are handled in :func:`_parameters` rather than here:
+
+    * a **gap** must be filled. Supplying only ``body.2`` and emitting one
+      parameter delivers that value in ``{{1}}``'s place — the contact reads the
+      wrong thing and nothing anywhere reports a problem;
+    * a **repeat** must collapse. Two entries for ``body.1`` emitted as two
+      parameters make the count disagree with the template's placeholder count,
+      and Meta refuses the whole message.
+
+    So the slots are collected into ``{number: value}`` — last write wins, which
+    is what makes a repeat harmless — and rendered as a contiguous run.
 
     A slot that does not parse is skipped. These strings are assembled by the
     flow engine rather than typed by a stranger, so a malformed one is a bug
-    here — but it must not take a send down, and dropping one parameter fails
-    at Meta with a message an operator can act on.
+    here — but it must not take a send down.
     """
-    header: list[tuple[int, str]] = []
-    body: list[tuple[int, str]] = []
-    buttons: dict[int, list[tuple[int, str]]] = {}
+    header: dict[int, str] = {}
+    body: dict[int, str] = {}
+    buttons: dict[int, dict[int, str]] = {}
 
     for slot, value in variables:
         parts = slot.split(".")
         if parts[0] == "header" and len(parts) == 2 and parts[1].isdigit():
-            header.append((int(parts[1]), value))
+            header[int(parts[1])] = value
         elif parts[0] == "body" and len(parts) == 2 and parts[1].isdigit():
-            body.append((int(parts[1]), value))
+            body[int(parts[1])] = value
         elif parts[0] == "button" and len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
-            buttons.setdefault(int(parts[1]), []).append((int(parts[2]), value))
+            buttons.setdefault(int(parts[1]), {})[int(parts[2])] = value
 
     components: list[dict[str, Any]] = []
     if header:
@@ -705,8 +750,21 @@ def _template_components(variables: tuple[tuple[str, str], ...]) -> list[dict[st
     return components
 
 
-def _parameters(slots: list[tuple[int, str]]) -> list[dict[str, str]]:
-    return [{"type": "text", "text": value} for _, value in sorted(slots)]
+def _parameters(slots: dict[int, str]) -> list[dict[str, str]]:
+    """``{1: "a", 3: "c"}`` as the contiguous run Meta reads positionally.
+
+    Numbering starts at ``{{1}}`` and runs to the highest slot supplied, with a
+    missing one filled by the empty string. An empty placeholder is visibly
+    wrong to whoever reads the message; a *shifted* one is not, and shifting is
+    what skipping a gap would do — see :func:`_template_components`.
+
+    A slot numbered zero or below cannot be a Meta placeholder and is dropped
+    rather than allowed to set the length of the run.
+    """
+    usable = {number: value for number, value in slots.items() if number >= 1}
+    if not usable:
+        return []
+    return [{"type": "text", "text": usable.get(number, "")} for number in range(1, max(usable) + 1)]
 
 
 # ---------------------------------------------------------------------------
@@ -1123,15 +1181,19 @@ class WhatsAppAdapter(Adapter):
                 raw=message,
             )
 
-        kind = _MEDIA_TYPES.get(_text(message.get("type"), 50))
+        # Bound once: the media id and the caption are read out of the key this
+        # names, so three copies of the expression would be three chances for a
+        # later edit to make them disagree.
+        raw_type = _text(message.get("type"), 50)
+        kind = _MEDIA_TYPES.get(raw_type)
         media_ids: tuple[str, ...] = ()
         text = _text(_message_text(message))
         if kind is not None:
-            media_id = _media_id(message, _text(message.get("type"), 50))
+            media_id = _media_id(message, raw_type)
             if media_id:
                 media_ids = (media_id,)
                 extra["media_kind"] = kind
-                text = text or _media_caption(message, _text(message.get("type"), 50))
+                text = text or _media_caption(message, raw_type)
 
         if not text and not media_ids:
             # location and contacts have no text of their own, and SPEC §7.2 has
