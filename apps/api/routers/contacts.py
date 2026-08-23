@@ -24,7 +24,7 @@ from django.utils import timezone
 from ninja import Query, Router, Status
 
 from apps.api.errors import ApiError
-from apps.api.pagination import paginate
+from apps.api.pagination import render_page
 from apps.api.requests import ApiRequest
 from apps.api.schemas import (
     ContactCreate,
@@ -68,14 +68,6 @@ def _contact_or_404(request: ApiRequest, contact_id: UUID) -> Contact:
     if contact.status != ContactStatus.ACTIVE:
         raise Http404("No such contact.")
     return contact
-
-
-def _page(queryset: Any, *, limit: int | None, cursor: str | None, render: Any) -> dict[str, Any]:
-    try:
-        page = paginate(queryset, limit=limit, cursor=cursor)
-    except ValueError as exc:
-        raise ApiError(str(exc), code="invalid_cursor", status=422) from exc
-    return {**page, "data": [render(row) for row in page["data"]]}
 
 
 def _aware(moment: dt.datetime | None) -> dt.datetime | None:
@@ -123,7 +115,7 @@ def list_contacts(
         rows = rows.filter(updated_at__gte=_aware(updated_after))
     # A stable tiebreak, because offset pagination is only correct with one.
     rows = rows.prefetch_related("tags").order_by("-created_at", "-id")
-    return _page(rows, limit=limit, cursor=cursor, render=contact_payload)
+    return render_page(rows, limit=limit, cursor=cursor, render=contact_payload)
 
 
 @router.post("/contacts", response={201: ContactOut}, url_name="contacts_create")
@@ -157,7 +149,10 @@ def get_contact(request: ApiRequest, contact_id: UUID) -> dict[str, Any]:
 def update_contact(request: ApiRequest, contact_id: UUID, payload: ContactUpdate) -> dict[str, Any]:
     """Partial update. Omitted fields are left alone; ``""`` clears one."""
     contact = _contact_or_404(request, contact_id)
-    changes = {key: value for key, value in payload.dict(exclude_unset=True).items() if value is not None}
+    # exclude_unset, so an omitted field is untouched and an explicitly sent ""
+    # clears. Nothing is dropped after validation: the schema rejects null, so
+    # every key that survives to here is one the caller meant.
+    changes = payload.dict(exclude_unset=True)
     if not changes:
         return contact_payload(contact)
     try:

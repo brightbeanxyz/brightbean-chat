@@ -21,14 +21,14 @@ import binascii
 import json
 from typing import Any
 
-from django.conf import settings
-
 __all__ = [
     "DEFAULT_LIMIT",
     "MAX_LIMIT",
+    "clamp_limit",
     "decode_cursor",
     "encode_cursor",
     "paginate",
+    "render_page",
 ]
 
 DEFAULT_LIMIT = 50
@@ -89,6 +89,22 @@ def paginate(queryset: Any, *, limit: int | None, cursor: str | None) -> dict[st
     }
 
 
-def max_body_bytes() -> int:
-    """Exposed for the docs page, which publishes the number it enforces."""
-    return int(settings.API_MAX_BODY_BYTES)
+def render_page(queryset: Any, *, limit: int | None, cursor: str | None, render: Any) -> dict[str, Any]:
+    """:func:`paginate`, with the rows serialised and the cursor error mapped.
+
+    Every list route wants exactly this, so it lives here rather than as a
+    private copy in each router module — two copies of the envelope is two ways
+    for two endpoints to page differently, and neither module's tests would
+    notice because each exercises its own.
+
+    A malformed cursor becomes a 422 rather than the ``ValueError``
+    :func:`decode_cursor` raises, which is why this is the layer that knows
+    about ``ApiError``.
+    """
+    from apps.api.errors import ApiError
+
+    try:
+        page = paginate(queryset, limit=limit, cursor=cursor)
+    except ValueError as exc:
+        raise ApiError(str(exc), code="invalid_cursor", status=422) from exc
+    return {**page, "data": [render(row) for row in page["data"]]}

@@ -11,9 +11,15 @@ import pytest
 from django.dispatch import Signal
 
 from apps.api.delivery import ACTION_TYPE
-from apps.api.events import SUBSCRIBABLE_EVENTS, connect_catalog_receivers, discover_catalog, on_catalog_event
+from apps.api.events import (
+    SUBSCRIBABLE_EVENTS,
+    connect_catalog_receivers,
+    discover_catalog,
+    on_catalog_event,
+    publishable,
+)
 from apps.api.models import OutboundWebhook
-from apps.contacts.models import Contact, Tag
+from apps.contacts.models import Contact, CustomField, CustomFieldType, Tag
 from apps.contacts.services import add_tag, create_contact
 from apps.queueing.models import ScheduledAction
 
@@ -143,6 +149,56 @@ class TestFanOut:
 
         action = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ACTION_TYPE).get()
         assert action.contact_id is None
+
+    def test_an_unsubscribable_event_never_reaches_the_database(self, tenancy, webhook, django_assert_num_queries):
+        """`contact.field_changed` fires on every field write and can never match.
+
+        `_validated_events` will not store it, so the per-endpoint check could
+        only ever `continue` — paying for the lookup first turns a 10k-row
+        import into 10k queries that cannot return anything.
+        """
+        contact = Contact.objects.create(workspace=tenancy.workspace, first_name="Ada")
+        field = CustomField.objects.create(workspace=tenancy.workspace, name="Score", type=CustomFieldType.TEXT)
+
+        with django_assert_num_queries(0):
+            on_catalog_event(
+                None,
+                event="contact.field_changed",
+                workspace_id=tenancy.workspace.pk,
+                contact_id=contact.pk,
+                field_id=field.pk,
+                cleared=False,
+            )
+
+        assert not ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ACTION_TYPE).exists()
+
+    def test_only_ids_and_named_fields_are_forwarded(self, tenancy, webhook):
+        """The payload is an allowlist, so an upstream addition cannot leak out.
+
+        Contract 7 promises ids only. If a later issue adds a body or an address
+        to a catalog payload for an internal consumer, a denylist would publish
+        it to every subscribed third party on the next deploy with no review
+        step and no failing test.
+        """
+        on_catalog_event(
+            None,
+            event="contact.created",
+            workspace_id=tenancy.workspace.pk,
+            contact_id="0192e8ab-0000-7000-8000-000000000001",
+            source="api",
+            text="a message body nobody meant to publish",
+            email="ada@example.com",
+        )
+
+        payload = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ACTION_TYPE).get().payload
+        assert payload["data"] == {"contact_id": "0192e8ab-0000-7000-8000-000000000001", "source": "api"}
+
+    def test_an_id_field_a_future_emitter_adds_still_gets_through(self, tenancy, webhook):
+        """The rule is "ids plus a named set", so L6-B needs no change here."""
+        assert publishable("broadcast_id")
+        assert publishable("contact_id")
+        assert not publishable("text")
+        assert not publishable("workspace_id"), "carried in the envelope, not in data"
 
     def test_a_payload_missing_the_contract_fields_is_ignored(self, tenancy, webhook):
         on_catalog_event(None, event="", workspace_id=None)

@@ -6,10 +6,10 @@ belong to one workspace's data rather than to the organization.
 """
 
 import pytest
+from django.db import connection
 
 from apps.api.models import OutboundWebhook, WebhookDelivery
 from apps.api.tests.support import FakeInternet, serving
-from apps.common.encryption import hmac_digest
 from apps.common.outbound import reset_deployment_cache
 from apps.members.roles import WorkspaceRole
 
@@ -60,9 +60,12 @@ class TestCreating:
         assert webhook.events == ["contact.created"]
         assert webhook.enabled is True
         assert webhook.secret in response.content.decode()
-        # The digest is the queryable half; an encrypted column cannot be
-        # compared, which is why it exists at all.
-        assert webhook.secret_digest == hmac_digest(webhook.secret)
+        # Stored encrypted, so a database dump does not hand over the ability to
+        # forge a signature for this endpoint.
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT secret FROM api_outbound_webhook WHERE id = %s", [str(webhook.pk)])
+            stored = cursor.fetchone()[0]
+        assert webhook.secret not in stored
 
     @pytest.mark.parametrize(
         "url",
@@ -99,6 +102,24 @@ class TestCreating:
         )
 
         assert response.status_code == 200
+
+    def test_a_workspace_cannot_hoard_endpoints(self, client_for, tenancy):
+        from apps.api.services import MAX_WEBHOOKS_PER_WORKSPACE, create_webhook
+
+        for index in range(MAX_WEBHOOKS_PER_WORKSPACE):
+            create_webhook(
+                workspace=tenancy.workspace,
+                url=f"https://receiver{index}.example.com/hooks",
+                events=["contact.created"],
+            )
+
+        response = client_for(tenancy.owner).post(
+            base(tenancy) + "create/",
+            {"url": "https://one-too-many.example.com/hooks", "events": ["contact.created"]},
+        )
+
+        assert response.status_code == 400
+        assert OutboundWebhook.objects.for_workspace(tenancy.workspace).count() == MAX_WEBHOOKS_PER_WORKSPACE
 
     def test_an_unknown_event_is_refused(self, client_for, tenancy):
         response = client_for(tenancy.owner).post(
@@ -178,6 +199,32 @@ class TestTestButton:
         assert len(internet.requests) == 1
         assert "Test delivered" in response.content.decode()
         assert WebhookDelivery.objects.for_workspace(tenancy.workspace).get().event == "webhook.test"
+
+    def test_it_uses_the_shorter_web_tier_deadline(self, client_for, tenancy, webhook, monkeypatch, settings):
+        """This is the one delivery that occupies a request thread.
+
+        The worker's ten seconds is the wrong budget for something holding a
+        gunicorn thread, so the test path has its own — without it a handful of
+        operators testing dead endpoints could hold every thread the app has.
+        """
+        settings.API_WEBHOOK_TEST_TIMEOUT_SECONDS = 3
+        settings.API_WEBHOOK_TIMEOUT_SECONDS = 30
+        seen: list[float] = []
+
+        from apps.api import delivery as delivery_module
+
+        real = delivery_module.guarded_request
+
+        def record(method, url, **kwargs):
+            seen.append(kwargs["timeout"])
+            return real(method, url, **kwargs)
+
+        monkeypatch.setattr(delivery_module, "guarded_request", record)
+        FakeInternet(serving(200)).install(monkeypatch)
+
+        client_for(tenancy.owner).post(f"{base(tenancy)}{webhook.pk}/test/")
+
+        assert seen == [3]
 
     def test_a_failure_is_reported_rather_than_swallowed(self, client_for, tenancy, webhook, monkeypatch):
         FakeInternet(serving(500)).install(monkeypatch)

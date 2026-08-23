@@ -114,16 +114,20 @@ class ContactCreate(StrictSchema):
 class ContactUpdate(StrictSchema):
     """A partial update. Every field is optional; omitted fields are untouched.
 
-    ``None`` is not a way to clear a field — the underlying columns are
-    non-nullable and default to ``""`` — so send ``""`` to clear one.
+    Deliberately **not** nullable. The underlying columns default to ``""`` and
+    cannot hold NULL, so ``{"email": null}`` has no meaning here — and typing
+    these as ``str | None`` would have advertised nullability in the generated
+    OpenAPI document while the route quietly dropped the null, which is the
+    worst of both. Send ``""`` to clear a field; send ``null`` and you get a 422
+    that says so.
     """
 
-    first_name: str | None = None
-    last_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    locale: str | None = None
-    timezone: str | None = None
+    first_name: str = ""
+    last_name: str = ""
+    email: str = ""
+    phone: str = ""
+    locale: str = ""
+    timezone: str = ""
 
 
 class TagAdd(StrictSchema):

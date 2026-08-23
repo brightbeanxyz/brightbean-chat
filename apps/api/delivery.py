@@ -164,6 +164,7 @@ def deliver_once(
     data: dict[str, Any],
     occurred_at: str,
     attempt: int,
+    timeout: float | None = None,
 ) -> Any:
     """POST one delivery and record the outcome. Never raises for a bad receiver.
 
@@ -200,7 +201,7 @@ def deliver_once(
             webhook.url,
             headers=headers,
             content=body,
-            timeout=settings.API_WEBHOOK_TIMEOUT_SECONDS,
+            timeout=settings.API_WEBHOOK_TIMEOUT_SECONDS if timeout is None else timeout,
         )
     except BlockedURLError as exc:
         # The address itself is refused. Retrying repeats the same refusal, so
@@ -362,6 +363,12 @@ def send_test_event(webhook: Any) -> Any:
     and deliberately outside the failure accounting: a test that a receiver is
     not ready for must not push a healthy endpoint towards auto-disable, and a
     test is not retried.
+
+    Synchronous also means this is the one delivery that occupies a web thread
+    rather than a worker, so it gets its own, shorter deadline
+    (``API_WEBHOOK_TEST_TIMEOUT_SECONDS``). Without that, a handful of operators
+    testing dead endpoints could hold every thread the app has for the worker's
+    full ten seconds each.
     """
     return deliver_once(
         webhook,
@@ -370,4 +377,5 @@ def send_test_event(webhook: Any) -> Any:
         data={"message": "This is a test delivery from BrightBean Chat."},
         occurred_at=timezone.now().isoformat(),
         attempt=1,
+        timeout=settings.API_WEBHOOK_TEST_TIMEOUT_SECONDS,
     )

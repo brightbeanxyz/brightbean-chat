@@ -9,6 +9,7 @@ Calling ``engine.start_flow`` directly would work, and would silently stop the
 """
 
 import json
+from contextlib import contextmanager
 
 import pytest
 
@@ -16,8 +17,15 @@ from apps.api.tests.conftest import bearer, make_key
 from apps.contacts.models import Contact
 from apps.flows.models import FlowExecution, StartedBy, Trigger, TriggerType
 from apps.flows.tests.support import graph, node, published_flow
+from apps.queueing.models import ActionType, ScheduledAction
 
 NOOP_ACTION = {"actions": [{"verb": "remove_tag", "tag": "not-a-tag-here"}]}
+
+
+@contextmanager
+def _unavailable():
+    """A contact lock somebody else is holding."""
+    yield False
 
 
 def api_flow(workspace, *, name="API flow", key=""):
@@ -73,6 +81,47 @@ class TestStartingAFlow:
 
         execution = FlowExecution.objects.for_workspace(tenancy.workspace).get(pk=response.json()["execution_id"])
         assert execution.variables["order_id"] == "4711"
+
+    def test_lock_contention_answers_202_queued_with_no_execution_id(self, client, tenancy, auth, contact, monkeypatch):
+        """The one response shape where ``execution_id`` is null.
+
+        SPEC §9.6 serialises everything one contact does behind an advisory
+        lock, and `fire_api_trigger` takes it without blocking — so a concurrent
+        event means the start is queued rather than run inline. Documented in
+        `docs/api/v1.md`, and reachable only under real concurrency, so the lock
+        is stubbed as already held.
+        """
+        from apps.queueing import locks
+
+        flow, _ = api_flow(tenancy.workspace)
+        # Patched at apps.queueing.locks, not on the entrypoints module: the
+        # entrypoint imports it inside the function, so the module attribute is
+        # what the call resolves against.
+        monkeypatch.setattr(locks, "try_contact_lock", lambda contact: _unavailable())
+
+        response = start(client, auth, contact, flow)
+
+        assert response.status_code == 202
+        body = response.json()
+        assert body["status"] == "queued"
+        assert body["execution_id"] is None
+        assert body["flow_id"] == str(flow.pk)
+        # And the work really was queued, not dropped.
+        assert ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.START_FLOW).exists()
+
+    def test_a_connection_id_is_scoped_and_passed_through(self, client, tenancy, other_tenancy, auth, contact):
+        """`connection_id` is documented but optional, so it needs its own pin."""
+        from apps.messaging.tests.conftest import make_connection
+
+        flow, _ = api_flow(tenancy.workspace)
+        mine = make_connection(tenancy.workspace, suffix="mine")
+        theirs = make_connection(other_tenancy.workspace, suffix="theirs")
+
+        ok = start(client, auth, contact, flow, connection_id=str(mine.pk))
+        assert ok.status_code == 202
+
+        stranger = start(client, auth, contact, flow, connection_id=str(theirs.pk))
+        assert stranger.status_code == 404
 
     def test_a_flow_without_an_api_trigger_is_a_422(self, client, tenancy, auth, contact):
         flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]), name="No trigger")

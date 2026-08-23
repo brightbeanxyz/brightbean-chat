@@ -238,10 +238,16 @@ def update_webhook(webhook: OutboundWebhook, *, url: str, events: Any, enabled: 
 def rotate_webhook_secret(webhook: OutboundWebhook) -> str:
     """Mint a new secret and persist it; returns the plaintext once."""
     secret = webhook.rotate_secret()
-    webhook.save(update_fields=["secret", "secret_digest", "updated_at"])
+    webhook.save(update_fields=["secret", "updated_at"])
     return secret
 
 
 def known_scopes() -> list[tuple[str, str]]:
-    """``(value, label)`` pairs for the issuance form."""
-    return [(scope.value, scope.label) for scope in ApiScope]
+    """``(value, label)`` pairs for the issuance form.
+
+    Filtered through ``SCOPE_PERMISSIONS`` rather than listing ``ApiScope``
+    outright, so the picker can only ever offer a scope that
+    :func:`_validated_scopes` will accept. A form that offers a choice the
+    server then refuses teaches people the product is broken.
+    """
+    return [(scope.value, scope.label) for scope in ApiScope if scope.value in SCOPE_PERMISSIONS]

@@ -19,9 +19,12 @@ credential-authenticated API only makes integrating harder.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 from django.conf import settings
+from django.core.signals import setting_changed
+from django.dispatch import receiver
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -61,8 +64,17 @@ ERROR_CODES: tuple[tuple[str, int, str], ...] = (
 )
 
 
-def _endpoints() -> list[dict[str, Any]]:
-    """The route table, straight out of the generated OpenAPI document."""
+@lru_cache(maxsize=1)
+def _endpoints() -> tuple[dict[str, Any], ...]:
+    """The route table, straight out of the generated OpenAPI document.
+
+    Cached, because generating that document walks every operation and builds
+    JSON Schema for every Pydantic model, and the answer cannot change while the
+    process lives — the routes are fixed at import. This page is deliberately
+    unauthenticated and so is not behind the per-key rate limit, which makes
+    "regenerate the whole schema per request" something anyone could drive in a
+    loop.
+    """
     from apps.api.api import api
 
     schema = api.get_openapi_schema()
@@ -77,7 +89,19 @@ def _endpoints() -> list[dict[str, Any]]:
                     "description": (operation.get("description") or "").strip().split("\n\n")[0],
                 }
             )
-    return rows
+    return tuple(rows)
+
+
+@receiver(setting_changed)
+def _clear_endpoint_cache(**kwargs: Any) -> None:
+    """Drop the cached route table when the URLconf is swapped.
+
+    The schema's paths are reversed from ``ROOT_URLCONF``, so a test that
+    overrides it would otherwise read the previous conf's table. Same reason and
+    same shape as ``apps.common.context_processors``' nav-URL cache.
+    """
+    if kwargs.get("setting") in {"ROOT_URLCONF", "INSTALLED_APPS"}:
+        _endpoints.cache_clear()
 
 
 def api_docs(request: HttpRequest) -> HttpResponse:
@@ -85,7 +109,7 @@ def api_docs(request: HttpRequest) -> HttpResponse:
     context = navigation_context(request)
     context.update(
         {
-            "endpoints": _endpoints(),
+            "endpoints": list(_endpoints()),
             "openapi_url": reverse("api_v1:openapi-json"),
             "token_prefix": TOKEN_PREFIX,
             "scope_rows": [

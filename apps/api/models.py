@@ -29,8 +29,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
-from apps.api.events import SUBSCRIBABLE_EVENTS
-from apps.common.encryption import EncryptedTextField, hmac_digest
+from apps.common.encryption import EncryptedTextField
 from apps.common.scoping import WorkspaceScopedModel
 
 __all__ = [
@@ -173,14 +172,12 @@ class OutboundWebhook(WorkspaceScopedModel):
     """
 
     url = models.URLField(max_length=500, help_text="HTTPS endpoint that receives deliveries.")
+    # No digest sidecar beside this one, unlike ChannelConnection.webhook_secret.
+    # That column exists because the inbound path looks a connection up *by* its
+    # secret; deliveries run the other way, so nothing here ever queries on the
+    # secret and a second column would be write-only state.
     secret = EncryptedTextField(
         help_text="Shared secret the receiver verifies X-BrightBean-Signature with.",
-    )
-    secret_digest = models.CharField(
-        max_length=64,
-        blank=True,
-        default="",
-        help_text="HMAC of secret. Encrypted columns cannot be compared; this is the queryable half.",
     )
     events = models.JSONField(default=list, help_text="Catalog event names this endpoint subscribes to.")
     enabled = models.BooleanField(default=True)
@@ -213,16 +210,7 @@ class OutboundWebhook(WorkspaceScopedModel):
         """
         secret = generate_webhook_secret()
         self.secret = secret
-        self.secret_digest = hmac_digest(secret)
         return secret
-
-    def subscribes_to(self, event: str) -> bool:
-        return self.enabled and event in set(self.events or ())
-
-    @property
-    def known_events(self) -> list[str]:
-        """Subscribed events that this deployment can actually emit today."""
-        return [event for event in (self.events or ()) if event in SUBSCRIBABLE_EVENTS]
 
 
 class WebhookDelivery(WorkspaceScopedModel):

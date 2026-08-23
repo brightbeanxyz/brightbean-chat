@@ -447,6 +447,18 @@ API_AUTH_FAILURE_WINDOW_SECONDS = env.int("API_AUTH_FAILURE_WINDOW_SECONDS", def
 # receiver still holds a queue slot.
 API_WEBHOOK_TIMEOUT_SECONDS = env.int("API_WEBHOOK_TIMEOUT_SECONDS", default=10)
 
+# The "send test event" button is the one delivery that runs inside a request
+# rather than on the worker, because an operator clicking Test wants the answer
+# and not a "queued" toast. That makes its deadline a web-tier concern: it is
+# time a gunicorn thread spends unavailable, so it is deliberately shorter than
+# the worker's. A receiver that cannot answer in three seconds has told the
+# operator what they needed to know.
+#
+# It bounds the HTTP phase only. DNS resolution sits outside guarded_request's
+# deadline (see its module docstring), so a hostname whose resolver black-holes
+# queries can still hold the thread for the system resolver's own timeout.
+API_WEBHOOK_TEST_TIMEOUT_SECONDS = env.int("API_WEBHOOK_TEST_TIMEOUT_SECONDS", default=3)
+
 # Tolerance a receiver is told to allow on X-BrightBean-Timestamp, published in
 # docs/api/v1.md. We do not enforce it — the receiver does — but the number has
 # to be written down somewhere both the docs and the tests can read.

@@ -31,9 +31,11 @@ from django.apps import apps as django_apps
 from django.dispatch import Signal
 
 __all__ = [
+    "PUBLISHABLE_FIELDS",
     "SUBSCRIBABLE_EVENTS",
     "connect_catalog_receivers",
     "discover_catalog",
+    "publishable",
 ]
 
 LOG = logging.getLogger(__name__)
@@ -54,6 +56,19 @@ SUBSCRIBABLE_EVENTS: tuple[str, ...] = (
     "execution.completed",
     "broadcast.finished",
 )
+
+#: Non-id payload fields this app is willing to forward to a third party.
+#:
+#: Contract 7 promises its payloads carry "workspace id, contact id, and
+#: event-specific ids only (no message bodies)", and everything below is one of
+#: the handful of non-id values the current emitters add. The rule
+#: :func:`publishable` applies is *ids plus this set* rather than "everything
+#: except the envelope", because the denylist form publishes whatever a future
+#: emitter happens to add — an outbound surface should widen deliberately, not
+#: by side effect. Anything ending in ``_id`` still passes, so an emitter that
+#: lands later (``broadcast.finished``'s ``broadcast_id``) needs no change here,
+#: which is the property SPEC §5 asks for.
+PUBLISHABLE_FIELDS: frozenset[str] = frozenset({"source", "platform", "preview", "cleared"})
 
 #: Human copy for the settings page, kept beside the names so a new event
 #: cannot be offered without one.
@@ -107,6 +122,19 @@ def connect_catalog_receivers() -> dict[str, Signal]:
     return catalog
 
 
+def publishable(key: str) -> bool:
+    """Whether a catalog payload field may be forwarded to a receiver.
+
+    Ids always may; ``event``, ``workspace_id``, ``occurred_at`` and Django's
+    own ``signal`` are the envelope and are carried separately; everything else
+    has to be named in :data:`PUBLISHABLE_FIELDS`. So a payload field added
+    upstream reaches third parties only if someone put it there on purpose.
+    """
+    if key in {"event", "workspace_id", "occurred_at", "signal"}:
+        return False
+    return key.endswith("_id") or key in PUBLISHABLE_FIELDS
+
+
 def on_catalog_event(sender: Any = None, **payload: Any) -> None:
     """Fan one catalog event out to the workspace's subscribed endpoints.
 
@@ -128,10 +156,17 @@ def on_catalog_event(sender: Any = None, **payload: Any) -> None:
         # is not ours to interpret.
         return
 
+    if event not in SUBSCRIBABLE_EVENTS:
+        # Contract 7's catalog is wider than SPEC §5's subscribable set —
+        # `contact.tag_removed` and `contact.field_changed` are emitted on every
+        # field write and can never match a subscription, because
+        # `services._validated_events` will not store them. Leaving before the
+        # query means a 10k-row import does not pay for 10k lookups that cannot
+        # return anything.
+        return
+
     endpoints = OutboundWebhook.objects.for_workspace(workspace_id).filter(enabled=True).select_related("workspace")
-    data = {
-        key: value for key, value in payload.items() if key not in {"event", "workspace_id", "signal", "occurred_at"}
-    }
+    data = {key: value for key, value in payload.items() if publishable(key)}
     occurred_at = payload.get("occurred_at")
     for endpoint in endpoints:
         if event not in set(endpoint.events or ()):

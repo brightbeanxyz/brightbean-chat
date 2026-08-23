@@ -8,6 +8,7 @@ the symptom would show up months later as "webhooks are unreliable".
 """
 
 import json
+from urllib.parse import quote
 
 import pytest
 from django.dispatch import Signal
@@ -113,6 +114,49 @@ class TestListing:
 
         assert [row["first_name"] for row in rows] == ["Tagged"]
 
+    def test_the_date_filters_bound_the_window(self, client, tenancy, auth):
+        """The three filters an incremental sync is built on.
+
+        A wrong bound here does not fail loudly — it returns a plausible page
+        that quietly omits records — so each one is pinned against a contact
+        that must be in and one that must be out.
+        """
+        import datetime as dt
+
+        from django.utils import timezone
+
+        old_contact = Contact.objects.create(workspace=tenancy.workspace, first_name="Old")
+        new_contact = Contact.objects.create(workspace=tenancy.workspace, first_name="New")
+        cutoff = timezone.now() - dt.timedelta(days=1)
+        Contact.objects.for_workspace(tenancy.workspace).filter(pk=old_contact.pk).update(
+            created_at=cutoff - dt.timedelta(days=1), updated_at=cutoff - dt.timedelta(days=1)
+        )
+
+        # quote(), because an unencoded "+00:00" offset decodes to a space in a
+        # query string and the timestamp then fails to parse. Documented.
+        stamp = quote(cutoff.isoformat())
+        after = client.get(f"{CONTACTS}?created_after={stamp}", **auth).json()["data"]
+        before = client.get(f"{CONTACTS}?created_before={stamp}", **auth).json()["data"]
+        updated = client.get(f"{CONTACTS}?updated_after={stamp}", **auth).json()["data"]
+
+        assert [row["first_name"] for row in after] == ["New"]
+        assert [row["first_name"] for row in before] == ["Old"]
+        assert [row["first_name"] for row in updated] == ["New"]
+        assert str(new_contact.pk) == after[0]["id"]
+
+    def test_a_naive_timestamp_is_read_as_utc_rather_than_refused(self, client, tenancy, auth):
+        """`_aware` exists so a caller need not spell the offset.
+
+        Django would warn and compare a naive datetime against an aware column;
+        this pins that we coerce instead.
+        """
+        Contact.objects.create(workspace=tenancy.workspace, first_name="Now")
+
+        response = client.get(f"{CONTACTS}?created_after=2000-01-01T00:00:00", **auth)
+
+        assert response.status_code == 200
+        assert len(response.json()["data"]) == 1
+
     def test_a_bad_status_is_a_422_not_an_empty_list(self, client, tenancy, auth):
         response = client.get(f"{CONTACTS}?status=banana", **auth)
 
@@ -200,6 +244,27 @@ class TestWrites:
         assert response.status_code == 200
         contact.refresh_from_db()
         assert (contact.first_name, contact.last_name) == ("Ada", "Byron")
+
+    def test_patch_rejects_an_explicit_null_rather_than_ignoring_it(self, client, tenancy, auth):
+        """The schema is not nullable, so null is a 422 and not a silent no-op.
+
+        Typing these as ``str | None`` would advertise nullability in the
+        OpenAPI document while the route dropped the value — a caller clearing a
+        field the way most REST APIs do would get a 200 and no change.
+        """
+        contact = Contact.objects.create(workspace=tenancy.workspace, first_name="Ada", email="ada@example.com")
+
+        response = client.patch(
+            f"{CONTACTS}/{contact.pk}",
+            data=json.dumps({"email": None}),
+            content_type="application/json",
+            **auth,
+        )
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_request"
+        contact.refresh_from_db()
+        assert contact.email == "ada@example.com"
 
     def test_patch_can_clear_a_field_with_an_empty_string(self, client, tenancy, auth):
         contact = Contact.objects.create(workspace=tenancy.workspace, first_name="Ada", email="ada@example.com")

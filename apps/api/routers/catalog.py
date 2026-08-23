@@ -11,7 +11,7 @@ from typing import Annotated, Any
 from ninja import Query, Router
 
 from apps.api.errors import ApiError
-from apps.api.pagination import paginate
+from apps.api.pagination import render_page
 from apps.api.requests import ApiRequest
 from apps.api.schemas import CustomFieldOut, FlowOut, Page, TagOut
 from apps.api.serializers import custom_field_payload, flow_payload, tag_payload
@@ -20,14 +20,6 @@ from apps.flows.models import Flow, FlowStatus
 from apps.members.decorators import require_permission
 
 router = Router(tags=["catalog"])
-
-
-def _page(queryset: Any, *, limit: int | None, cursor: str | None, render: Any) -> dict[str, Any]:
-    try:
-        page = paginate(queryset, limit=limit, cursor=cursor)
-    except ValueError as exc:
-        raise ApiError(str(exc), code="invalid_cursor", status=422) from exc
-    return {**page, "data": [render(row) for row in page["data"]]}
 
 
 @router.get("/flows", response=Page[FlowOut], url_name="flows_list")
@@ -54,7 +46,7 @@ def list_flows(
     rows = Flow.objects.for_workspace(request.workspace)
     if status is not None:
         rows = rows.filter(status=status)
-    return _page(rows.order_by("name", "id"), limit=limit, cursor=cursor, render=flow_payload)
+    return render_page(rows.order_by("name", "id"), limit=limit, cursor=cursor, render=flow_payload)
 
 
 @router.get("/tags", response=Page[TagOut], url_name="tags_list")
@@ -65,7 +57,7 @@ def list_tags(
     cursor: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     rows = Tag.objects.for_workspace(request.workspace).order_by("name", "id")
-    return _page(rows, limit=limit, cursor=cursor, render=tag_payload)
+    return render_page(rows, limit=limit, cursor=cursor, render=tag_payload)
 
 
 @router.get("/fields", response=Page[CustomFieldOut], url_name="fields_list")
@@ -76,4 +68,4 @@ def list_fields(
     cursor: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     rows = CustomField.objects.for_workspace(request.workspace).order_by("name", "id")
-    return _page(rows, limit=limit, cursor=cursor, render=custom_field_payload)
+    return render_page(rows, limit=limit, cursor=cursor, render=custom_field_payload)

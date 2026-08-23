@@ -163,6 +163,29 @@ class TestIssuanceService:
         with pytest.raises(ApiKeysError, match="Unknown scope"):
             issue_api_key(workspace=tenancy.workspace, issuer=tenancy.owner, name="No", scopes=["root"])
 
+    def test_a_workspace_cannot_hoard_keys(self, tenancy, settings):
+        """The cap is the only thing bounding how many live credentials exist."""
+        from apps.api.services import MAX_KEYS_PER_WORKSPACE
+
+        settings_cap = MAX_KEYS_PER_WORKSPACE
+        for index in range(settings_cap):
+            issue_api_key(workspace=tenancy.workspace, issuer=tenancy.owner, name=f"key {index}", scopes=["read"])
+
+        with pytest.raises(ApiKeysError, match="active keys"):
+            issue_api_key(workspace=tenancy.workspace, issuer=tenancy.owner, name="one too many", scopes=["read"])
+
+    def test_a_revoked_key_frees_a_slot(self, tenancy):
+        """The cap counts live keys, so revoking is the way back under it."""
+        from apps.api.services import MAX_KEYS_PER_WORKSPACE, revoke_api_key
+
+        keys = [
+            issue_api_key(workspace=tenancy.workspace, issuer=tenancy.owner, name=f"key {index}", scopes=["read"])
+            for index in range(MAX_KEYS_PER_WORKSPACE)
+        ]
+        revoke_api_key(keys[0])
+
+        issue_api_key(workspace=tenancy.workspace, issuer=tenancy.owner, name="replacement", scopes=["read"])
+
     def test_the_plaintext_is_returned_once_and_never_persisted(self, tenancy):
         api_key = issue_api_key(workspace=tenancy.workspace, issuer=tenancy.owner, name="Zapier", scopes=["read"])
 
