@@ -101,24 +101,20 @@ honestly live (SECURITY-BASELINE §7).
         return 'About ' + hint[template.category] + ' ' + hint.currency + ' per message.';
       },
 
-      // SPEC §6.6's segment-count preview. The arithmetic is NOT here: the
-      // server-rendered hint below is a fallback, and the live count is a
-      // deliberate approximation of apps/channels/segments.py for the keystroke
-      // case — GSM-7 versus UCS-2 and the 160/70 split. Anything that decides a
-      // *cost* uses the Python one.
-      get segments() {
-        if (!this.config.counts_segments) return 0;
-        var text = this.blocks.filter(function (b) { return b.type === 'text'; })
-                              .map(function (b) { return b.text || ''; }).join('\n');
-        if (!text) return 0;
-        var gsm = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-./0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà\^{}\\\[~\]|€]*$/.test(text);
-        var single = gsm ? 160 : 70;
-        var concat = gsm ? 153 : 67;
-        return text.length <= single ? 1 : Math.ceil(text.length / concat);
+      // SPEC §6.6's segment-count preview is NOT computed here. The arithmetic
+      // lives in apps/channels/segments.py, which is pure and is the only
+      // implementation, and L5-D already exposes it as an endpoint written for
+      // this composer by name. A JavaScript approximation of GSM-7 versus UCS-2
+      // would be a second counter that disagrees with the one the send is
+      // costed against — so this only publishes the text and lets the server
+      // answer.
+      announceText: function () {
+        window.broadcastMessageText = function () { return this.messageText; }.bind(this);
+        document.body.dispatchEvent(new Event('segments-changed'));
       },
-      get segmentHint() {
-        var n = this.segments;
-        return n ? (n + (n === 1 ? ' segment' : ' segments')) : '';
+      get messageText() {
+        return this.blocks.filter(function (b) { return b.type === 'text'; })
+                          .map(function (b) { return b.text || ''; }).join('\n');
       },
 
       get serialisedConfig() {

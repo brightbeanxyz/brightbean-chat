@@ -113,6 +113,18 @@ class Capabilities:
     #: rather than inbound messages.
     inbound: bool = True
 
+    #: True where a message is billed by GSM 03.38 **segment** rather than sent
+    #: whole (SPEC §6.6). SMS is the one in v1.
+    #:
+    #: Here rather than inferred, because there is nothing else in this table to
+    #: infer it from — ``max_text_len`` is a number, not a billing model, and
+    #: SMS carries images (MMS, L5-D) so "text only" does not identify it either.
+    #: Its consumers are the two composers that have to show a segment count
+    #: before somebody sends: the ``send_sms`` node's panel and L6-B's broadcast
+    #: composer. The arithmetic itself is :mod:`apps.channels.segments`, which is
+    #: pure and is the only implementation; this flag only says who needs it.
+    counts_segments: bool = False
+
     def supports_block(self, kind: str) -> bool:
         """True when ``kind`` renders natively. Unknown kinds are unsupported.
 
@@ -293,6 +305,9 @@ CAPABILITIES: dict[str, Capabilities] = {
         proactive_send=True,
         broadcast_allowed=True,
         max_text_len=1600,
+        # SPEC §6.6: billed per GSM-7/UCS-2 segment, which is why
+        # apps.channels.segments exists and why a composer has to show a count.
+        counts_segments=True,
         # No media ceilings: v1 SMS carries no media at all, so there is no
         # kind to publish a size for. MMS (L5-D) enables the kind and its
         # ceiling together, in this row.

@@ -20,9 +20,12 @@ table, the policy table, the template registry and the segment counter:
   composer.cost_hint             the workspace's own per-category estimates
   composer.counts_segments       whether the SMS segment preview applies
 
-A `{% templatetag openblock %} if platform == "whatsapp" {% templatetag closeblock %}` here would be the first crack in
-contract 4's promise that a Layer-5 platform costs one module and one registry
-line, and a test in this app greps for exactly that.
+An `if` comparing a platform name here would be the first crack in contract 4's
+promise that a Layer-5 platform costs one module and one registry line, and
+test_composer.py scans these templates for exactly that comparison. Which is why
+the prose above does not spell one out — the scan is a plain substring search on
+purpose, the way templates/contacts/_filter_bar_script.html keeps a literal
+script tag out of its own comment for its extractor.
 {% endcomment %}
 <div x-data="broadcastComposer({{ composer|json_attr }}, {{ config|json_attr }}, '{{ broadcast.message_tag|escapejs }}', '{{ broadcast.whatsapp_template_id|default:''|escapejs }}', {{ broadcast.template_variables|json_attr }})">
 
@@ -55,7 +58,22 @@ line, and a test in this app greps for exactly that.
     <div class="bc-panel" x-show="mode === 'message'">
       <div class="bc-panel-head">
         <span class="bc-panel-title">Message</span>
-        <span class="bc-hint" x-show="segments" x-text="segmentHint"></span>
+        {% if composer.counts_segments %}
+        {% comment %}
+          SPEC §6.6's segment-count preview, served by L5-D's own endpoint —
+          which its docstring names this composer as a caller of. It counts
+          through apps/channels/segments.py and multiplies by the workspace's
+          `per_segment_cost`, so neither the arithmetic nor the price exists
+          twice. Whether to offer it at all is the capability table's
+          `counts_segments`, not a platform name.
+        {% endcomment %}
+        <span id="broadcast-segments"
+              hx-post="{% url 'channels:sms_segment_preview' workspace_id=request.workspace.id %}"
+              hx-trigger="segments-changed from:body delay:400ms"
+              hx-target="this"
+              hx-swap="innerHTML"
+              hx-vals="js:{text: window.broadcastMessageText ? window.broadcastMessageText() : ''}"></span>
+        {% endif %}
       </div>
 
       <template x-for="(block, index) in blocks" :key="index">
@@ -70,6 +88,7 @@ line, and a test in this app greps for exactly that.
             <textarea class="form-input-styled" rows="3"
                       :maxlength="config.max_text_len"
                       x-model="block.text"
+                      @input.debounce.300ms="announceText()"
                       placeholder="What do you want to say?"></textarea>
           </template>
 

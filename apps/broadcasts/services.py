@@ -14,12 +14,20 @@ mini-flow half is a genuine ``flows.Flow`` holding a single-node ``graph_json``
 written through ``apps.flows.services.save_draft`` so it goes through the same
 sanitiser every other graph does.
 
-It is created **archived**. ``apps.flows.views._visible_flows`` excludes archived
-flows by default, so the broadcast's private copy stays out of the flow list
-without this app adding a column to ``apps.flows`` or that app learning what a
-broadcast is. It is never published either: :func:`schedule_broadcast` pins
-``flow_version`` and the send passes that version explicitly, so an edit while a
-send is draining cannot change what the rest of the audience receives.
+It lives in a reserved folder, :data:`BROADCAST_FOLDER`, so the flow list groups
+every broadcast's private copy under one heading an operator can filter away —
+and it is **archived when the broadcast finishes**, which takes it out of that
+list altogether (``apps.flows.views._visible_flows`` excludes archived flows by
+default). Archiving it any earlier is not an option: ``start_flow`` refuses an
+archived flow outright, which is the right rule for the engine and the reason the
+timing here is what it is. Neither half needs a column added to ``apps.flows`` or
+that app learning what a broadcast is.
+
+:func:`schedule_broadcast` **publishes** it and pins the published version. The
+foreign key alone would not be enough: ``apps.flows.services.save_draft`` rewrites
+the latest version *in place* while it is unpublished, so an edit during a drain
+would change the copy the rest of the audience receives. Publishing is what makes
+the next edit open a new version instead.
 
 --------------------------------------------------------------------------
 Refusals are values, not exceptions to swallow
@@ -70,6 +78,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BroadcastError",
+    "BROADCAST_FOLDER",
     "CONTENT_NODE_ID",
     "Counters",
     "WINDOW_DENIALS",
@@ -93,6 +102,13 @@ __all__ = [
 class BroadcastError(ValueError):
     """Something an operator can fix. The views render it as a toast."""
 
+
+#: Where a broadcast's private mini-flow is filed in the flow list. A folder
+#: rather than a hidden flag, because the flow *is* real and an operator asking
+#: "what did that broadcast actually send?" deserves an answer — but it is one
+#: heading rather than a copy loose among their own automations. Moving a flow
+#: out of it is how an operator adopts it (see :func:`delete_broadcast`).
+BROADCAST_FOLDER = "Broadcasts"
 
 #: The id of the one node a broadcast's graph holds. Fixed rather than generated
 #: because it also names the send's idempotency key through
@@ -216,13 +232,9 @@ def save_content(broadcast: Broadcast, config: dict[str, Any], *, user: Any = No
             flow = flow_services.create_flow(
                 workspace=broadcast.workspace,
                 name=f"Broadcast: {broadcast.name}"[:200],
+                folder=BROADCAST_FOLDER,
                 user=user,
             )
-            # Archived, not draft: `apps.flows.views._visible_flows` excludes
-            # archived flows unless the status filter asks for them, which keeps
-            # a broadcast's private copy out of the flow list without this app
-            # adding a column to apps.flows.
-            flow_services.archive_flow(flow)
         flow_services.save_draft(flow, graph, user=user)
         broadcast.flow = flow
         # Content is one or the other (SPEC §5), and the check constraint agrees.
@@ -334,9 +346,10 @@ def delete_broadcast(broadcast: Broadcast) -> None:
     flow = broadcast.flow
     with transaction.atomic():
         broadcast.delete()
-        if flow is not None and flow.status == FlowStatus.ARCHIVED:
-            # Only the private copy. A flow an operator promoted out of archive
-            # is theirs now and outlives the broadcast that made it.
+        if flow is not None and flow.folder == BROADCAST_FOLDER:
+            # Only the private copy. A flow an operator moved out of the reserved
+            # folder is theirs now — that move is the adoption — and it outlives
+            # the broadcast that made it.
             Flow.objects.for_workspace(flow.workspace_id).filter(pk=flow.pk).delete()
 
 
@@ -368,10 +381,15 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None, pr
     counts = preview if preview is not None else audience_module.preview(broadcast)
     if counts.total == 0:
         raise BroadcastError("Nobody matches this audience.")
+
+    # Before the generic refusal, deliberately. When the whole audience is
+    # outside the window, "nobody can be messaged" and "this needs a message tag"
+    # are both true — and only the second one tells an operator what to do about
+    # it. The specific reason wins.
+    _refuse_window_gaps(broadcast, counts)
+
     if counts.eligible == 0:
         raise BroadcastError("Nobody in this audience can be messaged on this channel right now.")
-
-    _refuse_window_gaps(broadcast, counts)
 
     when = when or broadcast.scheduled_at or timezone.now()
     with transaction.atomic():
@@ -426,18 +444,31 @@ def _refuse_window_gaps(broadcast: Broadcast, counts: Any) -> None:
 def _pin_version(broadcast: Broadcast) -> FlowVersion | None:
     """The exact graph this send will use, frozen now.
 
-    A template broadcast has no flow and pins nothing. A mini-flow one pins its
-    newest version, and the send passes it to ``start_flow`` explicitly — so a
-    graph edited while the queue is draining changes nothing for the contacts
-    still waiting, which is the property an operator assumes and would not think
-    to check.
+    A template broadcast has no flow and pins nothing. A mini-flow one is
+    **published**, and the foreign key alone is not what freezes it —
+    ``apps.flows.services.save_draft`` updates the latest version *in place*
+    while it is unpublished, so an edit during a drain would rewrite the very row
+    the broadcast pointed at and the rest of the audience would receive different
+    copy. Publishing is what makes the next edit open version 2 instead.
+
+    Publishing also validates strictly, which is the right last gate: the content
+    step validated what was typed, and this re-checks what is about to be sent to
+    thousands of people.
+
+    It leaves the flow ``active``, deliberately. ``start_flow`` refuses an
+    archived flow outright — a correct rule for the engine — so the private copy
+    has to stay runnable for as long as the queue might reach it.
+    :func:`_retire_flow` archives it when the broadcast comes to rest, which is
+    the first moment that is safe. Nothing here sets ``published`` by hand, which
+    ``apps.flows.models`` asks callers not to do.
     """
     if broadcast.flow is None:
         return None
-    version = flow_services.latest_version(broadcast.flow)
-    if version is None:  # pragma: no cover - create_flow always makes version 1
-        raise BroadcastError("This broadcast has no message to send.")
-    return version
+    try:
+        result = flow_services.publish(broadcast.flow, user=broadcast.created_by)
+    except flow_services.FlowValidationError as exc:
+        raise BroadcastError(_first_error(exc.result)) from exc
+    return result.version
 
 
 def _require_draft(broadcast: Broadcast) -> None:
@@ -491,6 +522,7 @@ def cancel_broadcast(broadcast: Broadcast) -> Broadcast:
         ).update(status=RecipientStatus.CANCELLED, updated_at=timezone.now())
 
         release_stats(locked)
+        _retire_flow(locked)
     broadcast.refresh_from_db()
     return broadcast
 
@@ -647,8 +679,22 @@ def settle(broadcast: Broadcast) -> bool:
         return False
 
     broadcast.refresh_from_db()
+    _retire_flow(broadcast)
     _announce(broadcast, current)
     return True
+
+
+def _retire_flow(broadcast: Broadcast) -> None:
+    """Archive the private mini-flow now that nothing will run it again.
+
+    This is what actually takes it out of the flow list; until now it had to stay
+    runnable, because ``start_flow`` refuses an archived flow. Only the copy still
+    in the reserved folder is touched — one an operator moved out is theirs.
+    """
+    flow = broadcast.flow
+    if flow is None or flow.folder != BROADCAST_FOLDER or flow.status == FlowStatus.ARCHIVED:
+        return
+    flow_services.archive_flow(flow)
 
 
 def _announce(broadcast: Broadcast, current: Counters) -> None:

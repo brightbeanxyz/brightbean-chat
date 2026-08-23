@@ -55,6 +55,8 @@ from typing import Any
 from django.db.models import Case, Count, IntegerField, QuerySet, Value, When
 
 from apps.channels.events import OutboundMessage
+from apps.channels.suppression import is_suppressed
+from apps.common.addresses import normalize_email
 from apps.contacts import conditions
 from apps.contacts.models import Contact
 from apps.messaging.codes import Denial
@@ -70,6 +72,7 @@ __all__ = [
     "SOURCE",
     "iter_candidates",
     "preview",
+    "suppressed",
     "probe_for",
     "target_queryset",
 ]
@@ -100,6 +103,10 @@ class Candidate:
     contact_id: Any
     identity_id: Any
     decision: str
+    #: The identity's ``platform_user_id`` — an address only where the platform's
+    #: addresses are mailboxes. Carried so :func:`suppressed` can be asked without
+    #: a second query per contact.
+    address: str = ""
 
     @property
     def is_eligible(self) -> bool:
@@ -206,12 +213,12 @@ def iter_candidates(broadcast: Any, *, after: Any = None, limit: int | None = No
         # ascending in Postgres, and NULL is exactly the pending record), then
         # by id so two addresses on one connection resolve the same way twice.
         .order_by("contact_id", "_rank", "channel_connection_id", "pk")
-        .values_list("contact_id", "pk", DECISION_FIELD)
+        .values_list("contact_id", "pk", DECISION_FIELD, "platform_user_id")
     )
 
-    best: dict[Any, tuple[Any, str]] = {}
-    for contact_id, identity_id, decision in rows:
-        best.setdefault(contact_id, (identity_id, str(decision)))
+    best: dict[Any, tuple[Any, str, str]] = {}
+    for contact_id, identity_id, decision, address in rows:
+        best.setdefault(contact_id, (identity_id, str(decision), str(address or "")))
 
     for contact_id in contact_ids:
         found = best.get(contact_id)
@@ -220,7 +227,37 @@ def iter_candidates(broadcast: Any, *, after: Any = None, limit: int | None = No
             # A real skip with a real reason, not an absence.
             yield Candidate(contact_id=contact_id, identity_id=None, decision=Denial.NO_IDENTITY.value)
             continue
-        yield Candidate(contact_id=contact_id, identity_id=found[0], decision=found[1])
+        identity_id, decision, address = found
+        if decision in ALLOWED_CODES and suppressed(broadcast.workspace_id, address):
+            decision = Denial.OPTED_OUT.value
+        yield Candidate(contact_id=contact_id, identity_id=identity_id, decision=decision, address=address)
+
+
+def suppressed(workspace_id: Any, address: str) -> bool:
+    """Whether the email suppression list refuses this address (SPEC §6.7).
+
+    Asked **per candidate**, in chunks of five hundred, rather than set-wise —
+    and only for an address that normalises as a mailbox, so a Telegram or SMS
+    broadcast costs no query at all. ``normalize_email`` is the same function
+    ``is_suppressed`` uses, so the two cannot disagree about what an address is.
+
+    Why it is asked at all, given that compliance already refuses an opted-out
+    identity: ``suppression.suppress_and_opt_out`` writes both the address-keyed
+    list *and* ``opted_out_at``, so the two normally agree. They come apart in
+    exactly one case, and that case is the one the list exists for — an address
+    whose identity was erased and re-imported. ``apps/channels/suppression.py``
+    names the consequence: "a re-imported contact costs exactly one refused send
+    before the chokepoint knows again". Checking here turns that refused send
+    into a counted skip, which is the difference between an operator seeing a
+    failure and seeing a reason.
+
+    Deliberately **not** in :func:`preview`, which is aggregate-only and must
+    stay three queries whatever the audience size. The preview reports the
+    chokepoint's answer; fanout reports the chokepoint's answer plus this.
+    """
+    if not normalize_email(address):
+        return False
+    return is_suppressed(workspace_id, address)
 
 
 def preview(broadcast: Any) -> AudiencePreview:

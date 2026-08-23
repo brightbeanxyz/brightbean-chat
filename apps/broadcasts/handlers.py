@@ -77,6 +77,14 @@ logger = logging.getLogger(__name__)
 __all__ = ["CHUNK_SIZE", "handle_broadcast_fanout", "handle_broadcast_send"]
 
 #: SPEC §13.2: "inserts one broadcast_send action per contact in batches of 500".
+#:
+#: What a chunk costs is worth knowing before changing this number. Every send is
+#: one ``queueing.registry.schedule`` call, and a call carrying an idempotency key
+#: wraps its insert in a savepoint — so a chunk is roughly fifteen hundred
+#: statements, and a ten-thousand-contact broadcast is thirty thousand spread
+#: across twenty chunks. That is a deliberate trade: the queue's public API is
+#: idempotent per row, and bulk-inserting ``ScheduledAction`` here to save it
+#: would be a second write path into a table this app does not own.
 CHUNK_SIZE = 500
 
 
@@ -269,6 +277,14 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
         # SPEC §13.2's send-time re-check. A contact who opted out between fanout
         # and send lands here, and is *counted* rather than quietly dropped.
         _settle_recipient(recipient, RecipientStatus.SKIPPED, decision.code)
+        _maybe_settle(broadcast)
+        return
+
+    if audience_module.suppressed(broadcast.workspace_id, identity.platform_user_id):
+        # The email suppression list, re-read at send time for the same reason
+        # compliance is: hours can pass, and a bounce recorded in between should
+        # stop this send rather than be discovered by the provider.
+        _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.OPTED_OUT.value)
         _maybe_settle(broadcast)
         return
 

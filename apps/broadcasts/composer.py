@@ -20,8 +20,15 @@ Message tags + Meta's copy   ``policy.outside_window`` being a ``policy.NeedsTag
 Approved templates           ``apps.channels.whatsapp_templates.approved_templates_for``
 Template variables           ``apps.channels.whatsapp_templates.variable_schema``
 Cost hint                    ``apps.channels.whatsapp_templates.cost_hint_for``
-SMS segments                 ``apps.channels.segments.segments_for``
-Email suppression            ``apps.channels.suppression.is_suppressed``
+SMS segments                 ``channels:sms_segment_preview`` (L5-D's endpoint,
+                             written for this composer by name), which counts
+                             through ``apps.channels.segments`` and multiplies by
+                             the workspace's own ``per_segment_cost``
+Email suppression            ``apps.channels.suppression.is_suppressed``, asked
+                             at fanout and at send by
+                             :func:`apps.broadcasts.audience.suppressed` — not
+                             here: whether an address is suppressed is a fact
+                             about a person, not an affordance of a platform
 Media                        ``apps.media_library.picker`` (through its endpoint)
 ===========================  ==================================================
 
@@ -33,7 +40,6 @@ in this package, it is a bug in this module first.
 from typing import Any
 
 from apps.channels import policy as channel_policy
-from apps.channels import segments as sms_segments
 from apps.channels import whatsapp_templates
 from apps.channels.capabilities import capabilities_for
 from apps.channels.models import ChannelConnection, ConnectionStatus
@@ -42,7 +48,7 @@ __all__ = [
     "BLOCK_KINDS",
     "broadcastable_connections",
     "composer_config",
-    "segment_hint",
+    "tag_choices",
     "template_options",
 ]
 
@@ -111,46 +117,6 @@ def template_options(workspace: Any, connection: Any) -> list[dict[str, Any]]:
     ]
 
 
-def segment_hint(connection: Any, text: str) -> dict[str, Any] | None:
-    """SPEC §6.6's segment-count preview, or ``None`` where it does not apply.
-
-    ``segments_for`` is pure — no Django, no clock, no price — so this adds the
-    only thing it deliberately leaves out: nothing. Per-segment *price* is
-    deployment data this product does not hold (SPEC §22: "OpenChat only warns,
-    never meters"), so the composer shows the count and the encoding, which is
-    what makes a 161-character message costing two segments explicable.
-
-    Gated on the platform having a segment cost at all, read from the
-    capabilities table rather than from a name: a platform whose ``max_text_len``
-    is the SMS single-segment figure is the one this arithmetic is about.
-    """
-    if not _is_sms_like(connection):
-        return None
-    count = sms_segments.segments_for(text or "")
-    return {
-        "encoding": count.encoding,
-        "characters": count.characters,
-        "segments": count.segments,
-        "remaining": count.remaining,
-        "limit": count.limit,
-    }
-
-
-def _is_sms_like(connection: Any) -> bool:
-    """Whether messages on this connection are billed by GSM-03.38 segment.
-
-    Asked of the capabilities table: a segment-counted channel is one that
-    renders text and nothing else — no media, no cards, no buttons — which is
-    exactly the shape SPEC §6.6 describes and exactly what
-    ``apps.channels.segments`` computes for. A platform added later that shares
-    that shape gets the preview for free; one that does not, does not.
-    """
-    caps = capabilities_for(connection.platform)
-    return caps.text and not any(
-        (caps.image, caps.audio, caps.video, caps.file, caps.card, caps.gallery, caps.buttons, caps.quick_replies)
-    )
-
-
 def composer_config(workspace: Any, connection: Any) -> dict[str, Any]:
     """Everything the content step needs to render itself, in one payload.
 
@@ -192,7 +158,12 @@ def composer_config(workspace: Any, connection: Any) -> dict[str, Any]:
         "templates": templates,
         "cost_hint": _cost_hint(workspace, templates),
         # -- the SMS-shaped preview -------------------------------------------
-        "counts_segments": _is_sms_like(connection),
+        #
+        # Whether to *offer* the segment count, read from the capability table.
+        # The count itself is L5-D's endpoint, which already does the arithmetic
+        # and the per-segment price — reproducing either here would be the second
+        # segment counter the layer-6 ground rules forbid.
+        "counts_segments": caps.counts_segments,
     }
 
 

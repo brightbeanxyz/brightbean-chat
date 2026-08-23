@@ -95,9 +95,25 @@ class TestContractFieldsAreExactlyAsWritten:
     #: adapter could only drop, unnumbered and unreachable.
     RENDERING_FIELDS = {"interaction_is_exclusive"}
 
+    #: Also beyond §6.1, added by issue #23. ``counts_segments`` says a message on
+    #: this platform is billed by GSM 03.38 segment, which the two composers that
+    #: have to show a count before somebody sends both ask — and which nothing
+    #: else in this table answers: ``max_text_len`` is a number rather than a
+    #: billing model, and SMS carries images (MMS), so "text only" does not
+    #: identify it either.
+    BILLING_FIELDS = {"counts_segments"}
+
     def test_capabilities_carries_every_spec_6_1_flag(self) -> None:
         fields = {f.name for f in dataclasses.fields(Capabilities)}
-        assert fields == self.SPEC_6_1_FLAGS | self.MEDIA_CEILING_FIELDS | self.RENDERING_FIELDS
+        assert fields == (
+            self.SPEC_6_1_FLAGS | self.MEDIA_CEILING_FIELDS | self.RENDERING_FIELDS | self.BILLING_FIELDS
+        )
+
+    def test_only_a_segment_billed_platform_declares_it(self) -> None:
+        """SPEC §6.6 names one: SMS. A second would need its own §6 subsection."""
+        declared = {platform for platform in Platform.values if capabilities_for(platform).counts_segments}
+
+        assert declared == {Platform.SMS}
 
     def test_a_media_ceiling_is_published_only_for_a_kind_the_platform_takes(self) -> None:
         """A ceiling on an unsupported kind is the drift #19 removed.
