@@ -505,7 +505,7 @@ def _require_draft(broadcast: Broadcast) -> None:
 def cancel_broadcast(broadcast: Broadcast) -> Broadcast:
     """Stop a broadcast: no more scheduling, and no send that has not already run.
 
-    Three writes, in one transaction, and all three are needed.
+    Four writes, in one transaction, and each covers a case the others cannot.
 
     1. The **status**, under a row lock. This is what the fanout handler and the
        send handler both re-read, and it is the half of cancellation that covers
@@ -516,6 +516,8 @@ def cancel_broadcast(broadcast: Broadcast) -> Broadcast:
        run only to discover there is nothing to do.
     3. The **pending recipient rows**, so the counters reconcile immediately
        rather than after a sweep.
+    4. The **deferred sends** — see :func:`_cancel_deferred_sends`, the narrowest
+       of the four and the one that is easiest to miss.
 
     Messages already sent stand. There is no unsend.
     """
