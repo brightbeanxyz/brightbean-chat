@@ -11,7 +11,14 @@ media_library/_asset_detail.html states.
       hx-post="{% if trigger %}{% url 'flows:trigger_update' workspace_id=request.workspace.id flow_id=flow.id trigger_id=trigger.id %}{% else %}{% url 'flows:trigger_create' workspace_id=request.workspace.id flow_id=flow.id %}{% endif %}"
       hx-swap="none"
       x-data
-      @htmx:after-request="if (event.detail.successful) $el.closest('#trigger-form').innerHTML = ''">
+      {% comment %}
+      Closed on `triggersChanged`, not on `event.detail.successful`. Every
+      refusal is deliberately 2xx — htmx drops HX-Trigger on anything else, so a
+      400 would show no toast at all — which makes `successful` true for a
+      rejected save too. Keying on the refresh event instead means a validation
+      failure leaves the form up with the user's input still in it.
+      {% endcomment %}
+      @htmx:after-request="if ((event.detail.xhr.getResponseHeader('HX-Trigger') || '').includes('triggersChanged')) $el.closest('#trigger-form').innerHTML = ''">
     {% csrf_token %}
     <input type="hidden" name="type" value="{{ spec.type }}">
 

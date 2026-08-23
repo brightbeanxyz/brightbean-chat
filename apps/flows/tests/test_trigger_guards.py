@@ -159,6 +159,17 @@ class TestCommentGuard:
         self._comment(instagram, comment_id="c-1", commenter_ref="ig-1")
         assert self._comment(instagram, comment_id="c-2", commenter_ref="ig-2") is not None
 
+    def test_two_overlong_comment_ids_sharing_a_prefix_are_distinct(self, tenancy, instagram):
+        """These values go straight into unique constraints, so truncating them
+        would make the second comment look already handled and silently drop its
+        private reply."""
+        assert self._comment(instagram, comment_id="c" * 250 + "A") is not None
+        assert self._comment(instagram, comment_id="c" * 250 + "B", commenter_ref="ig-2") is not None
+
+    def test_two_overlong_commenters_sharing_a_prefix_both_get_a_claim(self, tenancy, instagram):
+        assert self._comment(instagram, comment_id="c-1", commenter_ref="ig-" + "z" * 250 + "A") is not None
+        assert self._comment(instagram, comment_id="c-2", commenter_ref="ig-" + "z" * 250 + "B") is not None
+
     def test_a_future_timestamp_is_clamped(self, tenancy, instagram):
         """A forged timestamp must not buy extra days inside the 7-day window."""
         now = timezone.now()

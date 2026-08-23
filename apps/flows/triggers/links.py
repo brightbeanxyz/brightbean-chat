@@ -91,8 +91,16 @@ def registered_handle_resolvers() -> tuple[str, ...]:
 
 
 def handle_for(connection: Any, trigger: Any = None) -> str:
-    """This connection's public handle, by the three-step rule above."""
-    if trigger is not None:
+    """This connection's public handle, by the three-step rule above.
+
+    The trigger's ``link_handle`` names **one** account, so it is honoured only
+    when the trigger names one too. An unbound ref trigger covers every
+    connection of a matching platform — several Telegram bots, say — and letting
+    a single typed username stand in for all of them would print QR codes
+    pointing at the wrong account, which is the one failure mode a printed code
+    cannot be corrected after.
+    """
+    if trigger is not None and str(getattr(trigger, "channel_connection_id", "") or "") == str(connection.pk):
         configured = (trigger.config_json or {}).get("link_handle")
         if isinstance(configured, str) and configured.strip():
             return configured.strip().lstrip("@")

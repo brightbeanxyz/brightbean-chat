@@ -154,12 +154,20 @@ def _claim(connection: Any, event: Any, stage: Stage) -> bool:
     execution), so this is the row that makes SPEC §21's "zero duplicate sends
     across 1k forced worker retries" true on the deferred path.
     """
+    from apps.flows import messaging as messaging_facade
+
     try:
         with transaction.atomic():
             RoutedEvent(
                 workspace_id=connection.workspace_id,
                 channel_connection=connection,
-                provider_event_id=_bounded_event_id(event.provider_event_id),
+                # Hashed rather than sliced when over-long, so two events
+                # sharing a 200-character prefix cannot claim one another's
+                # guard. Idempotent, so an id already bounded on its way into
+                # the payload passes through unchanged.
+                provider_event_id=messaging_facade.bounded_identifier(
+                    event.provider_event_id, limit=_MAX_EVENT_ID_CHARS
+                ),
                 stage=str(stage),
             ).save()
         return True
@@ -182,20 +190,6 @@ def _connection(workspace_id: Any, raw_id: Any) -> Any | None:
         # A malformed uuid in a stored payload is a dropped action, not a 500 in
         # the worker loop that would retry it four more times to the same end.
         return None
-
-
-def _bounded_event_id(value: str) -> str:
-    """Fit a provider event id into the column without two ids colliding.
-
-    ``apps.messaging.identities.bounded_key`` is the house version of this and
-    hashes rather than truncates, for exactly the reason that matters here: two
-    long ids sharing a 200-character prefix would truncate into one another and
-    one event would silently claim the other's guard. Local rather than a facade
-    proxy because the limit is this column's, not an address's.
-    """
-    if len(value) <= _MAX_EVENT_ID_CHARS:
-        return value
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 #: ``RoutedEvent.provider_event_id``'s column width.

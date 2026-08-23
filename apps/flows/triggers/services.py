@@ -28,6 +28,7 @@ __all__ = [
     "summaries",
     "triggers_for",
     "update_trigger",
+    "workspace_triggers",
 ]
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,25 @@ def triggers_for(flow: Flow) -> Any:
     )
 
 
+def workspace_triggers(workspace_id: Any, *, lock: bool = False) -> Any:
+    """**Every** trigger in the workspace, in match order.
+
+    Priority is workspace-wide, not per flow — SPEC §10 orders the whole
+    candidate set and takes the first match, and
+    :func:`apps.flows.triggers.matching.candidates` queries across the workspace
+    to honour that. So allocation and reordering have to work in the same scope:
+    numbering each flow's triggers from zero gives every flow a priority-0
+    trigger, and two flows with an overlapping keyword are then separated only by
+    the hidden ``created_at`` tie-break, which no user can change.
+
+    ``lock`` takes ``select_for_update`` over the rows being renumbered, which is
+    the serialisation point a reorder needs — the flow row is not, because a
+    reorder now touches rows belonging to other flows.
+    """
+    queryset = Trigger.objects.for_workspace(workspace_id).order_by("priority", "created_at", "id")
+    return queryset.select_for_update() if lock else queryset
+
+
 def create_trigger(
     flow: Flow,
     *,
@@ -63,7 +83,11 @@ def create_trigger(
     connection: Any = None,
     enabled: bool = True,
 ) -> Trigger:
-    """Add a trigger to ``flow``, at the end of its priority order."""
+    """Add a trigger to the workspace, last in match order.
+
+    "Last" is workspace-wide: see :func:`workspace_triggers` for why per-flow
+    numbering would make overlapping triggers unorderable.
+    """
     spec = spec_for(trigger_type)
     if spec is None:
         raise TriggerValidationError([_issue(f"{trigger_type!r} is not a trigger type.", "type")])
@@ -72,7 +96,12 @@ def create_trigger(
 
     with transaction.atomic():
         locked = Flow.objects.for_workspace(flow.workspace_id).select_for_update().get(pk=flow.pk)
-        last = triggers_for(locked).order_by("-priority").values_list("priority", flat=True).first()
+        last = (
+            workspace_triggers(flow.workspace_id, lock=True)
+            .order_by("-priority")
+            .values_list("priority", flat=True)
+            .first()
+        )
         trigger = Trigger(
             flow=locked,
             channel_connection=connection,
@@ -126,18 +155,23 @@ def delete_trigger(trigger: Trigger) -> None:
 def move_trigger(trigger: Trigger, *, direction: str) -> Trigger:
     """Swap a trigger with its neighbour in match order.
 
-    Renormalises the flow's priorities to ``0, 10, 20, …`` first, under the same
-    ``select_for_update`` on the flow row that ``save_draft`` and ``publish``
-    take. That does two jobs at once: it breaks any existing ties, so "up" always
-    has a well-defined meaning, and it keeps two concurrent reorders from
-    interleaving into an order neither of them asked for.
+    The order is the **workspace's**, not the flow's, because that is the order
+    the matcher walks: a keyword trigger on one flow and a keyword trigger on
+    another compete for the same message, and "run this one first" has to be able
+    to settle that. The neighbour a move swaps with may therefore belong to a
+    different flow — which is why the panel says priority is workspace-wide and
+    shows the number on every row.
+
+    Renormalising to ``0, 10, 20, …`` first does two jobs: it breaks any existing
+    ties, so "up" always has a well-defined meaning, and together with
+    ``select_for_update`` over the same rows it keeps two concurrent reorders
+    from interleaving into an order neither asked for.
     """
     if direction not in {"up", "down"}:
         raise TriggerValidationError([_issue(f"{direction!r} is not a direction.", "direction")])
 
     with transaction.atomic():
-        Flow.objects.for_workspace(trigger.workspace_id).select_for_update().get(pk=trigger.flow_id)
-        ordered = list(triggers_for(trigger.flow))
+        ordered = list(workspace_triggers(trigger.workspace_id, lock=True))
         for position, row in enumerate(ordered):
             wanted = position * PRIORITY_STEP
             if row.priority != wanted:

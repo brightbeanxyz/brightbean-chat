@@ -85,6 +85,38 @@ class TestSerialization:
         assert "raw" not in payload
         assert "secret" not in str(payload)
 
+    def test_an_overlong_platform_user_id_survives_as_the_stored_form(self, tenancy, connection):
+        """Persistence stored this id through ``bounded_address``, which hashes
+        rather than truncates. Slicing it here sent the worker looking for an
+        identity row that does not exist, and the event routed with no contact."""
+        from apps.messaging.identities import bounded_address
+
+        raw = "u" * 500
+        event = inbound(connection, text="hi", user=raw)
+
+        stored = event_to_payload(event)["platform_user_id"]
+
+        assert stored == bounded_address(raw)
+        assert len(stored) <= 200
+
+    def test_two_overlong_ids_sharing_a_prefix_stay_distinct(self, tenancy, connection):
+        """Truncation would have collapsed them into one another, and one event
+        would silently claim the other's RoutedEvent guard."""
+        first = event_to_payload(inbound(connection, event_id="e" * 250 + "A", user="x" * 250 + "A"))
+        second = event_to_payload(inbound(connection, event_id="e" * 250 + "B", user="x" * 250 + "B"))
+
+        assert first["provider_event_id"] != second["provider_event_id"]
+        assert first["platform_user_id"] != second["platform_user_id"]
+
+    def test_bounding_is_idempotent_through_a_round_trip(self, tenancy, connection):
+        event = inbound(connection, text="hi", user="u" * 500, event_id="e" * 500)
+
+        once = event_to_payload(event)
+        twice = event_to_payload(payload_to_event(once, connection))
+
+        assert twice["platform_user_id"] == once["platform_user_id"]
+        assert twice["provider_event_id"] == once["provider_event_id"]
+
     def test_text_is_capped(self, tenancy, connection):
         event = inbound(connection, text="x" * (MAX_ROUTE_TEXT_CHARS * 2))
         assert len(event_to_payload(event)["payload"]["text"]) == MAX_ROUTE_TEXT_CHARS

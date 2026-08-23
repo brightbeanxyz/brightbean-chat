@@ -113,6 +113,43 @@ class TestTheForm:
         assert response.status_code == 200
         assert b"<form" in response.content
 
+    def test_the_form_closes_only_on_a_real_save(self, tenancy, client_for, flow):
+        """The template keys its close on the ``triggersChanged`` header rather
+        than on ``event.detail.successful``, because every refusal is
+        deliberately 2xx — htmx drops HX-Trigger on anything else — so
+        ``successful`` is true for a rejected save too and the form would wipe
+        the user's input before they could correct it.
+
+        Asserting the header contract here is what keeps that template line
+        honest: a save carries the event, a refusal does not.
+        """
+        saved = client_for(tenancy.owner).post(
+            _url("flows:trigger_create", tenancy, flow),
+            {"type": TriggerType.KEYWORD, "keyword_text": ["help"], "keyword_mode": ["contains"]},
+        )
+        refused = client_for(tenancy.owner).post(
+            _url("flows:trigger_create", tenancy, flow),
+            {"type": TriggerType.KEYWORD, "keyword_text": [""], "keyword_mode": ["contains"]},
+        )
+
+        assert 200 <= saved.status_code < 300 and 200 <= refused.status_code < 300
+        assert "triggersChanged" in saved.headers["HX-Trigger"]
+        assert "triggersChanged" not in refused.headers["HX-Trigger"]
+
+    def test_the_template_does_not_close_on_bare_success(self, tenancy):
+        """Guards the handler itself, since no Python path exercises it.
+
+        Read off the attribute rather than the whole file — the comment beside it
+        names ``event.detail.successful`` to explain why it is *not* used.
+        """
+        from pathlib import Path
+
+        markup = Path("templates/flows/_trigger_form.html").read_text()
+        handler = next(line for line in markup.splitlines() if "@htmx:after-request" in line)
+
+        assert "event.detail.successful" not in handler
+        assert "triggersChanged" in handler
+
     def test_an_unknown_type_is_refused_without_a_500(self, tenancy, client_for, flow):
         response = client_for(tenancy.owner).get(_url("flows:trigger_form", tenancy, flow) + "?type=teleport")
 
@@ -199,6 +236,38 @@ class TestMutations:
         first.refresh_from_db()
         second.refresh_from_db()
         assert second.priority < first.priority
+
+    def test_a_new_trigger_does_not_collide_with_another_flows(self, tenancy, client_for, flow):
+        """Priority is workspace-wide because matching is. Numbering each flow
+        from zero gave every flow a priority-0 trigger, and two flows with an
+        overlapping keyword were then separated only by a hidden created_at
+        tie-break no user could change."""
+        other = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]), name="Other")
+        _trigger(other)
+
+        client_for(tenancy.owner).post(
+            _url("flows:trigger_create", tenancy, flow),
+            {"type": TriggerType.KEYWORD, "keyword_text": ["help"], "keyword_mode": ["contains"]},
+        )
+
+        priorities = sorted(Trigger.objects.for_workspace(tenancy.workspace).values_list("priority", flat=True))
+        assert len(set(priorities)) == len(priorities), priorities
+
+    def test_moving_reorders_against_another_flows_trigger(self, tenancy, client_for, flow):
+        """The neighbour a move swaps with may belong to a different flow — that
+        is the whole point, because those are the two triggers competing for the
+        same message."""
+        other = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]), name="Other")
+        theirs = _trigger(other, priority=0)
+        mine = _trigger(flow, priority=10)
+
+        client_for(tenancy.owner).post(
+            _url("flows:trigger_move", tenancy, flow, trigger_id=mine.pk), {"direction": "up"}
+        )
+
+        mine.refresh_from_db()
+        theirs.refresh_from_db()
+        assert mine.priority < theirs.priority
 
     def test_moving_past_the_end_is_a_no_op(self, tenancy, client_for, flow):
         only = _trigger(flow)

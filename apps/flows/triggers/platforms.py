@@ -45,10 +45,17 @@ def platforms_for_trigger(trigger: Trigger, *, connected: set[str]) -> set[str]:
 def platforms_for_flow(flow: Any) -> tuple[str, ...]:
     """Which platforms this flow can run on, for capability validation.
 
-    Falls back to the workspace's connected platforms when no enabled trigger
-    names one — a flow with no triggers at all, or one whose only triggers are
-    ``api`` and ``rule``, can be started on any channel, so narrowing it would
-    silence warnings that are still true.
+    Falls back to the workspace's connected platforms in two cases, and the
+    second is easy to miss. The obvious one is a flow with no enabled trigger at
+    all: nothing says where it runs, so every warning is still true.
+
+    The other is a flow carrying a **channel-independent** trigger — ``api`` or
+    ``rule``. Those name no platform, so they contribute nothing to the set; but
+    ``fire_api_trigger`` resolves a channel from the contact's own identities and
+    L6-A's rule triggers do the same, so such a flow really can run on any
+    connected channel. Letting a Telegram trigger sitting beside an API trigger
+    narrow the set would suppress the SMS warnings for a run that can genuinely
+    happen on SMS.
     """
     connected = set(connected_platforms(flow.workspace_id))
     bound: set[str] = set()
@@ -58,5 +65,8 @@ def platforms_for_flow(flow: Any) -> tuple[str, ...]:
         .select_related("channel_connection")
     )
     for trigger in triggers:
+        spec = spec_for(trigger.type)
+        if spec is not None and not spec.platforms:
+            return tuple(sorted(connected))
         bound |= platforms_for_trigger(trigger, connected=connected)
     return tuple(sorted(bound or connected))

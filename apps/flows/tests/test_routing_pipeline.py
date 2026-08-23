@@ -403,6 +403,24 @@ class TestCommentGuard:
 
         assert not HandledComment.objects.for_workspace(tenancy.workspace).exists()
 
+    def test_a_deferred_comment_hook_reaches_the_worker(self, tenancy):
+        """A hook on the contactless path is under the same contract as anywhere
+        else: an L5 comment hook that cannot finish inline says ``Deferred`` and
+        the event must reach the worker rather than ending here."""
+        from apps.flows.triggers.handlers import ROUTE_EVENT
+        from apps.flows.triggers.hooks import Deferred, Stage, register_hook
+        from apps.queueing.models import ScheduledAction
+
+        instagram = self._instagram(tenancy)
+        register_hook(lambda context: Deferred("needs the api"), stage=Stage.TRIGGER, name="probe", priority=1)
+
+        with routing_adapter(Platform.INSTAGRAM):
+            _route(instagram, self._comment(instagram))
+
+        queued = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ROUTE_EVENT)
+        assert queued.count() == 1
+        assert queued.get().payload["stage"] == "trigger"
+
     def test_claiming_creates_no_contact(self, tenancy):
         """apps/messaging/ingest.py's rule: one viral post must not become a
         contact-spam amplifier."""

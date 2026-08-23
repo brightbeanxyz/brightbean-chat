@@ -37,6 +37,7 @@ __all__ = [
     "assign_conversation",
     "available",
     "bounded_address",
+    "bounded_identifier",
     "close_conversation",
     "message_idempotency_key",
     "open_conversation",
@@ -200,6 +201,26 @@ def bounded_address(platform_user_id: Any) -> str:
     if identities is None:  # pragma: no cover - messaging is installed everywhere
         return str(platform_user_id or "")
     return str(identities.bounded_address(platform_user_id))
+
+
+def bounded_identifier(value: Any, *, limit: int = 200) -> str:
+    """A storable identifier, bounded **without truncation**.
+
+    ``apps.messaging.identities.bounded_key`` hashes an over-long value rather
+    than cutting it, and that difference is load-bearing wherever the result
+    lands in a unique constraint or is compared against a stored one: two values
+    agreeing on their first ``limit`` characters would otherwise silently become
+    the same key. Routing needs the same rule for a queued event's ids and for
+    the comment guards, so it uses the same function rather than a second
+    spelling of it.
+
+    Idempotent — a value already bounded passes through unchanged — so bounding
+    on the way into a queue payload and again on the way out is safe.
+    """
+    identities = _module(_IDENTITIES_MODULE)
+    if identities is None:  # pragma: no cover - messaging is installed everywhere
+        return str(value or "")[:limit]
+    return str(identities.bounded_key(value, limit=limit))
 
 
 def resolve_identity(connection: Any, platform_user_id: str, *, occurred_at: Any = None) -> Any:

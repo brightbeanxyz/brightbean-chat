@@ -22,7 +22,8 @@ name) is attacker-adjacent user text and is rendered escaped. No mark_safe, no
                 @click="triggersOpen = false">Close</button>
     </div>
     <p class="text-xs mb-4" style="color: var(--text-tertiary);">
-        What starts this flow. Lower numbers run first, and the first match wins.
+        What starts this flow. Lower numbers run first and the first match wins —
+        across every flow in this workspace, not just this one.
     </p>
 
     {% for label in duplicate_stage_labels %}

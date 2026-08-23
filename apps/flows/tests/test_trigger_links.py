@@ -55,6 +55,26 @@ class TestDeepLinks:
 
         assert link.url == "https://t.me/my_bot?start=promo"
 
+    def test_an_unbound_trigger_does_not_reuse_one_handle_everywhere(self, tenancy, flow):
+        """A typed handle names one account. Reusing it across every connection
+        an unbound trigger covers prints QR codes pointing at the wrong bot —
+        and a printed code cannot be corrected afterwards."""
+        first = connection_for(tenancy.workspace, external_id="bot-1")
+        second = connection_for(tenancy.workspace, external_id="bot-2")
+        trigger = _trigger(flow, handle="@my_bot")  # unbound
+
+        found = {link.connection.pk: link for link in links.ref_links_for(trigger)}
+
+        assert found[first.pk].available is False
+        assert found[second.pk].available is False
+
+    def test_a_bound_trigger_still_uses_its_own_handle(self, tenancy, flow):
+        """The override is honoured exactly where it is unambiguous."""
+        connection = connection_for(tenancy.workspace, external_id="bot-1")
+        trigger = _trigger(flow, connection=connection, handle="@my_bot")
+
+        assert links.ref_link(connection, "promo", trigger=trigger).url == "https://t.me/my_bot?start=promo"
+
     def test_an_adapter_can_register_a_resolver(self, tenancy, flow):
         """Step two: one line in L4-B's own ready(), no edit here or in channels."""
         connection = connection_for(tenancy.workspace, external_id="bot-999")

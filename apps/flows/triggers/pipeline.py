@@ -163,10 +163,17 @@ def _route(context: RoutingContext, from_stage: Stage) -> None:
 
     if not context.can_run_engine:
         # A comment: no contact, so nothing to lock and no flow to start. The
-        # trigger stage still runs, because matching one is what tells L5-A's
-        # private reply there is work to do.
+        # trigger stage still runs, because matching one is what claims the
+        # comment and tells L5-A's private reply there is work to do.
+        #
+        # Its outcome is honoured rather than discarded: a hook here is under the
+        # same contract as anywhere else, so an L5 comment hook that cannot
+        # finish inline must be able to say ``Deferred`` and have the event
+        # reach the worker instead of ending here.
         context.stage = Stage.TRIGGER
-        run_stage(Stage.TRIGGER, context)
+        outcome = run_stage(Stage.TRIGGER, context)
+        if isinstance(outcome, Deferred):
+            handlers.hand_off(context, Stage.TRIGGER, reason=outcome.reason)
         return
 
     if context.mode is RoutingMode.WORKER:

@@ -57,14 +57,20 @@ def event_to_payload(event: NormalizedEvent) -> dict[str, Any]:
     payload = event.payload
     return {
         "type": str(event.type),
-        "platform_user_id": _text(event.platform_user_id, MAX_ROUTE_ID_CHARS),
-        "provider_event_id": _text(event.provider_event_id, MAX_ROUTE_ID_CHARS),
+        # Bounded by hashing, never by slicing. Persistence stored this
+        # platform_user_id through ``bounded_address``, so an over-long one is
+        # already a digest in the identity table — truncating here would send the
+        # worker looking for a row that does not exist, and it would route the
+        # event with no contact. The same rule protects provider_event_id, which
+        # keys the RoutedEvent exactly-once guard.
+        "platform_user_id": _identifier(event.platform_user_id),
+        "provider_event_id": _identifier(event.provider_event_id),
         "timestamp": event.timestamp.isoformat() if event.timestamp else "",
         "payload": {
             "text": _text(payload.text, MAX_ROUTE_TEXT_CHARS),
             "attachments": _texts(payload.attachments, MAX_ROUTE_ATTACHMENTS, MAX_ROUTE_URL_CHARS),
             "button_id": _text(payload.button_id, MAX_ROUTE_ID_CHARS),
-            "comment_id": _text(payload.comment_id, MAX_ROUTE_ID_CHARS),
+            "comment_id": _identifier(payload.comment_id),
             "media_ids": _texts(payload.media_ids, MAX_ROUTE_ATTACHMENTS, MAX_ROUTE_ID_CHARS),
             "ref": _text(payload.ref, MAX_ROUTE_ID_CHARS),
             # Kept, unlike raw, because L4-A ships the platform-agnostic comment
@@ -97,14 +103,16 @@ def payload_to_event(raw: Any, connection: Any) -> NormalizedEvent | None:
     return NormalizedEvent(
         type=EventType(event_type),
         connection=connection,
-        platform_user_id=_text(raw.get("platform_user_id"), MAX_ROUTE_ID_CHARS),
-        provider_event_id=_text(raw.get("provider_event_id"), MAX_ROUTE_ID_CHARS),
+        platform_user_id=_identifier(raw.get("platform_user_id")),
+        provider_event_id=_identifier(raw.get("provider_event_id")),
         timestamp=timestamp or timezone.now(),
         payload=EventPayload(
             text=_text(body.get("text"), MAX_ROUTE_TEXT_CHARS),
             attachments=_texts(body.get("attachments"), MAX_ROUTE_ATTACHMENTS, MAX_ROUTE_URL_CHARS),
             button_id=_text(body.get("button_id"), MAX_ROUTE_ID_CHARS),
-            comment_id=_text(body.get("comment_id"), MAX_ROUTE_ID_CHARS),
+            # A comment id keys the HandledComment guard, so it is bounded the
+            # same way rather than sliced.
+            comment_id=_identifier(body.get("comment_id")),
             media_ids=_texts(body.get("media_ids"), MAX_ROUTE_ATTACHMENTS, MAX_ROUTE_ID_CHARS),
             ref=_text(body.get("ref"), MAX_ROUTE_ID_CHARS),
             extra=_extra(body.get("extra")),
@@ -147,6 +155,13 @@ def shrink_to_fit(document: dict[str, Any]) -> dict[str, Any] | None:
 
 def _size(document: dict[str, Any]) -> int:
     return len(json.dumps(document, separators=(",", ":")).encode("utf-8"))
+
+
+def _identifier(value: Any) -> str:
+    """Bound an id the way the identity table does — see the facade's docstring."""
+    from apps.flows import messaging as messaging_facade
+
+    return messaging_facade.bounded_identifier(value, limit=MAX_ROUTE_ID_CHARS)
 
 
 def _text(value: Any, limit: int) -> str:

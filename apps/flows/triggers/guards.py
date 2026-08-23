@@ -36,7 +36,10 @@ DEFAULT_REPLY_INTERVAL = timedelta(hours=24)
 #: SPEC §10: a comment's private reply has seven days from the comment.
 PRIVATE_REPLY_WINDOW = timedelta(days=7)
 
-#: Platform ids are attacker-controlled. Bounded on write to the column width.
+#: Platform ids are attacker-controlled and go straight into two unique
+#: constraints, so they are bounded by *hashing* rather than by slicing: two
+#: distinct comment ids sharing a 200-character prefix would otherwise become one
+#: key, and the second comment would be silently dropped as already handled.
 _MAX_PLATFORM_ID = 200
 
 
@@ -109,9 +112,9 @@ def record_comment(
                 workspace_id=connection.workspace_id,
                 channel_connection=connection,
                 trigger=trigger,
-                comment_id=comment_id[:_MAX_PLATFORM_ID],
-                post_id=post_id[:_MAX_PLATFORM_ID],
-                commenter_ref=commenter_ref[:_MAX_PLATFORM_ID],
+                comment_id=_bounded(comment_id),
+                post_id=_bounded(post_id),
+                commenter_ref=_bounded(commenter_ref),
                 # The clock is ours, not the platform's — the rule
                 # apps/messaging/ingest.py already applies to inbound
                 # timestamps. A comment dated next week would otherwise buy
@@ -123,6 +126,13 @@ def record_comment(
             return row
     except IntegrityError:
         return None
+
+
+def _bounded(value: str) -> str:
+    """Key material, bounded without truncation. See :data:`_MAX_PLATFORM_ID`."""
+    from apps.flows import messaging as messaging_facade
+
+    return messaging_facade.bounded_identifier(value, limit=_MAX_PLATFORM_ID)
 
 
 def private_reply_deadline(row: HandledComment) -> datetime:

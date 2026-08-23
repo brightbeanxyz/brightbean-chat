@@ -156,6 +156,28 @@ class TestCapabilityWarnings:
 
         assert platforms_for_flow(flow) == (Platform.SMS,)
 
+    def test_an_api_trigger_beside_a_bound_one_widens_the_scope_back(self, tenancy):
+        """``fire_api_trigger`` resolves a channel from the contact's own
+        identities, so a flow carrying an api trigger really can run on SMS —
+        letting the Telegram trigger beside it narrow the set would suppress
+        warnings for a run that can genuinely happen."""
+        telegram = connection_for(tenancy.workspace, external_id="bot-1")
+        connection_for(tenancy.workspace, platform=Platform.SMS, external_id="+15550015")
+        flow = self._flow(tenancy)
+        _trigger(flow, connection=telegram)
+        _trigger(flow, TriggerType.API, config={})
+
+        assert platforms_for_flow(flow) == tuple(sorted({Platform.SMS, Platform.TELEGRAM}))
+
+    def test_a_disabled_api_trigger_does_not_widen_it(self, tenancy):
+        telegram = connection_for(tenancy.workspace, external_id="bot-1")
+        connection_for(tenancy.workspace, platform=Platform.SMS, external_id="+15550016")
+        flow = self._flow(tenancy)
+        _trigger(flow, connection=telegram)
+        _trigger(flow, TriggerType.API, config={}, enabled=False)
+
+        assert platforms_for_flow(flow) == (Platform.TELEGRAM,)
+
     def test_a_bound_trigger_counts_even_while_the_connection_needs_reauth(self, tenancy):
         """The binding is the author's stated intent; needs_reauth is a temporary
         condition, and dropping the warning while a token refreshes would be
