@@ -21,6 +21,7 @@ import httpx
 import pytest
 
 from apps.common import outbound
+from apps.common.outbound import reset_deployment_cache
 from apps.contacts.services import create_custom_field, field_values_for
 from apps.flows.engine import start_flow, synchronous_safe
 from apps.flows.engine.nodes.external_request import _timeout as node_timeout
@@ -33,6 +34,14 @@ from tests.ssrf import guard_required
 PUBLIC = "93.184.216.34"
 API = "api.example.test"
 SINK = {"actions": [{"verb": "remove_tag", "tag": "not-a-tag-here"}]}
+
+
+@pytest.fixture(autouse=True)
+def _clear_deployment_cache() -> Any:
+    """The guard caches its own host's addresses; these tests swap the resolver."""
+    reset_deployment_cache()
+    yield
+    reset_deployment_cache()
 
 
 class FakeInternet:
@@ -158,6 +167,34 @@ class TestTheHappyPath:
 
         assert internet.requests[0].read() == b""
 
+    def test_a_header_configured_twice_says_so(self, tenancy, monkeypatch, caplog):
+        """Last one wins, but silently losing an API key header is undebuggable."""
+        internet = FakeInternet(serving({})).install(monkeypatch)
+        flow = branching_flow(
+            tenancy.workspace,
+            headers=[{"name": "X-Key", "value": "first"}, {"name": "X-Key", "value": "second"}],
+        )
+
+        with caplog.at_level("INFO"):
+            run(tenancy.workspace, flow)
+
+        assert internet.requests[0].headers["x-key"] == "second"
+        assert "more than once" in caplog.text
+        assert "first" not in caplog.text and "second" not in caplog.text, "names are logged, values never"
+
+    def test_a_header_whose_name_renders_empty_says_so(self, tenancy, monkeypatch, caplog):
+        internet = FakeInternet(serving({})).install(monkeypatch)
+        flow = branching_flow(
+            tenancy.workspace,
+            headers=[{"name": "{{nothing_here}}", "value": "x"}, {"name": "X-Fine", "value": "y"}],
+        )
+
+        with caplog.at_level("INFO"):
+            run(tenancy.workspace, flow)
+
+        assert internet.requests[0].headers["x-fine"] == "y"
+        assert "rendered empty" in caplog.text
+
     def test_headers_are_rendered_and_sent(self, tenancy, monkeypatch):
         internet = FakeInternet(serving({})).install(monkeypatch)
         flow = branching_flow(
@@ -240,6 +277,56 @@ class TestErrorRouting:
         assert execution.status == ExecutionStatus.COMPLETED
         assert execution.current_node_id == "bad"
         assert not ScheduledAction.objects.for_workspace(tenancy.workspace.pk).exists()
+
+    @pytest.mark.parametrize("charset", ["undefined", "idna", "punycode"])
+    def test_a_hostile_content_type_charset_does_not_crash_the_step(self, tenancy, monkeypatch, charset):
+        """The far end picks ``Content-Type``, and the node decodes every body.
+
+        These three codec names pass a "can this encode?" check and then raise on
+        decode. ``UnicodeError`` is not an ``OutboundError``, so it escaped the
+        node, rolled the step back and put the request on the queue's retry
+        ladder — with a stranger's server choosing when that happened.
+        """
+
+        def handler(request):
+            return httpx.Response(
+                200, content=b'\xff\xfe{"id": "u-1"}', headers={"Content-Type": f"text/plain; charset={charset}"}
+            )
+
+        FakeInternet(handler).install(monkeypatch)
+        flow = branching_flow(
+            tenancy.workspace,
+            fallback_handle_on_error=True,
+            response_mappings=[{"json_path": "$.id", "target_type": "variable", "target": "external_id"}],
+        )
+
+        execution = run(tenancy.workspace, flow)
+
+        assert execution.status == ExecutionStatus.COMPLETED
+        assert execution.current_node_id == "ok", "a 200 is a 200 whatever the charset header says"
+        assert not ScheduledAction.objects.for_workspace(tenancy.workspace.pk).exists()
+
+    def test_a_compressed_body_is_declined_rather_than_expanded(self, tenancy, monkeypatch):
+        """The guard asks for identity; a body compressed anyway has no bound."""
+        import gzip
+
+        bomb = gzip.compress(b"A" * (32 * 1024 * 1024))
+
+        def handler(request):
+            return httpx.Response(200, content=bomb, headers={"Content-Encoding": "gzip"})
+
+        FakeInternet(handler).install(monkeypatch)
+        flow = branching_flow(
+            tenancy.workspace,
+            response_mappings=[{"json_path": "$.id", "target_type": "variable", "target": "external_id"}],
+        )
+
+        execution = run(tenancy.workspace, flow)
+
+        assert execution.status == ExecutionStatus.COMPLETED
+        assert execution.current_node_id == "ok"
+        assert "external_id" not in execution.variables, "a declined body maps nothing"
+        assert execution.variables[summary_key("req")]["body"] == ""
 
     def test_without_the_flag_a_failure_takes_the_default_handle(self, tenancy, monkeypatch):
         """``fallback_handle_on_error`` is "Follow the error handle on failure"."""
@@ -391,6 +478,28 @@ class TestResponseMappings:
 
         assert "value" not in execution.variables, reason
         assert execution.current_node_id == "ok", "a skipped mapping is not a failed request"
+
+    def test_a_body_exactly_at_the_size_cap_still_maps(self, tenancy, monkeypatch, settings):
+        """A complete response wrongly flagged truncated loses every mapping."""
+        payload = b'{"id":"u-1"}'
+        settings.EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = len(payload)
+
+        def handler(request):
+            def chunks():
+                yield payload
+
+            return httpx.Response(200, content=chunks())
+
+        FakeInternet(handler).install(monkeypatch)
+        flow = branching_flow(
+            tenancy.workspace,
+            response_mappings=[{"json_path": "$.id", "target_type": "variable", "target": "external_id"}],
+        )
+
+        execution = run(tenancy.workspace, flow)
+
+        assert execution.variables["external_id"] == "u-1"
+        assert execution.variables[summary_key("req")]["truncated"] is False
 
     def test_a_non_json_body_skips_every_mapping(self, tenancy, monkeypatch):
         FakeInternet(serving(status=200, text="<html>fine, actually</html>")).install(monkeypatch)

@@ -35,7 +35,7 @@ the deployment's network that server can reach things nobody outside can:
    the first. A name that returns one public and one private address is a
    rebinding attempt with the timing removed.
 4. **The deployment's own host**, by name and by address. See
-   :func:`_deployment_hosts`.
+   :func:`_deployment_identity`.
 5. **Pin.** The connection is made to the literal IP that was just checked, with
    ``Host`` and TLS SNI carrying the original hostname. Nothing re-resolves, so
    there is no window between the check and the connect for DNS to change its
@@ -57,6 +57,20 @@ followed by ``httpx`` (which would resolve the target itself) but by the loop in
 would hand the pinned address back to a resolver in the proxy, which is the one
 configuration where every guarantee above quietly stops holding.
 
+**The body is read uncompressed**, because a size cap on a compressed body is
+not a size cap. ``httpx`` decompresses before the caller counts anything, so a
+65 KB gzip response — well under any ``Content-Length`` check — expands to 64 MB
+before a limit on the decoded stream can fire. The guard asks for
+``Accept-Encoding: identity`` and declines to expand a body that arrives
+compressed anyway (:func:`_refuses_body`), so the bytes counted and the bytes
+allocated are the same bytes.
+
+**What ``timeout`` does not cover.** ``socket.getaddrinfo`` takes no timeout and
+cannot be interrupted, so name resolution is bounded by the OS resolver's
+configuration rather than by this module. The deadline is re-checked after every
+resolution and the deployment's own host is resolved from cache, but a caller
+needing a hard wall-clock bound needs one around :func:`guarded_request`.
+
 **Proving a call site uses this.** ``tests/ssrf.py`` exposes ``guard_required()``,
 which fails any HTTP request made inside its block that did not come from here.
 Baseline §6's "new call sites add a test proving the guard is in the path" means
@@ -69,6 +83,7 @@ import socket
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -77,6 +92,7 @@ from django.conf import settings
 __all__ = [
     "CONNECT_TIMEOUT",
     "DEFAULT_TIMEOUT",
+    "DEPLOYMENT_ADDRESS_TTL",
     "GUARD_EXTENSION",
     "MAX_REDIRECTS",
     "MAX_RESPONSE_BYTES",
@@ -87,6 +103,7 @@ __all__ = [
     "allow_private",
     "guarded_request",
     "max_response_bytes",
+    "reset_deployment_cache",
     "resolve_host",
 ]
 
@@ -124,12 +141,28 @@ _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 #: Headers a caller may not set, because the guard owns them. ``Host`` is the
 #: dangerous one: overriding it would let a caller point the pinned connection's
 #: virtual host somewhere else, which is most of the way back to the attack the
-#: pinning prevents.
-_RESERVED_HEADERS = frozenset({"host", "content-length", "transfer-encoding"})
+#: pinning prevents. ``Accept-Encoding`` is here for the size cap: the guard only
+#: advertises codecs it can inflate under a bound (see :func:`_inflate`).
+_RESERVED_HEADERS = frozenset({"host", "content-length", "transfer-encoding", "accept-encoding"})
 
 #: Headers dropped when a redirect crosses to a different origin. ``httpx`` does
 #: this when it follows redirects itself; this module follows them, so it has to.
 _ORIGIN_SCOPED_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization"})
+
+#: The guard asks for an uncompressed body, and that is what makes the size cap
+#: real. ``httpx`` decompresses before a caller can count anything, so a cap
+#: applied to its output is applied *after* the allocation it exists to prevent:
+#: measured, a 65 KB gzip body — comfortably under a 1 MB ``Content-Length``
+#: check — expanded to 64 MB in one chunk. Asking for ``identity`` means the
+#: bytes on the wire and the bytes in memory are the same bytes, so counting one
+#: bounds the other.
+_ACCEPT_ENCODING = "identity"
+
+#: How long a resolution of the deployment's own host is reused. Cached because
+#: it sits in front of *every* outbound request and changes about as often as
+#: the deployment is redeployed; bucketed rather than held forever so a moved
+#: deployment starts being recognised again without a restart.
+DEPLOYMENT_ADDRESS_TTL = 300
 
 
 class OutboundError(Exception):
@@ -171,6 +204,11 @@ class GuardedResponse:
     #: The **logical** URL the response came from — hostname, not pinned IP, and
     #: after any redirects.
     final_url: str
+    #: That URL's host on its own, already lowercased. Carried rather than left
+    #: for the caller to re-parse: every log line and error message wants the
+    #: host and nothing else (SECURITY-BASELINE §5), and the guard has already
+    #: computed it.
+    final_host: str = ""
 
     @property
     def ok(self) -> bool:
@@ -179,17 +217,53 @@ class GuardedResponse:
 
     @property
     def text(self) -> str:
-        """The body decoded as text, never raising on bad bytes."""
-        return self.content.decode(self.charset, errors="replace")
+        """The body decoded as text. **Never raises** — see :attr:`charset`."""
+        return self._decode(self.content)
+
+    def text_prefix(self, max_chars: int) -> str:
+        """The first ``max_chars`` characters of :attr:`text`, cheaply.
+
+        Slices the *bytes* first, so keeping a two-kilobyte excerpt of a
+        megabyte body does not decode the megabyte. Four bytes per character is
+        UTF-8's maximum, so the byte slice can only over-read, never under-read;
+        a multi-byte sequence cut in half is what ``errors="replace"`` is for.
+        """
+        return self._decode(self.content[: max(max_chars, 0) * 4])[:max_chars]
+
+    def _decode(self, raw: bytes) -> str:
+        """Decode ``raw`` under this response's charset, falling back to UTF-8.
+
+        The fallback is not belt-and-braces. ``charset`` comes from a stranger's
+        ``Content-Type`` header, and a codec that survives the probe there can
+        still fail on real bytes, so the operation is attempted rather than
+        trusted. Anything that goes wrong is a body we describe as best we can,
+        never an exception: this is called from a flow node, and the runner does
+        not catch — a raise here would roll the step back and hand a remote
+        server the power to choose when this deployment retries.
+        """
+        try:
+            return raw.decode(self.charset, errors="replace")
+        except (UnicodeError, LookupError, TypeError, ValueError):  # pragma: no cover - the probe catches these
+            return raw.decode("utf-8", errors="replace")
 
     @property
     def charset(self) -> str:
-        encoding = self.headers.get("content-type", "")
-        _, _, parameters = encoding.partition("charset=")
-        candidate = parameters.split(";")[0].strip().strip('"') or "utf-8"
+        """The declared charset, if this process can actually decode with it.
+
+        Validated by **decoding a probe**, which is the whole point. An earlier
+        version proved the codec could *encode* an empty string, and three real
+        codec names pass that test and then raise on decode: ``undefined``
+        raises unconditionally, ``idna`` rejects ``errors="replace"``, and
+        ``punycode`` raises ``UnicodeDecodeError`` on any non-ASCII byte. The
+        header is attacker-controlled, so the check has to be the same operation
+        the caller will perform, not one that merely resembles it.
+        """
+        declared = self.headers.get("content-type", "")
+        _, _, parameters = declared.partition("charset=")
+        candidate = parameters.split(";")[0].strip().strip("\"'") or "utf-8"
         try:
-            "".encode(candidate)
-        except LookupError:
+            b"\xc3\xa9".decode(candidate, errors="replace")
+        except (UnicodeError, LookupError, TypeError, ValueError):
             return "utf-8"
         return candidate
 
@@ -220,8 +294,21 @@ def allow_private() -> bool:
 
 
 def max_response_bytes() -> int:
+    """The response cap, from settings.
+
+    A value that will not parse falls back to the default rather than raising.
+    ``config/settings/base.py`` uses ``env.int``, so a bad *env var* is caught at
+    boot — but this reads whatever is on the settings object, and a ``ValueError``
+    escaping here is not an :class:`OutboundError`, so it would sail past every
+    caller's handler and crash a flow step instead of failing it.
+    """
     value = getattr(settings, "EXTERNAL_REQUEST_MAX_RESPONSE_BYTES", MAX_RESPONSE_BYTES)
-    return int(value) if isinstance(value, int | str) else MAX_RESPONSE_BYTES
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning("EXTERNAL_REQUEST_MAX_RESPONSE_BYTES is not a number; using %s.", MAX_RESPONSE_BYTES)
+        return MAX_RESPONSE_BYTES
+    return parsed if parsed > 0 else MAX_RESPONSE_BYTES
 
 
 def resolve_host(host: str) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
@@ -317,48 +404,69 @@ def _refusal(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
     return ""
 
 
-def _deployment_hosts() -> frozenset[str]:
-    """Hostnames that mean "this deployment".
+def _deployment_identity() -> tuple[frozenset[str], frozenset[str]]:
+    """``(hostnames, addresses)`` that mean "this deployment".
 
-    ``APP_URL``'s host plus every literal ``ALLOWED_HOSTS`` entry. Wildcards are
-    skipped: development sets ``ALLOWED_HOSTS = ["*"]``, and reading that as a
-    hostname would deny every URL in the product.
+    The names are ``APP_URL``'s host plus every literal ``ALLOWED_HOSTS`` entry.
+    Wildcards are skipped: development sets ``ALLOWED_HOSTS = ["*"]``, and
+    reading that as a hostname would deny every URL in the product. Django's
+    ``.example.com`` form (apex plus every subdomain) is read as the apex alone —
+    treating it as a suffix would deny an integration at ``api.example.com`` that
+    has nothing to do with this deployment, and the address check still catches a
+    subdomain that really does point here.
 
     Denied on **any port**, not only the configured one. SPEC §11.7 says "the
     deployment's own host"; a deployment behind a proxy answers on 80, 443 and
     whatever gunicorn bound, and the interesting target — ``/internal/tick``, an
     admin page, another tenant's webhook URL — is reachable on all of them.
 
-    Django's ``.example.com`` form (apex plus every subdomain) is read here as
-    the apex alone. Treating it as a suffix would deny an integration at
-    ``api.example.com`` that has nothing to do with this deployment, and the
-    address check below still catches a subdomain that really does point here.
+    The addresses come from ``APP_URL`` alone. Resolving every ``ALLOWED_HOSTS``
+    entry would put a fan of DNS lookups in front of each outbound request, and
+    ``APP_URL`` is the one entry a deployment is guaranteed to have set correctly
+    (it is what every absolute link in the product is built from). Resolution
+    failures answer "no addresses" rather than raising: this is a second line
+    behind the name match, and a deployment whose own name does not resolve from
+    inside its network is ordinary rather than a reason to break every flow.
+
+    Both halves are derived from one parse of ``APP_URL``, and the resolution is
+    cached — see :func:`_resolved_deployment_addresses`.
     """
     hosts = {str(host).strip().lower() for host in (getattr(settings, "ALLOWED_HOSTS", None) or [])}
     hosts = {host.lstrip(".") for host in hosts if host and "*" not in host}
-    app_host = httpx.URL(str(getattr(settings, "APP_URL", "") or "")).host
-    if app_host:
-        hosts.add(app_host.lower())
-    return frozenset(hosts)
-
-
-def _deployment_addresses() -> frozenset[str]:
-    """The addresses ``APP_URL``'s host resolves to, best effort.
-
-    Only ``APP_URL``: resolving every ``ALLOWED_HOSTS`` entry would put a fan of
-    DNS lookups in front of each outbound request, and ``APP_URL`` is the one
-    entry a deployment is guaranteed to have set correctly (it is what every
-    absolute link in the product is built from).
-
-    Resolution failures answer "no addresses" rather than raising. This check is
-    a second line behind the name match and the private-range rules; a
-    deployment whose own name does not resolve from inside its network is
-    ordinary, and turning that into a refused request would break every flow.
-    """
-    app_host = httpx.URL(str(getattr(settings, "APP_URL", "") or "")).host
+    app_host = (httpx.URL(str(getattr(settings, "APP_URL", "") or "")).host or "").lower()
     if not app_host:
-        return frozenset()
+        return frozenset(hosts), frozenset()
+    hosts.add(app_host)
+    bucket = int(time.monotonic() // DEPLOYMENT_ADDRESS_TTL)
+    return frozenset(hosts), _resolved_deployment_addresses(app_host, bucket)
+
+
+@lru_cache(maxsize=16)
+def _resolved_deployment_addresses(app_host: str, _bucket: int) -> frozenset[str]:
+    """``APP_URL``'s addresses, cached for :data:`DEPLOYMENT_ADDRESS_TTL`.
+
+    Cached on the same reasoning as :func:`apps.common.net._trusted_networks`:
+    this runs in front of every outbound request and its answer is a property of
+    the deployment, not of the request. Uncached it was a synchronous DNS round
+    trip per call, taken inside the flow engine's transaction with the contact's
+    advisory lock held, for a value that had not changed since the last one.
+
+    ``_bucket`` is a coarse clock, so the entry expires instead of being pinned
+    for the process's life — ``lru_cache`` has no TTL of its own, and a
+    deployment that moves should start recognising itself again without a
+    restart. Tests that swap :func:`resolve_host` must call
+    :func:`reset_deployment_cache`.
+    """
     return frozenset(str(address) for address in resolve_host(app_host))
+
+
+def reset_deployment_cache() -> None:
+    """Forget the cached resolution of the deployment's own host.
+
+    For tests that patch :func:`resolve_host`, and for an operator who has moved
+    the deployment and does not want to wait out the TTL.
+    """
+    _resolved_deployment_addresses.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +557,40 @@ def _parsed(url: str, *, base: httpx.URL | None = None) -> httpx.URL:
         raise BlockedURLError("That is not a URL this server can request.") from exc
 
 
+def _redirect_location(status: int, headers: httpx.Headers) -> str:
+    """The ``Location`` this response redirects to, or ``""``.
+
+    One function because two places ask the question — :func:`_send`, deciding
+    whether to spend the cap on a body it is about to discard, and
+    :func:`guarded_request`, deciding whether to follow. They disagreed once: one
+    tested the raw header and the other its stripped form, so a
+    ``Location:`` holding only spaces made ``_send`` drop a body that
+    ``guarded_request`` then returned as the final response, empty.
+    """
+    if status not in _REDIRECT_STATUSES:
+        return ""
+    return headers.get("location", "").strip()
+
+
+def _refuses_body(encoding: str) -> bool:
+    """True when this ``Content-Encoding`` is one the guard will not expand.
+
+    The guard sent ``Accept-Encoding: identity``, so a compressed body is a
+    server ignoring the request — and its decompressed size is a number this
+    process learns only by allocating it. Declining is the one answer that keeps
+    :data:`MAX_RESPONSE_BYTES` a real bound rather than an aspiration: the check
+    is on the *header*, before a byte of the body is read, so a compression bomb
+    never becomes memory at all.
+
+    The cost is honest and logged: an integration behind a server that
+    compresses unasked gets an empty body and a ``truncated`` flag, which its
+    caller reports as a skipped mapping. That is a visible, diagnosable
+    failure, and the alternative on offer was an unbounded allocation in a
+    worker holding a contact's advisory lock.
+    """
+    return bool(encoding) and encoding != "identity"
+
+
 def _clean_headers(headers: Mapping[str, Any] | Iterable[tuple[str, Any]] | None) -> dict[str, str]:
     """Drop headers that are not safe to forward, with a reason in the log.
 
@@ -510,9 +652,16 @@ def guarded_request(
     :class:`GuardedResponse` with that status, because the caller decides what
     a 404 means.
 
-    ``timeout`` is the budget for the **whole** call, redirects included: three
-    hops at ten seconds each would otherwise be a thirty-second request behind a
-    contact's advisory lock.
+    ``timeout`` is the budget for the **HTTP** phase of the whole call, redirects
+    included: three hops at ten seconds each would otherwise be a thirty-second
+    request behind a contact's advisory lock. It does **not** bound name
+    resolution — ``socket.getaddrinfo`` takes no timeout and cannot be
+    interrupted, so a blackholed nameserver is bounded by the OS resolver's own
+    configuration (``options timeout``/``attempts`` in ``resolv.conf``) and not
+    by this argument. The deadline is re-checked after every resolution, so a
+    slow lookup fails the call rather than also spending the HTTP budget, and the
+    deployment's own host is resolved from cache — but a caller that needs a hard
+    wall-clock bound needs one around ``guarded_request``, not inside it.
 
     ``client`` is the test seam, the same one
     :func:`apps.channels.providers.base.request_json` offers — pass an
@@ -525,8 +674,7 @@ def guarded_request(
 
     # Resolved once, not per hop: on a redirect chain these answers cannot
     # change, and re-deriving them would put a DNS lookup on every hop.
-    own_hosts = _deployment_hosts()
-    own_addresses = _deployment_addresses()
+    own_hosts, own_addresses = _deployment_identity()
 
     send_headers = _clean_headers(headers)
     current_method = str(method or "GET").upper()
@@ -552,7 +700,7 @@ def guarded_request(
                 cap=cap,
             )
 
-            location = response_headers.get("location", "").strip() if status in _REDIRECT_STATUSES else ""
+            location = _redirect_location(status, response_headers)
             if not location:
                 return GuardedResponse(
                     status_code=status,
@@ -561,6 +709,7 @@ def guarded_request(
                     truncated=truncated,
                     elapsed_ms=int((time.monotonic() - started) * 1000),
                     final_url=str(target.logical),
+                    final_host=target.host,
                 )
             if hop == MAX_REDIRECTS:
                 raise BlockedURLError(f"{target.host} redirected more than {MAX_REDIRECTS} times.")
@@ -610,6 +759,7 @@ def _send(
     """
     request_headers = dict(headers)
     request_headers["Host"] = target.authority
+    request_headers["Accept-Encoding"] = _ACCEPT_ENCODING
 
     try:
         with http.stream(
@@ -624,16 +774,28 @@ def _send(
         ) as response:
             status = response.status_code
             response_headers = response.headers
-            if status in _REDIRECT_STATUSES and response_headers.get("location"):
+            if _redirect_location(status, response_headers):
                 response.close()
                 return status, response_headers, b"", False
 
             declared = response_headers.get("content-length")
             if declared and declared.isdigit() and int(declared) > cap:
                 # Refused before a single byte of it is read: the point of a cap
-                # is that an oversized body never becomes memory pressure.
+                # is that an oversized body never becomes memory pressure. Only
+                # a lower bound when the body is compressed, which is why the
+                # streaming cap below counts wire bytes rather than trusting it.
                 response.close()
                 logger.info("Outbound response from %s declared %s bytes; cut off at %s.", target.host, declared, cap)
+                return status, response_headers, b"", True
+
+            encoding = response_headers.get("content-encoding", "").strip().lower()
+            if _refuses_body(encoding):
+                response.close()
+                logger.info(
+                    "Outbound response from %s is %s-encoded though identity was requested; body declined.",
+                    target.host,
+                    encoding,
+                )
                 return status, response_headers, b"", True
 
             chunks: list[bytes] = []
@@ -642,11 +804,14 @@ def _send(
             for chunk in response.iter_bytes():
                 chunks.append(chunk)
                 size += len(chunk)
-                if size >= cap:
+                # ``>``, not ``>=``: a body that is exactly ``cap`` bytes long
+                # arrived whole, and calling it truncated makes callers throw
+                # away a complete response — the node skips every one of its
+                # response mappings on a truncated body.
+                if size > cap:
                     truncated = True
                     break
-            body = b"".join(chunks)[:cap]
-            return status, response_headers, body, truncated
+            return status, response_headers, b"".join(chunks)[:cap], truncated
     except httpx.InvalidURL as exc:
         # httpx parses ``Location`` to populate ``response.next_request`` even
         # with ``follow_redirects=False``, so a far end answering

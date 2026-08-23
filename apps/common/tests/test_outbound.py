@@ -8,6 +8,7 @@ claim the original ``Host``?" is a fact the test reads rather than infers.
 """
 
 import ipaddress
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -17,10 +18,13 @@ from apps.common import outbound
 from apps.common.outbound import (
     GUARD_EXTENSION,
     MAX_REDIRECTS,
+    MAX_RESPONSE_BYTES,
     BlockedURLError,
     GuardedResponse,
     OutboundTransportError,
     guarded_request,
+    max_response_bytes,
+    reset_deployment_cache,
 )
 
 PUBLIC = "93.184.216.34"
@@ -53,7 +57,7 @@ PRIVATE_ADDRESSES = [
 
 
 @pytest.fixture(autouse=True)
-def _no_real_dns(monkeypatch: Any) -> None:
+def _no_real_dns(monkeypatch: Any) -> Iterator[None]:
     """No test in this file touches the network, including for DNS.
 
     Every unstubbed name answers "does not resolve", which is what a real
@@ -67,6 +71,11 @@ def _no_real_dns(monkeypatch: Any) -> None:
         raise outbound.socket.gaierror("no such host")
 
     monkeypatch.setattr(outbound.socket, "getaddrinfo", _gaierror)
+    # The deployment's own addresses are cached for DEPLOYMENT_ADDRESS_TTL, so
+    # one test's APP_URL resolution would otherwise answer the next one's.
+    reset_deployment_cache()
+    yield
+    reset_deployment_cache()
 
 
 def resolving(mapping: dict[str, list[str]], monkeypatch: Any, *, calls: list[str] | None = None) -> None:
@@ -304,6 +313,19 @@ class TestRedirects:
         with pytest.raises(BlockedURLError):
             guarded_request("GET", "https://api.example.test/start", client=transport(handler))
 
+    def test_a_whitespace_only_location_keeps_the_body(self, monkeypatch: Any) -> None:
+        """Two conditions had to agree on "is this a followable redirect?" and did
+        not: one tested the raw header, the other its stripped form, so the body
+        was dropped by the first and then returned empty by the second."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(302, json={"still": "here"}, headers={"Location": "   "})
+
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert response.status_code == 302
+        assert response.json() == {"still": "here"}
+
     def test_redirects_are_followed_up_to_the_cap(self, monkeypatch: Any) -> None:
         resolving({"api.example.test": [PUBLIC]}, monkeypatch)
         handler = self._chain({"/0": "/1", "/1": "/2", "/2": "/3"})
@@ -455,6 +477,42 @@ class TestResponseCap:
         assert response.truncated is True
         assert len(response.content) == 250
 
+    def test_a_body_exactly_at_the_cap_is_not_truncated(self, monkeypatch: Any) -> None:
+        """``>=`` here made a complete response look cut off, and the External
+        Request node skips *every* response mapping on a truncated body."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def chunks() -> Any:
+            yield b'{"a": 1}'  # exactly eight bytes
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        response = guarded_request("GET", "https://api.example.test/", max_bytes=8, client=transport(handler))
+        assert response.content == b'{"a": 1}'
+        assert response.truncated is False
+        assert response.json() == {"a": 1}
+
+    def test_one_byte_over_the_cap_is_truncated(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def chunks() -> Any:
+            yield b"123456789"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=chunks())
+
+        response = guarded_request("GET", "https://api.example.test/", max_bytes=8, client=transport(handler))
+        assert len(response.content) == 8
+        assert response.truncated is True
+
+    @pytest.mark.parametrize("value", ["1mb", None, "", -1, 0, object()])
+    def test_an_unusable_cap_setting_falls_back_instead_of_crashing(self, value: Any, settings: Any) -> None:
+        """``int("1mb")`` is a ValueError, which is not an OutboundError and
+        would sail past every caller's handler."""
+        settings.EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = value
+        assert max_response_bytes() == MAX_RESPONSE_BYTES
+
     def test_a_body_under_the_cap_arrives_whole(self, monkeypatch: Any) -> None:
         resolving({"api.example.test": [PUBLIC]}, monkeypatch)
         response = guarded_request("GET", "https://api.example.test/", client=transport(ok({"id": "abc"})))
@@ -475,6 +533,122 @@ class TestResponseCap:
         response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
         assert len(response.content) == 64
         assert response.truncated is True
+
+
+class TestCompressedBodies:
+    """The size cap is only real if a compressed body cannot get around it."""
+
+    def test_identity_encoding_is_requested(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert seen[0].headers["accept-encoding"] == "identity"
+
+    def test_a_caller_cannot_ask_for_compression(self, monkeypatch: Any) -> None:
+        """It is a size control, not a preference."""
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={})
+
+        guarded_request(
+            "GET", "https://api.example.test/", headers={"Accept-Encoding": "gzip"}, client=transport(handler)
+        )
+        assert seen[0].headers["accept-encoding"] == "identity"
+
+    def test_a_compression_bomb_is_never_expanded(self, monkeypatch: Any) -> None:
+        """The measured case: 65 KB on the wire, 64 MB if anything decompresses it.
+
+        The declared ``Content-Length`` is the *compressed* size and sails under
+        the cap, so the header check is the only thing standing between this
+        response and a 64 MB allocation in a worker holding a contact's lock.
+        """
+        import gzip
+
+        bomb = gzip.compress(b"A" * (64 * 1024 * 1024))
+        assert len(bomb) < MAX_RESPONSE_BYTES, "the point is that the compressed size looks harmless"
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=bomb,
+                headers={"Content-Encoding": "gzip", "Content-Length": str(len(bomb))},
+            )
+
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+
+        assert response.content == b""
+        assert response.truncated is True
+        assert response.status_code == 200
+
+    def test_an_identity_encoded_body_is_read_normally(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"id": "x"}, headers={"Content-Encoding": "identity"})
+
+        assert guarded_request("GET", "https://api.example.test/", client=transport(handler)).json() == {"id": "x"}
+
+
+class TestHostileContentType:
+    """``Content-Type`` is written by a stranger's server and reaches a decoder."""
+
+    @pytest.mark.parametrize("charset", ["undefined", "idna", "punycode", "not-a-codec", "", '"utf-8"'])
+    def test_a_charset_that_cannot_decode_falls_back_instead_of_raising(self, charset: str, monkeypatch: Any) -> None:
+        """Each of these used to raise past every caller's ``except OutboundError``.
+
+        ``undefined`` raises unconditionally, ``idna`` rejects
+        ``errors="replace"``, and ``punycode`` raises on any non-ASCII byte —
+        all three survived a check that only proved the codec could *encode*.
+        """
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content=b'\xff\xfe{"a": 1}', headers={"Content-Type": f"text/plain; charset={charset}"}
+            )
+
+        response = guarded_request("GET", "https://api.example.test/", client=transport(handler))
+        assert isinstance(response.text, str)
+        assert isinstance(response.text_prefix(10), str)
+
+    def test_a_usable_charset_is_still_honoured(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content="café".encode("latin-1"), headers={"Content-Type": "text/plain; charset=latin-1"}
+            )
+
+        assert guarded_request("GET", "https://api.example.test/", client=transport(handler)).text == "café"
+
+
+class TestTextPrefix:
+    def _response(self, content: bytes) -> GuardedResponse:
+        return GuardedResponse(
+            200, httpx.Headers({}), content, False, 1, "https://api.example.test/", "api.example.test"
+        )
+
+    def test_it_returns_the_first_characters(self) -> None:
+        assert self._response(b"abcdefghij").text_prefix(4) == "abcd"
+
+    def test_a_short_body_is_returned_whole(self) -> None:
+        assert self._response(b"ab").text_prefix(100) == "ab"
+
+    def test_multibyte_characters_survive_the_byte_slice(self) -> None:
+        """Four bytes per character is UTF-8's maximum, so the slice over-reads."""
+        assert self._response(("é" * 50).encode()).text_prefix(10) == "é" * 10
+
+    def test_a_sequence_cut_in_half_does_not_raise(self) -> None:
+        assert isinstance(self._response(b"\xf0\x9f\x98").text_prefix(4), str)
 
 
 class TestHeaderHygiene:
@@ -548,7 +722,20 @@ class TestFailuresAndResults:
         resolving({"api.example.test": [PUBLIC]}, monkeypatch)
         response = guarded_request("GET", "https://api.example.test/v1", client=transport(ok()))
         assert response.final_url == "https://api.example.test/v1", "the hostname, not the pinned address"
+        assert response.final_host == "api.example.test", "carried, so no caller re-parses the URL for it"
         assert response.elapsed_ms >= 0
+
+    def test_final_host_follows_a_redirect(self, monkeypatch: Any) -> None:
+        resolving({"api.example.test": [PUBLIC], "cdn.example.test": [PUBLIC_ALT]}, monkeypatch)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.host == PUBLIC:
+                return httpx.Response(302, headers={"Location": "https://cdn.example.test/blob"})
+            return httpx.Response(200, json={})
+
+        assert guarded_request("GET", "https://api.example.test/", client=transport(handler)).final_host == (
+            "cdn.example.test"
+        )
 
 
 class TestGuardedResponseDecoding:

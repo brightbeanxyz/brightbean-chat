@@ -194,11 +194,15 @@ class ExternalRequestNode(Node):
         """
         body = ""
         if response is not None and response.content:
-            body = scrub(response.text[:SUMMARY_MAX_BODY_CHARS])
+            # ``text_prefix`` rather than ``text[:n]``: the latter decodes the
+            # whole body — up to the guard's megabyte cap — to keep two
+            # kilobytes of it, inside the worker transaction with the contact's
+            # advisory lock held.
+            body = scrub(response.text_prefix(SUMMARY_MAX_BODY_CHARS))
         ctx.set_variable(
             summary_key(ctx.node_id),
             {
-                "host": _host_of(response.final_url) if response is not None else "",
+                "host": response.final_host if response is not None else "",
                 "status": response.status_code if response is not None else None,
                 "duration_ms": elapsed_ms,
                 "body": body,
@@ -243,25 +247,35 @@ def _headers(ctx: NodeContext) -> dict[str, str]:
     anything unsafe to forward — control characters, ``Host`` — so this does not
     re-check it.
 
-    Nothing in here is logged, at any level. See the module docstring.
+    No header **value** is logged, at any level. See the module docstring — the
+    names are the author's own text and are safe to name; the values are where
+    the API key lives.
     """
     rendered: dict[str, str] = {}
     for entry in ctx.config.get("headers") or []:
         if not isinstance(entry, dict):
             continue
         name = ctx.render(entry.get("name")).strip()
-        if name:
-            rendered[name] = ctx.render(entry.get("value"))
+        if not name:
+            # A header whose name renders empty — a non-string in the graph
+            # document, or a placeholder that resolved to nothing. Logged rather
+            # than dropped in silence: "my API key header never arrived" is
+            # otherwise a debugging session with no evidence in it.
+            logger.info(
+                "Execution %s: external_request node %s has a header whose name rendered empty; skipping it.",
+                ctx.execution.pk,
+                ctx.node_id,
+            )
+            continue
+        if name in rendered:
+            logger.info(
+                "Execution %s: external_request node %s configures %r more than once; the last one wins.",
+                ctx.execution.pk,
+                ctx.node_id,
+                name,
+            )
+        rendered[name] = ctx.render(entry.get("value"))
     return rendered
-
-
-def _host_of(url: str) -> str:
-    import httpx
-
-    try:
-        return httpx.URL(url).host
-    except (httpx.InvalidURL, ValueError, TypeError):  # pragma: no cover - the guard already parsed it
-        return ""
 
 
 # ---------------------------------------------------------------------------
