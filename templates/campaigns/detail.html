@@ -41,8 +41,14 @@ per-step counts, which is why subscriber mutations fire both events.
 {% endblock %}
 
 {% block content %}
-<div class="grid gap-6" style="grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);">
-    <div id="sequence-steps"
+{% comment %}
+One column on a phone, two from `md` up — a fixed two-column grid put the
+subscriber panel in a 300px gutter on every narrow screen. Layout utilities
+rather than a component class, which is the split ground rule 9 draws: the
+design system owns component properties, utilities own layout.
+{% endcomment %}
+<div class="grid gap-6 md:grid-cols-3">
+    <div id="sequence-steps" class="md:col-span-2"
          hx-get="{% url 'campaigns:steps' workspace_id=request.workspace.id sequence_id=sequence.id %}"
          hx-trigger="sequenceStepsChanged from:body"
          hx-target="this"
@@ -50,7 +56,7 @@ per-step counts, which is why subscriber mutations fire both events.
         {% include "campaigns/_steps.html" %}
     </div>
 
-    <div id="sequence-subscribers"
+    <div id="sequence-subscribers" class="min-w-0"
          hx-get="{% url 'campaigns:subscribers' workspace_id=request.workspace.id sequence_id=sequence.id %}"
          hx-trigger="load, sequenceSubscribersChanged from:body"
          hx-target="this"

@@ -242,7 +242,12 @@ def _fire(trigger: Any, contact: Contact, *, event: str, payload: dict[str, Any]
     from apps.flows.triggers.entrypoints import fire_trigger
 
     variables = {"rule_event": event}
-    variables.update({key: str(value) for key, value in payload.items() if key.endswith("_id") and value})
+    # `workspace_id` is envelope rather than subject — every flow already runs in
+    # one workspace, and putting it in the renderer's namespace is a value an
+    # author can print into a message for no reason.
+    variables.update(
+        {key: str(value) for key, value in payload.items() if key.endswith("_id") and value and key != "workspace_id"}
+    )
 
     result = fire_trigger(trigger=trigger, contact=contact, variables=variables)
     if not result.started:

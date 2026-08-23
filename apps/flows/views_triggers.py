@@ -26,6 +26,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.common.htmx import toast_response
 from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
+from apps.contacts import conditions
 from apps.contacts.conditions import ConditionError
 from apps.contacts.filters import filter_config
 from apps.flows.models import Flow, Trigger, TriggerType
@@ -141,6 +142,26 @@ def _post_pickers(spec: Any, workspace_id: str) -> list[dict[str, str]]:
     return pickers
 
 
+def _config_from(request: WorkspaceRequest, trigger_type: str) -> dict[str, Any]:
+    """The submitted config, normalised and — for a rule's filter — resolved.
+
+    The trigger schema checks a ``filters`` document's *shape*; only
+    ``conditions.validate`` can tell whether the tag and field ids in it exist
+    **in this workspace**. Without this a rule naming a deleted tag saves
+    happily and then declines every event for ever, which is the worst kind of
+    broken: a control that looks configured and does nothing.
+
+    Scoped resolution also means another workspace's id fails as "unknown"
+    rather than as "forbidden" — SECURITY-BASELINE §1's no-existence-oracle
+    rule, applied to a filter document. Raises ``ConditionError``, which both
+    callers already answer with a toast.
+    """
+    config = forms.config_from_post(trigger_type, request.POST)
+    if trigger_type == TriggerType.RULE and config.get("filters"):
+        conditions.validate(request.workspace, config["filters"])
+    return config
+
+
 @login_required
 @require_permission("edit_flows")
 @require_POST
@@ -152,7 +173,7 @@ def trigger_create(request: WorkspaceRequest, workspace_id: str, flow_id: str) -
         return toast_response(tone="error", title="Unknown trigger type", body="Pick one from the list.")
 
     try:
-        config = forms.config_from_post(trigger_type, request.POST)
+        config = _config_from(request, trigger_type)
     except forms.KeywordMismatchError as exc:
         return toast_response(tone="error", title="Keywords did not save", body=str(exc))
     except ConditionError as exc:
@@ -188,7 +209,7 @@ def trigger_update(request: WorkspaceRequest, workspace_id: str, flow_id: str, t
         return toast_response(tone="error", title="Unknown trigger type")
 
     try:
-        config = forms.config_from_post(trigger.type, request.POST)
+        config = _config_from(request, trigger.type)
     except forms.KeywordMismatchError as exc:
         return toast_response(tone="error", title="Keywords did not save", body=str(exc))
     except ConditionError as exc:
