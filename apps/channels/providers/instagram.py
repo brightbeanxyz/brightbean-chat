@@ -1343,23 +1343,22 @@ def _pending_private_reply(connection: ChannelConnection, identity: Any) -> Any:
     flow engine sends a message to a contact and does not need to learn that
     Instagram has two kinds of recipient.
 
-    **Only the thread-opening message.** An unanswered claim is not on its own a
-    licence to readdress a send: a claim whose flow never started — no
-    publishable version, a refused first send — sits open for seven days, and
+    **Only when there is no other way to reach them.** An unanswered claim is not
+    on its own a licence to readdress a send: a claim whose flow never started —
+    no publishable version, a refused first send — sits open for seven days, and
     without this check an agent's inbox reply days later would go out as that
     comment's one private reply, carrying Meta's auto-appended link to the post
     and spending an allowance the agent knew nothing about. So the claim is
-    consumed only when this really is the first outbound message on the thread,
-    which is the one moment a private reply is both correct and the only form
-    Meta will accept.
+    consumed only when the contact has never messaged the account
+    (:func:`_never_messaged_us`), which is the one case where a private reply is
+    both correct and the only form Meta will accept.
 
     Two indexed lookups on the send path, and no cheaper pre-filter in front of
-    the first. The obvious one — "only ask when the contact has never written to
-    us" — was wrong: a claimed comment *is* recorded as inbound activity, so it
-    sets ``last_inbound_at`` and the filter closed on the very case it was meant
-    to open. ``HandledComment`` carries a partial index over exactly the
-    unanswered rows (:class:`apps.flows.models.HandledComment`), and the second
-    lookup only runs once the first has found something.
+    the first. The obvious one — gating on ``identity.last_inbound_at`` — is
+    wrong for the reason :func:`_never_messaged_us` gives. ``HandledComment``
+    carries a partial index over exactly the unanswered rows
+    (:class:`apps.flows.models.HandledComment`), and the second lookup only runs
+    once the first has found something.
 
     Never raises. A private reply is a refinement of an ordinary send; a failure
     to look one up must not fail the send itself.
@@ -1381,7 +1380,7 @@ def _pending_private_reply(connection: ChannelConnection, identity: Any) -> Any:
             .order_by("-commented_at")[:5]
         )
         candidate = next((row for row in rows if guards.may_private_reply(row)), None)
-        if candidate is None or not _thread_is_unopened(connection, identity):
+        if candidate is None or not _never_messaged_us(connection, identity):
             return None
         return candidate
     except Exception:
@@ -1389,19 +1388,21 @@ def _pending_private_reply(connection: ChannelConnection, identity: Any) -> Any:
     return None
 
 
-#: Statuses that mean a message actually reached Instagram. Narrower than "not
-#: failed" on both ends, and both ends matter to :func:`_thread_is_unopened`:
-#: ``queued`` excludes the very message being dispatched right now — contract 1
-#: inserts the row *before* calling the adapter — and it also excludes an
-#: earlier attempt that never left, which did not open a thread either.
-_DELIVERED_STATUSES = ("sent", "delivered", "read")
+def _never_messaged_us(connection: ChannelConnection, identity: Any) -> bool:
+    """Has this contact never sent this account a **message**?
 
+    The question a private reply actually turns on. Meta refuses an ordinary DM
+    to somebody who has not written first, and what grants that permission is an
+    inbound *message* — not a comment, and not anything we sent them.
 
-def _thread_is_unopened(connection: ChannelConnection, identity: Any) -> bool:
-    """Has this contact never actually been sent anything on this connection?
+    So it is asked of the inbound message rows, and neither of the two nearer
+    signals would do. ``last_inbound_at`` is set by a claimed comment as well as
+    by a DM, so it answers False for exactly the person who needs a private
+    reply. "Have we sent them anything" is a different question again: a contact
+    who wrote to us months ago and was never replied to still takes an ordinary
+    DM, and contract 1 inserts the row being dispatched *before* calling the
+    adapter, so that check also sees the message it is being asked about.
 
-    The question a private reply turns on, and the reason it is asked of the
-    message table rather than of the identity: that is where the answer lives.
     Only reached once a pending claim has been found, so an established thread
     never pays for it.
     """
@@ -1415,8 +1416,7 @@ def _thread_is_unopened(connection: ChannelConnection, identity: Any) -> bool:
         .filter(
             channel_connection=connection,
             conversation__contact_id=contact_id,
-            direction=MessageDirection.OUT,
-            status__in=_DELIVERED_STATUSES,
+            direction=MessageDirection.IN,
         )
         .exists()
     )
@@ -1479,6 +1479,13 @@ def _respond_to_comment(context: Any, trigger: Any, row: Any) -> None:
     The queue row carries the comment's *text* as well as the row id, because the
     handler re-dispatches the comment through the ingest seam and the trigger's
     keyword rules have to match it there exactly as they matched it here.
+
+    ``open_thread`` is the other thing it carries, and it is false for a
+    commenter we already know. The re-dispatch exists only to create the
+    contact, the consent record and the messaging window; when all three already
+    exist the routing stage has started the flow synchronously and dispatching
+    again would start it a second time. The public reply is queued either way —
+    an author who configured one wants it for repeat customers too.
     """
     from apps.queueing.registry import schedule as queue_schedule
 
@@ -1492,6 +1499,7 @@ def _respond_to_comment(context: Any, trigger: Any, row: Any) -> None:
                 "parent_comment_id": _text(
                     context.event.payload.extra.get(COMMENT_PARENT_ID_KEY), MAX_PLATFORM_ID_CHARS
                 ),
+                "open_thread": context.contact is None,
             },
             workspace=context.connection.workspace,
             # One reply per claimed comment, whatever redelivery does upstream.
@@ -1530,15 +1538,22 @@ def _answer_comment(payload: dict[str, Any], action: Any) -> None:
     connection = row.channel_connection
     if connection.platform != Platform.INSTAGRAM.value:
         return
-    if not guards.may_private_reply(row):
-        # Past the seven-day deadline, or a redelivery of an action whose reply
-        # already went out. Both mean the same thing: nothing to do.
-        logger.info("Instagram: comment row %s is no longer answerable.", row.pk)
+    if row.private_reply_sent_at is not None:
+        # A redelivery of an action whose private reply already went out.
+        logger.info("Instagram: comment row %s has already been answered.", row.pk)
+        return
+    if payload.get("open_thread", True) and not guards.may_private_reply(row):
+        # Past the seven-day deadline, so there is no thread to open. Checked
+        # only on the path that would open one: a commenter we already know has
+        # a thread already, and their public reply does not expire with the
+        # private-reply window.
+        logger.info("Instagram: comment row %s is past its private-reply deadline.", row.pk)
         return
 
     config = row.trigger.config_json if isinstance(row.trigger.config_json, dict) else {}
     _send_public_reply(connection, row, config)
-    _open_thread(connection, row, payload)
+    if payload.get("open_thread", True):
+        _open_thread(connection, row, payload)
 
 
 def _send_public_reply(connection: ChannelConnection, row: Any, config: dict[str, Any]) -> None:

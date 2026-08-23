@@ -27,7 +27,7 @@ from apps.channels.models import ChannelConnection
 from apps.channels.providers.instagram import COMMENT_REPLY_ACTION
 from apps.channels.providers.meta_common import SIGNATURE_HEADER
 from apps.channels.tests.instagram_support import IG_USER_ID, at_now, fake_graph, load_delivery, sign
-from apps.flows.models import Flow, HandledComment, Trigger, TriggerType
+from apps.flows.models import Flow, FlowExecution, HandledComment, Trigger, TriggerType
 from apps.flows.tests.support import graph as flow_graph
 from apps.flows.tests.support import node
 from apps.flows.triggers import comments as comment_responders
@@ -254,6 +254,114 @@ class TestCommentToDm:
         assert responder is not None
         assert responder.supports_like is False
         assert comment_responders.like_supported_on(["instagram"]) is False
+
+
+@pytest.mark.usefixtures("instagram_app", "real_pipeline")
+class TestACommenterWeAlreadyKnow:
+    """The routing gate used to branch on whether a contact existed, not on
+    whether this was a comment — so anyone who had ever sent a DM bypassed SPEC
+    §10's guards entirely and got no public reply."""
+
+    def _with_a_dm_thread(self, client: Client, tenancy: Tenancy) -> Any:
+        with fake_graph():
+            deliver(client, at_now(load_delivery("message_text")))
+        return ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get().contact
+
+    def test_their_comment_is_claimed(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        contact = self._with_a_dm_thread(client, tenancy)
+        with fake_graph():
+            deliver(client, at_now(load_delivery("comment")))
+            run_queued()
+
+        row = HandledComment.objects.for_workspace(tenancy.workspace).get()
+        assert row.comment_id == COMMENT_ID
+        assert row.commenter_ref == IG_USER_ID
+        assert contact is not None
+
+    def test_they_get_the_public_reply(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """An author who configures one wants it for repeat customers too."""
+        self._with_a_dm_thread(client, tenancy)
+        with fake_graph() as api:
+            deliver(client, at_now(load_delivery("comment")))
+            run_queued()
+        assert api.bodies(f"{COMMENT_ID}/replies") == [{"message": "Sent you a DM!"}]
+
+    def test_the_flow_runs_exactly_once(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """Started synchronously by the routing stage. The queued half skips its
+        re-dispatch for a known commenter, which would otherwise start it again.
+        """
+        self._with_a_dm_thread(client, tenancy)
+        with fake_graph() as api:
+            deliver(client, at_now(load_delivery("comment")))
+            run_queued()
+
+        replies = [body for body in api.message_bodies() if body["message"].get("text") == "It is 40 EUR, shipped."]
+        assert len(replies) == 1
+        # An ordinary DM: the thread is already open, so nothing is a private reply.
+        assert replies[0]["recipient"] == {"id": IG_USER_ID}
+        assert FlowExecution.objects.for_workspace(tenancy.workspace).count() == 1
+
+    def test_their_second_comment_on_the_post_is_refused(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        """``once_per_contact_per_post`` — the setting that silently did nothing
+        for this class of commenter."""
+        self._with_a_dm_thread(client, tenancy)
+        second = at_now(load_delivery("comment"))
+        second["entry"][0]["changes"][0]["value"]["id"] = "17900000000000177"
+        second["entry"][0]["changes"][0]["value"]["text"] = "price again?"
+
+        with fake_graph() as api:
+            deliver(client, at_now(load_delivery("comment")))
+            deliver(client, second)
+            run_queued()
+
+        assert HandledComment.objects.for_workspace(tenancy.workspace).count() == 1
+        assert len(api.bodies(f"{COMMENT_ID}/replies")) == 1
+        replies = [body for body in api.message_bodies() if body["message"].get("text") == "It is 40 EUR, shipped."]
+        assert len(replies) == 1
+
+    def test_the_setting_still_lets_a_second_comment_through(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        comment_trigger: Trigger,
+    ) -> None:
+        comment_trigger.config_json["once_per_contact_per_post"] = False
+        comment_trigger.save(update_fields=["config_json", "updated_at"])
+        self._with_a_dm_thread(client, tenancy)
+        second = at_now(load_delivery("comment"))
+        second["entry"][0]["changes"][0]["value"]["id"] = "17900000000000177"
+
+        with fake_graph():
+            deliver(client, at_now(load_delivery("comment")))
+            deliver(client, second)
+            run_queued()
+
+        assert HandledComment.objects.for_workspace(tenancy.workspace).count() == 2
 
 
 @pytest.mark.usefixtures("instagram_app", "real_pipeline")
@@ -492,7 +600,7 @@ class TestTheClaimIsNotAGeneralLicence:
             _send(tenancy, contact, instagram_connection, "Anything else?", source="agent")
         assert api.message_bodies()[0]["recipient"] == {"id": IG_USER_ID}
 
-    def test_an_unspent_claim_does_not_convert_a_send_on_an_open_thread(
+    def test_an_unspent_claim_does_not_convert_a_send_to_someone_who_wrote_first(
         self,
         client: Client,
         tenancy: Tenancy,
@@ -503,7 +611,8 @@ class TestTheClaimIsNotAGeneralLicence:
 
         An unanswered claim is not on its own a licence to readdress a send.
         Here one exists — the private reply never went out, so Meta would still
-        accept it for seven days — while the DM thread is demonstrably open.
+        accept it for seven days — while the contact has demonstrably written to
+        the account, so an ordinary DM reaches them.
         Before the fix the next message to that person, an agent's inbox reply
         included, was silently sent as the comment's one private reply: it
         carried Meta's auto-appended link to the post and spent an allowance the
@@ -545,21 +654,24 @@ class TestTheClaimIsNotAGeneralLicence:
         row.refresh_from_db()
         assert row.private_reply_sent_at is None
 
-    def test_a_failed_earlier_send_does_not_count_as_an_open_thread(
+    def test_a_pure_commenter_still_gets_the_private_reply(
         self,
         client: Client,
         tenancy: Tenancy,
         instagram_connection: ChannelConnection,
         comment_trigger: Trigger,
     ) -> None:
-        """A queued or failed row never reached Instagram, so it opened nothing.
-        The check is on delivered statuses for exactly this reason — and because
-        contract 1 inserts the row being dispatched *before* calling the adapter,
-        so a naive "any outbound exists" test would see the message itself."""
+        """The other side of the same predicate. Somebody who has only ever
+        commented has sent no inbound *message*, so Meta will not take an
+        ordinary DM and the private reply is the only form that works — even
+        though the claim itself set ``last_inbound_at``, which is why that field
+        cannot be the signal."""
         with fake_graph() as api:
             deliver(client, at_now(load_delivery("comment")))
             run_queued()
         assert api.message_bodies()[0]["recipient"] == {"comment_id": COMMENT_ID}
+        identity = ContactChannelIdentity.objects.for_workspace(tenancy.workspace).get()
+        assert identity.last_inbound_at is not None
 
 
 @pytest.mark.usefixtures("instagram_app", "real_pipeline")

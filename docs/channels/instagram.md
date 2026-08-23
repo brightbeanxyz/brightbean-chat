@@ -260,6 +260,11 @@ own `Retry-After`.
 
 SPEC §10's comment trigger, and the reason most people connect Instagram at all.
 
+This works the same way whether or not the person has messaged the account
+before. What differs is only the last step: somebody already in a DM thread gets
+the flow's first message as an ordinary DM, because Meta does not need a private
+reply to reach them.
+
 When somebody comments on a post and the trigger matches — post scope, include
 and exclude keywords, top-level only — three things happen, in order:
 
@@ -279,6 +284,11 @@ Meta's limits, which the product enforces rather than discovers:
 - **Seven days** from the comment. A comment surfacing later is not claimed at
   all, so it does not spend that person's one reply on a message that would be
   refused.
+
+And one rule that is the product's rather than Meta's: `once_per_contact_per_post`
+(on by default) means one person gets one reply per post however many times they
+comment on it. It applies to everybody — a repeat customer who has DM'd before is
+not exempt.
 
 The public reply and the private reply are **queued**, not sent inside the
 webhook request — SPEC §7.1 budgets 1.5 seconds for the whole inline path, and

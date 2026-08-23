@@ -21,6 +21,7 @@ __all__ = [
     "PRIVATE_REPLY_WINDOW",
     "claim_default_reply",
     "claim_public_reply",
+    "claimed_comment",
     "may_claim_comment",
     "may_private_reply",
     "mark_private_reply_sent",
@@ -134,6 +135,26 @@ def _bounded(value: str) -> str:
     from apps.flows import messaging as messaging_facade
 
     return messaging_facade.bounded_identifier(value, limit=_MAX_PLATFORM_ID)
+
+
+def claimed_comment(connection: Any, comment_id: str) -> HandledComment | None:
+    """The row already claiming **this** comment on this connection, if any.
+
+    The distinction :func:`record_comment` cannot make on its own: it answers
+    None for two unrelated refusals — this comment is already claimed, and a
+    *different* comment from the same person on the same post is
+    (``once_per_contact_per_post``). Telling them apart matters, because the
+    first is the platform handing a claim of ours back and the second is the
+    guard doing its job.
+
+    Bounded through the same helper the insert used, so the lookup finds what
+    was written rather than a value that only looks like it.
+    """
+    return (
+        HandledComment.objects.for_workspace(connection.workspace_id)
+        .filter(channel_connection=connection, comment_id=_bounded(comment_id))
+        .first()
+    )
 
 
 def private_reply_deadline(row: HandledComment) -> datetime:

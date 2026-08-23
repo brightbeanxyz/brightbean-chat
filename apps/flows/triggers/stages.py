@@ -30,7 +30,7 @@ from apps.flows.engine.waits import attempt_resume
 from apps.flows.models import ExecutionStatus, FlowExecution, StartedBy, Trigger, TriggerType
 from apps.flows.triggers import comments
 from apps.flows.triggers.context import RoutingContext
-from apps.flows.triggers.guards import claim_default_reply, may_claim_comment, record_comment
+from apps.flows.triggers.guards import claim_default_reply, claimed_comment, may_claim_comment, record_comment
 from apps.flows.triggers.hooks import Consumed, HookOutcome, Passed, Stage, register_hook
 from apps.flows.triggers.matching import MatchContext, extra_value, match
 from apps.flows.triggers.types import COMMENT_POST_ID_KEY
@@ -111,14 +111,16 @@ def trigger_match(context: RoutingContext) -> HookOutcome:
     if found is None:
         return Passed("no trigger matched")
 
-    if context.contact is None:
-        # A comment. The trigger matched, but there is nobody to run a flow for
-        # until a private reply opens a DM thread, which only the platform's
-        # adapter can do. What *this* layer owes is the guard: claim the comment
-        # first, so a redelivery and a second comment from the same person on
-        # the same post are refused by the database rather than by whatever the
-        # adapter remembers to check.
-        return _claim_comment(context, found.trigger)
+    if context.event.type == EventType.COMMENT:
+        # A comment goes through the guard **whether or not we already know the
+        # person**. It used to branch on ``context.contact is None`` instead,
+        # which conflated two different questions and quietly answered the wrong
+        # one: SPEC §10's ``once_per_contact_per_post`` is a property of the
+        # comment, not of whether a contact row happens to exist yet, so a
+        # repeat commenter who had ever sent a DM bypassed the guard entirely —
+        # and, once L5-A shipped, got no public reply either, because that hangs
+        # off the claim.
+        return _claim_comment(context, found.trigger, found.variables)
 
     if not _start(context, found.trigger, found.variables):
         return Passed("the matched flow could not run")
@@ -159,22 +161,31 @@ def default_reply(context: RoutingContext) -> HookOutcome:
     return Consumed("default reply")
 
 
-def _claim_comment(context: RoutingContext, trigger: Trigger) -> HookOutcome:
-    """Take SPEC §10's comment guards, and report whether this comment is ours.
+def _claim_comment(context: RoutingContext, trigger: Trigger, variables: dict[str, Any]) -> HookOutcome:
+    """Take SPEC §10's comment guards, then start the flow if there is anyone to start it for.
 
-    Three refusals, all of them ``Passed`` rather than ``Consumed`` because a
-    comment we are not going to answer must leave the chain free for whatever a
-    later stage might do with it.
+    Every refusal is ``Passed`` rather than ``Consumed``, because a comment we
+    are not going to answer must leave the chain free for whatever a later stage
+    might do with it.
 
     The claim lives here and not in the matcher on purpose: a matcher runs for
     every candidate in priority order, so a matcher with a side effect would
     leave a claim behind from a trigger that then *lost* the match.
+
+    **A comment reaches this twice on the contactless path, and that is the
+    design.** The first pass claims it and hands it to the platform, which has to
+    open a DM thread before there is anybody to run a flow for; the platform
+    dispatches the comment back once it has, and the second pass finds its own
+    claim and starts the flow. Telling that second pass apart from a *different*
+    comment refused by ``once_per_contact_per_post`` is what
+    :func:`~apps.flows.triggers.guards.claimed_comment` is for — both look
+    identical from ``record_comment``'s None.
     """
     payload = context.event.payload
     comment_id = (payload.comment_id or "").strip()
     if not comment_id:
-        # Nothing to key the guard on. L5-A and L5-B fill payload.comment_id and
-        # the extras named in apps.flows.triggers.types; until then a comment
+        # Nothing to key the guard on. An adapter fills payload.comment_id and
+        # the extras named in apps.flows.triggers.types; without them a comment
         # event carries no identity and must not start anything.
         return Passed("the comment carries no id")
 
@@ -193,21 +204,34 @@ def _claim_comment(context: RoutingContext, trigger: Trigger) -> HookOutcome:
         commented_at=context.event.timestamp,
         once_per_contact_per_post=bool(trigger.config_json.get("once_per_contact_per_post", True)),
     )
-    if row is None:
-        return Passed("this comment is already handled")
 
-    # The row id is what the platform's private reply picks up: it names the
-    # comment to answer, the trigger whose flow to run, and the deadline to
-    # answer inside.
-    context.notes["handled_comment_id"] = str(row.pk)
-    # ...and this is the hand-off itself. The claim is ours; posting a public
-    # reply and opening a DM thread are things only the platform's adapter can
-    # do, so they are called through the responder registry rather than being
-    # reimplemented per platform here (:mod:`apps.flows.triggers.comments`).
-    # It never raises: a responder that did would unwind the savepoint this
-    # claim was written in and hand the guard straight back.
-    comments.respond(context, trigger, row)
-    return Consumed(f"{trigger.type} trigger, awaiting a contact")
+    if row is None:
+        row = claimed_comment(context.connection, comment_id)
+        if row is None:
+            # A different comment from this person on this post already holds
+            # the guard. That is ``once_per_contact_per_post`` working.
+            return Passed("this person's comment on this post is already handled")
+        # Our own claim, coming back. The responder is deliberately not called a
+        # second time — it has already done its half.
+    else:
+        # The row id is what the platform's private reply picks up: it names the
+        # comment to answer, the trigger whose flow to run, and the deadline to
+        # answer inside.
+        context.notes["handled_comment_id"] = str(row.pk)
+        # ...and this is the hand-off itself. The claim is ours; posting a public
+        # reply and opening a DM thread are things only the platform's adapter
+        # can do, so they are called through the responder registry rather than
+        # reimplemented per platform here (:mod:`apps.flows.triggers.comments`).
+        # It never raises: a responder that did would unwind the savepoint this
+        # claim was written in and hand the guard straight back.
+        comments.respond(context, trigger, row)
+
+    if context.contact is None:
+        return Consumed(f"{trigger.type} trigger, awaiting a contact")
+
+    if not _start(context, trigger, variables):
+        return Passed("the matched flow could not run")
+    return Consumed(f"{trigger.type} trigger")
 
 
 def register_builtin_hooks() -> None:
