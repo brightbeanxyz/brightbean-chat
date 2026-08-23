@@ -65,6 +65,7 @@ targetRules = ["generic-api-key"]
 paths = [
     '''apps/api/tests/test_delivery\.py''',
     '''docs/api/v1\.md''',
+]
 
 # The email channel's credential-shaped fixtures (issue #21).
 #
