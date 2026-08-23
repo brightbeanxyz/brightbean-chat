@@ -516,7 +516,21 @@ class ContactImport(WorkspaceScopedModel):
 
     @property
     def is_running(self) -> bool:
+        """A worker is checking or importing this file. Drives the progress poll."""
         return self.status in {ImportStatus.VALIDATING, ImportStatus.IMPORTING}
+
+    @property
+    def is_writing(self) -> bool:
+        """Contacts are being created or updated right now.
+
+        Narrower than :attr:`is_running` on purpose, and it is what gates
+        re-mapping. A dry run in flight writes nothing, so an operator who spots
+        a mistake in their column mapping should be able to fix it and check
+        again — the new pass resets ``next_offset``, which strands the old pass's
+        next batch on the offset guard. An import in flight is a different
+        matter: its mapping is already half-applied to real rows.
+        """
+        return self.status == ImportStatus.IMPORTING
 
     @property
     def errors_truncated(self) -> bool:

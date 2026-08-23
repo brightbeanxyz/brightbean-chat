@@ -32,7 +32,12 @@ whichever one it saw last — importing data from a column nobody chose.
 
 {% include "contacts/_import_progress.html" %}
 
-{% if header and not run.is_running %}
+{% comment %}
+  `is_writing`, not `is_running`: the mapping form stays available while a dry
+  run is in flight, so a mistake spotted mid-check can be corrected without
+  waiting. It goes away once real rows are being written.
+{% endcomment %}
+{% if header and not run.is_writing %}
   <section class="crm-panel">
     <h2>Map the columns</h2>
     <p class="muted text-xs">

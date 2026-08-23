@@ -26,6 +26,7 @@ the value, and the alternative loses data to defend against a payload.
 
 import csv
 from collections.abc import Iterable, Iterator, Sequence
+from itertools import islice
 from typing import Any
 
 from django.db.models import QuerySet
@@ -146,24 +147,28 @@ def _values_by_contact(workspace: Any, contact_ids: list[Any]) -> dict[Any, dict
 
 
 def _chunks(rows: QuerySet[Contact]) -> Iterator[list[Contact]]:
-    """Slice the queryset into pages of :data:`CHUNK_SIZE`.
+    """Group one server-side cursor into lists of :data:`CHUNK_SIZE`.
 
-    ``.iterator()`` would be the obvious tool and is the wrong one here: the tag
-    and custom-field lookups below are per-chunk batch queries keyed on the ids
-    in hand, so the generator needs the ids as a **list** before it can ask for
-    them. Slicing an ordered queryset gives exactly that, and the ordering is
-    total (every entry in ``filters.SORTS`` ends with the primary key), so
-    consecutive pages cannot repeat or skip a row.
+    ``.iterator()`` plus ``islice`` rather than repeated ``rows[offset:offset+n]``
+    slices, and the difference is correctness rather than speed. LIMIT/OFFSET
+    paging issues one query per chunk, each in its own snapshot — there is no
+    ``ATOMIC_REQUESTS`` here, and a ``StreamingHttpResponse`` runs its generator
+    after the view has returned anyway. A total ordering does **not** rescue
+    that: the default sort leads on ``last_interaction_at``, which the ingest
+    path writes on every inbound message, so a contact who messages in mid-export
+    moves toward the front of the order, gets emitted a second time if they were
+    already past, and displaces the row that then never appears at all.
+
+    A server-side cursor reads the whole result from one snapshot, so the file is
+    a consistent answer to the filter. ``islice`` still hands the batch lookups
+    below the list of ids they need, which was the only thing the slicing bought.
     """
-    offset = 0
+    stream = rows.iterator(chunk_size=CHUNK_SIZE)
     while True:
-        page = list(rows[offset : offset + CHUNK_SIZE])
+        page = list(islice(stream, CHUNK_SIZE))
         if not page:
             return
         yield page
-        if len(page) < CHUNK_SIZE:
-            return
-        offset += CHUNK_SIZE
 
 
 def stream_contacts(workspace: Any, rows: QuerySet[Contact]) -> Iterator[str]:

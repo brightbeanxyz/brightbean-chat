@@ -185,7 +185,15 @@ def _rows_context(request: WorkspaceRequest) -> dict[str, Any]:
         # Everything the pagination and export links have to carry forward,
         # already encoded. Rebuilding it in the template would mean the filter
         # JSON being urlencoded by hand in three places.
+        #
+        # Two spellings, and the difference is which of them should remember the
+        # page. `querystring` describes the *set* and is what the export link and
+        # the pagination links extend — an export of "page 3" is not a thing.
+        # `page_querystring` describes the *view*, so the container's own refresh
+        # and the pushed URL keep the operator where they were: without it, a
+        # bulk tag applied on page 3 redrew page 1 underneath them.
         "querystring": _querystring(query),
+        "page_querystring": _querystring(query, page=page.number),
         **_permissions(request),
     }
 
@@ -208,13 +216,21 @@ def _sort_options() -> list[dict[str, str]]:
     return [{"value": key, "label": labels.get(key, key)} for key in SORTS]
 
 
-def _querystring(query: ContactQuery) -> str:
+def _querystring(query: ContactQuery, *, page: int = 0) -> str:
     """``filter=…&q=…&sort=…`` for the links that must preserve the view.
 
     Built with ``urlencode`` rather than string concatenation because the filter
     is a JSON document full of quotes and braces, and ``segment`` is preferred
     over ``filter`` when both could apply — one canonical spelling per view, so a
     "next page" link and an "export" link cannot describe different sets.
+
+    ``page`` is an **int**, and the caller passes ``page.number`` off the
+    Paginator rather than the raw ``?page=`` string. That is what keeps a
+    user-supplied value out of the ``HX-Push-Url`` header: interpolating the raw
+    parameter there made a newline in it a ``BadHeaderError`` — Django refuses
+    the header, so the endpoint answered 500 — and let anything else append
+    query parameters to the URL htmx pushes into the address bar. Page 1 is
+    omitted, so the canonical URL for a view has no ``page`` in it.
     """
     params: dict[str, str] = {}
     if query.segment is not None:
@@ -225,6 +241,8 @@ def _querystring(query: ContactQuery) -> str:
         params["q"] = query.search_term
     if query.sort != DEFAULT_SORT:
         params["sort"] = query.sort
+    if page > 1:
+        params["page"] = str(page)
     return urlencode(params)
 
 
@@ -289,14 +307,12 @@ def _filter_config(workspace: Any, query: ContactQuery) -> dict[str, Any]:
 def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The CRM's front page: filter bar, toolbar and the first page of contacts."""
     context = _rows_context(request)
+    # No separate `segment_rows`: `filter_config["segments"]` is the same ordered
+    # query, and the picker needs the same two columns the builder does.
     return render(
         request,
         "contacts/list.html",
-        {
-            **context,
-            "filter_config": _filter_config(request.workspace, context["query"]),
-            "segment_rows": Segment.objects.for_workspace(request.workspace).order_by("name"),
-        },
+        {**context, "filter_config": _filter_config(request.workspace, context["query"])},
     )
 
 
@@ -314,13 +330,17 @@ def contact_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     endpoint, so htmx would push the partial's address and hand the reader a
     bookmark to a bare ``<table>``. The server knows the page's own URL and the
     canonical spelling of the current view, so it says so here.
+
+    Every part of that header comes from ``_querystring``, which urlencodes it
+    and takes the page as an int off the Paginator. Nothing the caller typed
+    reaches the header as-is — a header value is not a place to interpolate a
+    query parameter.
     """
     context = _rows_context(request)
     response = render(request, "contacts/_rows.html", context)
-    page = request.GET.get("page") or ""
-    parts = [part for part in (context["querystring"], f"page={page}" if page else "") if part]
     listing = reverse("contacts:list", kwargs={"workspace_id": request.workspace.pk})
-    response["HX-Push-Url"] = f"{listing}?{'&'.join(parts)}" if parts else listing
+    params = context["page_querystring"]
+    response["HX-Push-Url"] = f"{listing}?{params}" if params else listing
     return response
 
 
@@ -395,6 +415,13 @@ def _form_value(field: CustomField, value: Any) -> str:
         # Local time, minute precision: ``datetime-local`` refuses an offset, and
         # showing UTC to an operator in Berlin is a value they will "correct".
         return timezone.localtime(value).strftime("%Y-%m-%dT%H:%M")
+    if field.type == CustomFieldType.NUMBER:
+        # ``value_number`` is a DecimalField(decimal_places=6), so a stored 5
+        # comes back as Decimal("5.000000") and str() keeps every zero — the
+        # operator sees a number they did not type in the box they are about to
+        # edit. ``quantize`` back to an integer when there is no fraction, because
+        # ``normalize()`` alone turns 100 into "1E+2".
+        return str(value.quantize(1) if value == value.to_integral_value() else value.normalize())
     return str(value)
 
 
@@ -626,10 +653,10 @@ def tag_suggestions(request: WorkspaceRequest, workspace_id: str, contact_id: st
             # Offer "create <term>" only when the term names nothing yet AND the
             # caller may mint one. Both halves matter: the second is the
             # permission, the first stops the control offering to create a tag
-            # that is sitting right above it.
+            # that is sitting right above it — or one the contact already has,
+            # which `matches` excludes and so could never have caught.
             "can_create": bool(term)
             and _can(request, "manage_crm")
-            and not any(tag.name.casefold() == term.casefold() for tag in matches)
             and not Tag.objects.for_workspace(request.workspace).filter(name__iexact=term).exists(),
         },
     )
@@ -996,8 +1023,8 @@ def _import_context(request: WorkspaceRequest, run: ContactImport) -> dict[str, 
     problem = ""
     if run.file:
         try:
-            header = imports.read_header(run)
-            rows = imports.preview(run)
+            # One read for both — see `imports.header_and_preview`.
+            header, rows = imports.header_and_preview(run)
         except (imports.UnusableImportError, OSError, ValueError) as exc:
             problem = str(exc) or "That file could not be read."
     return {
@@ -1163,7 +1190,10 @@ def import_mapping(request: WorkspaceRequest, workspace_id: str, import_id: str)
     state whose only meaningful next step is the thing the button does.
     """
     run = _import_or_404(request, import_id)
-    if run.is_running:
+    if run.is_writing:
+        # `is_writing`, not `is_running`: re-mapping during a *dry run* is safe
+        # and is exactly what an operator who spotted a mistake wants. See the
+        # property.
         return toast_response(tone="info", title="That import is already running")
 
     try:
@@ -1187,7 +1217,13 @@ def import_mapping(request: WorkspaceRequest, workspace_id: str, import_id: str)
     run.mapping = mapping
     run.dedupe = dedupe
     run.next_offset = 0
-    run.save(update_fields=["mapping", "dedupe", "next_offset", "updated_at"])
+    # The status moves HERE, not when the worker picks the row up. The progress
+    # panel decides whether to poll from `run.is_running`, and it re-renders the
+    # moment this response's toast fires — so leaving the status at `uploaded`
+    # until `_begin` runs meant the panel usually saw "not running", registered
+    # no poll, and sat there while the import went on behind it.
+    run.status = ImportStatus.VALIDATING
+    run.save(update_fields=["mapping", "dedupe", "next_offset", "status", "updated_at"])
     imports.enqueue(run, mode=imports.MODE_DRY_RUN)
     return toast_response(
         tone="success",
@@ -1216,7 +1252,10 @@ def import_run(request: WorkspaceRequest, workspace_id: str, import_id: str) -> 
             body="The preview has to finish before anything is imported.",
         )
     run.next_offset = 0
-    run.save(update_fields=["next_offset", "updated_at"])
+    # See `import_mapping`: the panel polls on `is_running`, so the status has to
+    # be true before the response that triggers the first re-render.
+    run.status = ImportStatus.IMPORTING
+    run.save(update_fields=["next_offset", "status", "updated_at"])
     imports.enqueue(run, mode=imports.MODE_IMPORT)
     return toast_response(
         tone="success", title="Import started", body="You can leave this page.", events={"importChanged": True}

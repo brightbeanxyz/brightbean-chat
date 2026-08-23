@@ -86,8 +86,8 @@ inert — a button that looks fine and does nothing.
       {% endcomment %}
       <select id="contact-segment" name="segment" class="w-56" x-on:change="$el.form.requestSubmit()">
         <option value="">Everyone</option>
-        {% for segment in segment_rows %}
-          <option value="{{ segment.id }}" {% if query.segment and query.segment.id == segment.id %}selected{% endif %}>{{ segment.name }}</option>
+        {% for segment in filter_config.segments %}
+          <option value="{{ segment.value }}" {% if filter_config.segmentId == segment.value %}selected{% endif %}>{{ segment.label }}</option>
         {% endfor %}
       </select>
       <noscript><button type="submit">Load</button></noscript>

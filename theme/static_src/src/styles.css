@@ -1774,9 +1774,16 @@ span.flatpickr-weekday {
    inputs, display on containers a template toggles — are left alone
    deliberately, and the markup uses utilities for those.
 
-   .crm-chip is the one to watch. It sets padding, background and
-   radius but NOT display or width, so `class="crm-chip w-auto"` and
-   the flex wrappers around it still behave.
+   Two to watch, because they DO set properties a utility might try
+   to override, and unlayered wins:
+
+     .crm-chip sets `display: inline-flex`, so `class="crm-chip hidden"`
+       renders a visible chip. Toggle it on a wrapper instead.
+     .crm-avatar sets width and height, so `class="crm-avatar w-8"`
+       stays 2.5rem. Add a modifier here for another size.
+
+   Utilities remain correct for everything neither class touches —
+   margin, flex placement, text colour.
    ═══════════════════════════════════════════════════════════════ */
 
 .crm-toolbar {

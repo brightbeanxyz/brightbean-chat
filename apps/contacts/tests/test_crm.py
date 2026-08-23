@@ -710,3 +710,173 @@ class TestContextKeys:
 
         assert "recent_messages" in response.context
         assert "MessagePreview(" not in response.content.decode()
+
+
+@pytest.mark.django_db
+class TestHostileQueryParameters:
+    """The query string is the part ``tests/idor.py`` does not walk, and the part
+    a crafted link reaches without a form."""
+
+    def test_a_json_depth_bomb_in_the_filter_is_refused_not_a_500(self, tenancy, client_for):
+        """16 KiB of `[` fits inside MAX_FILTER_BYTES, so only a depth check
+        catches it — and the RecursionError it otherwise raises is not a
+        ValueError, so it escaped as a 500 rather than a refusal."""
+        response = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/"), {"filter": "[" * 16000})
+
+        assert response.status_code == 200
+        assert "could not be applied" in response.content.decode()
+
+    def test_the_depth_bomb_is_refused_on_the_export_too(self, tenancy, client_for):
+        response = client_for(tenancy.owner).get(url(tenancy, "contacts/export/"), {"filter": "[" * 16000})
+
+        assert response.status_code == 404  # fails closed rather than exporting everyone
+
+    def test_saving_a_segment_from_a_depth_bomb_is_refused(self, tenancy, client_for):
+        response = client_for(tenancy.owner).post(
+            url(tenancy, "contacts/segments/create/"), {"name": "Bomb", "filter": "[" * 16000}
+        )
+
+        assert response.status_code == 204
+        assert triggers(response)["showToast"]["tone"] == "error"
+        assert not Segment.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_newline_in_the_page_parameter_does_not_500(self, tenancy, client_for):
+        """It reached HX-Push-Url verbatim, and Django refuses a header value
+        holding a newline — so a crafted link answered 500."""
+        response = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/"), {"page": "1\r\nX-Injected: yes"})
+
+        assert response.status_code == 200
+        assert "X-Injected" not in response.headers["HX-Push-Url"]
+
+    def test_the_pushed_url_cannot_carry_smuggled_parameters(self, tenancy, client_for):
+        """The page is taken as an int off the Paginator, so nothing the caller
+        typed is interpolated into the URL htmx writes to the address bar."""
+        response = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/"), {"page": "9 &evil=1"})
+
+        assert "evil" not in response.headers["HX-Push-Url"]
+
+    def test_the_pushed_url_keeps_a_real_page(self, tenancy, client_for):
+        for index in range(60):
+            services.create_contact(tenancy.workspace, first_name=f"C{index:02d}")
+
+        response = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/"), {"page": "2"})
+
+        assert "page=2" in response.headers["HX-Push-Url"]
+
+    def test_page_one_is_not_spelled_in_the_url(self, tenancy, client_for):
+        response = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/"))
+
+        assert "page=" not in response.headers["HX-Push-Url"]
+
+
+@pytest.mark.django_db
+class TestTheRefreshKeepsTheView:
+    def test_the_container_refetches_its_own_page_not_page_one(self, tenancy, client_for):
+        """A bulk action fires contactsChanged and the container re-fetches from
+        its own hx-get. Without the page in it, an operator acting on page 3
+        watched the table jump back to page 1 underneath them."""
+        for index in range(120):
+            services.create_contact(tenancy.workspace, first_name=f"C{index:03d}")
+
+        body = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/"), {"page": "2"}).content.decode()
+
+        assert 'hx-trigger="contactsChanged from:body"' in body
+        assert "page=2" in body
+
+    def test_the_export_link_never_carries_a_page(self, tenancy, client_for):
+        """ "Export the current filter" is about the set, not the screenful."""
+        for index in range(60):
+            services.create_contact(tenancy.workspace, first_name=f"C{index:02d}")
+
+        body = client_for(tenancy.owner).get(url(tenancy, "contacts/"), {"page": "2"}).content.decode()
+
+        assert "contacts/export/" in body
+        export_line = next(line for line in body.splitlines() if "contacts/export/" in line)
+        assert "page=" not in export_line
+
+
+@pytest.mark.django_db
+class TestNumberFieldRendering:
+    def test_a_whole_number_is_not_shown_with_six_decimal_places(self, tenancy, client_for, crm):
+        """value_number is a DecimalField(decimal_places=6), so str() on a stored
+        5 gives "5.000000" — a number the operator did not type, in the box they
+        are about to edit."""
+        field = services.create_custom_field(tenancy.workspace, name="Seats", field_type=CustomFieldType.NUMBER)
+        services.set_field_value(crm["contact"], field, 5)
+
+        response = client_for(tenancy.owner).get(url(tenancy, f"contacts/{crm['contact'].pk}/"))
+        row = next(r for r in response.context["field_values"] if r["field"].pk == field.pk)
+
+        assert row["form_value"] == "5"
+
+    def test_a_round_hundred_does_not_become_scientific_notation(self, tenancy, client_for, crm):
+        """Decimal.normalize() turns 100 into 1E+2, which an input[type=number]
+        shows verbatim."""
+        field = services.create_custom_field(tenancy.workspace, name="Seats", field_type=CustomFieldType.NUMBER)
+        services.set_field_value(crm["contact"], field, 100)
+
+        response = client_for(tenancy.owner).get(url(tenancy, f"contacts/{crm['contact'].pk}/"))
+        row = next(r for r in response.context["field_values"] if r["field"].pk == field.pk)
+
+        assert row["form_value"] == "100"
+
+    def test_a_real_fraction_keeps_its_digits(self, tenancy, client_for, crm):
+        field = services.create_custom_field(tenancy.workspace, name="Rate", field_type=CustomFieldType.NUMBER)
+        services.set_field_value(crm["contact"], field, "1.25")
+
+        response = client_for(tenancy.owner).get(url(tenancy, f"contacts/{crm['contact'].pk}/"))
+        row = next(r for r in response.context["field_values"] if r["field"].pk == field.pk)
+
+        assert row["form_value"] == "1.25"
+
+
+@pytest.mark.django_db
+class TestMergeCounts:
+    def test_the_count_is_live_contacts_carrying_the_source(self, tenancy, client_for):
+        """Not the write's row count. A contact who already carries the target
+        has their source link deleted rather than moved, so the row count
+        under-reports the people the merge affected."""
+        keep, _ = services.get_or_create_tag(tenancy.workspace, "Priority")
+        drop, _ = services.get_or_create_tag(tenancy.workspace, "VIP")
+        for name in ("Both", "Also both"):
+            contact = services.create_contact(tenancy.workspace, first_name=name)
+            services.add_tag(contact, keep)
+            services.add_tag(contact, drop)
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, f"settings/tags/{drop.pk}/merge/"), {"target_id": str(keep.pk)}
+        )
+
+        assert "2 contacts moved" in triggers(response)["showToast"]["body"]
+
+    def test_the_count_excludes_soft_deleted_contacts(self, tenancy, client_for):
+        """The trap delete_tag documents: a number about people must not include
+        people the rest of the app has stopped showing."""
+        keep, _ = services.get_or_create_tag(tenancy.workspace, "Priority")
+        drop, _ = services.get_or_create_tag(tenancy.workspace, "VIP")
+        live = services.create_contact(tenancy.workspace, first_name="Live")
+        gone = services.create_contact(tenancy.workspace, first_name="Gone")
+        services.add_tag(live, drop)
+        services.add_tag(gone, drop)
+        services.delete_contact(gone)
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, f"settings/tags/{drop.pk}/merge/"), {"target_id": str(keep.pk)}
+        )
+
+        assert "1 contact moved" in triggers(response)["showToast"]["body"]
+        # The tombstone's link still moves — it belongs to that contact, and
+        # issue #29's export has to be able to read it.
+        assert set(gone.tags.values_list("name", flat=True)) == {"Priority"}
+
+
+@pytest.mark.django_db
+class TestSegmentPickerReusesOneQuery:
+    def test_the_picker_and_the_builder_read_the_same_list(self, tenancy, client_for):
+        services.create_segment(tenancy.workspace, name="VIPs", filter_json={"match": "all", "rules": []})
+
+        response = client_for(tenancy.owner).get(url(tenancy, "contacts/"))
+
+        assert "segment_rows" not in response.context
+        assert [row["label"] for row in response.context["filter_config"]["segments"]] == ["VIPs"]
+        assert "VIPs" in response.content.decode()

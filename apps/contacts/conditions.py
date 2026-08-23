@@ -5,6 +5,7 @@ One filter language, four consumers: saved segments, the flow Condition node
 same three names, and nothing re-implements the operator table:
 
     CONDITION_SCHEMA                          # JSON Schema, embedded by issue #6
+    load_document(filter_json)                # -> parsed document, or raises
     validate(workspace, filter_json)          # -> CompiledFilter, or raises
     evaluate(contact, filter_json) -> bool    # one contact
     queryset(workspace, filter_json)          # -> QuerySet[Contact]
@@ -137,6 +138,7 @@ __all__ = [
     "SourceNotEvaluableError",
     "evaluate",
     "evaluate_many",
+    "load_document",
     "queryset",
     "register_source",
     "sources",
@@ -712,7 +714,20 @@ def _assert_shape(document: Any) -> None:
             stack.extend((child, depth + 1) for child in node)
 
 
-def _load(filter_json: Any) -> Any:
+def load_document(filter_json: Any) -> Any:
+    """Parse a filter document and apply every structural cap, or raise.
+
+    Public because it is the **only** correct way to turn a raw filter string
+    into a document, and more than one caller needs that without also resolving
+    the tag and field ids :func:`validate` looks up. Issue #13's contact list
+    takes a filter in the query string on four endpoints; a second hand-rolled
+    ``json.loads`` there re-opened the depth hole this function was written to
+    close, because the size cap alone does not cover it and ``RecursionError`` is
+    not a ``ValueError``.
+
+    Returns the parsed document, which may be any JSON value — callers that need
+    an object check for one.
+    """
     if isinstance(filter_json, bytes | bytearray):
         try:
             filter_json = bytes(filter_json).decode("utf-8")
@@ -990,7 +1005,7 @@ def _resolve_group(
                 )
             group = _resolve_group(
                 workspace,
-                _load(segment_filters[target]),
+                load_document(segment_filters[target]),
                 path=f"{rule_path}.segment.",
                 budget=budget,
                 seen=(*seen, target),
@@ -1022,7 +1037,7 @@ def validate(workspace: Any, filter_json: Any, *, exclude_segment_id: Any = None
     Costs at most one query per source kind per group, regardless of rule count.
     """
     seen: tuple[UUID, ...] = (exclude_segment_id,) if exclude_segment_id else ()
-    root = _resolve_group(workspace, _load(filter_json), path="", budget=_Budget(), seen=seen, depth=0)
+    root = _resolve_group(workspace, load_document(filter_json), path="", budget=_Budget(), seen=seen, depth=0)
     return CompiledFilter(root=root)
 
 

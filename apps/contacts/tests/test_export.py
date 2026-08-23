@@ -162,3 +162,46 @@ class TestFormulaInjectionEndToEnd:
 
         assert "'=HYPERLINK" in body
         assert ",=HYPERLINK" not in body
+
+
+@pytest.mark.django_db
+class TestSnapshotConsistency:
+    def test_a_contact_whose_sort_key_moves_mid_export_is_written_once(self, tenancy, client_for, monkeypatch):
+        """LIMIT/OFFSET paging read each chunk in its own snapshot, so a contact
+        who messaged in mid-export moved to the front of `-last_interaction_at`
+        and was emitted twice — while the row they displaced was never emitted at
+        all. A server-side cursor reads one snapshot."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.contacts import export as export_module
+        from apps.contacts.models import Contact
+
+        now = timezone.now()
+        for index in range(9):
+            services.create_contact(
+                tenancy.workspace, first_name=f"C{index:02d}", last_interaction_at=now - timedelta(days=index)
+            )
+        monkeypatch.setattr(export_module, "CHUNK_SIZE", 3)
+
+        original = export_module._chunks
+        state = {"seen": 0}
+
+        def touching_chunks(rows):
+            """Shove the oldest contact to the front between chunks."""
+            for page in original(rows):
+                state["seen"] += 1
+                if state["seen"] == 1:
+                    Contact.objects.for_workspace(tenancy.workspace).filter(first_name="C08").update(
+                        last_interaction_at=timezone.now() + timedelta(days=1)
+                    )
+                yield page
+
+        monkeypatch.setattr(export_module, "_chunks", touching_chunks)
+
+        exported = rows(client_for(tenancy.owner).get(url(tenancy, "contacts/export/")))
+
+        names = [row[1] for row in exported[1:]]
+        assert sorted(names) == [f"C{index:02d}" for index in range(9)]
+        assert len(names) == len(set(names))

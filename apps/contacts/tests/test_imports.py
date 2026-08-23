@@ -684,3 +684,178 @@ class TestTagValidation:
         assert run.error_count == 1
         assert run.errors[0]["column"] == imports.TAGS_TARGET
         assert Tag.objects.for_workspace(tenancy.workspace).count() == 0
+
+
+@pytest.mark.django_db
+class TestBlankRows:
+    def test_a_trailing_newline_is_skipped_not_reported(self, tenancy):
+        """The common shape of a hand-edited or tool-generated export. Reporting
+        it handed the operator an error report for a clean file."""
+        run = make_run(
+            tenancy.workspace,
+            "email\nada@example.test\n\n",
+            mapping={"0": "system:email"},
+            status=ImportStatus.VALIDATED,
+        )
+        imports.enqueue(run, mode=imports.MODE_IMPORT)
+
+        drain(run, imports.MODE_IMPORT)
+
+        assert run.error_count == 0
+        assert run.errors == []
+        assert run.skipped_count == 1
+        assert run.created_count == 1
+        assert Contact.objects.for_workspace(tenancy.workspace).count() == 1
+
+    def test_a_row_whose_mapped_cells_are_all_empty_is_skipped_too(self, tenancy):
+        run = make_run(
+            tenancy.workspace,
+            "email,note\nada@example.test,x\n,\n",
+            mapping={"0": "system:email"},
+            status=ImportStatus.VALIDATED,
+        )
+        imports.enqueue(run, mode=imports.MODE_IMPORT)
+
+        drain(run, imports.MODE_IMPORT)
+
+        assert run.error_count == 0
+        assert run.skipped_count == 1
+
+    def test_the_dry_run_agrees_with_the_import(self, tenancy):
+        """One loop, two modes — the counts have to match or the preview lies."""
+        text = "email\nada@example.test\n\n"
+        checked = make_run(tenancy.workspace, text, mapping={"0": "system:email"})
+        imports.enqueue(checked, mode=imports.MODE_DRY_RUN)
+        drain(checked, imports.MODE_DRY_RUN)
+
+        assert (checked.created_count, checked.skipped_count, checked.error_count) == (1, 1, 0)
+
+
+@pytest.mark.django_db
+class TestTheRowCapCount:
+    def test_the_capped_row_is_not_counted_as_processed(self, tenancy, settings):
+        """Counting it made total_rows one larger than the work the import will
+        do, so the progress bar stopped a row short of full."""
+        settings.CONTACT_IMPORT_MAX_ROWS = 5
+        settings.CONTACT_IMPORT_BATCH_ROWS = 10
+        buffer = io.StringIO()
+        buffer.write("email\n")
+        for index in range(12):
+            buffer.write(f"person{index}@example.test\n")
+        run = make_run(tenancy.workspace, buffer.getvalue(), mapping={"0": "system:email"})
+        imports.enqueue(run, mode=imports.MODE_DRY_RUN)
+
+        drain(run, imports.MODE_DRY_RUN)
+
+        assert run.processed_rows == 5
+        assert run.total_rows == 5
+        assert run.percent_complete == 100
+
+
+@pytest.mark.django_db
+class TestOneReadPerRender:
+    def test_the_mapping_page_reads_the_file_once(self, tenancy, monkeypatch):
+        """read_header + preview was two full reads of the object per render — a
+        second 20 MB GET on the S3 backend to show three rows."""
+        from apps.contacts import imports as module
+
+        reads = []
+        original = module._decoded
+        monkeypatch.setattr(module, "_decoded", lambda run: reads.append(run.pk) or original(run))
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING)
+
+        header, rows = module.header_and_preview(run)
+
+        assert header == ["first", "last", "email"]
+        assert len(rows) == 2
+        assert len(reads) == 1
+
+
+@pytest.mark.django_db
+class TestTheWizardShowsProgress:
+    def test_checking_a_file_marks_the_run_running_before_the_worker_starts(self, tenancy, client_for):
+        """The progress panel decides whether to poll from `is_running`, and it
+        re-renders on this response's toast — so the status has to be true
+        already or the panel registers no poll and never updates."""
+        run = make_run(tenancy.workspace, SIMPLE)
+
+        client_for(tenancy.owner).post(
+            f"/w/{tenancy.workspace.id}/contacts/import/{run.pk}/mapping/",
+            {"column-2": "system:email", "dedupe": ImportDedupe.UPDATE},
+        )
+
+        run.refresh_from_db()
+        assert run.status == ImportStatus.VALIDATING
+        assert run.is_running is True
+
+    def test_importing_marks_the_run_running_too(self, tenancy, client_for):
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.VALIDATED)
+
+        client_for(tenancy.owner).post(f"/w/{tenancy.workspace.id}/contacts/import/{run.pk}/run/")
+
+        run.refresh_from_db()
+        assert run.status == ImportStatus.IMPORTING
+        assert run.is_running is True
+
+    def test_the_panel_polls_while_a_run_is_working(self, tenancy, client_for):
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.IMPORTING)
+
+        body = (
+            client_for(tenancy.owner)
+            .get(f"/w/{tenancy.workspace.id}/contacts/import/{run.pk}/progress/")
+            .content.decode()
+        )
+
+        assert "every 2s" in body
+
+    def test_and_stops_once_it_is_finished(self, tenancy, client_for):
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.DONE)
+
+        body = (
+            client_for(tenancy.owner)
+            .get(f"/w/{tenancy.workspace.id}/contacts/import/{run.pk}/progress/")
+            .content.decode()
+        )
+
+        assert "every 2s" not in body
+
+    def test_remapping_during_a_dry_run_is_allowed(self, tenancy, client_for):
+        """A dry run writes nothing, so an operator who spots a bad mapping
+        mid-check should be able to fix it rather than wait. The new pass resets
+        next_offset, which strands the old pass's next batch on the offset
+        guard."""
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.VALIDATING)
+
+        response = client_for(tenancy.owner).post(
+            f"/w/{tenancy.workspace.id}/contacts/import/{run.pk}/mapping/",
+            {"column-0": "system:first_name", "column-2": "system:email", "dedupe": ImportDedupe.UPDATE},
+        )
+
+        assert "already running" not in response.headers["HX-Trigger"]
+        run.refresh_from_db()
+        assert run.mapping == {"0": "system:first_name", "2": "system:email"}
+
+    def test_remapping_while_rows_are_being_written_is_refused(self, tenancy, client_for):
+        """An import in flight has already half-applied its mapping to real rows."""
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.IMPORTING)
+
+        response = client_for(tenancy.owner).post(
+            f"/w/{tenancy.workspace.id}/contacts/import/{run.pk}/mapping/",
+            {"column-2": "system:email", "dedupe": ImportDedupe.UPDATE},
+        )
+
+        assert "already running" in response.headers["HX-Trigger"]
+        run.refresh_from_db()
+        assert run.mapping == MAPPING
+
+    def test_a_stranded_batch_from_the_old_mapping_does_not_run(self, tenancy):
+        """The offset guard is what makes re-mapping mid-check safe."""
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.VALIDATING)
+        stale = imports.enqueue(run, mode=imports.MODE_DRY_RUN, offset=500)
+        run.next_offset = 0
+        run.save(update_fields=["next_offset"])
+
+        imports.handle_contact_import(stale.payload, stale)
+
+        run.refresh_from_db()
+        assert run.processed_rows == 0

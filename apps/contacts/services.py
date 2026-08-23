@@ -381,6 +381,10 @@ def merge_tags(source: Tag, target: Tag) -> int:
     re-pointed. Deleting and re-adding would work too and would cost one insert
     per contact plus a full round of contract-7 events.
 
+    Returns the number of **live contacts that carried the source** — which is
+    what the operator is asking about, and deliberately not the number of rows
+    the write touched. See the comment on the count.
+
     Which is the second half of the decision: like :func:`delete_tag`, this sends
     **no per-contact event**. At ten thousand tagged contacts one administrative
     click would otherwise mean ten thousand rule-trigger evaluations and ten
@@ -395,19 +399,38 @@ def merge_tags(source: Tag, target: Tag) -> int:
         raise ContactsError("A tag cannot be merged into itself.")
 
     links = ContactTag.objects.for_workspace(source.workspace_id)
-    with transaction.atomic():
-        # Contacts already carrying the target: their source link is a duplicate
-        # the (contact, tag) unique constraint would reject on re-point, so it
-        # goes rather than moving.
-        already = set(links.filter(tag=target).values_list("contact_id", flat=True))
-        links.filter(tag=source, contact_id__in=already).delete()
-        # `update` rather than a loop: the rows keep their workspace and contact,
-        # so ContactScopedModel.save()'s derivation has nothing left to derive,
-        # and a per-row save would be one query per contact for no added
-        # invariant.
-        moved = links.filter(tag=source).update(tag=target, updated_at=timezone.now())
-        source.delete()
-    return moved
+    try:
+        with transaction.atomic():
+            # The number the operator is told, counted BEFORE anything moves and
+            # restricted to live contacts. Neither half is incidental. The
+            # ``update()`` row count below is not this number: a contact who
+            # already carries the target has their source link *deleted* rather
+            # than re-pointed, so a merge where everyone already had the target
+            # would report "0 contacts" after doing real work. And an unfiltered
+            # count reaches links on soft-deleted contacts — the same trap
+            # :func:`delete_tag` documents, feeding a number about people the
+            # rest of the app has stopped showing into a message about people.
+            affected = links.filter(tag=source, contact__status=ContactStatus.ACTIVE).count()
+
+            # Contacts already carrying the target: their source link is a
+            # duplicate the (contact, tag) unique constraint would reject on
+            # re-point, so it goes rather than moving.
+            already = set(links.filter(tag=target).values_list("contact_id", flat=True))
+            links.filter(tag=source, contact_id__in=already).delete()
+            # `update` rather than a loop: the rows keep their workspace and
+            # contact, so ContactScopedModel.save()'s derivation has nothing left
+            # to derive, and a per-row save would be one query per contact for no
+            # added invariant.
+            links.filter(tag=source).update(tag=target, updated_at=timezone.now())
+            source.delete()
+    except IntegrityError as exc:
+        # `already` is a check-then-write: a concurrent add_tag(contact, target)
+        # between reading it and the update leaves a source link whose re-point
+        # collides with the (contact, tag) unique index. Rare, and a 500 for it
+        # would be a 500 for a routine race — the same reasoning `_unique_name`
+        # applies to two concurrent creates.
+        raise ContactsError("Another change to these tags landed first. Try the merge again.") from exc
+    return affected
 
 
 def update_contact(contact: Contact, **fields: Any) -> list[str]:

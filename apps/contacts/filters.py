@@ -117,11 +117,17 @@ class ContactQuery:
 def parse_filter_document(raw: Any) -> dict[str, Any]:
     """Parse a ``?filter=`` value into a filter document, or refuse it.
 
-    The byte cap is checked **before** ``json.loads``, on the encoded length, for
-    the reason :func:`apps.contacts.conditions._load` gives at length: a cap
-    applied after parsing has already paid for the parse it exists to prevent.
-    ``conditions.validate`` re-applies its own caps to the result — this is the
-    cheap outer gate, not the security boundary.
+    Straight through to :func:`apps.contacts.conditions.load_document`, which is
+    the engine's own loader, and that delegation is the point rather than a
+    convenience. This function used to call ``json.loads`` itself behind a byte
+    cap, and a byte cap does not close the **depth** hole: 16 KiB of ``[`` fits
+    inside ``MAX_FILTER_BYTES`` and blows CPython's recursion limit, and the
+    ``RecursionError`` that comes back is not a ``ValueError``, so it escaped
+    this function as a 500 rather than a refusal. ``load_document`` measures
+    bracket depth before it parses, catches ``RecursionError`` alongside
+    ``ValueError``, rejects bare ``NaN``/``Infinity``, and re-applies the node and
+    size caps to the parsed result — all of which its docstring explains, and
+    none of which is worth a second implementation here.
 
     An empty value is an empty document ("no filter"), not an error: the list
     page links to itself with ``?filter=`` in the query string whether or not a
@@ -131,12 +137,7 @@ def parse_filter_document(raw: Any) -> dict[str, Any]:
         return {}
     if not isinstance(raw, str):
         raise ConditionValidationError("filter must be text", code="bad_json")
-    if len(raw.encode("utf-8", "surrogatepass")) > conditions.MAX_FILTER_BYTES:
-        raise ConditionValidationError("filter document is too large", code="too_large")
-    try:
-        document = json.loads(raw)
-    except ValueError as exc:
-        raise ConditionValidationError("filter document is not valid JSON", code="bad_json") from exc
+    document = conditions.load_document(raw)
     if not isinstance(document, dict):
         raise ConditionValidationError("filter document must be an object", code="not_an_object")
     return document
@@ -209,7 +210,6 @@ def contacts_for(workspace: Any, query: ContactQuery) -> tuple[QuerySet[Contact]
         return Contact.objects.for_workspace(workspace).none(), query.error
 
     rows: QuerySet[Contact]
-    error = ""
     if query.document:
         try:
             rows = conditions.queryset(workspace, query.document)
@@ -221,4 +221,6 @@ def contacts_for(workspace: Any, query: ContactQuery) -> tuple[QuerySet[Contact]
         # for anything that can feed a bulk action.
         rows = Contact.objects.for_workspace(workspace).filter(status=ContactStatus.ACTIVE)
 
-    return search(rows, query.search_term).order_by(*SORTS[query.sort]), error
+    # Every failure above returns early, so reaching here means there is nothing
+    # to report — the empty string is the answer, not a variable's last value.
+    return search(rows, query.search_term).order_by(*SORTS[query.sort]), ""

@@ -91,6 +91,7 @@ __all__ = [
     "RowError",
     "enqueue",
     "handle_contact_import",
+    "header_and_preview",
     "preview",
     "read_header",
     "resolve_mapping",
@@ -210,6 +211,14 @@ def _decoded(run: ContactImport) -> io.StringIO:
     file — behaves differently on S3 and on local disk and would have to be
     re-opened per batch anyway.
 
+    **Every batch pays one of these**, and that is the cost to know about before
+    tuning ``CONTACT_IMPORT_BATCH_ROWS`` down: a 50 000-row file at 500 rows per
+    batch is 100 full reads of the object. Each batch is its own transaction in
+    its own worker, so there is nothing to cache it in. The re-parse of the rows
+    before ``next_offset`` rides along and is the cheap half — a few tens of
+    milliseconds a batch — so the number that matters is how many times the
+    *object* is fetched, not how many rows are re-scanned.
+
     ``utf-8-sig`` first, because a file saved by Excel begins with a BOM and
     ``utf-8`` would read it as part of the first column's name — which silently
     breaks the mapping for that one column only. ``cp1252`` is the fallback
@@ -284,10 +293,25 @@ def preview(run: ContactImport, limit: int | None = None) -> list[list[str]]:
     ``CONTACT_IMPORT_PREVIEW_ROWS`` and why the *full* check is the queued dry
     run. Seeing three real rows under the column headings is what stops an
     operator mapping "Surname" onto ``first_name``.
+
+    Prefer :func:`header_and_preview` when you want both — this reads the file to
+    get here, and so does :func:`read_header`.
     """
-    reader, _ = _reader(run)
-    count = limit or settings.CONTACT_IMPORT_PREVIEW_ROWS
-    return [row for row in islice(reader, count)]
+    _, rows = header_and_preview(run, limit=limit)
+    return rows
+
+
+def header_and_preview(run: ContactImport, *, limit: int | None = None) -> tuple[list[str], list[list[str]]]:
+    """``(header, sample rows)`` from **one** read of the file.
+
+    The mapping page needs both, and calling ``read_header`` then ``preview``
+    read, decoded and re-parsed the whole upload twice per render — a second full
+    ``GET`` of a 20 MB object on the S3 backend, for a page that shows three
+    rows.
+    """
+    reader, header = _reader(run)
+    count = settings.CONTACT_IMPORT_PREVIEW_ROWS if limit is None else limit
+    return header, list(islice(reader, count))
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +479,16 @@ def _locked_run(workspace_id: Any, import_id: Any) -> ContactImport | None:
     if not import_id:
         return None
     try:
-        return ContactImport.objects.for_workspace(workspace_id).select_for_update().filter(pk=import_id).first()
+        return (
+            ContactImport.objects.for_workspace(workspace_id)
+            .select_for_update()
+            # `enqueue` hands the instance to `schedule`, which wants a Workspace
+            # rather than an id; without this every continuation batch pays a
+            # lazy fetch for it.
+            .select_related("workspace")
+            .filter(pk=import_id)
+            .first()
+        )
     except (ValidationError, ValueError, TypeError):
         return None
 
@@ -477,12 +510,16 @@ def _run_batch(run: ContactImport, *, mode: str, offset: int) -> None:
     capped = False
 
     for index, row in enumerate(islice(reader, offset, offset + batch_size), start=offset):
-        processed += 1
         number = index + 1
         if number > max_rows:
+            # Before the increment: this row is not processed, it is the reason
+            # the run stops. Counting it would make `total_rows` one larger than
+            # the work the import pass will do, so the progress bar would stop a
+            # row short of full for every capped file.
             errors.append(RowError(number, "", f"This file has more than {max_rows:,} rows; the rest were skipped."))
             capped = True
             break
+        processed += 1
         if sum(len(cell) for cell in row) > MAX_ROW_CHARS:
             errors.append(RowError(number, "", "That row is too long to import."))
             continue
@@ -628,8 +665,11 @@ def _apply_row(
     """
     from apps.contacts import services
 
+    if _is_blank(row, mapping):
+        return "skipped"
+
     values = {name: _cell(row, index) for index, name in mapping.system.items()}
-    if error := _validate_system(values, number, row, mapping):
+    if error := _validate_system(values, number):
         return error
 
     typed: list[tuple[CustomField, Any]] = []
@@ -694,7 +734,7 @@ def _cell(row: list[str], index: int) -> str:
     return row[index].strip() if index < len(row) else ""
 
 
-def _validate_system(values: dict[str, str], number: int, row: list[str], mapping: ResolvedMapping) -> RowError | None:
+def _validate_system(values: dict[str, str], number: int) -> RowError | None:
     """Refuse a row before anything is written, or return ``None``.
 
     Only email is format-checked. SPEC §5 is explicit that a contact's phone is
@@ -710,13 +750,20 @@ def _validate_system(values: dict[str, str], number: int, row: list[str], mappin
             validate_email(email)
         except ValidationError:
             return RowError(number, "email", "That is not an email address.")
-    mapped = [*mapping.system, *mapping.fields, *([mapping.tags_column] if mapping.tags_column is not None else [])]
-    if not any(_cell(row, index) for index in mapped):
-        # Trailing blank lines are ordinary in a hand-edited export, so this is a
-        # skip rather than an error — an operator should not have to read a
-        # report telling them their file ended.
-        return RowError(number, "", "That row is empty.")
     return None
+
+
+def _is_blank(row: list[str], mapping: ResolvedMapping) -> bool:
+    """No mapped cell on this row carries anything.
+
+    A **skip**, not an error, and that distinction is the whole reason this is a
+    separate predicate: a file ending in a newline produces one of these, and
+    reporting it would hand the operator an error report for a clean file and
+    send them looking for a problem that is not there. It still costs a
+    ``skipped_count``, so the numbers add up.
+    """
+    mapped = [*mapping.system, *mapping.fields, *([mapping.tags_column] if mapping.tags_column is not None else [])]
+    return not any(_cell(row, index) for index in mapped)
 
 
 def _tag_names(row: list[str], mapping: ResolvedMapping) -> list[str]:

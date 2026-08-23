@@ -14,7 +14,7 @@ usernames all arrive from strangers (SECURITY-BASELINE §2). Django autoescapes,
 nothing is marked safe, and no value from a contact reaches an href or a src.
 {% endcomment %}
 <div id="contact-rows"
-     hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}{% if querystring %}?{{ querystring }}{% endif %}"
+     hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}{% if page_querystring %}?{{ page_querystring }}{% endif %}"
      hx-trigger="contactsChanged from:body"
      hx-swap="outerHTML">
 
