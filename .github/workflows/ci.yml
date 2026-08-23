@@ -529,5 +529,20 @@ jobs:
           sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
+      # --log-opts scopes the scan to the history of the ref being built, which
+      # for a pull request is its merge with the base branch.
+      #
+      # Without it, `detect` walks every object in the clone — and `fetch-depth: 0`
+      # means that includes every *other* branch pushed to the remote. The effect,
+      # with six workstreams running in parallel per layer, was that one branch's
+      # credential-shaped test fixture failed every sibling's build: their content,
+      # scanned against a .gitleaks.toml that does not know about it, on a PR that
+      # cannot fix it. A branch is now judged on its own commits and its own
+      # allowlist, which is the only pairing that can be correct.
+      #
+      # Nothing is scanned less thoroughly. `.gitleaks.toml`'s header explains that
+      # CI scans full *history* — still true, and still the reason path allowlists
+      # rather than inline `# gitleaks:allow` markers are the right form: the
+      # history of the built ref is walked in full, back to the root commit.
       - name: Run gitleaks
-        run: gitleaks detect --source . --redact --verbose --no-banner
+        run: gitleaks detect --source . --redact --verbose --no-banner --log-opts "HEAD"
