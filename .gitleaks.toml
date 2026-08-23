@@ -43,3 +43,47 @@ paths = [
     '''apps/credentials/tests/.*\.py''',
     '''tests/support\.py''',
 ]
+
+# Credential-shaped fixtures for the email channel (#21). Four of the five are
+# inputs to the log-scrubbing suite, whose whole point is that they are shaped
+# like the real thing — a value shaped like "secret" proves nothing about a
+# pattern written for a token shaped like a token, which is the argument the
+# first allowlist above already makes for apps/common/tests/test_logging.py.
+#
+#   test_email_scrubbing.py   SMTP_PASSWORD, RESEND_KEY (re_…), SIGNING_SECRET
+#                             (whsec_…) and the AWS pair AKIAIOSFODNN7EXAMPLE /
+#                             wJalrXUtnFEMI/… — which are AWS's own published
+#                             documentation examples, not anyone's keys.
+#   fixtures/email/*.json     A recorded SNS SubscriptionConfirmation body. Its
+#                             "Token" is the example value from Amazon's own
+#                             documentation and its "Signature" is the literal
+#                             string PLACEHOLDER.
+#
+# All are literals in test files, none is read from an environment, and none
+# grants access to anything.
+[[allowlists]]
+description = "Synthetic email-channel test fixtures"
+targetRules = ["generic-api-key"]
+paths = [
+    '''apps/channels/tests/test_email_scrubbing\.py''',
+    '''apps/channels/tests/fixtures/email/.*\.json''',
+]
+
+# Two strings in the public API workstream (#25) that read as credentials and
+# are not.
+#
+#   test_delivery.py   A fake receiver's error page, "token=abcdef123456 is
+#                      invalid", served by a stub. The test asserts that string
+#                      is *absent* from the stored delivery row — it is the
+#                      negative-case input that makes the assertion mean
+#                      something, so removing it would remove the test.
+#   docs/api/v1.md     `"idempotency_key": "order-4711-shipped"` in a worked
+#                      example. Not a credential at all; the rule matches on the
+#                      word "key" in the field name.
+[[allowlists]]
+description = "Credential-shaped strings in the public API workstream"
+targetRules = ["generic-api-key"]
+paths = [
+    '''apps/api/tests/test_delivery\.py''',
+    '''docs/api/v1\.md''',
+]
