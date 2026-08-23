@@ -8,79 +8,42 @@ for every platform on behalf of one. The warnings surface where a destination
 *is* known — the picker, when a caller passes ``?platform=`` — and they never
 block.
 
-**Relationship to ROADMAP contract 4.** Issue #4 owns the per-platform
-``Capabilities`` table, as registry data specifically so consumers can read it
-without importing adapter code. This module reads it when it exists
-(:func:`_registry_capabilities`) for the kind-support booleans — "does this
-platform accept video at all" — and degrades to no kind warnings when it does
-not, because #4 is a parallel sibling that may not have merged yet.
+**There is one table now, and it is contract 4's.** This module used to carry
+its own ``_CEILINGS`` dict beside a ``TODO(#4): fold these into the contract-4
+Capabilities registry``, because when it was written #4 had not landed and the
+registry's ``Capabilities`` carried booleans plus button and text limits with
+nothing about media size. #4 landed, and #19 (L5-C) added the byte fields, so
+this module now asks the registry both halves of the question — *does this
+platform take this kind at all* and *how big may it be* — instead of answering
+the first from the registry and the second from a copy that could disagree with
+it. The disagreement was not hypothetical: the old table gave SMS a 5 MB image
+ceiling while the registry said SMS carries no images at all.
 
-The byte ceilings below are **not** in contract 4: its ``Capabilities`` fields
-are booleans plus ``max_buttons`` / ``max_quick_replies`` / ``max_text_len``,
-with nothing about media size. So they live here, conservatively, and are
-marked to be reconciled into the registry once #4 lands rather than duplicated
-forever. They are advisory numbers on an advisory path; being a little strict
-costs a warning nobody had to obey.
+Reading the registry through :func:`_registry_capabilities` stays lazy and
+defensive: this app must not grow a hard dependency on another, and a caller of
+the picker must not get a 500 because the channels app is not installed. With no
+registry to ask there are no ceilings and no kinds, so the honest answer is
+silence — which is what an advisory path should say when it knows nothing.
 """
 
 from typing import Any
 
 from apps.common.platforms import Platform
-from apps.media_library.mimes import MediaKind
 
 __all__ = ["warnings_for"]
 
 _MB = 1024 * 1024
 
-# platform -> kind -> max bytes. A kind absent from a platform's row is one the
-# platform does not accept at all.
-#
-# TODO(#4): fold these into the contract-4 Capabilities registry once the
-# channels app lands, so there is one table rather than two.
-_CEILINGS: dict[str, dict[str, int]] = {
-    Platform.TELEGRAM: {
-        MediaKind.IMAGE: 10 * _MB,
-        MediaKind.AUDIO: 50 * _MB,
-        MediaKind.VIDEO: 50 * _MB,
-        MediaKind.FILE: 50 * _MB,
-    },
-    Platform.INSTAGRAM: {
-        MediaKind.IMAGE: 8 * _MB,
-        MediaKind.AUDIO: 25 * _MB,
-        MediaKind.VIDEO: 25 * _MB,
-    },
-    Platform.MESSENGER: {
-        MediaKind.IMAGE: 25 * _MB,
-        MediaKind.AUDIO: 25 * _MB,
-        MediaKind.VIDEO: 25 * _MB,
-        MediaKind.FILE: 25 * _MB,
-    },
-    Platform.WHATSAPP: {
-        MediaKind.IMAGE: 5 * _MB,
-        MediaKind.AUDIO: 16 * _MB,
-        MediaKind.VIDEO: 16 * _MB,
-        MediaKind.FILE: 100 * _MB,
-    },
-    Platform.SMS: {
-        MediaKind.IMAGE: 5 * _MB,
-        MediaKind.AUDIO: 5 * _MB,
-        MediaKind.VIDEO: 5 * _MB,
-    },
-    Platform.EMAIL: {
-        MediaKind.IMAGE: 25 * _MB,
-        MediaKind.AUDIO: 25 * _MB,
-        MediaKind.VIDEO: 25 * _MB,
-        MediaKind.FILE: 25 * _MB,
-    },
-}
-
 
 def _registry_capabilities(platform: str) -> Any:
-    """Contract 4's static Capabilities row, or ``None`` before #4 merges.
+    """Contract 4's static Capabilities row, or ``None`` when it cannot be read.
 
     Imported lazily and defensively on purpose: this app must not grow a hard
     dependency on a sibling issue's module, and a caller of the picker must not
-    get a 500 because the channels app is not installed yet.
+    get a 500 because the channels app is not installed. An unknown platform
+    raises out of ``capabilities_for`` by design (a permissive default would
+    read as "everything is supported"), and here that is simply "nothing to
+    say".
     """
     try:
         from apps.channels.registry import capabilities_for  # type: ignore[import-not-found]
@@ -88,17 +51,8 @@ def _registry_capabilities(platform: str) -> Any:
         return None
     try:
         return capabilities_for(platform)
-    except Exception:  # pragma: no cover - a registry miss is not our failure
+    except Exception:
         return None
-
-
-def _kind_supported(platform: str, kind: str) -> bool | None:
-    """``True``/``False`` from the registry, or ``None`` when it cannot say."""
-    capabilities = _registry_capabilities(platform)
-    if capabilities is None:
-        return None
-    supported = getattr(capabilities, kind, None)
-    return bool(supported) if isinstance(supported, bool) else None
 
 
 def warnings_for(*, platform: str, kind: str, size: int) -> list[str]:
@@ -107,18 +61,25 @@ def warnings_for(*, platform: str, kind: str, size: int) -> list[str]:
     An empty list means "no known problem", which is also what an unknown
     platform returns — this path advises, so silence is the safe answer.
     """
-    if platform not in _CEILINGS:
+    capabilities = _registry_capabilities(platform)
+    if capabilities is None:
         return []
 
-    messages: list[str] = []
-    ceilings = _CEILINGS[platform]
-    label = Platform(platform).label
-
-    supported = _kind_supported(platform, kind)
-    if supported is False or (supported is None and kind not in ceilings):
+    label = _label(platform)
+    if not capabilities.supports_block(kind):
         return [f"{label} does not accept {kind} messages."]
 
-    limit = ceilings.get(kind)
-    if limit is not None and size > limit:
-        messages.append(f"{label} accepts {kind} files up to {limit // _MB} MB; this one is {size / _MB:.1f} MB.")
-    return messages
+    # 0 means the platform publishes no ceiling for this kind, not a ceiling of
+    # zero. Warning on every file would make the picker useless.
+    limit = capabilities.max_bytes_for(kind)
+    if limit and size > limit:
+        return [f"{label} accepts {kind} files up to {limit // _MB} MB; this one is {size / _MB:.1f} MB."]
+    return []
+
+
+def _label(platform: str) -> str:
+    """The platform's display name, or its raw value if the enum has no such member."""
+    try:
+        return Platform(platform).label
+    except ValueError:  # pragma: no cover - unreachable while the registry gates above
+        return platform

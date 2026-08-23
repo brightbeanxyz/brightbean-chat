@@ -1,0 +1,89 @@
+{% extends "layouts/workspace_settings.html" %}
+{% block title %}WhatsApp templates · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>WhatsApp message templates</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    More than 24 hours after a contact's last message, WhatsApp accepts nothing
+    but a template Meta has already approved. Write one here, submit it, and it
+    becomes available to flows and broadcasts once the review comes back.
+  </p>
+
+  {% if not connections %}
+    <div class="alert-warn">
+      <p>No WhatsApp number is connected yet, so there is nothing to submit a template against.</p>
+    </div>
+  {% endif %}
+
+  <p>
+    <a href="{{ new_url }}">New template</a> ·
+    <a href="{{ cost_url }}">Cost estimates</a>
+    <span class="muted">({{ cost_hint.currency }} — estimates only, never metered)</span>
+  </p>
+
+  {% if templates %}
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Language</th><th>Category</th><th>Number</th><th>Variables</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in templates %}
+          <tr>
+            <td>{{ row.template.name }}</td>
+            <td><code>{{ row.template.language }}</code></td>
+            <td>
+              {{ row.template.get_category_display }}
+              <br /><span class="muted">≈ {{ cost_hint.currency }} {{ row.cost }} per message</span>
+            </td>
+            <td>{{ row.template.channel_connection.display_name }}</td>
+            <td>
+              {% if row.slots %}
+                {% for slot in row.slots %}<code>{{ slot }}</code>{% if not forloop.last %} {% endif %}{% endfor %}
+              {% else %}
+                <span class="muted">None</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="status-pill status-pill-{{ row.template.status }}">
+                {{ row.template.get_status_display }}
+              </span>
+              {% comment %}
+              Meta's stated reason, escaped like every other provider-supplied
+              string (SECURITY-BASELINE §2). Never mark_safe.
+              {% endcomment %}
+              {% if row.template.rejected_reason %}
+                <br /><span class="muted">{{ row.template.rejected_reason }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.template.status == "draft" or row.template.status == "rejected" %}
+                <a href="{% url 'channels:whatsapp_template_edit' workspace_id=request.workspace.id template_id=row.template.id %}">Edit</a>
+                <form method="post"
+                      action="{% url 'channels:whatsapp_template_submit' workspace_id=request.workspace.id template_id=row.template.id %}">
+                  {% csrf_token %}
+                  <button type="submit">Submit for review</button>
+                </form>
+              {% endif %}
+              <form method="post"
+                    action="{% url 'channels:whatsapp_template_delete' workspace_id=request.workspace.id template_id=row.template.id %}">
+                {% csrf_token %}
+                <button type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No templates yet.</p>
+  {% endif %}
+
+  <h2>What review is like</h2>
+  <p class="muted">
+    Meta usually answers within minutes, occasionally within a day. BrightBean
+    Chat checks every hour and notifies workspace admins when the answer arrives;
+    a rejected template shows Meta's reason above and can be edited and
+    resubmitted. Marketing templates are reviewed most strictly and cost the most
+    to send.
+  </p>
+{% endblock %}

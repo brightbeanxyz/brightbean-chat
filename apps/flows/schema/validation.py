@@ -456,6 +456,18 @@ def _send_message_warnings(
                 f"config.blocks[{index}].text",
             )
 
+    if capabilities.interaction_is_exclusive and (config.get("buttons") or []) and (config.get("quick_replies") or []):
+        # Otherwise the panel says "WhatsApp allows 10 quick replies" and stays
+        # quiet, while every one of them actually arrives as numbered text
+        # because the buttons took the only control set the message has.
+        yield _warn(
+            "capability_unsupported",
+            f"{platform} shows buttons or quick replies, not both; the adapter appends the quick "
+            "replies to the text as numbered options instead (SPEC §6.1).",
+            node,
+            "config.quick_replies",
+        )
+
     for key, supported, ceiling, label in (
         ("buttons", capabilities.buttons, capabilities.max_buttons, "buttons"),
         ("quick_replies", capabilities.quick_replies, capabilities.max_quick_replies, "quick replies"),

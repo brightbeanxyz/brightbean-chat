@@ -23,10 +23,20 @@ silently matches nothing (see ``apps.common.encryption``). Telegram presents its
 secret in a header and the connection has to be found *by* it, which is exactly
 the case ``apps/credentials/models.py`` predicted this issue would be the first
 to hit.
+
+**WhatsApp's two tables live here too** (issue #19). SPEC §5 files
+``whatsapp_template`` under "messaging", but ``apps.messaging`` is the one app
+ROADMAP contract 4 keeps free of platform names — the compliance engine's whole
+design is that a platform costs a policy row and never a branch — and the table
+hangs off a :class:`ChannelConnection` rather than off a conversation. The
+*behaviour* is not here: submitting, polling and rendering a template is
+:mod:`apps.channels.whatsapp_templates`, so this module stays what it says it
+is.
 """
 
 import secrets
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
@@ -44,6 +54,10 @@ __all__ = [
     "SmsSettings",
     "WebhookEventLog",
     "WebhookEventStatus",
+    "WhatsAppCostHint",
+    "WhatsAppTemplate",
+    "WhatsAppTemplateCategory",
+    "WhatsAppTemplateStatus",
     "generate_webhook_secret",
     "generate_preview_handle",
 ]
@@ -422,3 +436,221 @@ class SmsSettings(WorkspaceScopedModel):
     @property
     def opt_in_reply(self) -> str:
         return self.opt_in_confirmation.strip() or DEFAULT_OPT_IN_TEXT
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp templates (SPEC §5's whatsapp_template, §6.5) — issue #19
+# ---------------------------------------------------------------------------
+
+
+class WhatsAppTemplateCategory(models.TextChoices):
+    """The three categories Meta will review a template under (SPEC §6.5).
+
+    Category is not decoration: it decides the price of every send and it
+    decides how the template is reviewed. Marketing is the expensive,
+    strictly-reviewed one; authentication is one-time-passcode traffic and has
+    its own rules Meta enforces at submission.
+    """
+
+    MARKETING = "marketing", "Marketing"
+    UTILITY = "utility", "Utility"
+    AUTHENTICATION = "authentication", "Authentication"
+
+
+class WhatsAppTemplateStatus(models.TextChoices):
+    """Where a template is in its life (SPEC §5).
+
+    ``DRAFT`` is ours alone — Meta has never seen it. The other three mirror
+    what the Graph API reports back, and the transition between them is made by
+    the hourly poll rather than by anything a person does here
+    (:mod:`apps.channels.whatsapp_templates`).
+    """
+
+    DRAFT = "draft", "Draft"
+    PENDING = "pending", "In review"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+
+
+class WhatsAppTemplate(WorkspaceScopedModel):
+    """One WhatsApp message template, ours and Meta's copy of it (SPEC §6.5).
+
+    Outside the 24-hour window a WhatsApp send needs one of these and nothing
+    else will do — ``apps.messaging.compliance`` answers ``NeedsTemplate`` from
+    ``PlatformPolicy`` alone, with no knowledge that this table exists. That
+    separation is the point: the *decision* is policy data, and this is the
+    material that satisfies it.
+
+    **Workspace-scoped, though SPEC §5 lists only the connection FK.** Every
+    read here happens in a settings page or a composer that already knows its
+    workspace, and CONTRIBUTING makes the enforcing manager the rule for tenant
+    data rather than something each view remembers. The connection FK is still
+    the authoritative link — a template belongs to the WABA it was submitted to.
+
+    **What keeps the two from disagreeing is the write path, not a ``clean``.**
+    An earlier version of this docstring promised one, and a ``clean`` here
+    could not have delivered it anyway: ``workspace`` is not a form field and is
+    assigned after ``form.is_valid()``, so ``ModelForm._post_clean`` would run
+    the model's validation before the value it was meant to check exists. What
+    holds instead is that both sides are forced to the same workspace on every
+    write — ``views_whatsapp._edit`` loads through ``get_scoped_object_or_404``,
+    ``WhatsAppTemplateForm`` narrows the ``channel_connection`` choices to that
+    workspace, and the view then assigns ``workspace`` itself. Every reader
+    fails closed regardless: ``whatsapp_templates.sendable`` and
+    ``approved_templates_for`` both filter on workspace *and* connection, so a
+    row that ever did disagree would be unsendable and invisible rather than
+    reachable from the wrong tenant.
+
+    ``body_structure`` is the authored template, in the shape
+    :mod:`apps.channels.whatsapp_templates` translates into Graph components::
+
+        {
+          "header": {"format": "text", "text": "Order {{1}}"},   # optional
+          "body":   {"text": "Hi {{1}}, your order shipped."},
+          "footer": {"text": "Reply STOP to opt out."},           # optional
+          "buttons": [{"type": "quick_reply", "text": "Track"},
+                      {"type": "url", "text": "Open", "url": "https://x.test/{{1}}"}]
+        }
+
+    The ``{{n}}`` placeholders are Meta's own numbering, and they are filled by
+    the one shared renderer (SECURITY-BASELINE §3) — never by a template engine.
+    """
+
+    channel_connection = models.ForeignKey(
+        ChannelConnection,
+        on_delete=models.CASCADE,
+        related_name="whatsapp_templates",
+        help_text="The WhatsApp connection whose WABA this template was submitted to.",
+    )
+    name = models.CharField(
+        max_length=512,
+        help_text="Meta's template name: lowercase letters, digits and underscores.",
+    )
+    language = models.CharField(
+        max_length=10,
+        default="en_US",
+        help_text="Meta's language code, e.g. en_US or de.",
+    )
+    category = models.CharField(max_length=20, choices=WhatsAppTemplateCategory.choices)
+    body_structure = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Header/body/footer/buttons with {{n}} placeholders. See the class docstring.",
+    )
+    meta_template_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Meta's id for this template. Empty until it has been submitted.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=WhatsAppTemplateStatus.choices,
+        default=WhatsAppTemplateStatus.DRAFT,
+    )
+    rejected_reason = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Meta's stated reason, shown to the operator. Provider-supplied: escape on render.",
+    )
+
+    class Meta:
+        db_table = "channels_whatsapp_template"
+        ordering = ["name", "language"]
+        constraints = [
+            # Meta's own key for a template is (name, language) inside one
+            # WABA, so two rows agreeing on all three would be one template
+            # with two local states — and the poll would flip it back and
+            # forth. Per connection rather than per workspace: two numbers on
+            # different WABAs legitimately have a template of the same name.
+            models.UniqueConstraint(
+                fields=["channel_connection", "name", "language"],
+                name="whatsapptemplate_unique_name_language",
+            ),
+        ]
+        indexes = [
+            # The hourly poll reads exactly this shape.
+            models.Index(fields=["status"], name="whatsapptemplate_status_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.language})"
+
+    @property
+    def reference(self) -> str:
+        """``<name>/<language>`` — what ``OutboundMessage.template_ref`` carries.
+
+        Deliberately not the primary key. A queued message is retried minutes or
+        hours later from its stored body alone, and a template deleted in the
+        meantime would leave that retry unable to say what it was sending. Name
+        and language are also what the Cloud API itself keys on, so the value
+        that survives is the value the platform understands.
+        """
+        return f"{self.name}/{self.language}"
+
+    @property
+    def is_usable(self) -> bool:
+        """True when a send may reference this template."""
+        return self.status == WhatsAppTemplateStatus.APPROVED
+
+
+class WhatsAppCostHint(WorkspaceScopedModel):
+    """A workspace's own per-category price estimates (SPEC §6.5, §22).
+
+        Surface per-send cost hint in broadcast composer (static table per
+        category, editable in settings; do not attempt live pricing).
+
+    SPEC §22 settles what this is for: "WhatsApp costs are the self-hoster's
+    Meta bill; OpenChat only warns, never meters." So these numbers are shown
+    beside a template and multiplied by a recipient count in a composer, and
+    nothing in the product ever adds them up, stores them per message, or
+    refuses a send because of them.
+
+    They are per workspace and hand-entered because Meta prices per country,
+    per category and per agreement, and revises all three. A number this
+    product fetched would be wrong in a way that looked authoritative; a number
+    the operator typed from their own rate card is wrong in a way they can see.
+
+    Explicit columns rather than a JSON blob of categories: config authored by
+    a user gets schema validation that rejects unknown keys
+    (SECURITY-BASELINE §7), and three decimals do not need a document to hold
+    them.
+    """
+
+    #: What a category costs when the workspace has entered nothing. Zero, not a
+    #: guess: a made-up price shown as a hint is worse than an absent one, and
+    #: the settings page says so where an operator will read it.
+    DEFAULT_AMOUNT = Decimal("0")
+
+    currency = models.CharField(
+        max_length=3,
+        default="USD",
+        help_text="ISO 4217 code, for display only. Nothing converts between currencies.",
+    )
+    marketing = models.DecimalField(max_digits=8, decimal_places=4, default=DEFAULT_AMOUNT)
+    utility = models.DecimalField(max_digits=8, decimal_places=4, default=DEFAULT_AMOUNT)
+    authentication = models.DecimalField(max_digits=8, decimal_places=4, default=DEFAULT_AMOUNT)
+
+    class Meta:
+        db_table = "channels_whatsapp_cost_hint"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["workspace"], name="whatsappcosthint_unique_workspace"),
+        ]
+
+    def __str__(self) -> str:
+        return f"WhatsApp cost hints ({self.currency})"
+
+    def amount_for(self, category: str) -> Decimal:
+        """The per-send estimate for one category, or the default.
+
+        Looked up against the choices rather than by bare ``getattr``, for the
+        reason ``Capabilities.max_bytes_for`` gives: the field names are the
+        category values, and an unconstrained lookup would happily return
+        ``currency``.
+        """
+        if category not in WhatsAppTemplateCategory.values:
+            return self.DEFAULT_AMOUNT
+        value = getattr(self, category, None)
+        return value if isinstance(value, Decimal) else self.DEFAULT_AMOUNT

@@ -1,0 +1,26 @@
+{% comment %}
+The template as a contact would see it. Every value here has been through
+apps.flows.rendering.render — plain token substitution, no template engine
+(SECURITY-BASELINE §3) — and is escaped by Django on the way out. Nothing on
+this page is ever marked safe.
+{% endcomment %}
+<div class="card">
+  {% if rendered.header %}<p><strong>{{ rendered.header }}</strong></p>{% endif %}
+  <p>{{ rendered.body|linebreaksbr }}</p>
+  {% if rendered.footer %}<p class="muted">{{ rendered.footer }}</p>{% endif %}
+</div>
+
+{% if samples %}
+  <p class="muted">Sample values, used for this preview only. They are never sent.</p>
+  <ul>
+    {% for sample in samples %}
+      <li>
+        <label for="sample-{{ sample.slot }}"><code>{{ sample.slot }}</code></label>
+        <input type="text" id="sample-{{ sample.slot }}" name="sample.{{ sample.slot }}"
+               value="{{ sample.value }}" autocomplete="off" />
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p class="muted">This template has no variables.</p>
+{% endif %}

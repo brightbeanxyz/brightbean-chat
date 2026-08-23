@@ -1655,6 +1655,9 @@
             },
             "retry_unmatched": {
               "$ref": "#/$defs/retry_unmatched"
+            },
+            "whatsapp_template": {
+              "$ref": "#/$defs/whatsapp_template"
             }
           },
           "required": [
@@ -2026,6 +2029,55 @@
       "required": [
         "label",
         "url"
+      ],
+      "type": "object"
+    },
+    "whatsapp_template": {
+      "additionalProperties": false,
+      "properties": {
+        "reference": {
+          "description": "<name>/<language>, e.g. order_shipped/en_US.",
+          "maxLength": 600,
+          "minLength": 3,
+          "pattern": "^[a-z0-9_]{1,512}/[A-Za-z_]{2,10}$",
+          "type": "string"
+        },
+        "template_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "variables": {
+          "items": {
+            "$ref": "#/$defs/whatsapp_template_variable"
+          },
+          "maxItems": 20,
+          "type": "array"
+        }
+      },
+      "required": [
+        "reference"
+      ],
+      "type": "object"
+    },
+    "whatsapp_template_variable": {
+      "additionalProperties": false,
+      "properties": {
+        "slot": {
+          "description": "header.1, body.2, button.0.1 …",
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^(header|body|button\\.[0-9]{1,2})\\.[0-9]{1,3}$",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 1024,
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "value"
       ],
       "type": "object"
     }

@@ -58,6 +58,12 @@ class Capabilities:
     quick_replies: bool = False
     url_buttons: bool = False
     typing_indicator: bool = False
+    #: Buttons and quick replies compete for one control set (WhatsApp). Kept in
+    #: step with the real table in ``apps.channels.capabilities``, which is what
+    #: is actually in force — this copy only matters on a deployment where the
+    #: channels app is absent, and a field missing here would be an
+    #: AttributeError in the validator rather than a missing warning.
+    interaction_is_exclusive: bool = False
     proactive_send: bool = False
     window_hours: int | None = None
     tags_supported: tuple[str, ...] = ()
@@ -147,6 +153,7 @@ _VENDORED: dict[str, Capabilities] = {
         file=True,
         buttons=True,
         quick_replies=True,
+        interaction_is_exclusive=True,
         url_buttons=True,
         proactive_send=True,
         window_hours=24,

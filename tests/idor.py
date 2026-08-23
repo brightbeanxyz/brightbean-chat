@@ -62,6 +62,9 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "identity_id": lambda t: _victim_identity(t).pk,
     "import_id": lambda t: _victim_contact_import(t).pk,
     "connection_id": lambda t: _victim_connection(t).pk,
+    # Issue #19's WhatsApp template manager. Workspace-scoped like the rest of
+    # the channels app, so the sweep's ordinary rules apply.
+    "template_id": lambda t: _victim_whatsapp_template(t).pk,
     "asset_id": lambda t: _victim_media_asset(t).pk,
     "folder_id": lambda t: _victim_media_folder(t).pk,
     "flow_id": lambda t: _victim_flow(t).pk,
@@ -168,6 +171,33 @@ def _victim_connection(tenancy: Tenancy) -> Any:
             external_id=f"bot-{tenancy.slug}",
         )
     return connection
+
+
+def _victim_whatsapp_template(tenancy: Tenancy) -> Any:
+    """A WhatsApp template owned by the victim, created on demand (issue #19).
+
+    Built on ``_victim_connection`` so the template and the connection it names
+    belong to the same workspace — a template whose connection was somebody
+    else's would make the sweep pass for the wrong reason. The connection is
+    reused as-is even though it is a Telegram row: the routes under test resolve
+    the template by workspace and never look at its platform, and forcing a
+    second connection here would collide with SPEC §5's deployment-wide unique
+    ``(platform, external_id)``.
+    """
+    from apps.channels.models import WhatsAppTemplate
+
+    template = WhatsAppTemplate.objects.for_workspace(tenancy.workspace).first()
+    if template is None:
+        template = WhatsAppTemplate(
+            workspace=tenancy.workspace,
+            channel_connection=_victim_connection(tenancy),
+            name=f"victim_{tenancy.slug}".replace("-", "_"),
+            language="en_US",
+            category="utility",
+            body_structure={"body": {"text": "Hello"}},
+        )
+        template.save()
+    return template
 
 
 def _victim_flow(tenancy: Tenancy) -> Any:

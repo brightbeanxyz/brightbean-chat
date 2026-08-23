@@ -95,13 +95,19 @@
         </span>
         {{ platform.label }} —
         {% if platform.connect_url %}
-          <a href="{{ platform.connect_url }}">set it up</a> — paste a BotFather token and
-          we do the rest.
+          <a href="{{ platform.connect_url }}">set it up</a> — {{ platform.connect_hint }}
         {% elif platform.adapter_ready %}
           adapter installed.
         {% else %}
           guided setup arrives with {{ platform.issue }}. A connection added now holds its
           webhook URL and secret, and starts working when the adapter ships.
+        {% endif %}
+        {% if platform.extra_links %}
+          <ul>
+            {% for link in platform.extra_links %}
+              <li><a href="{{ link.url }}">{{ link.label }}</a></li>
+            {% endfor %}
+          </ul>
         {% endif %}
       </li>
     {% endfor %}

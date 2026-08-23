@@ -46,6 +46,7 @@ def outbound_from_body(body: Any) -> OutboundMessage:
         quick_replies=tuple(filter(None, (_quick_reply(item) for item in _list(body.get("quick_replies"))))),
         tag=_text(body.get("tag")) or None,
         template_ref=_text(body.get("template_ref")) or None,
+        template_variables=_template_variables(body.get("template_variables")),
         # Absent from every row written before issue #12, which reads back as
         # "" — the same thing an agent reply or an API send stores, and what an
         # adapter already has to handle as "no node behind this message".
@@ -55,6 +56,24 @@ def outbound_from_body(body: Any) -> OutboundMessage:
 
 def _list(value: Any) -> list[Any]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _template_variables(value: Any) -> tuple[tuple[str, str], ...]:
+    """``[[slot, value], ...]`` back to the pairs ``OutboundMessage`` holds.
+
+    A pair that is not two strings is dropped rather than coerced. The retry
+    would otherwise send a template with a slot filled by ``"None"``, which the
+    platform accepts and the contact reads.
+    """
+    if not isinstance(value, list):
+        return ()
+    pairs: list[tuple[str, str]] = []
+    for item in value:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            slot, filled = item
+            if isinstance(slot, str) and isinstance(filled, str) and slot:
+                pairs.append((slot, filled))
+    return tuple(pairs)
 
 
 def _text(value: Any) -> str:
