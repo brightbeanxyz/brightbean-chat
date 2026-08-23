@@ -399,8 +399,21 @@ class WhatsAppTemplate(WorkspaceScopedModel):
     read here happens in a settings page or a composer that already knows its
     workspace, and CONTRIBUTING makes the enforcing manager the rule for tenant
     data rather than something each view remembers. The connection FK is still
-    the authoritative link — a template belongs to the WABA it was submitted
-    to — and ``clean`` keeps the two from disagreeing.
+    the authoritative link — a template belongs to the WABA it was submitted to.
+
+    **What keeps the two from disagreeing is the write path, not a ``clean``.**
+    An earlier version of this docstring promised one, and a ``clean`` here
+    could not have delivered it anyway: ``workspace`` is not a form field and is
+    assigned after ``form.is_valid()``, so ``ModelForm._post_clean`` would run
+    the model's validation before the value it was meant to check exists. What
+    holds instead is that both sides are forced to the same workspace on every
+    write — ``views_whatsapp._edit`` loads through ``get_scoped_object_or_404``,
+    ``WhatsAppTemplateForm`` narrows the ``channel_connection`` choices to that
+    workspace, and the view then assigns ``workspace`` itself. Every reader
+    fails closed regardless: ``whatsapp_templates.sendable`` and
+    ``approved_templates_for`` both filter on workspace *and* connection, so a
+    row that ever did disagree would be unsendable and invisible rather than
+    reachable from the wrong tenant.
 
     ``body_structure`` is the authored template, in the shape
     :mod:`apps.channels.whatsapp_templates` translates into Graph components::

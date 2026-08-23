@@ -62,6 +62,13 @@ PLATFORM_USER_ID = f"+{WA_ID}"
 #: whole file, permanently.
 ACCESS_TOKEN = "EAA" + "deadbeef" * 4  # noqa: S105 - a fake credential for tests
 
+#: The same shape Meta actually issues: base64url, so it carries ``-`` and
+#: ``_``. Kept beside the plain one because the scrubber's pattern has to accept
+#: both, and the all-alphanumeric fixture above cannot show that — an
+#: alphanumeric-only rule matches it happily while failing to fire on a real
+#: token at all. Patterned rather than random, for the reason above.
+BASE64URL_ACCESS_TOKEN = "EAA" + "dead-beef_" * 3  # noqa: S105 - a fake credential for tests
+
 #: The Meta app secret the fixtures are signed with. Supplied to the resolution
 #: chain through ``PLATFORM_CREDENTIALS_FROM_ENV`` in :func:`app_secret_settings`.
 APP_SECRET = "an-app-secret-for-tests"  # noqa: S105 - a fake credential for tests

@@ -22,7 +22,13 @@ from apps.channels.events import OutboundMessage, TextBlock
 from apps.channels.models import ChannelConnection
 from apps.channels.providers.exceptions import APIError
 from apps.channels.providers.whatsapp import WhatsAppAdapter, call, credentials_of
-from apps.channels.tests.whatsapp_support import ACCESS_TOKEN, Reply, fake_graph_api, make_connection
+from apps.channels.tests.whatsapp_support import (
+    ACCESS_TOKEN,
+    BASE64URL_ACCESS_TOKEN,
+    Reply,
+    fake_graph_api,
+    make_connection,
+)
 from apps.common.logging import REDACTED, scrub
 
 pytestmark = pytest.mark.django_db
@@ -125,6 +131,21 @@ class TestNothingLogsTheToken:
 class TestTheScrubberKnowsThisShape:
     def test_a_bare_meta_token_is_redacted(self) -> None:
         assert ACCESS_TOKEN not in scrub(f"the token is {ACCESS_TOKEN} apparently")
+
+    def test_a_base64url_token_is_redacted_whole(self) -> None:
+        """The shape Meta actually issues, and the one the first rule missed.
+
+        An alphanumeric-only character class does not merely stop at the first
+        ``-``: it fails to reach the 20-character minimum and does not fire at
+        all, so the entire credential survives. The all-alphanumeric fixture
+        could never have shown that, which is why this case exists separately.
+        """
+        scrubbed = scrub(f"pasted {BASE64URL_ACCESS_TOKEN} here")
+
+        assert BASE64URL_ACCESS_TOKEN not in scrubbed
+        # Not merely truncated at the first non-alphanumeric character: no
+        # recognisable prefix of the token is left behind either.
+        assert BASE64URL_ACCESS_TOKEN[:12] not in scrubbed
 
     def test_it_survives_a_bearer_header(self) -> None:
         assert scrub(f"Authorization: Bearer {ACCESS_TOKEN}").endswith(REDACTED)
