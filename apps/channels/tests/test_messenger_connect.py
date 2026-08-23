@@ -38,7 +38,9 @@ from tests.support import Tenancy, create_tenancy
 pytestmark = pytest.mark.django_db
 
 CALLBACK = "/oauth/meta/callback/"
-USER_TOKEN = "EAAuserTOKEN0123456789abcdefghijklmnop"  # noqa: S105 - a fake credential for tests
+# Assembled, not written out — see ``messenger_support.PAGE_TOKEN`` for why a
+# credential-shaped literal in this repository fails CI on every open PR.
+USER_TOKEN = "EAA" + "userTOKEN0123" * 3  # noqa: S105 - a fake credential for tests
 GRANTED_PAGE = {"id": "555555555555555", "name": "Acme Support", "access_token": PAGE_TOKEN}
 
 

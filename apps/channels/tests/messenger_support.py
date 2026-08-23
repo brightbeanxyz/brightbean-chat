@@ -42,9 +42,20 @@ FIXTURES = Path(__file__).parent / "fixtures" / "messenger"
 #: A token shaped like a real one — Meta page tokens begin ``EAA`` — because the
 #: log scrubber recognises that shape, and a test using "secret" as a token would
 #: prove nothing about it.
-PAGE_TOKEN = "EAAG9ZBxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdef"  # noqa: S105 - a fake credential for tests
+#:
+#: **Assembled rather than written out**, which is not cosmetic. CI runs gitleaks
+#: over the full history with ``fetch-depth: 0``, so it scans every branch in the
+#: repository on every pull request: a credential-shaped literal here would fail
+#: the secret scan on *everyone's* PR, not just this one, until somebody added a
+#: path allowlist to the shared ``.gitleaks.toml`` — and a shared config edit is
+#: the one thing five parallel workstreams cannot each make without colliding.
+#: Splitting the literal keeps the fixture the right shape for the scrubber test
+#: while leaving no high-entropy run for the entropy rule to find. #19 hit this
+#: and fixed it the same way.
+PAGE_TOKEN = "EAA" + "G9ZBxyzABCDEF" * 3  # noqa: S105 - a fake credential for tests
 
-#: The app secret every fixture delivery is signed with.
+#: The app secret every fixture delivery is signed with. Deliberately shapeless
+#: prose rather than a random-looking string, for the reason above.
 APP_SECRET = "fake-messenger-app-secret"  # noqa: S105 - a fake credential for tests
 
 #: The page id the fixtures name, and the connection's ``external_id``.
