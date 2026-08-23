@@ -20,7 +20,7 @@ Nothing fetches an `attachments` URL server-side. There is no reason to: the
 reader can already reach it, and fetching a stranger's URL from inside the
 deployment is what SECURITY-BASELINE §6's guard exists to contain.
 
-A `media_ids` entry is the opposite case, and both shipped channels are in it:
+A `media_ids` entry is the opposite case, and two shipped channels are in it:
 
 * **Telegram** hands out a `file_id`. It becomes a URL only after a `getFile`
   call, and the URL it becomes expires in an hour and carries the bot token in
@@ -33,6 +33,13 @@ A `media_ids` entry is the opposite case, and both shipped channels are in it:
 
 If a platform's media URL needs a signature, a session or an account credential,
 it is `media_ids`, whatever it looks like.
+
+**Not yet wired:** WhatsApp (#19) also stores `media_ids` and has no
+`media_source` override, so its inbound media renders as a tombstone rather than
+a picture. The work is the same shape as Twilio's — a `GET` to the Graph media
+endpoint with the connection's access token — and is a follow-up, not part of
+this path's design. Instagram and Messenger use `attachments`, because Meta
+serves those URLs publicly, so they need nothing here.
 
 ## The path
 
@@ -157,6 +164,9 @@ def media_source(self, connection, media_id):
     )
 ```
 
+`apps/channels/providers/sms.py` is the worked example for the credentialed
+case and `telegram.py` for the resolve-then-fetch case.
+
 Fill `EventPayload.media_kinds` alongside `media_ids` while you are there —
 positionally aligned, one entry per id — so the inbox can pick a tag. Twilio's
 `MediaContentType0` is the field for it. Classify from the *payload*, not from
@@ -179,3 +189,10 @@ Four rules:
   raise you meant to handle is a stack trace in someone's logs.)
 * Use `MEDIA_RESOLVE_TIMEOUT` for any HTTP call you make here. See the time
   budget above for why picking your own number breaks something.
+* **Check the origin before attaching a credential**, whenever the identifier
+  came from a webhook body rather than being built by you. Twilio's adapter
+  refuses any `MediaUrl` that is not HTTPS on `api.twilio.com`, because
+  otherwise a forged payload would be a way to post the account's own
+  credentials to a host of the attacker's choosing. The guard covers the
+  redirect half by dropping `Authorization` across origins; the first hop is
+  yours to check.

@@ -136,16 +136,23 @@ verification and short codes are out of scope.
 | Messaging window | None. Opt-out is the only gate. |
 | Send rate | 1 per second per connection, Twilio's long-code throughput |
 
-**Inbound MMS is recorded, not yet rendered.** Twilio delivers picture messages
-as `MediaUrl` values pointing at a REST resource under your account, which is not
-a link a browser can follow: on an account with authenticated media it answers
-401 to anyone without the Account SID and Auth Token, and on an account without
-it, it answers to *anyone at all* — a contact's picture messages behind a URL we
+**Inbound MMS renders in the thread.** Twilio delivers picture messages as
+`MediaUrl` values pointing at a REST resource under your account, which is not a
+link a browser can follow: on an account with authenticated media it answers 401
+to anyone without the Account SID and Auth Token, and on an account without it,
+it answers to *anyone at all* — a contact's picture messages behind a URL we
 would be handing out. So they are stored as media identifiers rather than as
-attachments, which is the same call the Telegram adapter makes about its
-`file_id`s, and neither channel resolves them yet. The message text arrives
-normally; the picture is on the message row and needs a credentialed fetch to
-display. Resolving them for both channels is its own piece of work.
+attachments, the same call the Telegram adapter makes about its `file_id`s, and
+resolved on demand through the shared path in `apps/channels/media.py`: the
+adapter attaches the account's Basic auth, the fetch goes through the SSRF guard,
+and the bytes come back from this deployment's own origin with a content type
+sniffed from them rather than believed. See [Inbound media](media.md).
+
+The credential is attached only after the stored URL is checked against
+`api.twilio.com` over HTTPS. That URL arrived in a webhook body, and without the
+check a forged one would be a way to post your Account SID and Auth Token to
+somebody else's server — Twilio's request signature is what makes forging hard,
+and the origin check is what makes it pointless.
 
 A flow with buttons still works on SMS. The shared downgrade renderer
 (`apps/channels/downgrade.py`) appends "Reply 1 for …" to the message, and a
