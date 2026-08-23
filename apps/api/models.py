@@ -271,6 +271,7 @@ def touch_last_used(api_key: ApiKey, *, now: datetime | None = None) -> None:
     if previous is not None and (moment - previous).total_seconds() < 60:
         return
     api_key.last_used_at = moment
-    # all_objects: this runs on the auth path, where the workspace has just been
-    # resolved *from* the key and re-scoping the update would be circular.
-    ApiKey.all_objects.filter(pk=api_key.pk).update(last_used_at=moment)
+    # Scoped, even though the row was found unscoped a moment ago: by this point
+    # the key has named its workspace, so there is no reason to reach for the
+    # escape hatch a second time.
+    ApiKey.objects.for_workspace(api_key.workspace_id).filter(pk=api_key.pk).update(last_used_at=moment)
