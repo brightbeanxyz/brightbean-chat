@@ -163,6 +163,22 @@ class TestPolling:
 
         assert response.headers["Cache-Control"] == "no-store"
 
+    def test_the_status_chip_lives_in_the_polled_fragment(
+        self, tenancy, client_for, make_contacts, make_broadcast, connection
+    ):
+        """It changes while somebody is looking at the page.
+
+        A copy in the page header would sit at "Scheduled" while the counters
+        beside it filled in — which is what it did until this test existed.
+        """
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+        client = client_for(tenancy.owner)
+
+        fragment = client.get(_url("broadcasts:counters", tenancy, broadcast)).content.decode()
+
+        assert "status-pill-draft" in fragment
+
     def test_the_detail_page_carries_the_htmx_304_fix(
         self, tenancy, client_for, make_contacts, make_broadcast, connection
     ):

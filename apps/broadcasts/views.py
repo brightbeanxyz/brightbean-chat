@@ -209,7 +209,13 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
     if step == "audience":
         query = ContactQuery(document=broadcast.target_filter_json or {}, segment=broadcast.segment)
         context["filter_config"] = filter_config(request.workspace, query)
-        context.setdefault("preview", audience_module.preview(broadcast) if broadcast.target_filter_json else None)
+        # The same fragment the preview endpoint renders, filled server-side so
+        # the count is on screen before the first poll rather than a beat later.
+        # Skipped for a draft with no audience yet, where there is nothing to
+        # count and the aggregate would be three queries for an empty answer.
+        preview = audience_module.preview(broadcast) if broadcast.target_filter_json else None
+        context["preview"] = preview
+        context["reasons"] = _reasons(preview.skipped, preview.samples) if preview else []
     if step == "content":
         context["config"] = services.node_config(_graph_of(broadcast))
     context.update(extra)
@@ -343,6 +349,16 @@ def audience_preview(request: WorkspaceRequest, workspace_id: str, broadcast_id:
         document, segment = _audience_from(request, params=request.GET)
     except ConditionError as exc:
         return render(request, "broadcasts/_audience_preview.html", {"error": str(exc)})
+
+    if not document:
+        # No rules yet — which is what the page loads with, and what the filter
+        # bar serialises to while it is empty. An empty document is not a filter
+        # the condition engine can compile ("missing key(s): match, rules"), so
+        # asking it would be a 500 on a keystroke; there is also nothing to
+        # count. ``{"match": "all", "rules": []}`` is a different thing entirely
+        # and does reach the engine: it targets everyone, deliberately, which is
+        # exactly why this preview exists.
+        return render(request, "broadcasts/_audience_preview.html", {"preview": None})
 
     # A throwaway instance so the preview is computed against the filter on
     # screen rather than the one on disk. Never saved — assigning to an unsaved

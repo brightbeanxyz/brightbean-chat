@@ -190,6 +190,12 @@ def set_audience(broadcast: Broadcast, *, filter_json: Any, segment: Any = None)
     deleted mid-send would otherwise take the audience with it.
     """
     _require_draft(broadcast)
+    if not filter_json:
+        # An empty document is the absence of a filter, not a filter matching
+        # nobody, and the condition engine cannot compile one. "Everyone" has a
+        # spelling — ``{"match": "all", "rules": []}`` — and choosing it is an
+        # act the composer makes somebody perform, count in hand.
+        raise BroadcastError("Add at least one rule, or pick a saved segment.")
     try:
         conditions.validate(broadcast.workspace_id, filter_json)
     except conditions.ConditionError as exc:
@@ -389,6 +395,9 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None, pr
         raise BroadcastError("Only a draft can be scheduled.")
     if broadcast.flow_id is None and broadcast.whatsapp_template_id is None:
         raise BroadcastError("Add a message before sending.")
+    if not broadcast.target_filter_json:
+        # Reachable through the API, where nothing walks the wizard's steps.
+        raise BroadcastError("Choose who this broadcast goes to.")
 
     counts = preview if preview is not None else audience_module.preview(broadcast)
     if counts.total == 0:

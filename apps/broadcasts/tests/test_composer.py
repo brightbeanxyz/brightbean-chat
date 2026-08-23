@@ -505,3 +505,64 @@ class TestNoPlatformBranches:
             f"apps/broadcasts compares a platform literal at {offenders}. Contract 4's promise is that "
             f"a Layer-5 platform costs one module and one registry line; read the flag, not the name."
         )
+
+
+@pytest.mark.django_db
+class TestNoAudienceYet:
+    """A draft with no rules at all — the state the audience step opens in.
+
+    An empty document is the *absence* of a filter, and the condition engine
+    cannot compile one: ``conditions.queryset(ws, {})`` raises "missing key(s):
+    match, rules". So every path that might meet one has to recognise it, or a
+    freshly created broadcast 500s on the first keystroke.
+
+    ``{"match": "all", "rules": []}`` is a different thing and is deliberately
+    *not* caught here: it targets the whole workspace, which is the hazard
+    apps/contacts/conditions.py names by issue number, and the answer to it is
+    the count this preview shows rather than a refusal.
+    """
+
+    def test_the_preview_answers_without_asking_the_engine(self, tenancy, client_for, connection):
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Fresh", connection=connection, user=tenancy.owner
+        )
+
+        response = client_for(tenancy.owner).get(
+            _url("broadcasts:audience_preview", tenancy, broadcast_id=broadcast.pk)
+        )
+
+        assert response.status_code == 200
+        assert b"Add a rule" in response.content
+
+    def test_the_composer_page_opens_on_a_draft_with_no_audience(self, tenancy, client_for, connection):
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Fresh", connection=connection, user=tenancy.owner
+        )
+
+        response = client_for(tenancy.owner).get(_url("broadcasts:compose", tenancy, broadcast_id=broadcast.pk))
+
+        assert response.status_code == 200
+
+    def test_saving_an_empty_audience_is_refused_in_words_an_operator_can_act_on(self, tenancy, client_for, connection):
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Fresh", connection=connection, user=tenancy.owner
+        )
+
+        response = client_for(tenancy.owner).post(
+            _url("broadcasts:save_audience", tenancy, broadcast_id=broadcast.pk), {"filter": ""}
+        )
+
+        assert b"Add at least one rule" in response.content
+        broadcast.refresh_from_db()
+        assert broadcast.target_filter_json == {}
+
+    def test_scheduling_one_is_refused_rather_than_crashing(self, tenancy, connection, make_contacts):
+        """Reachable through the API, where nothing walks the wizard's steps."""
+        make_contacts(1, connection=connection)
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Fresh", connection=connection, user=tenancy.owner
+        )
+        services.save_content(broadcast, {"blocks": [{"type": "text", "text": "Hi"}]})
+
+        with pytest.raises(services.BroadcastError, match="Choose who"):
+            services.schedule_broadcast(broadcast)

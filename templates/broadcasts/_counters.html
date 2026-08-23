@@ -11,7 +11,11 @@ no receipt path of its own.
 {% endcomment %}
 <div class="bc-panel">
     <div class="bc-panel-head">
-        <span class="bc-panel-title">Progress</span>
+        <span class="bc-panel-title">
+            Progress
+            {# Polled, so it follows the broadcast through scheduled → sending → sent. #}
+            <span class="status-pill status-pill-{{ broadcast.status }}">{{ broadcast.get_status_display }}</span>
+        </span>
         {% if broadcast.is_live %}
         <form hx-post="{% url 'broadcasts:cancel' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
               hx-swap="none"
