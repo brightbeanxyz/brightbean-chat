@@ -39,7 +39,7 @@ The redirect URI is fixed, and has to be
 Meta requires every redirect URI to be whitelisted in the app's console, exactly.
 A per-workspace callback path would mean whitelisting one URI per tenant, which is
 not something a self-hoster can do — so the callback lives outside
-``/w/<workspace_id>/``, at ``/oauth/meta/callback/``, and the workspace comes from
+``/w/<workspace_id>/``, at ``/channels/messenger/callback/``, and the workspace comes from
 the signed state instead of from the path. That is also why the route carries no
 tenant-shaped kwarg and is therefore not swept by ``tests/idor.py``: it has no
 tenant id to fuzz, and what stands in for the sweep is the state check above.
@@ -54,8 +54,7 @@ from urllib.parse import urlencode, urljoin
 from django.conf import settings
 from django.urls import reverse
 
-from apps.channels.providers import meta_common
-from apps.channels.providers.base import BACKGROUND_TIMEOUT
+from apps.channels.providers.base import BACKGROUND_TIMEOUT, request_json
 from apps.channels.providers.exceptions import APIError
 from apps.common import signing
 
@@ -187,6 +186,8 @@ def authorize_url(*, client_id: str, state: str) -> str:
     time is asked again rather than being handed straight back with the same
     partial grant and no explanation.
     """
+    from apps.channels.providers.messenger import GRAPH_VERSION
+
     query = urlencode(
         {
             "client_id": client_id,
@@ -197,7 +198,7 @@ def authorize_url(*, client_id: str, state: str) -> str:
             "auth_type": "rerequest",
         }
     )
-    return f"{LOGIN_ROOT}/{meta_common.GRAPH_VERSION}/dialog/oauth?{query}"
+    return f"{LOGIN_ROOT}/{GRAPH_VERSION}/dialog/oauth?{query}"
 
 
 def exchange_code(*, code: str, client_id: str, client_secret: str) -> str:
@@ -242,15 +243,19 @@ def exchange_code(*, code: str, client_id: str, client_secret: str) -> str:
 
 
 def _oauth_token(form: dict[str, str]) -> str:
-    body = meta_common.graph_call(
-        # The one Graph endpoint with no bearer token to present: it authenticates
-        # with the app id and secret in its own body.
-        "",
+    from apps.channels.providers.messenger import GRAPH_ROOT, GRAPH_VERSION, _client
+
+    # ``request_json`` directly rather than the adapter's ``graph_call``: this is
+    # the one Graph endpoint with no bearer token to present — it authenticates
+    # with the app id and secret in its own body. It still borrows the adapter's
+    # pooled client, which is also the documented test seam, so a connect flow
+    # under test goes through the same fake every other Graph call does.
+    body = request_json(
         "POST",
-        "oauth/access_token",
+        f"{GRAPH_ROOT}/{GRAPH_VERSION}/oauth/access_token",
         data=form,
+        client=_client(),
         timeout=BACKGROUND_TIMEOUT,
-        unauthenticated=True,
     )
     token = body.get("access_token")
     if not isinstance(token, str) or not token:
@@ -266,13 +271,17 @@ def list_pages(user_token: str) -> list[MetaPage]:
     which the view renders as an explanation rather than an error — "you have no
     Facebook pages" is a true and actionable thing to be told.
     """
-    body = meta_common.graph_call(
+    from apps.channels.providers.messenger import graph_call
+
+    body = graph_call(
         user_token,
         "GET",
         "me/accounts",
         params={"fields": "id,name,access_token", "limit": str(MAX_PAGES)},
         timeout=BACKGROUND_TIMEOUT,
     )
+    from apps.channels.providers.messenger import bounded_id
+
     rows = body.get("data")
     if not isinstance(rows, list):
         return []
@@ -281,7 +290,7 @@ def list_pages(user_token: str) -> list[MetaPage]:
     for item in rows[:MAX_PAGES]:
         if not isinstance(item, dict):
             continue
-        page_id = meta_common.bounded_id(item.get("id"))
+        page_id = bounded_id(item.get("id"))
         token = item.get("access_token")
         if not page_id or not isinstance(token, str) or not token:
             # A page the app cannot message is a page we cannot connect. Listing

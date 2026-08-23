@@ -1,12 +1,13 @@
 """Fixtures shared by the channels test modules."""
 
 from collections.abc import Iterator
+from datetime import timedelta
 from typing import Any
 
 import pytest
 
 from apps.channels.models import ChannelConnection
-from apps.channels.providers import meta_common
+from apps.channels.providers import messenger as messenger_module
 from apps.channels.tests.fake_adapter import FakeAdapter, registered
 from apps.channels.tests.messenger_support import APP_SECRET, PAGE_ID, PAGE_TOKEN
 from apps.common.platforms import Platform
@@ -30,20 +31,6 @@ def connection(tenancy: Any) -> ChannelConnection:
 def secret(connection: ChannelConnection) -> str:
     """The connection's webhook secret, in plaintext."""
     return connection.webhook_secret
-
-
-@pytest.fixture(autouse=True)
-def _forget_app_secrets() -> Iterator[None]:
-    """Start and end every test in this app with no memoised Meta app secret.
-
-    ``meta_common.app_secret_for`` caches per process for a minute so the webhook
-    ack path does not pay the SPEC §4 credential chain on every delivery. That
-    cache would otherwise outlive the test that populated it and let the next one
-    verify against a secret its own settings never configured.
-    """
-    meta_common.forget_app_secrets()
-    yield
-    meta_common.forget_app_secrets()
 
 
 @pytest.fixture
@@ -75,7 +62,7 @@ def page(tenancy: Any, app_secret: str) -> ChannelConnection:
         display_name="Acme Page",
         external_id=PAGE_ID,
     )
-    meta_common.store_page_token(connection, PAGE_TOKEN)
+    messenger_module.store_page_token(connection, PAGE_TOKEN)
     connection.rotate_webhook_secret()
     connection.save()
     return connection
@@ -122,3 +109,52 @@ def _clean_processors() -> Iterator[None]:
             ingest.unregister_processor(name)
         for name, processor in before.items():
             ingest.register_processor(processor, name=name)
+
+
+@pytest.fixture
+def instagram_app(settings: Any) -> dict[str, str]:
+    """Deployment-level Instagram app credentials, the bottom of SPEC §4's chain.
+
+    The env level rather than a workspace override, because that is the shape a
+    self-hoster uses and because it exercises ``env_credentials`` — which is also
+    what the ``hub.challenge`` verification reads.
+    """
+    from apps.channels.tests.instagram_support import APP_SECRET
+
+    settings.PLATFORM_CREDENTIALS_FROM_ENV = {
+        Platform.INSTAGRAM.value: {
+            "client_id": "1122334455",
+            "client_secret": APP_SECRET,
+            "verify_token": "hub-verify-token",
+        }
+    }
+    return settings.PLATFORM_CREDENTIALS_FROM_ENV[Platform.INSTAGRAM.value]
+
+
+@pytest.fixture
+def instagram_connection(tenancy: Any) -> ChannelConnection:
+    """An active Instagram connection with a long-lived token on it.
+
+    ``external_id`` is the Instagram professional account id, because that is
+    what arrives as ``entry[].id`` and is the only thing
+    ``InstagramAdapter.resolve_connection`` has to find the row by.
+    """
+    from django.utils import timezone
+
+    from apps.channels import instagram_oauth
+    from apps.channels.tests.instagram_support import ACCESS_TOKEN, IG_ACCOUNT_ID
+
+    connection = ChannelConnection(
+        workspace=tenancy.workspace,
+        platform=Platform.INSTAGRAM,
+        display_name="@brightbean",
+        external_id=IG_ACCOUNT_ID,
+    )
+    instagram_oauth.store_credentials(
+        connection,
+        token=ACCESS_TOKEN,
+        expires_at=timezone.now() + timedelta(days=59),
+        user_id=IG_ACCOUNT_ID,
+    )
+    connection.save()
+    return connection

@@ -4,7 +4,7 @@ Two credentials, and they fail differently.
 
 The **page access token** *is* the page: anyone holding it can read every message
 sent to it and send as it. Unlike Telegram's bot token it never appears in a URL,
-because ``meta_common.graph_call`` puts it in an ``Authorization`` header — so the
+because ``messenger_module.graph_call`` puts it in an ``Authorization`` header — so the
 first assertion here is that the design holds, not merely that the scrubber
 catches it afterwards.
 
@@ -32,9 +32,9 @@ import pytest
 
 from apps.channels.events import OutboundMessage, TextBlock
 from apps.channels.models import ChannelConnection
-from apps.channels.providers import meta_common
+from apps.channels.providers import messenger as messenger_module
 from apps.channels.providers.exceptions import APIError
-from apps.channels.providers.messenger import MessengerAdapter, list_posts
+from apps.channels.providers.messenger import MessengerAdapter, recent_posts
 from apps.channels.tests.messenger_support import APP_SECRET, PAGE_TOKEN, PSID, Reply, fake_graph
 from apps.common.logging import scrub
 
@@ -71,7 +71,7 @@ class TestTheTokenIsNeverInAUrl:
             subscribe_page(page)
             unsubscribe_page(page)
             set_get_started(page)
-            list_posts(page, 5)
+            recent_posts(page, limit=5)
             MessengerAdapter().send_typing(page, Identity())
         assert graph.calls
         for call in graph.calls:
@@ -110,13 +110,13 @@ class TestNothingLogsACredential:
             raise httpx.ConnectError("failed connecting to graph.facebook.com", request=request)
 
         client = httpx.Client(transport=httpx.MockTransport(boom))
-        original = meta_common._client
-        meta_common._client = lambda: client  # type: ignore[assignment]
+        original = messenger_module._client
+        messenger_module._client = lambda: client  # type: ignore[assignment]
         try:
             with pytest.raises(APIError) as caught:
                 MessengerAdapter().send(page, Identity(), TEXT)
         finally:
-            meta_common._client = original  # type: ignore[assignment]
+            messenger_module._client = original  # type: ignore[assignment]
             client.close()
 
         assert PAGE_TOKEN not in str(caught.value)
@@ -141,17 +141,15 @@ class TestNothingLogsACredential:
             def credentials(self) -> Any:
                 raise ValueError("could not decrypt")
 
-        assert meta_common.page_token(Broken()) == ""  # type: ignore[arg-type]
+        assert messenger_module.page_token(Broken()) == ""  # type: ignore[arg-type]
         assert PAGE_TOKEN not in emitted(caplog)
 
     def test_a_failed_post_listing_logs_no_token(self, page: ChannelConnection, caplog: Any) -> None:
-        from apps.channels.posts import PostListingError
-
         def configure(graph: Any) -> None:
             graph.reply("/posts", Reply(status=400))
 
-        with fake_graph(configure), pytest.raises(PostListingError):
-            list_posts(page, 5)
+        with fake_graph(configure), pytest.raises(APIError):
+            recent_posts(page, limit=5)
         assert PAGE_TOKEN not in emitted(caplog)
 
     def test_a_dead_token_notification_carries_no_token(self, page: ChannelConnection, caplog: Any) -> None:

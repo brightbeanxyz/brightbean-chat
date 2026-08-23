@@ -412,7 +412,6 @@ class TestThePrivateReplyHandoffIsBounded:
         send it is making — so an open claim would otherwise let any later message
         spend the one private reply Meta permits.
         """
-        from apps.flows.triggers import comments
 
         deliver_comment(client)
         run_queued_actions()
@@ -421,8 +420,8 @@ class TestThePrivateReplyHandoffIsBounded:
         row.private_reply_sent_at = None
         row.save(update_fields=["private_reply_sent_at"])
 
-        stale = timezone.now() + comments.PRIVATE_REPLY_HANDOFF + timedelta(minutes=1)
-        assert comments.pending_private_reply(page, PSID, now=stale) is None
+        stale = timezone.now() + messenger_adapter.PRIVATE_REPLY_HANDOFF + timedelta(minutes=1)
+        assert messenger_adapter.pending_private_reply(page, PSID, now=stale) is None
         # Still inside the platform's own seven days — this is our narrower bound.
         from apps.flows.triggers.guards import may_private_reply
 
@@ -431,21 +430,19 @@ class TestThePrivateReplyHandoffIsBounded:
     def test_a_send_inside_the_window_still_gets_the_private_reply(
         self, client: Client, page: ChannelConnection, comment_trigger: Trigger
     ) -> None:
-        from apps.flows.triggers import comments
 
         deliver_comment(client)
-        assert comments.pending_private_reply(page, PSID) is not None
+        assert messenger_adapter.pending_private_reply(page, PSID) is not None
 
     def test_an_answerable_claim_is_never_hidden_behind_older_ones(
         self, client: Client, page: ChannelConnection, comment_trigger: Trigger
     ) -> None:
         """The fixed slice this replaced could bury a live claim behind expired ones."""
-        from apps.flows.triggers import comments
 
         for index in range(8):
             deliver_comment(client, comment_id=f"111111111111111_92{index:02d}", message=f"question {index}")
         assert HandledComment.objects.unscoped().count() == 1  # once per person per post
-        assert comments.pending_private_reply(page, PSID) is not None
+        assert messenger_adapter.pending_private_reply(page, PSID) is not None
 
 
 class TestOnlyOneMessageAnswersAComment:
@@ -565,8 +562,11 @@ class TestTheSeamIsPlatformAgnostic:
         """L5-A adds one ``register_comment_actions`` line, not an edit to stages."""
         from apps.flows.triggers import comments
 
-        assert comments.actions_for("messenger") is messenger_adapter.enqueue_comment_actions
-        assert comments.actions_for("instagram") is None
+        responder = comments.responder_for("messenger")
+        assert responder is not None
+        assert responder.respond is messenger_adapter.respond_to_comment
+        assert responder.supports_like is True
+        assert responder.picker_route == "channels:messenger_posts"
 
     def test_a_platform_with_nothing_registered_still_claims_the_comment(
         self, client: Client, page: ChannelConnection, comment_trigger: Trigger
@@ -574,11 +574,11 @@ class TestTheSeamIsPlatformAgnostic:
         """The behaviour before any Layer-5 adapter shipped: claimed, unanswered."""
         from apps.flows.triggers import comments
 
-        registered = comments._ACTIONS.pop("messenger")
+        registered = comments._RESPONDERS.pop("messenger")
         try:
             deliver_comment(client)
         finally:
-            comments._ACTIONS["messenger"] = registered
+            comments._RESPONDERS["messenger"] = registered
 
         assert HandledComment.objects.unscoped().count() == 1
         assert not queued().exists()
@@ -594,15 +594,15 @@ class TestTheSeamIsPlatformAgnostic:
         """
         from apps.flows.triggers import comments
 
-        def explode(claim: Any) -> None:
+        def explode(context: Any, trigger: Any, row: Any) -> None:
             raise RuntimeError("Meta is on fire")
 
-        registered = comments._ACTIONS["messenger"]
-        comments._ACTIONS["messenger"] = explode
+        registered = comments._RESPONDERS["messenger"]
+        comments._RESPONDERS["messenger"] = comments.CommentResponder(respond=explode)
         try:
             response, _calls = deliver_comment(client)
         finally:
-            comments._ACTIONS["messenger"] = registered
+            comments._RESPONDERS["messenger"] = registered
 
         assert response.status_code == 200
         assert HandledComment.objects.unscoped().count() == 1

@@ -5,7 +5,7 @@ shape so a reader of one recognises the other.
 
 :func:`fake_graph`
     Routes every Graph call through ``httpx.MockTransport`` by replacing
-    :func:`apps.channels.providers.meta_common._client`, which is the seam that
+    :func:`apps.channels.providers.messenger_module._client`, which is the seam that
     module documents for exactly this. Going through the seam rather than
     stubbing ``graph_call`` means the **real** error mapping runs: a 429 really
     does become a ``RateLimitError``, a 400 with ``error.code`` 190 really does
@@ -35,7 +35,7 @@ import httpx
 from django.test import Client
 
 from apps.channels import security
-from apps.channels.providers import meta_common
+from apps.channels.providers import messenger as messenger_module
 
 FIXTURES = Path(__file__).parent / "fixtures" / "messenger"
 
@@ -170,14 +170,14 @@ def fake_graph(configure: Callable[[FakeGraph], None] | None = None) -> Iterator
         configure(fake)
 
     client = httpx.Client(transport=httpx.MockTransport(fake.handle))
-    original = meta_common._client
+    original = messenger_module._client
     # One client for the whole block. ``request_json`` only closes a client it
     # created itself, so handing out a fresh one per call would leak them.
-    meta_common._client = lambda: client  # type: ignore[assignment]
+    messenger_module._client = lambda: client  # type: ignore[assignment]
     try:
         yield fake
     finally:
-        meta_common._client = original  # type: ignore[assignment]
+        messenger_module._client = original  # type: ignore[assignment]
         client.close()
 
 

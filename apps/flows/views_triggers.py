@@ -20,13 +20,14 @@ from typing import Any
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
+from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows.models import Flow, Trigger, TriggerType
-from apps.flows.triggers import forms, links, qr, services
+from apps.flows.triggers import comments, forms, links, qr, services
 from apps.flows.triggers.registry import TRIGGER_TYPES, spec_for
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
@@ -38,7 +39,6 @@ __all__ = [
     "trigger_form",
     "trigger_move",
     "trigger_panel",
-    "trigger_posts",
     "trigger_qr",
     "trigger_toggle",
     "trigger_update",
@@ -88,19 +88,44 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     if spec is None:
         return toast_response(tone="error", title="Unknown trigger type", body="Pick one from the list.")
 
-    connection_options = _connection_options(request, spec)
     context = _panel_context(request, flow)
     context.update(
         {
             "trigger": trigger,
             "spec": spec,
             "config": trigger.config_json if trigger is not None else spec.default_config(),
-            "connection_options": connection_options,
-            "post_picker_connections": _post_picker_connections(request, spec, flow, connection_options),
+            "connection_options": _connection_options(request, spec),
             "rule_events": _RULE_EVENTS,
+            # Both read off the comment-responder registry rather than being
+            # decided here, so this view still names no platform: SPEC §10's
+            # like_comment is offered when some platform the trigger can fire on
+            # has an API for it, and a post picker is offered by whichever
+            # platforms ship one. See apps.flows.triggers.comments.
+            "like_supported": comments.like_supported_on(spec.platforms),
+            "post_pickers": _post_pickers(spec, workspace_id),
         }
     )
     return render(request, "flows/_trigger_form.html", context)
+
+
+def _post_pickers(spec: Any, workspace_id: str) -> list[dict[str, str]]:
+    """The post pickers this trigger type can offer, one per platform.
+
+    A route whose reverse fails is skipped rather than raised on: a responder
+    registered by an adapter whose urls have not been mounted is a
+    misconfiguration, and it should cost the operator a missing button rather
+    than the whole trigger drawer.
+    """
+    labels = dict(Platform.choices)
+    pickers: list[dict[str, str]] = []
+    for platform, route in comments.picker_routes(spec.platforms):
+        try:
+            url = reverse(route, kwargs={"workspace_id": workspace_id})
+        except NoReverseMatch:
+            logger.warning("Comment responder for %s names an unroutable post picker %r.", platform, route)
+            continue
+        pickers.append({"platform": platform, "label": str(labels.get(platform, platform)), "url": url})
+    return pickers
 
 
 @login_required
@@ -303,52 +328,6 @@ def _duplicate_stage_labels(rows: list[Trigger]) -> list[str]:
     return sorted(labels)
 
 
-@login_required
-@require_permission("edit_flows")
-@require_GET
-def trigger_posts(request: WorkspaceRequest, workspace_id: str, flow_id: str, connection_id: str) -> HttpResponse:
-    """The comment trigger's post picker (SPEC §10, issues #17 and #18).
-
-    A comment trigger scoped to specific posts stores platform post ids, and
-    before this route the only way to fill that in was to paste ids that live
-    nowhere a person can see them. This lists the connected account's recent posts
-    so they can be ticked instead.
-
-    ``edit_flows`` rather than ``manage_channels``: the person configuring a
-    trigger is a flow author, and this reads a connection without changing
-    anything about it — the same call ``views_telegram.telegram_preview`` makes
-    for the builder's Test button.
-
-    **Every outcome is a 200 with a reason**, including the failures. The caller
-    is an htmx fragment inside the trigger drawer, "this channel cannot list
-    posts" and "this page has not posted yet" are ordinary things for it to
-    render, and htmx drops ``HX-Trigger`` on a non-2xx — so a 4xx here would make
-    the picker appear to do nothing at all. That is this module's stated
-    convention for every mutation and it holds for reads too.
-    """
-    from apps.channels import posts as channel_posts
-
-    flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
-    model = _connection_model()
-    connection = get_scoped_object_or_404(model, request.workspace, pk=connection_id) if model else None
-    if connection is None:  # pragma: no cover - channels is always installed
-        raise Http404("No such connection.")
-
-    context: dict[str, Any] = {"flow": flow, "connection": connection, "posts": [], "reason": ""}
-    if not channel_posts.supports_post_listing(connection.platform):
-        context["reason"] = "unsupported"
-        return render(request, "flows/triggers/_post_picker.html", context)
-
-    try:
-        context["posts"] = channel_posts.list_posts(connection)
-    except channel_posts.PostListingError:
-        # The platform refused. Nothing platform-supplied reaches the log line —
-        # an attacker-controlled id in a log message is a log-injection primitive.
-        logger.info("Listing posts failed for connection %s.", connection.pk)
-        context["reason"] = "failed"
-    return render(request, "flows/triggers/_post_picker.html", context)
-
-
 def _connection_model() -> Any:
     from apps.flows.compat import installed_model
 
@@ -371,47 +350,6 @@ def _connection_options(request: WorkspaceRequest, spec: Any) -> list[dict[str, 
     return [
         {"value": str(row.pk), "label": row.display_name, "platform": row.platform, "status": row.status}
         for row in rows
-    ]
-
-
-def _post_picker_connections(
-    request: WorkspaceRequest,
-    spec: Any,
-    flow: Flow,
-    options: list[dict[str, str]],
-) -> list[dict[str, str]]:
-    """Connections whose posts the comment trigger's picker can list.
-
-    A subset of ``options`` — the list the caller has already built — narrowed by
-    ``apps.channels.posts.supports_post_listing``: a platform whose adapter has not
-    registered a lister has no picker to offer, and offering a button that can only
-    fail is worse than offering none. Taking the list as an argument rather than
-    rebuilding it means one query per form render instead of two, and means the
-    picker and the connection dropdown cannot disagree about what is on offer.
-
-    The URL is built here rather than in the template because the connection id
-    is a path segment, which is what puts this route inside ``tests/idor.py``'s
-    automatic sweep.
-    """
-    from apps.channels import posts as channel_posts
-
-    if spec.type != TriggerType.COMMENT:
-        return []
-    return [
-        {
-            "value": option["value"],
-            "label": option["label"],
-            "url": reverse(
-                "flows:trigger_posts",
-                kwargs={
-                    "workspace_id": str(request.workspace.pk),
-                    "flow_id": str(flow.pk),
-                    "connection_id": option["value"],
-                },
-            ),
-        }
-        for option in options
-        if channel_posts.supports_post_listing(option["platform"])
     ]
 
 

@@ -8,7 +8,7 @@ for a platform's POST.
 
 from django.urls import path
 
-from apps.channels import views, views_messenger, views_telegram
+from apps.channels import views, views_instagram, views_messenger, views_telegram
 
 app_name = "channels"
 
@@ -24,12 +24,17 @@ urlpatterns = [
         views_telegram.telegram_preview,
         name="telegram_preview",
     ),
-    # Messenger's guided connect (issue #18). The OAuth *callback* is not here:
-    # Meta whitelists one exact redirect URI per app, so it cannot carry a
-    # workspace id and lives at /oauth/meta/callback/ instead — see
-    # apps/channels/urls_oauth.py.
+    # Instagram's guided connect (issue #17). The OAuth *callback* is not here:
+    # Meta allows one exact redirect URI per app, so it cannot carry a workspace
+    # id and lives in ``urls_oauth.py`` at the deployment root instead.
+    path("instagram/connect/", views_instagram.instagram_connect, name="instagram_connect"),
+    path("instagram/posts/", views_instagram.instagram_posts, name="instagram_posts"),
+    # Messenger's guided connect (issue #18), the page chooser, and the comment
+    # trigger's post picker. Its OAuth callback is not here either, and for the
+    # same reason.
     path("messenger/connect/", views_messenger.messenger_connect, name="messenger_connect"),
     path("messenger/pages/", views_messenger.messenger_pages, name="messenger_pages"),
+    path("messenger/posts/", views_messenger.messenger_posts, name="messenger_posts"),
     path("<uuid:connection_id>/", views.connection_detail, name="detail"),
     path("<uuid:connection_id>/status/", views.connection_set_status, name="set_status"),
     path("<uuid:connection_id>/rotate-secret/", views.connection_rotate_secret, name="rotate_secret"),

@@ -32,6 +32,13 @@ from tests.support import Tenancy, create_tenancy
 pytestmark = pytest.mark.django_db
 
 
+def _store_token(connection: Any, token: str) -> None:
+    """The adapter owns the credential accessors, beside its Graph client."""
+    from apps.channels.providers.messenger import store_page_token
+
+    store_page_token(connection, token)
+
+
 def one_message_flow(workspace: Any, text: str, *, name: str) -> Flow:
     """A published flow whose only step is one message."""
     return published_flow(
@@ -340,7 +347,6 @@ class TestReceipts:
         self, client: Client, tenancy: Tenancy, page: ChannelConnection, sent_message: Message
     ) -> None:
         """The resolution query is scoped to the workspace and to this connection."""
-        from apps.channels.providers import meta_common
 
         other = ChannelConnection(
             workspace=tenancy.workspace,
@@ -348,7 +354,7 @@ class TestReceipts:
             display_name="Second page",
             external_id="444444444444444",
         )
-        meta_common.store_page_token(other, "EAAsecondpagetoken0123456789abcdef")
+        _store_token(other, "EAAsecondpagetoken0123456789abcdef")
         other.rotate_webhook_secret()
         other.save()
 
@@ -415,7 +421,6 @@ class TestABatchSpanningWorkspaces:
     """
 
     def _page_for(self, workspace: Any, external_id: str) -> ChannelConnection:
-        from apps.channels.providers import meta_common
 
         connection = ChannelConnection(
             workspace=workspace,
@@ -423,7 +428,7 @@ class TestABatchSpanningWorkspaces:
             display_name=f"Page {external_id}",
             external_id=external_id,
         )
-        meta_common.store_page_token(connection, "EAA" + "pagetoken0123" * 3)
+        _store_token(connection, "EAA" + "pagetoken0123" * 3)
         connection.rotate_webhook_secret()
         connection.save()
         return connection
@@ -473,7 +478,7 @@ class TestABatchSpanningWorkspaces:
         )
         # ``EncryptedJSONField`` subclasses ``TextField``, so django-stubs types
         # the attribute as ``str`` even though the column holds JSON — the same
-        # suppression ``meta_common.store_page_token`` explains.
+        # suppression ``messenger_module.store_page_token`` explains.
         override.credentials = {  # type: ignore[assignment]
             "client_id": "9999",
             "client_secret": "their-own-secret",

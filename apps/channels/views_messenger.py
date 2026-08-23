@@ -5,7 +5,7 @@ generic frame ships the connection row, its status and its webhook URL, and each
 platform's real connect flow belongs to that platform's issue — and separate from
 :mod:`apps.channels.providers.messenger` because the adapter is the thing Layer 5
 copies and a screen is not part of SPEC §6.1. The Graph calls this flow makes live
-in :mod:`apps.channels.oauth_meta`; this module owns what an operator sees.
+in :mod:`apps.channels.messenger_oauth`; this module owns what an operator sees.
 
 Three routes and one round trip:
 
@@ -13,7 +13,7 @@ Three routes and one round trip:
     Explains what is about to happen and what it needs. ``POST`` mints a signed
     ``state`` and sends the browser to Facebook.
 
-``/oauth/meta/callback/``
+``/channels/messenger/callback/``
     Where Facebook comes back. **Not** under ``/w/<workspace_id>/`` — Meta
     whitelists one exact redirect URI per app, and a per-workspace path would
     mean one whitelist entry per tenant. The workspace comes from the signed
@@ -57,11 +57,10 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
-from apps.channels import oauth_meta
+from apps.channels import messenger_oauth
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
-from apps.channels.models import ChannelConnection
+from apps.channels.models import ChannelConnection, ConnectionStatus
 from apps.channels.providers import messenger as messenger_adapter
-from apps.channels.providers import meta_common
 from apps.channels.providers.exceptions import APIError
 from apps.common.encryption import decrypt_value, encrypt_value
 from apps.common.platforms import Platform
@@ -72,7 +71,7 @@ from apps.members.requests import WorkspaceRequest
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["messenger_connect", "messenger_oauth_callback", "messenger_pages"]
+__all__ = ["messenger_connect", "messenger_oauth_callback", "messenger_pages", "messenger_posts"]
 
 #: Where the half-finished connect attempt lives on the session.
 PENDING_SESSION_KEY = "messenger_connect"
@@ -80,7 +79,7 @@ PENDING_SESSION_KEY = "messenger_connect"
 #: How long a half-finished attempt stays usable, in seconds. Matches the state's
 #: own lifetime: an operator who wandered off mid-flow starts again rather than
 #: finishing with a token minted twenty minutes ago.
-PENDING_MAX_AGE = oauth_meta.STATE_MAX_AGE
+PENDING_MAX_AGE = messenger_oauth.STATE_MAX_AGE
 
 #: Shown for every reason the OAuth round trip can fail: a tampered state, an
 #: expired one, a declined consent screen, a code Facebook will not exchange.
@@ -141,9 +140,9 @@ def messenger_connect(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
             messages.error(request, NOT_CONFIGURED)
             return redirect(request.path)
         return redirect(
-            oauth_meta.authorize_url(
+            messenger_oauth.authorize_url(
                 client_id=credentials["client_id"],
-                state=oauth_meta.mint_state(request.workspace.pk),
+                state=messenger_oauth.mint_state(request.workspace.pk),
             )
         )
 
@@ -153,11 +152,11 @@ def messenger_connect(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
         {
             "configured": bool(credentials),
             "not_configured_message": NOT_CONFIGURED,
-            "scopes": oauth_meta.SCOPES,
+            "scopes": messenger_oauth.SCOPES,
             "subscribed_fields": messenger_adapter.SUBSCRIBED_FIELDS,
             # The URL Meta has to have whitelisted, shown so an operator can copy
             # it into the app console rather than guess at it.
-            "callback_url": oauth_meta.callback_url(),
+            "callback_url": messenger_oauth.callback_url(),
             "credentials_url": reverse("credentials:list", kwargs={"workspace_id": workspace_id}),
             "list_url": reverse("channels:list", kwargs={"workspace_id": workspace_id}),
         },
@@ -193,7 +192,7 @@ def messenger_oauth_callback(request: HttpRequest) -> HttpResponse:
     ``403``, exactly as ``RBACMiddleware`` and ``require_permission`` would have
     answered (SECURITY-BASELINE §1, CONTRIBUTING).
     """
-    workspace_id = oauth_meta.read_state(request.GET.get("state", ""))
+    workspace_id = messenger_oauth.read_state(request.GET.get("state", ""))
     if not workspace_id:
         logger.info("Messenger connect: a callback arrived with an unusable state.")
         raise Http404("No such connection attempt.")
@@ -219,7 +218,7 @@ def messenger_oauth_callback(request: HttpRequest) -> HttpResponse:
         return redirect(connect_url)
 
     try:
-        user_token = oauth_meta.exchange_code(
+        user_token = messenger_oauth.exchange_code(
             code=code,
             client_id=credentials["client_id"],
             client_secret=credentials["client_secret"],
@@ -264,7 +263,7 @@ def messenger_pages(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
         return redirect(reverse("channels:messenger_connect", kwargs={"workspace_id": workspace_id}))
 
     try:
-        pages = oauth_meta.list_pages(token)
+        pages = messenger_oauth.list_pages(token)
     except APIError:
         logger.info("Messenger connect: listing pages failed for workspace %s.", request.workspace.pk)
         _clear_pending(request)
@@ -299,7 +298,7 @@ def messenger_pages(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     )
 
 
-def _connect_page(request: WorkspaceRequest, page: oauth_meta.MetaPage) -> str:
+def _connect_page(request: WorkspaceRequest, page: messenger_oauth.MetaPage) -> str:
     """Write the connection and wire the page up. "" on success, else a message.
 
     The order is ``views_telegram._connect``'s, and load-bearing for the same
@@ -321,7 +320,7 @@ def _connect_page(request: WorkspaceRequest, page: oauth_meta.MetaPage) -> str:
         display_name=page.name[:200],
         external_id=page.id,
     )
-    meta_common.store_page_token(connection, page.access_token)
+    messenger_adapter.store_page_token(connection, page.access_token)
     # Minted so the connection has one like every other row, and so rotating it
     # from the settings page is not a special case. Messenger never presents it:
     # Meta signs with the app secret (see ``MessengerAdapter.verify_webhook``).
@@ -450,3 +449,43 @@ def _clear_pending(request: HttpRequest) -> None:
     """Drop the stashed token. Called on success and on every failure path."""
     if request.session.pop(PENDING_SESSION_KEY, None) is not None:
         request.session.modified = True
+
+
+@login_required
+@require_permission("edit_flows")
+@require_http_methods(["GET"])
+def messenger_posts(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Recent posts, for the comment trigger's post picker (SPEC §10).
+
+    ``edit_flows`` rather than ``manage_channels``: the person configuring a
+    trigger is a flow author, and this reads a connection without changing
+    anything about it.
+
+    The empty and error states are **200s with a reason**, not error statuses.
+    The caller is an HTMX fragment inside the trigger drawer; a 4xx would send it
+    down its error path and show a failure where "connect a page first" is an
+    ordinary thing to render.
+    """
+    connection = (
+        ChannelConnection.objects.for_workspace(request.workspace)
+        .filter(platform=Platform.MESSENGER.value, status=ConnectionStatus.ACTIVE)
+        .order_by("created_at")
+        .first()
+    )
+    context: dict[str, Any] = {"posts": [], "reason": "", "connect_url": ""}
+    if connection is None:
+        context["reason"] = "Connect a Facebook page to pick posts from it."
+        context["connect_url"] = reverse("channels:messenger_connect", kwargs={"workspace_id": workspace_id})
+        return render(request, "channels/_messenger_posts.html", context)
+
+    try:
+        context["posts"] = messenger_adapter.recent_posts(connection)
+    except APIError:
+        logger.info("Messenger post picker: the page's posts were refused for connection %s.", connection.pk)
+        context["reason"] = "Facebook would not list this page's posts. Reconnect the channel and try again."
+    except Exception:
+        logger.exception("Messenger post picker failed for connection %s.", connection.pk)
+        context["reason"] = "The page's posts could not be loaded just now."
+    if not context["posts"] and not context["reason"]:
+        context["reason"] = "This page has no posts yet."
+    return render(request, "channels/_messenger_posts.html", context)

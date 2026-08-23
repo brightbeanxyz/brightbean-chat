@@ -3,7 +3,7 @@
     OAuth ``state`` tampering rejected; no token material in logs.
 
 ``TestStateIsTheBoundary`` is also the class that stands in for the IDOR sweep on
-``/oauth/meta/callback/``. That route carries no tenant-shaped kwarg — Meta
+``/channels/messenger/callback/``. That route carries no tenant-shaped kwarg — Meta
 whitelists one exact redirect URI per app, so the path cannot name a workspace —
 and ``tests/idor.py`` therefore skips it the way it skips every workspace-neutral
 route. What replaces the sweep's guarantee is here: the workspace comes from a
@@ -24,9 +24,9 @@ from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.channels import oauth_meta
+from apps.channels import messenger_oauth
 from apps.channels.models import ChannelConnection, ConnectionStatus
-from apps.channels.providers import meta_common
+from apps.channels.providers import messenger as messenger_module
 from apps.channels.providers.messenger import GET_STARTED_PAYLOAD, SUBSCRIBED_FIELDS
 from apps.channels.tests.messenger_support import PAGE_TOKEN, Reply, fake_graph
 from apps.channels.views_messenger import PENDING_SESSION_KEY
@@ -37,7 +37,9 @@ from tests.support import Tenancy, create_tenancy
 
 pytestmark = pytest.mark.django_db
 
-CALLBACK = "/oauth/meta/callback/"
+# Reversed rather than written out: the callback moved to /channels/ when
+# #17's urls_oauth.py landed, and a literal here would have gone stale silently.
+CALLBACK = reverse("messenger_oauth_callback")
 # Assembled, not written out — see ``messenger_support.PAGE_TOKEN`` for why a
 # credential-shaped literal in this repository fails CI on every open PR.
 USER_TOKEN = "EAA" + "userTOKEN0123" * 3  # noqa: S105 - a fake credential for tests
@@ -67,7 +69,7 @@ def admin(tenancy: Tenancy, client_for: Any) -> Client:
 
 
 def complete_callback(client: Client, tenancy: Tenancy, **overrides: Any) -> Any:
-    params = {"code": "a-real-code", "state": oauth_meta.mint_state(tenancy.workspace.pk), **overrides}
+    params = {"code": "a-real-code", "state": messenger_oauth.mint_state(tenancy.workspace.pk), **overrides}
     with fake_graph(graph_for_connect()):
         return client.get(CALLBACK, params)
 
@@ -108,9 +110,9 @@ class TestStartingTheFlow:
 
         query = parse_qs(urlparse(response["Location"]).query)
         assert query["client_id"] == ["1234567890"]
-        assert query["redirect_uri"] == [oauth_meta.callback_url()]
-        assert set(query["scope"][0].split(",")) == set(oauth_meta.SCOPES)
-        assert oauth_meta.read_state(query["state"][0]) == str(tenancy.workspace.pk)
+        assert query["redirect_uri"] == [messenger_oauth.callback_url()]
+        assert set(query["scope"][0].split(",")) == set(messenger_oauth.SCOPES)
+        assert messenger_oauth.read_state(query["state"][0]) == str(tenancy.workspace.pk)
 
     def test_a_deployment_with_no_app_configured_says_so(self, tenancy: Tenancy, client_for: Any) -> None:
         response = admin(tenancy, client_for).post(connect_url(tenancy), follow=True)
@@ -119,7 +121,7 @@ class TestStartingTheFlow:
 
 
 class TestStateIsTheBoundary:
-    """The stand-in for the IDOR sweep on ``/oauth/meta/callback/``."""
+    """The stand-in for the IDOR sweep on ``/channels/messenger/callback/``."""
 
     @pytest.mark.parametrize(
         "state",
@@ -150,15 +152,15 @@ class TestStateIsTheBoundary:
     def test_an_expired_state_is_refused_indistinguishably(
         self, tenancy: Tenancy, client_for: Any, app_secret: str, monkeypatch: Any
     ) -> None:
-        monkeypatch.setattr(oauth_meta, "STATE_MAX_AGE", -1)
-        state = oauth_meta.mint_state(tenancy.workspace.pk)
+        monkeypatch.setattr(messenger_oauth, "STATE_MAX_AGE", -1)
+        state = messenger_oauth.mint_state(tenancy.workspace.pk)
         response = admin(tenancy, client_for).get(CALLBACK, {"code": "c", "state": state})
         assert response.status_code == 404
 
     def test_a_tampered_workspace_breaks_the_signature(
         self, tenancy: Tenancy, client_for: Any, app_secret: str
     ) -> None:
-        state = oauth_meta.mint_state(tenancy.workspace.pk)
+        state = messenger_oauth.mint_state(tenancy.workspace.pk)
         tampered = state[:-4] + ("aaaa" if not state.endswith("aaaa") else "bbbb")
         response = admin(tenancy, client_for).get(CALLBACK, {"code": "c", "state": tampered})
         assert response.status_code == 404
@@ -177,7 +179,7 @@ class TestStateIsTheBoundary:
         a UUID space is the only thing the caller was missing.
         """
         victim = create_tenancy("victim")
-        state = oauth_meta.mint_state(victim.workspace.pk)
+        state = messenger_oauth.mint_state(victim.workspace.pk)
         response = admin(tenancy, client_for).get(CALLBACK, {"code": "c", "state": state})
         assert response.status_code == 404
         assert PENDING_SESSION_KEY not in admin(tenancy, client_for).session
@@ -186,12 +188,12 @@ class TestStateIsTheBoundary:
         self, tenancy: Tenancy, client_for: Any, app_secret: str
     ) -> None:
         """403 for a real member missing the permission — the decorator's answer."""
-        state = oauth_meta.mint_state(tenancy.workspace.pk)
+        state = messenger_oauth.mint_state(tenancy.workspace.pk)
         response = client_for(tenancy.user_for(WorkspaceRole.EDITOR)).get(CALLBACK, {"code": "c", "state": state})
         assert response.status_code == 403
 
     def test_an_anonymous_caller_is_sent_to_log_in(self, tenancy: Tenancy, app_secret: str) -> None:
-        state = oauth_meta.mint_state(tenancy.workspace.pk)
+        state = messenger_oauth.mint_state(tenancy.workspace.pk)
         response = Client().get(CALLBACK, {"code": "c", "state": state})
         assert response.status_code == 302
         assert "/accounts/login/" in response["Location"]
@@ -200,7 +202,7 @@ class TestStateIsTheBoundary:
         self, tenancy: Tenancy, client_for: Any, app_secret: str
     ) -> None:
         client = admin(tenancy, client_for)
-        state = oauth_meta.mint_state(tenancy.workspace.pk)
+        state = messenger_oauth.mint_state(tenancy.workspace.pk)
         response = client.get(CALLBACK, {"error": "access_denied", "state": state})
         assert response.status_code == 302
         assert PENDING_SESSION_KEY not in client.session
@@ -296,7 +298,7 @@ class TestAnAbandonedAttemptLeavesNothingBehind:
         session = client.session
         session[PENDING_SESSION_KEY] = {
             **session[PENDING_SESSION_KEY],
-            "at": timezone.now().timestamp() - oauth_meta.STATE_MAX_AGE - 60,
+            "at": timezone.now().timestamp() - messenger_oauth.STATE_MAX_AGE - 60,
         }
         session.save()
 
@@ -323,7 +325,7 @@ class TestConnectingThePage:
         assert connection.external_id == GRANTED_PAGE["id"]
         assert connection.display_name == "Acme Support"
         assert connection.status == ConnectionStatus.ACTIVE
-        assert meta_common.page_token(connection) == PAGE_TOKEN
+        assert messenger_module.page_token(connection) == PAGE_TOKEN
 
         subscribe = next(call for call in graph.calls if call.matches("/subscribed_apps"))
         assert set(subscribe.params["subscribed_fields"].split(",")) == set(SUBSCRIBED_FIELDS)
@@ -451,7 +453,7 @@ class TestNothingLogsTheToken:
 
         caplog.set_level(logging.DEBUG)
         client = admin(tenancy, client_for)
-        state = oauth_meta.mint_state(tenancy.workspace.pk)
+        state = messenger_oauth.mint_state(tenancy.workspace.pk)
         with fake_graph(configure):
             client.get(CALLBACK, {"code": "a-real-code", "state": state})
 

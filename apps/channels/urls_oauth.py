@@ -1,29 +1,30 @@
-"""The Meta OAuth callback, mounted at ``/oauth/meta/`` (issue #18).
+"""OAuth callbacks, mounted at ``/channels/`` (SPEC §6.3, §6.4).
 
-Separate from ``urls.py`` because it cannot live under ``/w/<workspace_id>/``:
-Meta whitelists one exact ``redirect_uri`` per app, and a per-workspace path
-would mean one whitelist entry per tenant — impossible for a self-hoster and
-pointless for anyone else. The workspace comes from the signed ``state``
-instead, and ``apps.channels.views_messenger.messenger_oauth_callback`` does the
-membership and permission checks the middleware would otherwise have done from
-the URL.
+Not under ``/w/<workspace_id>/``, and that is forced rather than chosen: Meta
+matches a redirect URI against the app's configuration **exactly**, so one app
+has one callback URL for the whole deployment. Putting a workspace id in it
+would mean registering a new redirect URI per tenant, which is not something a
+self-hoster can automate.
 
-Separate from ``urls_webhooks.py`` too, and for the opposite reason: a webhook is
-unauthenticated and a signature is its credential, while this route is
-``@login_required`` and the browser arriving on it is a signed-in operator's.
+What replaces the URL's tenancy is a signed ``state`` — see
+:mod:`apps.channels.instagram_oauth` — carrying the workspace *and* the user the
+flow was started by, both re-checked in the view before anything is exchanged or
+written. The routes are ``login_required``, so an anonymous caller is bounced to
+the login page and never reaches the exchange at all.
 
-The route carries **no tenant-shaped kwarg**, so ``tests/idor.py`` skips it the
-way it skips every workspace-neutral route — there is no id on it to fuzz. What
-stands in for the sweep is the state check, which
-``apps/channels/tests/test_messenger_connect.py::TestStateIsTheBoundary`` holds:
-a forged, expired, foreign-purpose or foreign-workspace state is refused, and a
-valid state for a workspace the signed-in user does not administer answers 404.
+``tests/idor.py`` skips these: they carry no tenant-identifying kwarg, so there
+is nothing for the sweep to substitute another tenant's id into. The boundary is
+covered directly instead, by the cross-tenant class in
+``apps/channels/tests/test_instagram_connect.py``.
+
+Messenger's callback (#18) is the second line: same shape, same reasons.
 """
 
 from django.urls import path
 
-from apps.channels import views_messenger
+from apps.channels import views_instagram, views_messenger
 
 urlpatterns = [
-    path("callback/", views_messenger.messenger_oauth_callback, name="messenger_oauth_callback"),
+    path("instagram/callback/", views_instagram.instagram_callback, name="instagram_callback"),
+    path("messenger/callback/", views_messenger.messenger_oauth_callback, name="messenger_oauth_callback"),
 ]

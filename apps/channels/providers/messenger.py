@@ -68,11 +68,16 @@ credential chain. ``apps.common.logging`` scrubs both the ``Bearer`` form and
 Meta's ``EAA…`` token shape (SECURITY-BASELINE §5).
 """
 
+import hashlib
 import logging
 import secrets
-from datetime import UTC, datetime
+import threading
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+import httpx
+from django.db import transaction
 from django.utils import timezone
 
 from apps.channels import ingest as channels_ingest
@@ -94,10 +99,9 @@ from apps.channels.events import (
     SendStatus,
     TextBlock,
 )
-from apps.channels.models import ChannelConnection
-from apps.channels.posts import PostListingError, clean_post, register_post_lister
+from apps.channels.models import ChannelConnection, ConnectionStatus
 from apps.channels.providers import meta_common
-from apps.channels.providers.base import BACKGROUND_TIMEOUT, Adapter
+from apps.channels.providers.base import BACKGROUND_TIMEOUT, Adapter, request_json
 from apps.channels.providers.exceptions import APIError
 from apps.channels.registry import register_adapter
 from apps.common.platforms import Platform
@@ -119,6 +123,7 @@ __all__ = [
     "set_get_started",
     "subscribe_page",
     "unsubscribe_page",
+    "recent_posts",
     "wire_calls",
 ]
 
@@ -145,6 +150,10 @@ SUBSCRIBED_FIELDS: tuple[str, ...] = (
 #: three spellings ``apps.flows.triggers.matching.WELCOME_POSTBACKS`` already
 #: recognises, so SPEC §10's welcome trigger needs no Messenger-specific matcher.
 GET_STARTED_PAYLOAD = "GET_STARTED"
+
+#: How many posts the picker lists. Enough for "the campaign I launched this
+#: week" without turning one panel open into a crawl of a page's history.
+MAX_POSTS = 25
 
 #: The queued actions that answer a claimed comment. Registered at the foot of
 #: this module, beside the adapter.
@@ -262,6 +271,296 @@ _INBOUND_ATTACHMENT_TYPES = frozenset({"image", "audio", "video", "file", "fallb
 
 
 # ---------------------------------------------------------------------------
+# The Graph client
+# ---------------------------------------------------------------------------
+#
+# Here rather than in ``meta_common``, and that is the shape ``instagram.py``
+# established: the two Meta platforms talk to *different hosts* —
+# ``graph.instagram.com`` against ``graph.facebook.com`` — so the client is the
+# one part of "being a Meta adapter" they cannot share. What they do share is
+# the webhook half: the signature scheme, the ``entry``/``messaging``/``changes``
+# walk and the echo filter, all of which live in ``meta_common``.
+
+
+#: The Graph API root. A constant rather than a setting, for the reason
+#: ``apps.channels.providers.telegram.API_ROOT`` gives: there is one Graph API,
+#: and a configurable host that receives a page access token is an exfiltration
+#: primitive rather than a feature.
+GRAPH_ROOT = "https://graph.facebook.com"
+
+#: Pinned deliberately. Meta deprecates a version roughly every two years and
+#: changes payload shapes between them; an unversioned call silently follows the
+#: app's default version, which an operator can change in a console we do not
+#: control. Bumping this is a code change with fixtures to update.
+GRAPH_VERSION = "v21.0"
+
+
+#: Where the page (or IG user) access token sits inside ``connection.credentials``.
+TOKEN_KEY = "page_access_token"  # noqa: S105 - a dict key, not a credential
+
+#: Meta's OAuth error codes. 190 covers an expired, revoked or invalidated token;
+#: 102 is a session that can no longer be used. Both mean the same thing to an
+#: operator — reconnect — and neither is fixed by retrying.
+OAUTH_ERROR_CODES = frozenset({"102", "190"})
+
+
+#: The width of ``platform_user_id`` and the other id columns. Longer values are
+#: hashed rather than cut — see :func:`bounded_id`.
+MAX_PLATFORM_ID_CHARS = 200
+
+
+#: The process-wide connection pool. Built lazily and never closed, exactly as
+#: ``telegram._POOL`` is and for the same reasons.
+_POOL: httpx.Client | None = None
+
+_POOL_LOCK = threading.Lock()
+
+
+def _client() -> httpx.Client | None:
+    """The HTTP client every Graph call goes through.
+
+    A **pooled** client kept for the life of the process: ``request_json``'s
+    default of one client per call means a fresh TLS handshake for every message
+    sent, inside SPEC §7.1's 1.5 s inline budget, paid again for every message of
+    a downgraded gallery.
+
+    Built lazily rather than at import so a forked worker gets its own pool
+    rather than inheriting sockets opened before the fork.
+
+    **This is also the test seam.** A test monkeypatches this function to return
+    an ``httpx.Client(transport=httpx.MockTransport(...))`` and the whole Meta
+    stack — the real error mapping, the real 429 handling, the real payload
+    building — runs without a socket. See
+    ``apps/channels/tests/messenger_support.py``.
+    """
+    global _POOL
+    if _POOL is None:
+        with _POOL_LOCK:
+            if _POOL is None:
+                _POOL = httpx.Client(limits=httpx.Limits(max_keepalive_connections=8, max_connections=32))
+    return _POOL
+
+
+def graph_call(
+    token: str,
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    json: dict[str, Any] | None = None,
+    data: dict[str, Any] | None = None,
+    timeout: float | None = None,
+    unauthenticated: bool = False,
+) -> dict[str, Any]:
+    """One Graph API call. Returns the decoded body.
+
+    Raises :class:`~apps.channels.providers.exceptions.APIError` — or
+    :class:`~apps.channels.providers.exceptions.RateLimitError` on a 429 — through
+    ``request_json``, which owns the timeout policy, the retry semantics and the
+    "never put a URL in an error message" rule. None of that is re-implemented
+    here.
+
+    ``path`` is a Graph path *without* the version prefix (``"me/accounts"``,
+    ``"1234/messages"``). It is built by the caller from constants and stored
+    ids, never from user input, which is what keeps this off the SSRF guard's
+    list (SECURITY-BASELINE §6): a flow author cannot change the destination.
+
+    ``data`` sends a form-encoded body, which is what the OAuth token endpoint
+    wants. Prefer it to ``params`` for anything sensitive: a query string is part
+    of the URL, and ``httpx`` logs the URL of every request it makes at INFO.
+
+    ``unauthenticated`` is for the one endpoint that has no bearer token yet —
+    ``/oauth/access_token``, which authenticates with the app id and secret in its
+    own body. Everything else passes a token, and an empty one is refused rather
+    than sent as an anonymous call that would fail confusingly at Meta.
+
+    ``timeout`` defaults to the inline budget SPEC §7.1 sets. Connect-time work
+    passes ``BACKGROUND_TIMEOUT`` — nobody is waiting on a webhook for an OAuth
+    exchange.
+    """
+    if not token and not unauthenticated:
+        raise APIError("This connection has no access token stored.")
+    headers = {} if unauthenticated else {"Authorization": f"Bearer {token}"}
+    return request_json(
+        method,
+        f"{GRAPH_ROOT}/{GRAPH_VERSION}/{path.lstrip('/')}",
+        params=params,
+        json=json,
+        data=data,
+        # The token never enters the URL. See the module docstring.
+        headers=headers,
+        client=_client(),
+        timeout=timeout,
+    )
+
+
+def is_reauth_error(exc: APIError) -> bool:
+    """Whether ``exc`` means the stored credentials are dead rather than unlucky.
+
+    Meta answers 400 with ``error.code`` 190 for an expired, revoked or
+    password-changed token, and ``request_json`` has already lifted that code out
+    of the body. A 401 counts too: it is what the Graph API returns when the
+    ``Authorization`` header is rejected outright.
+    """
+    return exc.code in OAUTH_ERROR_CODES or exc.status_code == 401
+
+
+def mark_needs_reauth(connection: ChannelConnection, *, platform_label: str) -> None:
+    """Park a connection whose credentials the platform no longer accepts.
+
+    Two things, in this order: the status, so nothing keeps trying and the
+    settings page says why, and the notification SPEC §5 already reserved
+    (``channel_needs_reauth``, registered in ``apps.notifications.events``).
+
+    Idempotent — a page that fails ten sends in a minute must not send ten
+    notifications — and best effort. It is called from an error path, so it must
+    never raise on top of the failure it is describing.
+
+    **Both writes sit in their own savepoint, and that is not optional.** This runs
+    from ``adapter.send``, which the routing pipeline calls inside
+    ``transaction.atomic()`` while holding the contact advisory lock. Catching a
+    database error there without a savepoint leaves the surrounding transaction
+    marked aborted, so every later query in it fails with "current transaction is
+    aborted" — the message row could not be finalised and the whole event would be
+    lost, rather than one send failing. It is the hazard ``views_telegram._connect``,
+    ``triggers.guards.claim_default_reply`` and ``views_webhooks._log_event`` each
+    open a savepoint for.
+    """
+    if connection.status == ConnectionStatus.NEEDS_REAUTH:
+        return
+    try:
+        with transaction.atomic():
+            connection.status = ConnectionStatus.NEEDS_REAUTH
+            connection.save(update_fields=["status", "updated_at"])
+    except Exception:
+        logger.exception("Could not park connection %s as needing reconnection.", connection.pk)
+        return
+
+    try:
+        from apps.notifications.engine import notify
+
+        with transaction.atomic():
+            notify(
+                connection.workspace,
+                "channel_needs_reauth",
+                context={
+                    # Attacker-influenced (a page names itself), so it is escaped
+                    # on render like every other stored display string.
+                    "channel_name": connection.display_name,
+                    "platform_label": platform_label,
+                },
+            )
+    except Exception:
+        logger.exception("Could not notify about connection %s needing reconnection.", connection.pk)
+
+
+def page_token(connection: ChannelConnection) -> str:
+    """The access token stored on ``connection``, or "" when there is none.
+
+    ``credentials`` is an encrypted column, so reading it can fail on a
+    deployment whose key has changed. That is a configuration problem and not
+    something a webhook or a send should turn into a 500, so it reads as "no
+    token" and the caller fails the operation with a named error — the treatment
+    ``telegram.bot_token`` established.
+    """
+    try:
+        credentials: Any = connection.credentials or {}
+    except ValueError:
+        logger.error("Connection %s: credentials could not be decrypted.", connection.pk)
+        return ""
+    if not isinstance(credentials, dict):
+        return ""
+    token = credentials.get(TOKEN_KEY)
+    return token if isinstance(token, str) else ""
+
+
+def store_page_token(connection: ChannelConnection, token: str, **extra: Any) -> None:
+    """Put ``token`` on the connection's encrypted credentials column.
+
+    The inverse of :func:`page_token`, and the only place a token is written.
+    Both exist so the encrypted-JSON column is reached through named functions:
+    ``EncryptedJSONField`` subclasses ``TextField``, so django-stubs types the
+    attribute as ``str`` and every direct assignment is a type error even though
+    the column holds JSON. One suppression here beats one per call site.
+    """
+    connection.credentials = {TOKEN_KEY: token, **extra}  # type: ignore[assignment]
+
+
+def resolve_by_page_id(platform: str, page_id: str) -> ChannelConnection | None:
+    """The connection for one page (or IG user) id, or None.
+
+    SPEC §5 makes ``(platform, external_id)`` unique deployment-wide, which is
+    what lets one shared webhook URL address every workspace's pages without an
+    id in the path.
+
+    Crosses tenants by necessity — an inbound webhook has no session and
+    therefore no workspace — so this is a deliberate, greppable ``.unscoped()``
+    (CONTRIBUTING.md). It is *not* the authorisation step: whatever comes back is
+    still checked by ``views_webhooks._usable`` for platform and status, and its
+    signature is still verified against that row's own app secret.
+    """
+    page_id = page_id.strip()
+    if not page_id:
+        return None
+    return (
+        # Cross-tenant by necessity: a webhook identifies a page, not a session.
+        ChannelConnection.objects.unscoped()
+        .filter(platform=platform, external_id=page_id)
+        .select_related("workspace")
+        .first()
+    )
+
+
+def resolve_by_page_ids(platform: str, page_ids: "Iterable[str]") -> dict[str, ChannelConnection]:
+    """Every connection named by ``page_ids``, keyed by id, in **one** query.
+
+    The batched form of :func:`resolve_by_page_id`, and the one a parser should
+    reach for: a Meta delivery may carry up to :data:`MAX_ENTRIES` entries, and
+    resolving them one at a time puts that many round trips inside SPEC §7.1's
+    1.5-second ack budget — on the path the layer's own latency test holds to a
+    500 ms p95.
+
+    Crosses tenants for the same reason the single-id form does, and is no more
+    permissive: whatever comes back is still checked by ``views_webhooks._usable``
+    and still has to clear the workspace check in ``_event_connection``.
+    """
+    wanted = sorted({page_id for page_id in page_ids if page_id})
+    if not wanted:
+        return {}
+    return {
+        # Cross-tenant by necessity: a webhook identifies pages, not a session.
+        connection.external_id: connection
+        for connection in ChannelConnection.objects.unscoped()
+        .filter(platform=platform, external_id__in=wanted)
+        .select_related("workspace")
+    }
+
+
+def bounded_id(value: Any, limit: int = MAX_PLATFORM_ID_CHARS) -> str:
+    """A platform id that fits its column, **hashed** rather than truncated.
+
+    The rule this codebase already applies everywhere an attacker-controlled id
+    becomes a key — ``apps.messaging.identities.bounded_key``,
+    ``apps.channels.views_webhooks._dedup_id``,
+    ``apps.channels.providers.telegram._private_chat_id``. Truncating narrows an
+    identity key without saying so, and two ids agreeing on their first 200
+    characters would become one person receiving another's conversation.
+
+    Meta sends ids as JSON strings and occasionally as numbers; ``bool`` is
+    excluded explicitly because it is an ``int`` in Python and ``"True"`` is a
+    page-scoped id nobody has.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return ""
+    text = str(value).replace("\x00", "").strip()
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    return f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
+
+
+# ---------------------------------------------------------------------------
 # Graph calls this adapter makes
 # ---------------------------------------------------------------------------
 
@@ -272,8 +571,8 @@ def send_body(connection: ChannelConnection, body: dict[str, Any], *, timeout: f
     The single outbound call shape: everything this adapter sends — a message, a
     typing indicator, a read receipt — is this endpoint with a different body.
     """
-    return meta_common.graph_call(
-        meta_common.page_token(connection),
+    return graph_call(
+        page_token(connection),
         "POST",
         f"{connection.external_id}/messages",
         json=body,
@@ -289,8 +588,8 @@ def subscribe_page(connection: ChannelConnection, *, fields: tuple[str, ...] = S
     ``views_telegram`` avoids by rolling its connection back when ``setWebhook``
     fails, and which ``views_messenger`` avoids the same way.
     """
-    meta_common.graph_call(
-        meta_common.page_token(connection),
+    graph_call(
+        page_token(connection),
         "POST",
         f"{connection.external_id}/subscribed_apps",
         params={"subscribed_fields": ",".join(fields)},
@@ -300,8 +599,8 @@ def subscribe_page(connection: ChannelConnection, *, fields: tuple[str, ...] = S
 
 def unsubscribe_page(connection: ChannelConnection) -> None:
     """Stop Meta delivering for this page. Called when a connection is removed."""
-    meta_common.graph_call(
-        meta_common.page_token(connection),
+    graph_call(
+        page_token(connection),
         "DELETE",
         f"{connection.external_id}/subscribed_apps",
         timeout=BACKGROUND_TIMEOUT,
@@ -316,8 +615,8 @@ def set_get_started(connection: ChannelConnection) -> None:
     configured. So this is not decoration: without it the welcome trigger is a row
     that can never match, and nothing in the product would say why.
     """
-    meta_common.graph_call(
-        meta_common.page_token(connection),
+    graph_call(
+        page_token(connection),
         "POST",
         f"{connection.external_id}/messenger_profile",
         json={"get_started": {"payload": GET_STARTED_PAYLOAD}},
@@ -620,7 +919,7 @@ def _button_id(payload: str) -> str:
 
 def _text(value: Any, limit: int = MAX_INBOUND_TEXT_CHARS) -> str:
     """A bounded string, or "". Every inbound field goes through this."""
-    return meta_common.text_value(value, limit)
+    return meta_common.bounded_text(value, limit)
 
 
 def _epoch_ms(raw: Any) -> datetime | None:
@@ -683,7 +982,7 @@ def _sender_extra(item: dict[str, Any]) -> dict[str, Any]:
     extra: dict[str, Any] = {}
     recipient = item.get("recipient")
     if isinstance(recipient, dict):
-        page_id = meta_common.bounded_id(recipient.get("id"))
+        page_id = bounded_id(recipient.get("id"))
         if page_id:
             extra["page_id"] = page_id
     return extra
@@ -774,7 +1073,7 @@ class MessengerAdapter(Adapter):
         if payload.get("object") != WEBHOOK_OBJECT:
             return None
         for entry in meta_common.entries(payload):
-            connection = meta_common.resolve_by_page_id(self.platform, meta_common.bounded_id(entry.get("id")))
+            connection = resolve_by_page_id(self.platform, bounded_id(entry.get("id")))
             if connection is not None:
                 return connection
         return None
@@ -787,7 +1086,7 @@ class MessengerAdapter(Adapter):
         subscribed to, and there is no per-connection secret to present. Which is
         also why :meth:`on_webhook_secret_rotated` has nothing to do.
         """
-        return meta_common.verify_signature(request, connection)
+        return meta_common.verify_hub_signature(request, connection)
 
     def shares_credential(self, verified: ChannelConnection, other: ChannelConnection) -> bool:
         """True when both pages are signed for by the **same** Meta app secret.
@@ -814,8 +1113,8 @@ class MessengerAdapter(Adapter):
         """
         if verified.platform != other.platform:
             return False
-        ours = meta_common.app_secret_for(verified)
-        theirs = meta_common.app_secret_for(other)
+        ours = meta_common.app_secret(verified)
+        theirs = meta_common.app_secret(other)
         if not ours or not theirs:
             # No secret configured on one side means nothing is authenticated
             # there, and "both unconfigured" must never read as "both match".
@@ -846,16 +1145,18 @@ class MessengerAdapter(Adapter):
         # spent budget and silently drop receipts.
         self._read_receipt_budget = MAX_READ_RECEIPTS_PER_DELIVERY
 
-        entries = meta_common.entries(payload)
+        # Materialised because it is walked twice — once to collect the page ids
+        # for the batched lookup, once to parse. ``meta_common.entries`` yields.
+        entries = list(meta_common.entries(payload))
         # One query for the whole batch, not one per entry. A delivery may carry
         # up to ``meta_common.MAX_ENTRIES`` entries, and resolving them
         # individually put that many round trips inside SPEC §7.1's 1.5-second
         # budget — on the path the layer's own ack-latency test holds to 500 ms.
-        owners = meta_common.resolve_by_page_ids(
+        owners = resolve_by_page_ids(
             self.platform,
             (
                 page_id
-                for page_id in (meta_common.bounded_id(entry.get("id")) for entry in entries)
+                for page_id in (bounded_id(entry.get("id")) for entry in entries)
                 if page_id and page_id != connection.external_id
             ),
         )
@@ -882,7 +1183,7 @@ class MessengerAdapter(Adapter):
         hold is dropped: the signature proves the sender holds the app secret, not
         that every id in the body is ours to write.
         """
-        page_id = meta_common.bounded_id(entry.get("id"))
+        page_id = bounded_id(entry.get("id"))
         if not page_id or page_id == verified.external_id:
             return verified
         owner = owners.get(page_id)
@@ -921,7 +1222,7 @@ class MessengerAdapter(Adapter):
     ) -> list[NormalizedEvent]:
         """One ``messaging`` item. Usually one event; a postback with a referral is two."""
         sender = item.get("sender")
-        psid = meta_common.bounded_id(sender.get("id") if isinstance(sender, dict) else None)
+        psid = bounded_id(sender.get("id") if isinstance(sender, dict) else None)
         if not psid:
             return []
         timestamp = _timestamp(item.get("timestamp"), entry_time)
@@ -967,7 +1268,7 @@ class MessengerAdapter(Adapter):
             # inbound one and reopen the messaging window on our own traffic.
             return []
 
-        mid = meta_common.bounded_id(message.get("mid"))
+        mid = bounded_id(message.get("mid"))
         if not mid:
             # Every genuine message has one, and it is the deduplication key
             # (SPEC §7.1 step 2). Without it a redelivery would be processed again.
@@ -1135,7 +1436,7 @@ class MessengerAdapter(Adapter):
             )
         events: list[NormalizedEvent] = []
         for raw in mids[:MAX_DELIVERY_MIDS]:
-            mid = meta_common.bounded_id(raw)
+            mid = bounded_id(raw)
             if not mid:
                 continue
             events.append(
@@ -1303,17 +1604,17 @@ class MessengerAdapter(Adapter):
         if not isinstance(value, dict) or value.get("item") != "comment" or value.get("verb") != "add":
             return []
 
-        comment_id = meta_common.bounded_id(value.get("comment_id"))
+        comment_id = bounded_id(value.get("comment_id"))
         if not comment_id:
             return []
 
         author = value.get("from")
-        author_id = meta_common.bounded_id(author.get("id") if isinstance(author, dict) else None)
+        author_id = bounded_id(author.get("id") if isinstance(author, dict) else None)
         if not author_id or author_id == connection.external_id:
             return []
 
-        post_id = meta_common.bounded_id(value.get("post_id"))
-        parent_id = meta_common.bounded_id(value.get("parent_id"))
+        post_id = bounded_id(value.get("post_id"))
+        parent_id = bounded_id(value.get("parent_id"))
         if parent_id == post_id:
             # Meta sets ``parent_id`` to the *post* on a top-level comment and to
             # the parent comment on a reply. ``apps.flows.triggers.types`` reads an
@@ -1419,7 +1720,7 @@ class MessengerAdapter(Adapter):
                 raise
             if index == 0 and claim is not None:
                 self._settle_private_reply(claim, identity, result, psid)
-            provider_message_id = meta_common.bounded_id(result.get("message_id")) or provider_message_id
+            provider_message_id = bounded_id(result.get("message_id")) or provider_message_id
         return SendResult(status=SendStatus.SENT, provider_message_id=provider_message_id)
 
     def _pending_private_reply(self, connection: ChannelConnection, psid: str) -> Any:
@@ -1437,16 +1738,14 @@ class MessengerAdapter(Adapter):
         problem must not stop an ordinary DM going out.
         """
         try:
-            from apps.flows.triggers import comments
-
-            return comments.pending_private_reply(connection, psid)
+            return pending_private_reply(connection, psid)
         except Exception:
             logger.exception("Messenger: could not check for a pending private reply on connection %s.", connection.pk)
             return None
 
     def _settle_private_reply(self, claim: Any, identity: Any, result: dict[str, Any], psid: str) -> None:
         """Record that SPEC §10's one private reply has now been spent."""
-        answered = meta_common.bounded_id(result.get("recipient_id"))
+        answered = bounded_id(result.get("recipient_id"))
         if answered and answered != psid:
             # Meta answers a private reply with the page-scoped id it resolved the
             # commenter to. It should equal the id the comment carried; if it ever
@@ -1457,9 +1756,9 @@ class MessengerAdapter(Adapter):
                 "Messenger: a private reply resolved to a different page-scoped id than the comment carried."
             )
         try:
-            from apps.flows.triggers import comments
+            from apps.flows.triggers.guards import mark_private_reply_sent
 
-            comments.mark_private_reply_sent(claim, contact=getattr(identity, "contact", None))
+            mark_private_reply_sent(claim, contact=getattr(identity, "contact", None))
         except Exception:
             logger.exception("Messenger: could not record that a private reply was sent.")
 
@@ -1480,8 +1779,8 @@ class MessengerAdapter(Adapter):
         for the ingest pipeline — so it raises the event the pipeline already knows
         how to apply, exactly as ``telegram._handle_send_error`` does.
         """
-        if meta_common.is_reauth_error(exc):
-            meta_common.mark_needs_reauth(connection, platform_label="Facebook Messenger")
+        if is_reauth_error(exc):
+            mark_needs_reauth(connection, platform_label="Facebook Messenger")
             return
         if exc.code not in USER_UNAVAILABLE_CODES:
             return
@@ -1546,11 +1845,133 @@ def _seconds_to_ms(raw: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# The claimed comment's private reply
+# ---------------------------------------------------------------------------
+#
+# Private to this module, the way ``instagram._pending_private_reply`` is private
+# to that one. The shared seam is ``flows.triggers.comments``' responder registry;
+# how a platform spends its one comment-addressed reply is its own business.
+
+
+#: How long after a claim is recorded its private reply is still offered to a send.
+#:
+#: **Not** SPEC §10's seven days — that is the platform's outside limit, and it is
+#: still enforced by ``guards.may_private_reply``. This is a much shorter
+#: hand-off window, and it exists because the adapter cannot see *which* send it
+#: is about to make.
+#:
+#: The claim is answered by whatever message reaches the contact first. Over seven
+#: days that is far too loose a net: if the trigger's flow opens with a condition,
+#: a delay or an action, or fails to start at all, the claim stays open and the
+#: next message of *any* kind — an agent's inbox reply, a broadcast fan-out, an
+#: unrelated flow — would be addressed as a reply to a week-old comment, spending
+#: the one private reply Meta allows on a message that is not the comment
+#: trigger's first. Minutes covers the real case (the worker starts the flow and
+#: its first node sends) and excludes that one.
+#:
+#: Past it the flow's first message goes out as an ordinary DM instead, through
+#: the 24-hour window the comment opened — a worse-looking reply, not a failed one.
+PRIVATE_REPLY_HANDOFF = timedelta(minutes=10)
+
+
+def pending_private_reply(connection: Any, commenter_ref: str, *, now: datetime | None = None) -> Any:
+    """The comment this person is still owed a private reply to, or None.
+
+    Asked by an adapter immediately before a send, so it can address the call as
+    Meta's private reply (``recipient={"comment_id": …}``) rather than as an
+    ordinary message to a person.
+
+    **Keyed on the platform's own user id, not on a contact.**
+    :class:`~apps.flows.models.HandledComment` explains why at length: a comment
+    creates no contact, so ``contact`` is NULL at the moment the guard is taken and
+    is filled in later — by :func:`mark_private_reply_sent`, which is the call this
+    one leads to. A query keyed on the contact would therefore match nothing at
+    exactly the moment it is asked.
+
+    **Bounded by :data:`PRIVATE_REPLY_HANDOFF`**, which is the answer to "which
+    send is this?" — see that constant.
+
+    Scoped through the connection's workspace like every other tenant read: the
+    caller is a worker or a webhook with no session, so the workspace comes from
+    the connection rather than from a request. ``may_private_reply`` is re-checked
+    per row rather than expressed as a query filter, because the seven-day deadline
+    is measured from ``commented_at`` in Python by ``triggers.guards`` — and a
+    second spelling of that rule in a ``__gte`` lookup is how a guard and its query
+    end up disagreeing about which comments are still answerable.
+    """
+    from apps.flows.models import HandledComment
+    from apps.flows.triggers.guards import may_private_reply
+
+    if connection is None or not commenter_ref:
+        return None
+    moment = now or timezone.now()
+    rows = (
+        HandledComment.objects.for_workspace(connection.workspace_id)
+        .filter(
+            channel_connection=connection,
+            commenter_ref=commenter_ref,
+            private_reply_sent_at__isnull=True,
+            created_at__gte=moment - PRIVATE_REPLY_HANDOFF,
+        )
+        # Newest first. Every row here is inside the hand-off window, so they are
+        # all answerable; the most recent comment is the one this send is most
+        # likely to be about. Ordering oldest-first with a fixed slice used to be
+        # able to hide an answerable claim behind expired ones.
+        .order_by("-commented_at")
+    )
+    for row in rows:
+        if may_private_reply(row, now=moment):
+            return row
+    return None
+
+
+class ClaimedFlowNotRunnableError(RuntimeError):
+    """The claimed comment's trigger points at a flow that cannot start.
+
+    A configuration problem — a trigger whose flow has no publishable version, or
+    whose trigger row has since been deleted — so a caller should log it and stop
+    rather than retry. Distinguished from every other failure precisely so the
+    ones that *are* worth retrying can propagate.
+    """
+
+
+def start_claimed_flow(row: Any, contact: Any, connection: Any) -> None:
+    """Run the flow the claimed comment's trigger points at, for ``contact``.
+
+    Here rather than in the adapter that calls it, which is the point: starting a
+    flow is ``apps.flows``' own vocabulary — the ``StartedBy`` stamp, the variables
+    a trigger passes, which exception means "configuration problem, do not retry".
+    A channels provider that spelled all that out itself would be a second copy of
+    ``stages._start``, silently diverging the first time L6-A adds a variable or a
+    new non-retryable case.
+
+    Raises :class:`ClaimedFlowNotRunnableError` for the one failure retrying cannot
+    fix. Everything else propagates, so a caller running on the queue retries it.
+    """
+    from apps.flows.engine import FlowNotRunnableError, start_flow
+    from apps.flows.models import StartedBy
+
+    trigger = row.trigger
+    if trigger is None:
+        raise ClaimedFlowNotRunnableError(f"handled comment {row.pk} has no trigger left to run")
+    try:
+        start_flow(
+            contact,
+            trigger.flow,
+            started_by=StartedBy.stamp(StartedBy.TRIGGER, trigger.pk),
+            variables={"trigger_type": trigger.type},
+            connection=connection,
+        )
+    except FlowNotRunnableError as exc:
+        raise ClaimedFlowNotRunnableError(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # The comment-trigger follow-up (SPEC §10)
 # ---------------------------------------------------------------------------
 
 
-def enqueue_comment_actions(claim: Any) -> None:
+def respond_to_comment(context: Any, trigger: Any, row: Any) -> None:
     """Hand a freshly claimed comment to the worker, as two independent actions.
 
     Registered on ``apps.flows.triggers.comments``' seam, which is called from
@@ -1562,8 +1983,7 @@ def enqueue_comment_actions(claim: Any) -> None:
     The two actions are keyed separately on the ``HandledComment`` row, so a
     redelivery or a retried routing pass produces no second copy of either.
     """
-    row = claim.row
-    connection = claim.connection
+    connection = context.connection
     payload = {"connection_id": str(connection.pk), "handled_comment_id": str(row.pk)}
     for action_type, key, attempts in (
         # **At most once.** Meta gives us no way to make a comment or a like
@@ -1690,8 +2110,8 @@ def _public_reply(connection: ChannelConnection, row: Any, config: dict[str, Any
     if not message:
         return
     try:
-        meta_common.graph_call(
-            meta_common.page_token(connection),
+        graph_call(
+            page_token(connection),
             "POST",
             f"{row.comment_id}/comments",
             json={"message": message},
@@ -1706,8 +2126,8 @@ def _like_comment(connection: ChannelConnection, row: Any, config: dict[str, Any
     if not config.get("like_comment"):
         return
     try:
-        meta_common.graph_call(
-            meta_common.page_token(connection),
+        graph_call(
+            page_token(connection),
             "POST",
             f"{row.comment_id}/likes",
             timeout=BACKGROUND_TIMEOUT,
@@ -1739,7 +2159,6 @@ def _start_comment_flow(connection: ChannelConnection, row: Any) -> None:
     must not go round the routing stages, or the comment's own text could fire a
     keyword trigger on top of the comment trigger that already matched it.
     """
-    from apps.flows.triggers import comments
     from apps.messaging import ingest as messaging_ingest
     from apps.messaging.models import ContactChannelIdentity
 
@@ -1783,8 +2202,8 @@ def _start_comment_flow(connection: ChannelConnection, row: Any) -> None:
         raise RuntimeError(f"opening a thread from comment {row.pk} produced no contact")
 
     try:
-        comments.start_claimed_flow(row, identity.contact, connection)
-    except comments.ClaimedFlowNotRunnableError as exc:
+        start_claimed_flow(row, identity.contact, connection)
+    except ClaimedFlowNotRunnableError as exc:
         # A trigger pointing at a flow with no publishable version. A configuration
         # problem retries cannot fix, so it is logged and the claim stands.
         logger.warning("Messenger: comment trigger %s cannot start its flow: %s", row.trigger_id, exc)
@@ -1795,51 +2214,62 @@ def _start_comment_flow(connection: ChannelConnection, row: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def list_posts(connection: ChannelConnection, limit: int) -> list[Any]:
-    """Recent posts on this page, for the comment trigger's post picker.
+def recent_posts(connection: ChannelConnection, *, limit: int = MAX_POSTS) -> list[dict[str, str]]:
+    """Recent posts on this page, for the comment trigger's post picker (SPEC §10).
 
-    Registered on ``apps.channels.posts``' seam. The fields are the smallest set
-    that lets a person recognise a post: its id (which is what a trigger stores),
-    its own text, and a link to look at it.
+    Returns plain dictionaries of bounded strings rather than the Graph payload,
+    the way ``instagram.recent_media`` does and for the same reason: the caller is
+    a template, and handing a view the provider's json invites somebody to render
+    a key nobody vetted.
+
+    **The permalink is scheme-checked, not merely escaped.** It arrives from a
+    platform API and the template puts it in an ``href``; escaping
+    ``javascript:alert(1)`` leaves a link that still executes when somebody clicks
+    *View*, because there the scheme is the payload rather than the characters
+    (SECURITY-BASELINE §2). ``apps.common.validators.is_renderable_url`` is the
+    project's one answer to "may this be rendered", and is deliberately not an
+    SSRF guard — this URL is shown to a person, never fetched. A refused one
+    leaves the post listed with no link.
     """
-    try:
-        body = meta_common.graph_call(
-            meta_common.page_token(connection),
-            "GET",
-            f"{connection.external_id}/posts",
-            params={"fields": "id,message,permalink_url,created_time", "limit": limit},
-            timeout=BACKGROUND_TIMEOUT,
-        )
-    except APIError as exc:
-        # The message names the host and nothing else (``request_json``), so it is
-        # safe to log — but it is not shown to the operator, who gets the picker's
-        # own wording instead.
-        logger.info("Messenger: listing posts failed on connection %s (%s).", connection.pk, exc.code or "no code")
-        raise PostListingError("The page's posts could not be listed.") from exc
+    from apps.common.validators import is_renderable_url
 
-    rows = body.get("data")
-    if not isinstance(rows, list):
+    body = graph_call(
+        page_token(connection),
+        "GET",
+        f"{connection.external_id}/posts",
+        params={"fields": "id,message,permalink_url,created_time", "limit": max(1, min(limit, MAX_POSTS))},
+        timeout=BACKGROUND_TIMEOUT,
+    )
+    raw = body.get("data")
+    if not isinstance(raw, list):
         return []
-    posts = []
-    for item in rows:
+
+    posts: list[dict[str, str]] = []
+    for item in raw[:limit]:
         if not isinstance(item, dict):
             continue
-        post = clean_post(
-            post_id=item.get("id"),
-            title=item.get("message"),
-            permalink=item.get("permalink_url"),
-            created_time=item.get("created_time"),
+        post_id = bounded_id(item.get("id"))
+        if not post_id:
+            continue
+        permalink = _text(item.get("permalink_url"), MAX_ATTACHMENT_URL_CHARS)
+        if permalink and not is_renderable_url(permalink):
+            logger.info("Messenger: dropped a post permalink whose scheme is not safe to render.")
+            permalink = ""
+        posts.append(
+            {
+                "id": post_id,
+                "message": _text(item.get("message"), MAX_EXTRA_CHARS),
+                "permalink": permalink,
+                "created_time": _text(item.get("created_time"), 40),
+            }
         )
-        if post is not None:
-            posts.append(post)
     return posts
 
 
 register_adapter(Platform.MESSENGER, MessengerAdapter)
-register_post_lister(Platform.MESSENGER, list_posts)
 
 
-def _register_comment_actions() -> None:
+def _register_responder() -> None:
     """Claim ``apps.flows.triggers.comments``' Messenger slot.
 
     Through a function with a local import rather than a module-scope one:
@@ -1848,9 +2278,18 @@ def _register_comment_actions() -> None:
     legal here because ``AppConfig.ready`` runs after Django has populated every
     app's models.
     """
-    from apps.flows.triggers.comments import register_comment_actions
+    from apps.flows.triggers.comments import CommentResponder, register_responder
 
-    register_comment_actions(Platform.MESSENGER, enqueue_comment_actions, replace=True)
+    register_responder(
+        Platform.MESSENGER.value,
+        CommentResponder(
+            respond=respond_to_comment,
+            # The Graph API likes a comment through ``/{comment_id}/likes``.
+            supports_like=True,
+            picker_route="channels:messenger_posts",
+        ),
+        replace=True,
+    )
 
 
-_register_comment_actions()
+_register_responder()

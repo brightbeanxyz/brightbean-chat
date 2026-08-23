@@ -29,6 +29,13 @@ from apps.common.platforms import Platform
 pytestmark = pytest.mark.django_db
 
 
+def _store_token(connection: Any, token: str) -> None:
+    """The adapter owns the credential accessors, beside its Graph client."""
+    from apps.channels.providers.messenger import store_page_token
+
+    store_page_token(connection, token)
+
+
 def request_for(payload: Any) -> HttpRequest:
     """A request shaped the way the webhook endpoint hands one to an adapter."""
     body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
@@ -412,7 +419,6 @@ class TestMultiPageDeliveries:
         precisely so page B's messages are not logged and dispatched as page A's —
         which on a deployment hosting both is a cross-page misattribution.
         """
-        from apps.channels.providers import meta_common
 
         other = ChannelConnection(
             workspace=tenancy.workspace,
@@ -420,7 +426,7 @@ class TestMultiPageDeliveries:
             display_name="Second page",
             external_id="333333333333333",
         )
-        meta_common.store_page_token(other, "EAAsecondpagetoken0123456789abcdef")
+        _store_token(other, "EAAsecondpagetoken0123456789abcdef")
         other.rotate_webhook_secret()
         other.save()
 
@@ -449,7 +455,6 @@ class TestMultiPageDeliveries:
         1.5-second ack budget, on the path the layer's own latency test holds to a
         500 ms p95.
         """
-        from apps.channels.providers import meta_common
 
         other = ChannelConnection(
             workspace=tenancy.workspace,
@@ -457,7 +462,7 @@ class TestMultiPageDeliveries:
             display_name="Second page",
             external_id="333333333333333",
         )
-        meta_common.store_page_token(other, "EAAsecondpagetoken0123456789abcdef")
+        _store_token(other, "EAAsecondpagetoken0123456789abcdef")
         other.rotate_webhook_secret()
         other.save()
 

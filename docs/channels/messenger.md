@@ -9,8 +9,13 @@ Review and Business Verification — and the one with the strictest rules about
 what you may send and when.
 
 Specification: `docs/SPEC.md` §6.4 (the channel), §8 (the compliance rules) and
-§10 (the triggers). Implementation: `apps/channels/providers/messenger.py`, with
-the parts shared with Instagram in `apps/channels/providers/meta_common.py`.
+§10 (the triggers). Implementation: `apps/channels/providers/messenger.py`, the
+connect flow in `apps/channels/messenger_oauth.py`, and the webhook-side parts
+shared with Instagram in `apps/channels/providers/meta_common.py`.
+
+The Graph *client* is not shared: Messenger talks to `graph.facebook.com` and
+Instagram to `graph.instagram.com`, so each adapter keeps its own — see
+`docs/channels/instagram.md` for the sibling.
 
 ## Connecting a page
 
@@ -28,7 +33,7 @@ Under *Facebook Login for Business → Settings → Valid OAuth Redirect URIs*, 
 this deployment's callback **exactly**:
 
 ```
-https://<your-host>/oauth/meta/callback/
+https://<your-host>/channels/messenger/callback/
 ```
 
 Meta matches it character for character. The connect page shows the value this
@@ -254,6 +259,11 @@ trigger:
    them;
 4. a **second** queued action opens the DM thread and starts the flow — and the
    flow's **first message is the private reply**, addressed by comment id.
+
+The claim itself, and the decision to answer it, are platform-agnostic: L4-A's
+routing stage takes the guard and hands off through
+`apps.flows.triggers.comments`' responder registry, which Instagram registers
+against too. Only the answering is Messenger's.
 
 Steps 3 and 4 are two queue rows rather than one, and the split is deliberate.
 Meta gives no way to make a comment or a like idempotent, so that half runs **at

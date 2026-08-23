@@ -208,7 +208,7 @@ class TestBounds:
         conversation. Not reachable from a real Meta payload; the point is that it
         cannot become reachable.
         """
-        from apps.channels.providers.meta_common import MAX_PLATFORM_ID_CHARS
+        from apps.channels.providers.messenger import MAX_PLATFORM_ID_CHARS
 
         first = load_delivery("message_text")
         first["entry"][0]["messaging"][0]["sender"]["id"] = "9" * 400
