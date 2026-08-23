@@ -256,6 +256,20 @@ class OutboundMessage:
     #: is the case for every send that did not ask for something else. Like
     #: ``subject``, envelope rather than content.
     from_override: str = ""
+    #: An authored HTML body, for a platform that renders one. Email is the only
+    #: such platform in v1 (SPEC §11.10's ``html_body``).
+    #:
+    #: **This is the only field in this class whose contents are markup**, and
+    #: that is exactly why it is separate. ``TextBlock.text`` is plain text on
+    #: every path that produces one — a flow's ``send_message``, an inbox reply,
+    #: an API send — so an adapter building HTML has to escape it. Carrying the
+    #: author's markup in a block instead would make "is this string HTML?"
+    #: depend on which node happened to create it, and the answer would be wrong
+    #: for a contact whose name is ``<img src=…>``.
+    #:
+    #: Set it *and* a ``TextBlock`` holding the plain-text equivalent: the blocks
+    #: are what the inbox thread renders, and they should not be raw markup.
+    html_body: str = ""
 
     def to_body(self) -> dict[str, Any]:
         """The SPEC §7.2 ``message.body`` json.
@@ -277,6 +291,7 @@ class OutboundMessage:
             "node_id": self.node_id,
             "subject": self.subject,
             "from_override": self.from_override,
+            "html_body": self.html_body,
         }
 
 

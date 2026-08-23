@@ -35,6 +35,7 @@ pytestmark = pytest.mark.django_db
 
 FIXTURES = Path(__file__).parent / "fixtures" / "email"
 CERT_URL = "https://sns.eu-west-1.amazonaws.com/SimpleNotificationService-abc123.pem"
+TOPIC_ARN = "arn:aws:sns:eu-west-1:123456789012:brightbean-bounces"
 SIGNING_SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
 
 
@@ -99,6 +100,9 @@ def ses_connection(tenancy: Any) -> ChannelConnection:
         "secret_access_key": "s3cret",
         "region": "eu-west-1",
         "from_address": "hello@ses.test",
+        # Bounce handling is off until a topic is pinned, so every SES test that
+        # expects a notification to be acted on has to configure one.
+        "topic_arn": TOPIC_ARN,
     }
     connection.save()
     return connection
@@ -149,7 +153,7 @@ def sns_envelope(message: dict[str, Any], key: Any, **overrides: Any) -> dict[st
     payload = {
         "Type": "Notification",
         "MessageId": overrides.pop("MessageId", "sns-1"),
-        "TopicArn": "arn:aws:sns:eu-west-1:123456789012:brightbean-bounces",
+        "TopicArn": TOPIC_ARN,
         "Message": json.dumps(message),
         "Timestamp": "2026-08-20T10:00:00.000Z",
         "SignatureVersion": "1",
@@ -378,6 +382,32 @@ class TestSNSClassification:
         }
 
 
+class TestTheRawPayloadIsKept:
+    """`webhook_event_log.raw` is what an operator reads when a parse looks wrong."""
+
+    def test_a_bounce_stores_the_providers_payload(
+        self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any
+    ) -> None:
+        from apps.channels.models import WebhookEventLog
+
+        post(client, ses_connection, "ses", sns_envelope(fixture("ses_bounce_hard"), sns_keypair))
+
+        rows = WebhookEventLog.objects.filter(connection=ses_connection)
+        assert rows.exists()
+        assert all(row.raw for row in rows), "an empty raw leaves nothing to check the parse against"
+        assert any(row.raw.get("notificationType") == "Bounce" for row in rows)
+
+    def test_a_resend_bounce_stores_its_payload(self, client: Client, email_connection: ChannelConnection) -> None:
+        from apps.channels.models import WebhookEventLog
+
+        body = fixture("resend_bounced")
+        post(client, email_connection, "resend", body, **svix_headers(json.dumps(body).encode("utf-8")))
+
+        rows = WebhookEventLog.objects.filter(connection=email_connection)
+        assert rows.exists()
+        assert all(row.raw.get("type") == "email.bounced" for row in rows)
+
+
 class TestTheTopicIsBound:
     """A valid signature proves AWS sent it, not that *your* topic did."""
 
@@ -418,45 +448,40 @@ class TestTheTopicIsBound:
     def test_the_pinned_topic_is_accepted(
         self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any
     ) -> None:
-        ours = "arn:aws:sns:eu-west-1:123456789012:brightbean-bounces"
-        self._pin(ses_connection, ours)
-        payload = sns_envelope(fixture("ses_bounce_hard"), sns_keypair, TopicArn=ours)
+        payload = sns_envelope(fixture("ses_bounce_hard"), sns_keypair, TopicArn=TOPIC_ARN)
 
         assert post(client, ses_connection, "ses", payload).status_code == 200
         assert suppressed(ses_connection.workspace) == {"gone@example.test"}
 
-    def test_an_unpinned_connection_accepts_and_then_pins(
+    def test_no_configured_topic_means_nothing_is_accepted(
+        self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any
+    ) -> None:
+        """Fails closed, because nobody needs SNS to *deliver* to reach this route.
+
+        An attacker publishes to a topic they own, captures the payload AWS
+        signed for them, and POSTs it here. The signature is genuine, so trusting
+        the first topic seen would have accepted it and suppressed whatever it
+        named.
+        """
+        self._pin(ses_connection, "")
+        payload = sns_envelope(fixture("ses_bounce_hard"), sns_keypair)
+
+        assert post(client, ses_connection, "ses", payload).status_code == 200
+        assert suppressed(ses_connection.workspace) == set()
+
+    def test_a_confirmation_does_not_pin_a_topic(
         self, client: Client, ses_connection: ChannelConnection, sns_keypair: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Trust on first confirmation, enforced from then on."""
+        """Confirming a subscription is not evidence about who owns the topic."""
         from apps.channels.providers import email_backends
-        from apps.channels.providers.email import CONFIRM_SUBSCRIPTION_ACTION, confirm_sns_subscription
         from apps.channels.tests.email_support import FakeSESClient
-        from apps.queueing.models import ScheduledAction
 
         monkeypatch.setattr(email_backends, "ses_client", lambda *a, **k: FakeSESClient())
+        self._pin(ses_connection, "")
         payload = sign_sns({**fixture("sns_subscription_confirmation"), "SigningCertURL": CERT_URL}, sns_keypair)
+
         assert post(client, ses_connection, "ses", payload).status_code == 200
-
-        action = ScheduledAction.objects.unscoped().filter(type=CONFIRM_SUBSCRIPTION_ACTION).first()
-        assert action is not None
-        confirm_sns_subscription(action.payload, action)
-
-        assert self._pinned(ses_connection) == payload["TopicArn"]
-
-    def test_a_later_confirmation_cannot_repoint_the_connection(
-        self, client: Client, ses_connection: ChannelConnection, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Otherwise anyone reaching the webhook could rebind it to their topic."""
-        from apps.channels.providers import email_backends
-        from apps.channels.providers.email import _remember_topic
-        from apps.channels.tests.email_support import FakeSESClient
-
-        monkeypatch.setattr(email_backends, "ses_client", lambda *a, **k: FakeSESClient())
-        self._pin(ses_connection, "arn:aws:sns:eu-west-1:123456789012:ours")
-        _remember_topic(ses_connection, "arn:aws:sns:eu-west-1:999999999999:attacker")
-
-        assert self._pinned(ses_connection) == "arn:aws:sns:eu-west-1:123456789012:ours"
+        assert self._pinned(ses_connection) == ""
 
 
 class TestSubscriptionConfirmation:

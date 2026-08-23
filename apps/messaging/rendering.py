@@ -55,6 +55,7 @@ def outbound_from_body(body: Any) -> OutboundMessage:
         # send stores, so a retry of an older row rebuilds unchanged.
         subject=_text(body.get("subject")),
         from_override=_text(body.get("from_override")),
+        html_body=_text(body.get("html_body")),
     )
 
 

@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from django.utils import timezone
 
+from apps.channels.events import TextBlock
 from apps.channels.models import ChannelConnection, ConnectionStatus
 from apps.channels.providers import email_backends
 from apps.common.platforms import Platform
@@ -378,6 +379,64 @@ class TestRendering:
 
         assert len(sent[0].html) > 20_000
         assert sent[0].html.rstrip().endswith("</p>") or "</p>" in sent[0].html
+
+
+class TestAddressLimits:
+    def test_an_address_too_long_to_store_takes_the_error_handle(
+        self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]
+    ) -> None:
+        """`bounded_key` hashes rather than truncates, so storing it makes a non-address.
+
+        The send would then fail with an opaque `no_address` every time. Better
+        to say so once, on a handle the flow author can branch on.
+        """
+        long_address = ("x" * 240) + "@example.test"
+        contact = create_contact(tenancy.workspace, source="import", email=long_address)
+
+        result, _ = run_node(tenancy, contact, CONFIG)
+
+        assert result == Continue("error")
+        assert sent == []
+        assert not ContactChannelIdentity.objects.for_workspace(tenancy.workspace).exists()
+
+
+class TestGenericSendsGetASubject:
+    """Only `send_email` has a subject in its config; everything else does not."""
+
+    def test_an_inbox_reply_is_not_refused_for_having_no_subject(
+        self, tenancy: Any, email_connection: ChannelConnection, sent: list[Any]
+    ) -> None:
+        from apps.channels.events import OutboundMessage as Outbound
+        from apps.channels.providers.email import EmailAdapter
+
+        contact = create_contact(tenancy.workspace, source="manual", email="reader@example.test")
+        identity = identity_for(tenancy, email_connection, contact)
+        # Exactly what `send_as_agent` builds: blocks, and nothing else.
+        reply = Outbound(blocks=(TextBlock(text="Thanks, looking into it."),))
+
+        result = EmailAdapter().send(email_connection, identity, reply)
+
+        assert result.status == "sent"
+        assert sent[0].subject == "Message from Sender"
+
+    def test_a_connection_with_no_from_name_still_gets_one(self, tenancy: Any, sent: list[Any]) -> None:
+        from apps.channels.events import OutboundMessage as Outbound
+        from apps.channels.providers.email import DEFAULT_SUBJECT, EmailAdapter
+
+        bare = ChannelConnection(
+            workspace=tenancy.workspace,
+            platform=Platform.EMAIL.value,
+            display_name="Bare",
+            external_id="bare.test",
+        )
+        bare.credentials = {"provider": "smtp", "host": "mail.test", "from_address": "hi@bare.test"}  # type: ignore[assignment]
+        bare.save()
+        contact = create_contact(tenancy.workspace, source="manual", email="reader@example.test")
+        identity = identity_for(tenancy, bare, contact)
+
+        EmailAdapter().send(bare, identity, Outbound(blocks=(TextBlock(text="Hello"),)))
+
+        assert sent[0].subject == DEFAULT_SUBJECT
 
 
 class TestIdempotency:

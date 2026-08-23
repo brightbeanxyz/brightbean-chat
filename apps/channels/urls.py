@@ -30,4 +30,5 @@ urlpatterns = [
     path("<uuid:connection_id>/rotate-secret/", views.connection_rotate_secret, name="rotate_secret"),
     path("<uuid:connection_id>/delete/", views.connection_delete, name="delete"),
     path("<uuid:connection_id>/test-email/", views_email.send_test_email, name="send_test_email"),
+    path("<uuid:connection_id>/email-credentials/", views_email.update_credentials, name="email_credentials"),
 ]

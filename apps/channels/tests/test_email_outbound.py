@@ -54,7 +54,21 @@ def envelope_for(message: OutboundMessage, **credentials: Any) -> Any:
 
 
 def text_message(body: str, subject: str = "Hello") -> OutboundMessage:
-    return OutboundMessage(blocks=(TextBlock(text=body),), subject=subject)
+    """An authored HTML body, the way the ``send_email`` node builds one."""
+    return OutboundMessage(
+        blocks=(TextBlock(text=email_html.to_plain_text(body)),),
+        html_body=body,
+        subject=subject,
+    )
+
+
+def block_message(text: str, subject: str = "Hello") -> OutboundMessage:
+    """A generic send — ``send_message``, an inbox reply, the API.
+
+    No ``html_body``, so the block's text is **plain text** and the adapter has
+    to escape it on the way into HTML.
+    """
+    return OutboundMessage(blocks=(TextBlock(text=text),), subject=subject)
 
 
 class TestComplianceIsNotOptional:
@@ -74,7 +88,7 @@ class TestComplianceIsNotOptional:
                 subject="Gallery",
             ),
             OutboundMessage(
-                blocks=(TextBlock(text="<p>Body</p>"),),
+                blocks=(TextBlock(text="Body"),),
                 buttons=(Button(id="b", label="Open", url="https://example.test/x"),),
                 subject="Buttons",
             ),
@@ -212,6 +226,43 @@ class TestSanitizer:
         assert len(email_html.sanitize("x" * (email_html.MAX_HTML_CHARS + 500))) <= email_html.MAX_HTML_CHARS
 
 
+class TestBlockTextIsNotMarkup:
+    """A block's text is plain text on every path except the authored body.
+
+    ``send_message``, an inbox reply and an API send all put rendered contact
+    values straight into a ``TextBlock``, so treating one as HTML would turn a
+    contact's name into live markup in somebody's mail client.
+    """
+
+    def test_markup_in_a_block_is_escaped(self) -> None:
+        envelope = envelope_for(block_message('<img src="https://attacker.test/pixel">'))
+        assert "attacker.test" not in envelope.html.replace("&lt;", "<").split("<p>")[0]
+        assert "&lt;img" in envelope.html
+
+    def test_a_card_title_is_escaped(self) -> None:
+        message = OutboundMessage(
+            blocks=(CardBlock(card=Card(title="<script>alert(1)</script>", subtitle="&")),),
+            subject="s",
+        )
+        html = envelope_for(message).html
+        assert "<script>" not in html
+        assert "&lt;script&gt;" in html
+
+    def test_a_caption_is_escaped(self) -> None:
+        message = OutboundMessage(
+            blocks=(MediaBlock(kind="image", url="https://cdn.test/a.png", caption="<b>hi</b>"),),
+            subject="s",
+        )
+        assert "&lt;b&gt;" in envelope_for(message).html
+
+    def test_blank_lines_become_paragraphs(self) -> None:
+        assert envelope_for(block_message("One\n\nTwo")).html.count("<p>") >= 2
+
+    def test_the_authored_body_keeps_its_markup(self) -> None:
+        """The one field that is markup, and the reason it is a separate field."""
+        assert "<strong>bold</strong>" in envelope_for(text_message("<p><strong>bold</strong></p>")).html
+
+
 class TestHtmlInjectionViaPlaceholders:
     """The acceptance criterion: ``{{first_name}}`` holding markup renders escaped.
 
@@ -231,7 +282,7 @@ class TestHtmlInjectionViaPlaceholders:
 
 class TestComposition:
     def test_a_from_override_on_the_sending_domain_wins(self) -> None:
-        message = OutboundMessage(blocks=(TextBlock(text="<p>x</p>"),), subject="s", from_override="other@sender.test")
+        message = OutboundMessage(blocks=(TextBlock(text="x"),), subject="s", from_override="other@sender.test")
         assert envelope_for(message).from_address == "other@sender.test"
 
     def test_a_from_override_on_another_domain_is_refused(self) -> None:
@@ -241,11 +292,11 @@ class TestComposition:
         Editor must not be able to pick a From address on a domain the channel
         was never configured for.
         """
-        message = OutboundMessage(blocks=(TextBlock(text="<p>x</p>"),), subject="s", from_override="ceo@bank.test")
+        message = OutboundMessage(blocks=(TextBlock(text="x"),), subject="s", from_override="ceo@bank.test")
         assert envelope_for(message).from_address == "hello@sender.test"
 
     def test_a_malformed_from_override_falls_back(self) -> None:
-        message = OutboundMessage(blocks=(TextBlock(text="<p>x</p>"),), subject="s", from_override="not an address")
+        message = OutboundMessage(blocks=(TextBlock(text="x"),), subject="s", from_override="not an address")
         assert envelope_for(message).from_address == "hello@sender.test"
 
     def test_the_recipient_is_normalised(self) -> None:
@@ -270,7 +321,7 @@ class TestComposition:
 
     def test_url_buttons_become_links(self) -> None:
         message = OutboundMessage(
-            blocks=(TextBlock(text="<p>Body</p>"),),
+            blocks=(TextBlock(text="Body"),),
             buttons=(Button(id="b", label="Open it", url="https://example.test/x"),),
             subject="s",
         )
@@ -286,7 +337,7 @@ class TestComposition:
         under test, not the adapter's own.
         """
         message = OutboundMessage(
-            blocks=(TextBlock(text="<p>Body</p>"),),
+            blocks=(TextBlock(text="Body"),),
             buttons=(Button(id="b", label="Press me"),),
             subject="s",
         )

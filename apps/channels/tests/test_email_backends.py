@@ -74,6 +74,19 @@ class TestProviderResolution:
 
 
 @pytest.fixture(autouse=True)
+def _allow_loopback_relay(settings: Any) -> None:
+    """The dummy SMTP server listens on 127.0.0.1.
+
+    `check_destination` refuses loopback by default (SECURITY-BASELINE §6), and
+    `EMAIL_SMTP_ALLOW_INTERNAL` is the flag a single-tenant deployment relaying
+    through a local postfix turns on. Setting it here tests the supported
+    configuration rather than working around the guard — `TestDestinationGuard`
+    covers the default.
+    """
+    settings.EMAIL_SMTP_ALLOW_INTERNAL = True
+
+
+@pytest.fixture(autouse=True)
 def _empty_smtp_pool() -> Any:
     """No pooled SMTP connection may cross a test boundary.
 
@@ -218,6 +231,67 @@ class TestSMTP:
         parsed = email.message_from_string(server.messages[0])
         assert parsed["Bcc"] is None
         assert "\r\n" not in str(parsed["Subject"])
+
+
+class TestDestinationGuard:
+    """SECURITY-BASELINE §6 applied to a host an operator chose.
+
+    `manage_channels` is a workspace permission, not a deployment one, so on a
+    multi-tenant install this is the difference between an SMTP field and an
+    internal port scanner.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _default_policy(self, settings: Any) -> None:
+        settings.EMAIL_SMTP_ALLOW_INTERNAL = False
+        settings.EXTERNAL_REQUEST_ALLOW_PRIVATE = False
+
+    @pytest.mark.parametrize(
+        "host",
+        ["127.0.0.1", "localhost", "169.254.169.254", "0.0.0.0", "10.0.0.1", "[::1]"],  # noqa: S104 - a host to refuse, not to bind
+        ids=["loopback", "localhost", "cloud metadata", "unspecified", "private", "ipv6 loopback"],
+    )
+    def test_an_internal_host_is_refused_before_a_socket_opens(self, host: str) -> None:
+        connection = Connection({"provider": "smtp", "host": host.strip("[]"), "port": 25, "security": "none"})
+        with pytest.raises(APIError) as caught:
+            email_backends.deliver(connection, envelope())
+        assert caught.value.code == "blocked_host"
+
+    def test_the_refusal_does_not_name_the_address(self) -> None:
+        """Confirming which internal addresses exist is the reconnaissance this stops."""
+        connection = Connection({"provider": "smtp", "host": "169.254.169.254", "port": 25, "security": "none"})
+        with pytest.raises(APIError) as caught:
+            email_backends.deliver(connection, envelope())
+        assert "169.254" not in str(caught.value)
+
+    def test_a_local_relay_deployment_may_opt_in(self, settings: Any) -> None:
+        settings.EMAIL_SMTP_ALLOW_INTERNAL = True
+        with DummySMTPServer() as server:
+            email_backends.deliver(Connection(server.credentials()), envelope())
+            email_backends._close_pooled()
+        assert len(server.messages) == 1
+
+    def test_the_http_guards_flag_does_not_open_smtp(self, settings: Any) -> None:
+        """Two flags, two questions. The SSRF guard's does not relax this one."""
+        settings.EXTERNAL_REQUEST_ALLOW_PRIVATE = True
+        connection = Connection({"provider": "smtp", "host": "169.254.169.254", "port": 25, "security": "none"})
+        with pytest.raises(APIError) as caught:
+            email_backends.deliver(connection, envelope())
+        assert caught.value.code == "blocked_host"
+
+    @pytest.mark.parametrize("port", [0, 70000, -1])
+    def test_a_port_outside_the_range_is_a_field_error_not_a_crash(self, port: int) -> None:
+        """getaddrinfo raises OverflowError, which nothing upstream catches."""
+        connection = Connection({"provider": "smtp", "host": "mail.test", "port": port, "security": "none"})
+        with pytest.raises(APIError) as caught:
+            email_backends.deliver(connection, envelope())
+        assert caught.value.code == "bad_port"
+
+    def test_a_hostname_that_does_not_resolve_is_reported(self) -> None:
+        connection = Connection({"provider": "smtp", "host": "no-such-host.invalid", "port": 587, "security": "none"})
+        with pytest.raises(APIError) as caught:
+            email_backends.deliver(connection, envelope())
+        assert caught.value.code == "dns"
 
 
 class TestResend:

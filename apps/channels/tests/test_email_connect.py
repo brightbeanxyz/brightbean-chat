@@ -19,6 +19,20 @@ from apps.common.platforms import Platform
 
 pytestmark = pytest.mark.django_db
 
+
+@pytest.fixture(autouse=True)
+def _allow_loopback_relay(settings: Any) -> None:
+    """The dummy SMTP server listens on 127.0.0.1.
+
+    `check_destination` refuses loopback by default (SECURITY-BASELINE §6), and
+    `EMAIL_SMTP_ALLOW_INTERNAL` is the flag a single-tenant deployment relaying
+    through a local postfix turns on. Setting it here tests the supported
+    configuration rather than working around the guard — `TestDestinationGuard`
+    covers the default.
+    """
+    settings.EMAIL_SMTP_ALLOW_INTERNAL = True
+
+
 SMTP_PASSWORD = "hunter2-not-a-real-password"
 RESEND_KEY = "re_TestKeyAbcdefghijklmnop"
 SES_SECRET = "wJalrXUtnFEMI-K7MDENG-bPxRfiCY-EXAMPLEKEY"

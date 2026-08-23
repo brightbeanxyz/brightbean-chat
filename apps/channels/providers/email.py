@@ -69,10 +69,12 @@ shapes of all three, and of the ``/u/`` token, as a backstop.
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from django.utils import timezone
+from django.utils.html import escape
 
 from apps.channels import ingest as channels_ingest
 from apps.channels import security, suppression
@@ -115,6 +117,11 @@ _CAPABILITIES: Capabilities = capabilities_for(Platform.EMAIL)
 #: truncates it anyway, and a refused send over a long subject would be a worse
 #: outcome than a short one.
 MAX_SUBJECT_CHARS = 300
+
+#: What a message with no subject of its own is titled. Deliberately dull: it is
+#: what an inbox reply arrives as, and anything cleverer would be a sentence the
+#: agent did not write appearing above one they did.
+DEFAULT_SUBJECT = "A message for you"
 
 #: The queue action that confirms an SNS topic subscription. Deliberately not
 #: done inline: SPEC §21 wants webhook ack p95 under 500 ms, and an AWS API call
@@ -180,10 +187,18 @@ def compose(
     credentials = email_backends.credentials_of(connection)
     rendered = downgrade(outbound, _CAPABILITIES)
 
-    html_parts: list[str] = []
-    for message in rendered.messages:
-        html_parts.extend(_blocks_to_html(message))
-    body_html = email_html.sanitize("\n".join(part for part in html_parts if part))
+    if outbound.html_body:
+        # An authored body (SPEC §11.10). Its markup is the author's and stays;
+        # the values inside it were escaped by the renderer before it got here.
+        source_html = outbound.html_body
+    else:
+        # Everything else — send_message, an inbox reply, an API send — carries
+        # plain text in its blocks, so it is escaped on the way into HTML.
+        html_parts: list[str] = []
+        for message in rendered.messages:
+            html_parts.extend(_blocks_to_html(message))
+        source_html = "\n".join(part for part in html_parts if part)
+    body_html = email_html.sanitize(source_html)
     body_html, body_text = email_html.with_unsubscribe_footer(
         body_html, email_html.to_plain_text(body_html).strip(), unsubscribe_link
     )
@@ -195,7 +210,7 @@ def compose(
         # raw, the address that was checked against the suppression list and the
         # address actually mailed could be two different strings.
         to=normalize_email(str(getattr(identity, "platform_user_id", "") or "")),
-        subject=outbound.subject[:MAX_SUBJECT_CHARS],
+        subject=_subject(outbound, credentials)[:MAX_SUBJECT_CHARS],
         html=body_html,
         text=body_text,
         from_address=from_address,
@@ -203,6 +218,28 @@ def compose(
         headers=compliance_headers(unsubscribe_link),
         message_id=email_backends.new_message_id(domain),
     )
+
+
+def _subject(outbound: OutboundMessage, credentials: dict[str, Any]) -> str:
+    """The subject line, with a fallback for the sends that have no concept of one.
+
+    ``send_email`` always sets one — its schema requires it. Every *other* path
+    that can reach an email connection does not: an inbox reply, a broadcast and
+    an API send all build an ``OutboundMessage`` from blocks alone, because on
+    every other platform a subject is meaningless. Refusing those for
+    ``no_subject`` meant an agent simply could not reply in an email
+    conversation, which is not a compliance rule, just a missing default.
+
+    The connection may configure one; otherwise the sender's own name is the
+    most useful thing a recipient can see in a mailbox list.
+    """
+    if outbound.subject:
+        return outbound.subject
+    configured = str(credentials.get("default_subject") or "").strip()
+    if configured:
+        return configured
+    sender = str(credentials.get("from_name") or "").strip()
+    return f"Message from {sender}" if sender else DEFAULT_SUBJECT
 
 
 def _sender_address(connection: ChannelConnection, credentials: dict[str, Any], override: str) -> str:
@@ -262,21 +299,23 @@ def _blocks_to_html(message: OutboundMessage) -> list[str]:
 
 
 def _paragraphs(text: str) -> str:
-    """Author text, already HTML by the time it gets here.
+    """Plain text, escaped and wrapped into paragraphs.
 
-    ``send_email`` renders ``html_body`` in ``mode="html"``, so the *values* are
-    escaped and the *markup* is the author's — which is the asymmetry
-    ``apps/flows/rendering.py``'s docstring spends a paragraph on. Wrapping it in
-    a paragraph only when it carries no block markup of its own keeps a
-    single-line body from arriving unwrapped without double-wrapping a real
-    document.
+    **Escaped, because a block's text is not markup.** Only
+    ``OutboundMessage.html_body`` carries the author's HTML; a ``TextBlock``
+    holds plain text on every path that makes one, and a rendered contact value
+    like ``<img src="https://attacker.test/pixel">`` in a ``send_message`` block
+    would otherwise become live markup in the email — a tracking pixel nobody
+    configured, and worse in a client that fetches more than images.
+
+    Blank lines separate paragraphs, single newlines become ``<br />``, which is
+    what a reader who typed a message into the flow builder expects to see.
     """
     stripped = text.strip()
     if not stripped:
         return ""
-    if stripped.startswith("<"):
-        return stripped
-    return f"<p>{stripped}</p>"
+    blocks = [chunk.strip() for chunk in re.split(r"\n\s*\n", stripped) if chunk.strip()]
+    return "".join(f"<p>{escape(chunk).replace(chr(10), '<br />')}</p>" for chunk in blocks)
 
 
 def _media_html(block: MediaBlock) -> str:
@@ -289,26 +328,29 @@ def _media_html(block: MediaBlock) -> str:
     """
     if not is_renderable_url(block.url):
         return ""
-    caption = block.caption.strip()
+    # The URL is attribute-escaped and the caption is text-escaped: both arrive
+    # from the same untrusted places a block's text does.
+    url = escape(block.url)
+    caption = escape(block.caption.strip())
     if block.kind == "image":
         alt = caption or "Image"
-        image = f'<img src="{block.url}" alt="{alt}" />'
+        image = f'<img src="{url}" alt="{alt}" />'
         return f"<p>{image}</p>" if not caption else f"<p>{image}<br />{caption}</p>"
     label = caption or "Download"
-    return f'<p><a href="{block.url}">{label}</a></p>'
+    return f'<p><a href="{url}">{label}</a></p>'
 
 
 def _card_html(card: Card) -> str:
     parts: list[str] = []
     if card.image_url and is_renderable_url(card.image_url):
-        parts.append(f'<img src="{card.image_url}" alt="" />')
+        parts.append(f'<img src="{escape(card.image_url)}" alt="" />')
     if card.title:
-        parts.append(f"<h3>{card.title}</h3>")
+        parts.append(f"<h3>{escape(card.title)}</h3>")
     if card.subtitle:
-        parts.append(f"<p>{card.subtitle}</p>")
+        parts.append(f"<p>{escape(card.subtitle)}</p>")
     for button in card.buttons:
         if button.is_url and is_renderable_url(button.url):
-            parts.append(f'<p><a href="{button.url}">{button.label}</a></p>')
+            parts.append(f'<p><a href="{escape(button.url)}">{escape(button.label)}</a></p>')
     return f"<div>{''.join(parts)}</div>" if parts else ""
 
 
@@ -348,10 +390,6 @@ class EmailAdapter(Adapter):
         envelope = compose(connection, identity, outbound, unsubscribe_link=unsubscribe_url(identity))
         if not envelope.from_address:
             return SendResult(status=SendStatus.FAILED, error="no_from_address")
-        if not envelope.subject:
-            # Every mail client shows "(no subject)" and every spam filter
-            # notices. Reported rather than sent, so the row says why.
-            return SendResult(status=SendStatus.FAILED, error="no_subject")
         if not envelope.html and not envelope.text:
             return SendResult(status=SendStatus.FAILED, error="empty_message")
 
@@ -431,7 +469,9 @@ class EmailAdapter(Adapter):
         event_id = _text(payload.get("id")) or channels_ingest.synthetic_event_id(payload, prefix="resend")
 
         if event_type == "email.delivered":
-            return _delivery_only(connection, addresses, provider_message_id, event_id, occurred_at, "delivered")
+            return _delivery_only(
+                connection, addresses, provider_message_id, event_id, occurred_at, "delivered", raw=payload
+            )
         if event_type == "email.complained":
             return _bounce_events(
                 connection,
@@ -439,6 +479,7 @@ class EmailAdapter(Adapter):
                 provider_message_id,
                 event_id,
                 occurred_at,
+                raw=payload,
                 hard=True,
                 reason=SuppressionReason.COMPLAINT.value,
                 detail="complaint",
@@ -452,6 +493,7 @@ class EmailAdapter(Adapter):
                 provider_message_id,
                 event_id,
                 occurred_at,
+                raw=payload,
                 hard=subtype in _RESEND_HARD_BOUNCE,
                 reason=SuppressionReason.HARD_BOUNCE.value,
                 detail=subtype or "bounce",
@@ -487,7 +529,9 @@ class EmailAdapter(Adapter):
 
         if notification == "Delivery":
             addresses = _recipients((message.get("delivery") or {}).get("recipients"))
-            return _delivery_only(connection, addresses, provider_message_id, event_id, occurred_at, "delivered")
+            return _delivery_only(
+                connection, addresses, provider_message_id, event_id, occurred_at, "delivered", raw=message
+            )
         if notification == "Complaint":
             complaint = message.get("complaint")
             addresses = _sns_recipients(complaint, "complainedRecipients")
@@ -497,6 +541,7 @@ class EmailAdapter(Adapter):
                 provider_message_id,
                 event_id,
                 occurred_at,
+                raw=message,
                 hard=True,
                 reason=SuppressionReason.COMPLAINT.value,
                 detail=_text(complaint.get("complaintFeedbackType") if isinstance(complaint, dict) else ""),
@@ -512,6 +557,7 @@ class EmailAdapter(Adapter):
                 provider_message_id,
                 event_id,
                 occurred_at,
+                raw=message,
                 hard=bounce_type == _SES_PERMANENT,
                 reason=SuppressionReason.HARD_BOUNCE.value,
                 detail=f"{bounce_type}/{subtype}".strip("/"),
@@ -567,14 +613,24 @@ def _topic_is_ours(connection: ChannelConnection, topic_arn: str) -> bool:
     payload would suppress arbitrary addresses in whichever workspace's
     connection id it was posted to.
 
-    The expected ARN is stored on the connection. An operator can set it when
-    connecting; otherwise it is recorded from the first subscription
-    confirmation and enforced from then on, so the window in which anything is
-    accepted is the one before the topic is wired up at all.
+    **Fails closed.** Trusting the first topic seen was not good enough: nobody
+    needs SNS to *deliver* a notification to reach this route. An attacker can
+    publish one to a topic they own, capture the payload AWS signed for them,
+    and POST it here themselves — the signature is genuine, so with no expected
+    ARN recorded it would be accepted and would suppress whatever addresses it
+    names. So an unset ARN means bounce handling is off, not that anything goes.
+
+    The ARN is set on the connection, either when connecting or afterwards on
+    the credentials page. ``docs/channels/email.md`` says so, because an
+    operator who skips it gets silence rather than an error.
     """
     expected = str(email_backends.credentials_of(connection).get("topic_arn") or "").strip()
     if not expected:
-        return True
+        logger.warning(
+            "Connection %s: ignoring an SNS delivery because no bounce topic is configured.",
+            connection.pk,
+        )
+        return False
     if topic_arn == expected:
         return True
     logger.warning("Connection %s: refused an SNS delivery from an unexpected topic.", connection.pk)
@@ -588,6 +644,12 @@ def _delivery_only(
     event_id: str,
     occurred_at: datetime,
     status: str,
+    *,
+    #: The provider's payload for this event. Stored verbatim in
+    #: ``webhook_event_log.raw`` (SPEC §5), which is what an operator reads when
+    #: a classification looks wrong or a suppression is disputed — an empty dict
+    #: there leaves nothing to check the parse against.
+    raw: dict[str, Any],
 ) -> list[NormalizedEvent]:
     if not provider_message_id:
         return []
@@ -601,6 +663,7 @@ def _delivery_only(
             provider_event_id=event_id if index == 0 else f"{event_id}:{index}",
             timestamp=occurred_at,
             payload=EventPayload(extra={"provider_message_id": provider_message_id, "status": status}),
+            raw=raw,
         )
         for index, address in enumerate(addresses)
     ]
@@ -613,6 +676,8 @@ def _bounce_events(
     event_id: str,
     occurred_at: datetime,
     *,
+    #: See :func:`_delivery_only`.
+    raw: dict[str, Any],
     hard: bool,
     reason: str,
     detail: str,
@@ -647,6 +712,7 @@ def _bounce_events(
                             "error": detail[:_MAX_FIELD_CHARS],
                         }
                     ),
+                    raw=raw,
                 )
             )
         if hard:
@@ -658,6 +724,7 @@ def _bounce_events(
                     provider_event_id=f"{event_id}{suffix}:optout",
                     timestamp=occurred_at,
                     payload=EventPayload(extra={"suppression_reason": reason, "detail": detail[:_MAX_FIELD_CHARS]}),
+                    raw=raw,
                 )
             )
     return events
@@ -784,23 +851,7 @@ def confirm_sns_subscription(payload: dict[str, Any], action: Any) -> None:
     topic_arn = str(payload.get("topic_arn") or "")
     client = email_backends.ses_client(connection, service="sns")
     client.confirm_subscription(TopicArn=topic_arn, Token=payload.get("token"))
-    _remember_topic(connection, topic_arn)
     logger.info("Confirmed an SNS bounce-topic subscription for connection %s.", connection.pk)
-
-
-def _remember_topic(connection: ChannelConnection, topic_arn: str) -> None:
-    """Pin the confirmed topic on the connection, once.
-
-    This is what turns :func:`_topic_is_ours` from permissive into enforcing. It
-    only ever writes the first one: overwriting on a later confirmation would
-    let anyone who can reach the webhook re-point the connection at their own
-    topic, which is the check's whole purpose.
-    """
-    credentials = email_backends.credentials_of(connection)
-    if not topic_arn or credentials.get("topic_arn"):
-        return
-    connection.credentials = {**credentials, "topic_arn": topic_arn}  # type: ignore[assignment]
-    connection.save(update_fields=["credentials", "updated_at"])
 
 
 register_adapter(Platform.EMAIL, EmailAdapter)

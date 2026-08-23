@@ -65,7 +65,7 @@ from apps.members.requests import WorkspaceRequest
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["email_connect", "send_test_email"]
+__all__ = ["email_connect", "send_test_email", "update_credentials"]
 
 #: Shown when a provider refuses the credentials. One message per provider
 #: rather than per failure mode, for the reason ``views_telegram`` gives: an
@@ -247,6 +247,53 @@ def _credentials(request: WorkspaceRequest, provider: str, from_address: str) ->
         "username": (request.POST.get("username") or "").strip(),
         "password": request.POST.get("password") or "",
     }
+
+
+#: Credential keys the settings page may change after a connection exists.
+#:
+#: Both are chicken-and-egg with the connect step, which is why this view has to
+#: exist at all: the webhook URL contains the connection id, so a Resend endpoint
+#: can only be created — and its signing secret only revealed — once the
+#: connection has been saved. The SES topic is the same shape.
+#:
+#: An allowlist rather than "merge whatever was posted", so this page can never
+#: change the provider, the from-address or the sending credentials. Those decide
+#: what the channel *is*; changing them is disconnecting and connecting again.
+UPDATABLE_CREDENTIALS = ("signing_secret", "topic_arn")
+
+
+@login_required
+@require_permission("manage_channels")
+@require_POST
+def update_credentials(request: WorkspaceRequest, workspace_id: str, connection_id: str) -> HttpResponse:
+    """Set the webhook secret or bounce topic on an existing email channel.
+
+    Write-only, like every other credential surface here: a value is accepted and
+    never rendered back, and a blank field leaves the stored value alone rather
+    than clearing it — otherwise saving the page to change one field would wipe
+    the other.
+    """
+    connection = get_scoped_object_or_404(
+        ChannelConnection,
+        request.workspace,
+        pk=connection_id,
+        platform=Platform.EMAIL.value,
+    )
+    credentials = dict(email_backends.credentials_of(connection))
+    changed = []
+    for name in UPDATABLE_CREDENTIALS:
+        value = (request.POST.get(name) or "").strip()[:MAX_TOPIC_ARN_CHARS]
+        if value and value != credentials.get(name):
+            credentials[name] = value
+            changed.append(name)
+
+    if changed:
+        connection.credentials = credentials  # type: ignore[assignment]
+        connection.save(update_fields=["credentials", "updated_at"])
+        messages.success(request, "Updated this channel's webhook settings.")
+    else:
+        messages.info(request, "Nothing to update.")
+    return redirect(reverse("channels:detail", kwargs={"workspace_id": workspace_id, "connection_id": connection.pk}))
 
 
 @login_required

@@ -51,13 +51,17 @@ from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from typing import Any
 
+from django.conf import settings
+
 from apps.channels.providers.base import BACKGROUND_TIMEOUT, request_json
 from apps.channels.providers.exceptions import APIError, RateLimitError
+from apps.common.outbound import refusal_for, resolve_host
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_PROVIDER",
+    "check_destination",
     "Envelope",
     "PROVIDERS",
     "RESEND_API_ROOT",
@@ -217,6 +221,62 @@ def _smtp_settings(connection: Any) -> dict[str, Any]:
     }
 
 
+#: Ports an SMTP host may listen on. A number outside this is not a port, and
+#: `getaddrinfo` raises `OverflowError` rather than anything the connect view
+#: catches — so an operator typo became a 500 instead of a field error.
+MIN_PORT = 1
+MAX_PORT = 65535
+
+
+def check_destination(host: str, port: int) -> None:
+    """Refuse an SMTP destination this deployment must not connect to.
+
+    SECURITY-BASELINE §6 is written about URLs, but the reason it exists is a
+    server opening a connection somewhere a *user* chose, and that is exactly
+    what an operator-supplied SMTP host is. `manage_channels` is a workspace
+    permission, not a deployment one, so on a multi-tenant install a workspace
+    admin could otherwise point this at loopback, at the cloud metadata service,
+    or at an internal relay, and have the connect step probe it for them.
+
+    The classification is ``apps.common.outbound.refusal_for``, so the rules are
+    the SSRF guard's and a category added there is denied here too. **Every**
+    resolved address is checked, not just the first, so a hostname answering with
+    one public and one private address is refused.
+
+    The escape hatch is ``EMAIL_SMTP_ALLOW_INTERNAL``, and it is a *different*
+    flag from the guard's ``EXTERNAL_REQUEST_ALLOW_PRIVATE`` on purpose. For HTTP,
+    loopback is never a legitimate integration target. For SMTP it is one of the
+    commonest setups there is — a local postfix, a relay sidecar — so a
+    single-tenant deployment needs a way to say so, and a multi-tenant one needs
+    the default to stay closed.
+
+    This is a pre-flight check rather than a pinned connection: ``smtplib``
+    resolves the host itself and gives no hook to pin an address, so a
+    determined rebinding attack is still possible in the window between this
+    check and the connect. The check is what stops the straightforward case —
+    `host=127.0.0.1` typed into the form — and the residual gap is written down
+    here rather than left to be discovered.
+    """
+    if not MIN_PORT <= port <= MAX_PORT:
+        raise APIError(f"{port} is not a port number.", status_code=400, code="bad_port")
+    if getattr(settings, "EMAIL_SMTP_ALLOW_INTERNAL", False):
+        return
+    addresses = resolve_host(host)
+    if not addresses:
+        raise APIError("That mail server's hostname does not resolve.", status_code=400, code="dns")
+    for address in addresses:
+        refusal = refusal_for(address)
+        if refusal:
+            # The address is deliberately not named: this message reaches a
+            # workspace admin, and confirming which internal addresses exist is
+            # the reconnaissance the check exists to prevent.
+            raise APIError(
+                f"That mail server resolves to {refusal}, which this deployment will not connect to.",
+                status_code=400,
+                code="blocked_host",
+            )
+
+
 def smtp_connection(connection: Any) -> Any:
     """Django's SMTP backend, configured for this connection.
 
@@ -227,14 +287,17 @@ def smtp_connection(connection: Any) -> Any:
     """
     from django.core.mail import get_connection
 
-    settings = _smtp_settings(connection)
-    if not settings["host"]:
+    # `config`, not `settings`: this module imports django.conf.settings, and a
+    # local of that name would shadow it for anything added below.
+    config = _smtp_settings(connection)
+    if not config["host"]:
         raise APIError("This email connection has no SMTP host stored.")
+    check_destination(config["host"], config["port"])
     return get_connection(
         backend="django.core.mail.backends.smtp.EmailBackend",
         fail_silently=False,
         timeout=SMTP_TIMEOUT,
-        **settings,
+        **config,
     )
 
 
@@ -292,14 +355,14 @@ def _pool_key(connection: Any) -> tuple[Any, ...]:
     password is deliberately absent: it does not select a destination, and the
     key is held in memory for the life of the thread.
     """
-    settings = _smtp_settings(connection)
+    config = _smtp_settings(connection)
     return (
         str(connection.pk),
-        settings["host"],
-        settings["port"],
-        settings["use_tls"],
-        settings["use_ssl"],
-        settings["username"],
+        config["host"],
+        config["port"],
+        config["use_tls"],
+        config["use_ssl"],
+        config["username"],
     )
 
 

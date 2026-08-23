@@ -48,8 +48,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from apps.channels.models import SuppressionReason
-from apps.channels.suppression import suppress_and_opt_out
-from apps.channels.unsubscribe import identity_id_from_token
+from apps.channels.suppression import is_suppressed, suppress, suppress_and_opt_out
+from apps.channels.unsubscribe import target_from_token
 from apps.common.platforms import Platform
 
 logger = logging.getLogger(__name__)
@@ -65,23 +65,38 @@ ONE_CLICK_BODY = "List-Unsubscribe=One-Click"
 @require_http_methods(["GET", "POST"])
 def unsubscribe(request: HttpRequest, token: str) -> HttpResponse:
     """Confirm on ``GET``, unsubscribe on ``POST``."""
-    identity = _identity_or_404(token)
+    target = target_from_token(token)
+    identity = _identity(target)
+    address, workspace = _mailbox(target, identity)
+    if not address or workspace is None:
+        # Nothing this token can act on: a v1 token whose identity is gone, or a
+        # workspace that no longer exists. Same bare 404 as a bad signature.
+        raise Http404
+
+    already = _already_out(identity, workspace, address)
 
     if request.method == "GET":
         return render(
             request,
             "channels/unsubscribe_confirm.html",
-            {"address": identity.platform_user_id, "already": identity.opted_out_at is not None, "done": False},
+            {"address": address, "already": already, "done": False},
         )
 
-    already = identity.opted_out_at is not None
     if not already:
-        suppress_and_opt_out(
-            identity,
-            reason=SuppressionReason.UNSUBSCRIBE.value,
-            detail="",
-            connection=identity.channel_connection,
-        )
+        if identity is not None:
+            suppress_and_opt_out(
+                identity,
+                reason=SuppressionReason.UNSUBSCRIBE.value,
+                detail="",
+                connection=identity.channel_connection,
+            )
+        else:
+            # The identity is gone — the channel it belonged to was
+            # disconnected, which cascades. The mailbox is still a mailbox and
+            # the person still clicked unsubscribe, so the durable half is
+            # recorded and the address stays unmailable if the channel comes
+            # back.
+            suppress(workspace, address, reason=SuppressionReason.UNSUBSCRIBE.value)
 
     if _is_one_click(request):
         # RFC 8058 §3.2: the client wants a 2xx and nothing else. Rendering a
@@ -91,12 +106,46 @@ def unsubscribe(request: HttpRequest, token: str) -> HttpResponse:
     return render(
         request,
         "channels/unsubscribe_done.html",
-        {"address": identity.platform_user_id, "already": already, "done": True},
+        {"address": address, "already": already, "done": True},
     )
 
 
-def _identity_or_404(token: str) -> Any:
-    """The email identity a token names, or ``Http404``.
+def _mailbox(target: Any, identity: Any) -> tuple[str, Any]:
+    """The address and workspace this token acts on.
+
+    The identity is preferred when it is still there, because it is the live
+    record; the token's own copy is the fallback that makes a v2 link outlive
+    the connection it was sent from.
+    """
+    if identity is not None:
+        return str(identity.platform_user_id or ""), identity.workspace
+    if not target.address or not target.workspace_id:
+        return "", None
+    return target.address, _workspace(target.workspace_id)
+
+
+def _workspace(workspace_id: str) -> Any:
+    from apps.workspaces.models import Workspace
+
+    try:
+        return Workspace.objects.filter(pk=workspace_id).first()
+    except (ValidationError, ValueError, TypeError):
+        return None
+
+
+def _already_out(identity: Any, workspace: Any, address: str) -> bool:
+    """Whether this mailbox is already unsubscribed, by either record."""
+    if identity is not None and identity.opted_out_at is not None:
+        return True
+    return is_suppressed(workspace, address)
+
+
+def _identity(target: Any) -> Any:
+    """The email identity a token names, or ``None`` if it is gone.
+
+    ``None`` is not a 404 on its own any more: a v2 token carries the mailbox
+    too, and disconnecting a channel cascades its identities away without
+    meaning that the person's unsubscribe should stop working.
 
     The lookup is a deliberate, greppable ``.unscoped()``: there is no session
     and therefore no workspace on this path, and the signed token is what
@@ -110,14 +159,13 @@ def _identity_or_404(token: str) -> Any:
     """
     from apps.messaging.models import ContactChannelIdentity
 
-    identity_id = identity_id_from_token(token)
-    if not identity_id:
-        raise Http404
+    if not target.identity_id:
+        return None
     try:
-        identity = (
+        return (
             ContactChannelIdentity.objects.unscoped()
             .select_related("workspace", "channel_connection")
-            .filter(pk=identity_id, platform=Platform.EMAIL.value)
+            .filter(pk=target.identity_id, platform=Platform.EMAIL.value)
             .first()
         )
     except (ValidationError, ValueError, TypeError):
@@ -130,10 +178,7 @@ def _identity_or_404(token: str) -> Any:
         # for a malformed value, and catching only the ValueError underneath it
         # let this path 500. The same three, in the same order, as
         # ``apps.contacts.imports._locked_run``.
-        raise Http404 from None
-    if identity is None:
-        raise Http404
-    return identity
+        return None
 
 
 def _is_one_click(request: HttpRequest) -> bool:

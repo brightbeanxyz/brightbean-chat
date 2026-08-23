@@ -68,6 +68,7 @@ from django.db.models import Q
 
 from apps.channels.capabilities import capabilities_for
 from apps.channels.events import OutboundMessage, TextBlock
+from apps.channels.providers import email_html
 from apps.common.addresses import normalize_email
 from apps.common.platforms import Platform
 from apps.flows import messaging
@@ -98,6 +99,12 @@ MAX_BODY_CHARS = capabilities_for(Platform.EMAIL).max_text_len
 #: created by an automation, and ``manual`` is the honest label for "somebody at
 #: this workspace put this address here". See the module docstring.
 CAPTURE_SOURCE = "manual"
+
+#: The longest address that survives a round trip through the identity table.
+#: ``apps.messaging.identities.MAX_PLATFORM_USER_ID``, mirrored rather than
+#: imported for the same reason ``apps/contacts/imports.py`` mirrors the tag
+#: width: this module has to refuse what that one would mangle.
+MAX_ADDRESS_CHARS = 200
 
 
 @register_node
@@ -147,7 +154,12 @@ class SendEmailNode(Node):
             return Continue("default")
 
         outbound = OutboundMessage(
-            blocks=(TextBlock(text=body),),
+            # The HTML goes in `html_body`, and the *plain-text* rendering of it
+            # in the block. The blocks are what the inbox thread shows, and raw
+            # markup there would be both unreadable and the wrong thing to hand
+            # a renderer that treats block text as plain text everywhere else.
+            blocks=(TextBlock(text=email_html.to_plain_text(body)),),
+            html_body=body,
             subject=subject,
             from_override=normalize_email(ctx.render(ctx.config.get("from_override"))),
             node_id=ctx.node_id,
@@ -224,6 +236,17 @@ def _ensure_identity(ctx: NodeContext, connection: Any) -> Any:
 
     address = normalize_email(str(getattr(ctx.contact, "email", "") or ""))
     if not address:
+        return None
+    if len(address) > MAX_ADDRESS_CHARS:
+        # `identities.bounded_key` hashes an over-long value rather than cutting
+        # it, so storing this would produce a `sha256:…` identity that is not an
+        # address at all and fails every later send with an opaque `no_address`.
+        # Refusing here says so once, on the handle a flow author can branch on.
+        logger.info(
+            "Execution %s: this contact's email address is longer than %s characters.",
+            ctx.execution.pk,
+            MAX_ADDRESS_CHARS,
+        )
         return None
     try:
         # A savepoint, because the identity table's ``(connection, address)``

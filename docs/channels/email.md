@@ -70,6 +70,15 @@ them means entering them again.
 BrightBean Chat opens a connection and authenticates when you connect, so a
 wrong password is reported on the spot rather than at the first send.
 
+**Relaying through localhost or your own network needs `EMAIL_SMTP_ALLOW_INTERNAL=true`.**
+By default the host you give is resolved and refused if it points at loopback, a
+private range, or the cloud metadata service — on a multi-tenant deployment
+`manage_channels` is a *workspace* permission, so an unguarded SMTP host field
+is an internal port scanner with a form in front of it. A single-tenant install
+relaying through a local postfix or a sidecar sets the flag and the check steps
+aside. It is a separate flag from `EXTERNAL_REQUEST_ALLOW_PRIVATE`, which
+governs the HTTP guard and never opens loopback for anything.
+
 SMTP has **no delivery callback**, so a connection on this transport records a
 message as `sent` when the relay accepts it and learns nothing more. Bounces
 arrive as email to your return-path address, and reading them is out of scope in
@@ -88,7 +97,14 @@ To turn on bounce handling:
 2. In Resend, create a webhook endpoint pointing at that URL, subscribed to
    `email.bounced`, `email.complained` and `email.delivered`.
 3. Copy the signing secret Resend shows you (`whsec_…`) and paste it into the
-   connection.
+   **Bounce handling** box on the channel's page.
+
+Step 3 is on the channel's page rather than the connect form because of the
+order these have to happen in: the webhook URL contains the connection's id, so
+the connection has to exist before you can create the Resend endpoint, and the
+signing secret only appears when you do. The SES topic ARN is the same shape and
+the same box. Until the secret is set, Resend's deliveries are rejected with a
+403 — the signature cannot be checked, so they are not trusted.
 
 Every delivery is verified as a Svix signature — an HMAC over the raw body,
 checked before the body is parsed, with a five-minute timestamp tolerance. A
@@ -139,11 +155,13 @@ message whose body is a bounce notification naming somebody else's address, and
 have AWS sign it for them. So notifications are also checked against the topic
 this channel listens to.
 
-Set the ARN when you connect and it is enforced from the very first delivery.
-Leave it blank and the first subscription this channel confirms is pinned
-instead, and enforced from then on — a later confirmation cannot re-point it,
-because that would be the same hole with extra steps. Either way, once the ARN
-is set, a notification from any other topic is ignored.
+So **bounce handling is off until you set the ARN**, either when connecting or
+afterwards on the channel's page. That is deliberate rather than strict: trusting
+the first topic seen would not help, because nobody needs SNS to *deliver*
+anything to reach this route — an attacker can publish to a topic they own,
+capture the payload AWS signed for them, and post it here themselves. Until an
+expected ARN is recorded there is no way to tell that apart from a real bounce,
+so notifications are ignored and logged rather than acted on.
 
 ## Unsubscribe is not optional
 
@@ -155,6 +173,11 @@ is set, a notification from any other topic is ignored.
   sender's name (RFC 8058);
 * an unsubscribe link in the footer of the body, in both the HTML and the plain
   text.
+
+The link keeps working after the channel it was sent from is disconnected. That
+costs one thing worth knowing: the token carries the mailbox, so anyone holding
+the URL can read the address out of it — which is already true of anyone who can
+read the message it was delivered in.
 
 There is no setting that turns any of them off, and no way for a flow to omit
 them: they are added by the adapter, downstream of every path that can produce
@@ -234,6 +257,16 @@ per-message From address is there for `billing@` rather than `hello@`, and that
 is as far as it goes: node config is written by anyone with `edit_flows`, while
 what this channel sends *as* is `manage_channels`, which is admin-only. An
 override on another domain is ignored and the connection's own address is used.
+
+**Only the `send_email` body is HTML.** Text from anywhere else — a
+`send_message` block, an inbox reply, an API send — is plain text and is escaped
+on the way into the email, so a contact whose name is `<img src="…">` arrives as
+words rather than as a tracking pixel nobody configured.
+
+**A message with no subject of its own gets one.** `send_email` always has a
+subject; an inbox reply has no field for one, because on every other platform a
+subject is meaningless. Those are sent as "Message from &lt;your from-name&gt;",
+or a configured `default_subject` if the connection has one.
 
 **The plain-text alternative is generated**, from the same HTML the recipient
 gets. You do not write it twice, and the two cannot drift apart: links keep their

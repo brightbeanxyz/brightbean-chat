@@ -62,6 +62,31 @@
     else's mail configuration. Rendered as a plain form so it works without
     JavaScript; the response is a small JSON document the browser shows.
     {% endcomment %}
+    <h2>Bounce handling</h2>
+    <p class="muted">
+      Both of these can only be set after the channel exists, because the webhook
+      URL above contains its id — you create the endpoint in your provider first,
+      then paste back what it gives you. Until the relevant one is set, bounce and
+      complaint notifications are ignored rather than trusted.
+    </p>
+    <form method="post"
+          action="{% url 'channels:email_credentials' workspace_id=request.workspace.id connection_id=connection.id %}">
+      {% csrf_token %}
+      <p>
+        <label for="signing_secret">Resend signing secret</label><br />
+        <input type="password" id="signing_secret" name="signing_secret" autocomplete="off" spellcheck="false" />
+        <span class="muted">From the Resend webhook you pointed at the URL above. Stored encrypted.</span>
+      </p>
+      <p>
+        <label for="topic_arn">SES bounce topic ARN</label><br />
+        <input type="text" id="topic_arn" name="topic_arn" spellcheck="false"
+               placeholder="arn:aws:sns:eu-west-1:123456789012:bounces" />
+        <span class="muted">Only this topic's notifications are accepted.</span>
+      </p>
+      <p class="muted">Leave a field blank to keep what is already stored.</p>
+      <button type="submit">Save</button>
+    </form>
+
     <h2>Send a test email</h2>
     <p class="muted">
       Sends one real email to your own account address, through this connection,

@@ -249,14 +249,26 @@ class TestTheAdapterGate:
         identity = identity_for(tenancy.workspace, bare, "fine@example.test")
         assert EmailAdapter().send(bare, identity, outbound()).error == "no_from_address"
 
-    def test_a_message_with_no_subject_is_refused(
+    def test_a_message_with_no_subject_of_its_own_gets_a_default(
         self, tenancy: Any, connection: ChannelConnection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Every client shows "(no subject)" and every spam filter notices."""
-        monkeypatch.setattr(email_backends, "deliver", _must_not_send)
+        """An inbox reply has no subject field, and must still be sendable.
+
+        Refusing these meant an agent could not reply in an email conversation
+        at all — not a compliance rule, just a missing default.
+        """
+        sent: list[Any] = []
+
+        def record(conn: Any, env: Any) -> str:
+            sent.append(env)
+            return "msg-1"
+
+        monkeypatch.setattr(email_backends, "deliver", record)
         identity = identity_for(tenancy.workspace, connection, "fine@example.test")
-        message = OutboundMessage(blocks=(TextBlock(text="<p>Hi</p>"),))
-        assert EmailAdapter().send(connection, identity, message).error == "no_subject"
+        message = OutboundMessage(blocks=(TextBlock(text="Hi"),))
+
+        assert EmailAdapter().send(connection, identity, message).status == "sent"
+        assert sent[0].subject
 
 
 def _must_not_send(*args: Any, **kwargs: Any) -> str:

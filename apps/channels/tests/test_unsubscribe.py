@@ -22,7 +22,7 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.channels.models import ChannelConnection, EmailSuppression, SuppressionReason
-from apps.channels.unsubscribe import ACCEPTED_VERSIONS, PURPOSE, mint_token, unsubscribe_url
+from apps.channels.unsubscribe import ACCEPTED_VERSIONS, IDENTITY_KEY, PURPOSE, mint_token, unsubscribe_url
 from apps.common.platforms import Platform
 from apps.common.signing import sign
 from apps.contacts.models import Contact
@@ -166,15 +166,20 @@ class TestTheTokenIsTheWholeCredential:
         self, client: Client, identity: ContactChannelIdentity
     ) -> None:
         """The purpose is the signer salt, so a media token cannot be replayed here."""
-        foreign = sign({"i": str(identity.pk)}, purpose="media-delivery")
+        foreign = sign({IDENTITY_KEY: str(identity.pk)}, purpose="media-delivery")
         assert client.get(f"/u/{foreign}/").status_code == 404
 
     def test_an_unknown_payload_version_is_a_404(self, client: Client, identity: ContactChannelIdentity) -> None:
-        future = sign({"i": str(identity.pk)}, purpose=PURPOSE, version=99)
+        future = sign({IDENTITY_KEY: str(identity.pk)}, purpose=PURPOSE, version=99)
         assert client.get(f"/u/{future}/").status_code == 404
 
-    def test_a_token_for_a_deleted_identity_is_a_404(self, client: Client, identity: ContactChannelIdentity) -> None:
-        token = mint_token(identity)
+    def test_a_v1_token_for_a_deleted_identity_is_a_404(self, client: Client, identity: ContactChannelIdentity) -> None:
+        """v1 carried the identity alone, so nothing is left to act on.
+
+        A v2 token deliberately survives this — see
+        ``TestTokensNeverExpire::test_a_link_outlives_the_connection_it_was_sent_from``.
+        """
+        token = sign({IDENTITY_KEY: str(identity.pk)}, purpose=PURPOSE, version=1)
         identity.delete()
         assert client.get(f"/u/{token}/").status_code == 404
 
@@ -197,14 +202,15 @@ class TestTheTokenIsTheWholeCredential:
 
     def test_a_signed_token_whose_payload_is_not_a_uuid_is_a_404(self, client: Client) -> None:
         """Only reachable with our own key, so it is a bug — but never a 500."""
-        assert client.get(f"/u/{sign({'i': 'not-a-uuid'}, purpose=PURPOSE)}/").status_code == 404
+        token = sign({IDENTITY_KEY: "not-a-uuid"}, purpose=PURPOSE, version=1)
+        assert client.get(f"/u/{token}/").status_code == 404
 
     def test_every_rejection_looks_the_same(self, client: Client, identity: ContactChannelIdentity) -> None:
         """No error text, no distinguishable status: a caller learns nothing."""
         token = mint_token(identity)
         rejections = [
             client.get("/u/garbage/"),
-            client.get(f"/u/{sign({'i': str(identity.pk)}, purpose='flow-preview')}/"),
+            client.get(f"/u/{sign({IDENTITY_KEY: str(identity.pk)}, purpose='flow-preview')}/"),
             client.get(f"/u/{token[:-3]}zzz/"),
         ]
         assert {response.status_code for response in rejections} == {404}
@@ -226,9 +232,9 @@ class TestTokensNeverExpire:
 
         signing.unsign = recording  # type: ignore[assignment]
         try:
-            from apps.channels.unsubscribe import identity_id_from_token
+            from apps.channels.unsubscribe import target_from_token
 
-            identity_id_from_token(mint_token(identity))
+            target_from_token(mint_token(identity))
         finally:
             signing.unsign = original  # type: ignore[assignment]
         assert seen["max_age"] is None
@@ -238,22 +244,52 @@ class TestTokensNeverExpire:
     ) -> None:
         """The Layer-5 gate item, asserted rather than promised.
 
-        A token minted today sits in an inbox forever. Simulating the day a v2
-        payload ships: minting moves forward, ``ACCEPTED_VERSIONS`` grows, and
-        the link somebody received last year still works. A cutover here would
-        turn every one of them into a 404 on the day of the deploy.
+        A token minted today sits in an inbox forever. v2 has shipped, so this
+        simulates the day *after* the next shape change: minting moves forward,
+        ``ACCEPTED_VERSIONS`` grows, and the links somebody received under v1 and
+        v2 both still work. A cutover would turn every one of them into a 404 on
+        the day of the deploy.
         """
-        old_token = mint_token(identity)
+        v1_token = sign({IDENTITY_KEY: str(identity.pk)}, purpose=PURPOSE, version=1)
+        v2_token = mint_token(identity)
 
         from apps.channels import unsubscribe as unsubscribe_module
 
-        monkeypatch.setattr(unsubscribe_module, "MINT_VERSION", 2)
-        monkeypatch.setattr(unsubscribe_module, "ACCEPTED_VERSIONS", (1, 2))
-        new_token = mint_token(identity)
-        assert new_token != old_token
+        monkeypatch.setattr(unsubscribe_module, "MINT_VERSION", 3)
+        monkeypatch.setattr(unsubscribe_module, "ACCEPTED_VERSIONS", (1, 2, 3))
+        v3_token = mint_token(identity)
+        assert len({v1_token, v2_token, v3_token}) == 3
 
-        assert client.get(f"/u/{old_token}/").status_code == 200
-        assert client.get(f"/u/{new_token}/").status_code == 200
+        for token in (v1_token, v2_token, v3_token):
+            assert client.get(f"/u/{token}/").status_code == 200
+
+    def test_a_link_outlives_the_connection_it_was_sent_from(
+        self, client: Client, identity: ContactChannelIdentity
+    ) -> None:
+        """Disconnecting a channel cascades its identities away.
+
+        Every unsubscribe link already in an inbox would then 404 — the exact
+        failure `max_age=None` exists to prevent, arriving by a different door.
+        """
+        workspace = identity.workspace
+        token = mint_token(identity)
+        connection = identity.channel_connection
+        assert connection is not None
+        connection.delete()
+        assert not ContactChannelIdentity.objects.for_workspace(workspace).exists()
+
+        assert client.get(f"/u/{token}/").status_code == 200
+        assert client.post(f"/u/{token}/").status_code == 200
+        assert suppressed(workspace) == {"reader@example.test"}
+
+    def test_a_v1_token_still_resolves(self, client: Client, identity: ContactChannelIdentity) -> None:
+        """Minted before the payload grew, and never expiring."""
+        token = sign({IDENTITY_KEY: str(identity.pk)}, purpose=PURPOSE, version=1)
+
+        assert client.get(f"/u/{token}/").status_code == 200
+        assert client.post(f"/u/{token}/").status_code == 200
+        identity.refresh_from_db()
+        assert identity.opted_out_at is not None
 
     def test_the_accepted_versions_include_the_minted_one(self) -> None:
         from apps.channels.unsubscribe import MINT_VERSION
@@ -267,7 +303,14 @@ class TestTheLink:
         settings.APP_URL = "https://mail.example.test"
         assert unsubscribe_url(identity).startswith("https://mail.example.test/u/")
 
-    def test_the_token_carries_no_address(self, identity: ContactChannelIdentity) -> None:
-        """Signed, not encrypted — so the mailbox deliberately stays out of it."""
-        assert "reader@example.test" not in mint_token(identity)
-        assert "reader" not in mint_token(identity)
+    def test_the_token_carries_the_mailbox(self, identity: ContactChannelIdentity) -> None:
+        """Deliberate, and the reason a link survives its connection being deleted.
+
+        Signed, not encrypted, so this is readable by anyone holding the link —
+        which is already anyone who can read the message it was delivered in.
+        """
+        from apps.channels.unsubscribe import target_from_token
+
+        target = target_from_token(mint_token(identity))
+        assert target.address == "reader@example.test"
+        assert target.workspace_id == str(identity.workspace_id)
