@@ -8,9 +8,16 @@ keeping that decision in the URL rather than in a request flag means the note
 path is a different endpoint with its own test rather than a boolean somebody
 could flip by hand.
 {% endcomment %}
+{% load common_extras %}
 {% if can_reply %}
   <form class="ib-composer"
-        x-data
+        x-data="inboxComposer({
+          conversationId: '{{ conversation.id|escapejs }}',
+          pickerUrl: '{{ media_picker_url|escapejs }}',
+          platform: '{{ conversation.channel_connection.platform|escapejs }}',
+          kinds: {{ media_kinds|json_attr }},
+          max: {{ max_attachments }},
+        })"
         hx-post="{% url 'inbox:send' workspace_id=request.workspace.id conversation_id=conversation.id %}"
         hx-swap="none">
     {% csrf_token %}
@@ -44,7 +51,7 @@ could flip by hand.
       The button is offered only where the platform can carry media, read from
       apps.channels.capabilities in the view. No {% templatetag openblock %} if platform == … {% templatetag closeblock %} here, ever.
     {% endcomment %}
-    <div class="ib-attachments" x-data="inboxAttachments()" x-show="items.length" x-cloak>
+    <div class="ib-attachments" x-show="items.length" x-cloak>
       <template x-for="item in items" :key="item.id">
         <span class="ib-chip">
           <span x-text="item.name"></span>
@@ -53,6 +60,43 @@ could flip by hand.
                   :aria-label="'Remove attachment ' + item.name">×</button>
         </span>
       </template>
+    </div>
+
+    {% comment %}
+      The library picker itself. A list the agent chooses from, not a bulk add:
+      the endpoint returns a page of assets and which one they meant is a
+      question only they can answer.
+
+      Search re-queries the server rather than filtering the page in the
+      browser, because the payload is one keyset page — an asset past it is
+      unreachable by filtering what already arrived.
+    {% endcomment %}
+    <div class="ib-picker" x-show="picker.open" x-cloak @keydown.escape.window="closePicker()">
+      <div class="ib-picker-head">
+        <label class="sr-only" :for="'media-search-' + conversationId">Search the library</label>
+        <input type="search" :id="'media-search-' + conversationId" class="form-input-styled"
+               placeholder="Search the media library…"
+               x-model="picker.term" @input.debounce.300ms="loadPicker()">
+        <button type="button" class="btn-icon-hover" @click="closePicker()" aria-label="Close the picker">×</button>
+      </div>
+      <p class="muted text-xs" x-show="picker.loading">Loading…</p>
+      <p class="alert-error text-xs" x-show="picker.error" x-text="picker.error"></p>
+      <ul class="ib-picker-list" x-show="!picker.loading && !picker.error">
+        <template x-for="asset in picker.results" :key="asset.id">
+          <li>
+            <button type="button" class="ib-picker-item" @click="attach(asset)">
+              <img class="ib-picker-thumb" :src="asset.thumbnail_url" alt="" x-show="asset.thumbnail_url">
+              <span class="ib-picker-name" x-text="asset.title || asset.filename"></span>
+              <span class="ib-picker-kind" x-text="asset.kind"></span>
+              <span class="ib-picker-warn text-xs" x-show="asset.platform_warnings.length"
+                    x-text="asset.platform_warnings.join(' ')"></span>
+            </button>
+          </li>
+        </template>
+      </ul>
+      <p class="muted text-xs" x-show="!picker.loading && !picker.error && !picker.results.length">
+        Nothing in the library this channel can carry.
+      </p>
     </div>
     <div class="flex items-center gap-2 mt-2">
       <button type="submit" class="btn-brand btn-inline">Send</button>
@@ -67,23 +111,21 @@ could flip by hand.
               hx-swap="none">Add note</button>
       {% if media_kinds %}
         <button type="button" class="btn-outline btn-inline"
-                data-media-picker
-                data-picker-url="{{ media_picker_url }}"
-                data-kinds="{{ media_kinds|join:"," }}"
-                data-platform="{{ conversation.channel_connection.platform }}"
-                data-max="{{ max_attachments }}">Attach</button>
+                @click="togglePicker()"
+                :aria-expanded="picker.open ? 'true' : 'false'">Attach</button>
       {% endif %}
       {% comment %}
         Compose now, send later (SPEC §14). The same fields, a different endpoint
         — the shape "Add note" already uses beside it — so the scheduled body is
         built by exactly the code that builds a live one.
       {% endcomment %}
-      <button type="button" class="btn-outline btn-inline" data-schedule-toggle
-              aria-expanded="false" aria-controls="inbox-schedule-{{ conversation.id }}">Send later</button>
+      <button type="button" class="btn-outline btn-inline" @click="scheduling = !scheduling"
+              :aria-expanded="scheduling ? 'true' : 'false'"
+              aria-controls="inbox-schedule-{{ conversation.id }}">Send later</button>
       <span class="ml-auto text-xs" style="color: var(--text-ghost);">A reply pauses automation for {{ pause_minutes }} minutes.</span>
     </div>
 
-    <div id="inbox-schedule-{{ conversation.id }}" class="ib-schedule" hidden>
+    <div id="inbox-schedule-{{ conversation.id }}" class="ib-schedule" x-show="scheduling" x-cloak>
       <label for="send-at-{{ conversation.id }}">Send at</label>
       <input id="send-at-{{ conversation.id }}" class="form-datetime" type="datetime-local" name="send_at">
       <button type="submit" class="btn-outline btn-inline"

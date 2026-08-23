@@ -53,10 +53,7 @@ def handle_reminder(payload: dict[str, Any], action: ScheduledAction) -> None:
     from apps.inbox.models import DeferredStatus, InboxReminder
 
     reminder = _load(InboxReminder, payload, action, "reminder_id")
-    if reminder is None or reminder.status != DeferredStatus.PENDING:
-        # Cancelled between the enqueue and the claim, or already fired and
-        # re-run by zombie recovery. Both are ordinary, and both mean there is
-        # nothing left to do.
+    if reminder is None or not _is_current(reminder, action):
         return
 
     # Deliberately unwrapped, unlike the call inside :func:`_fail`. There is no
@@ -93,7 +90,7 @@ def handle_scheduled_reply(payload: dict[str, Any], action: ScheduledAction) -> 
     from apps.messaging.services import send_as_agent
 
     reply = _load(ScheduledReply, payload, action, "scheduled_reply_id")
-    if reply is None or reply.status != DeferredStatus.PENDING:
+    if reply is None or not _is_current(reply, action):
         return
 
     conversation = reply.conversation
@@ -133,6 +130,28 @@ def handle_scheduled_reply(payload: dict[str, Any], action: ScheduledAction) -> 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _is_current(row: Any, action: ScheduledAction) -> bool:
+    """Is this action still the one the row is waiting on?
+
+    Two questions, and the second is the one that bites.
+
+    **Is the row still pending?** Cancelled between the enqueue and the claim, or
+    already done and re-run by zombie recovery. Both are ordinary.
+
+    **Is this action the row's *current* one?** ``_cancel_action`` can only
+    cancel a ``PENDING`` queue row, so a reschedule that happens after the worker
+    has already claimed the original leaves that claimed action running with
+    nothing to stop it — while the row is pending again, pointing at its
+    replacement. Without this check the superseded worker sends at the *old*
+    time, hours early, and the row-derived idempotency key does not help: it
+    stops the replacement from sending a second time, which is the wrong one of
+    the two to stop.
+    """
+    from apps.inbox.models import DeferredStatus
+
+    return row.status == DeferredStatus.PENDING and row.action_id == action.pk
 
 
 def _fail(reply: Any, code: str, reason: str, *, message: Any = None) -> None:

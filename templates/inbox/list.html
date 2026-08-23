@@ -96,7 +96,33 @@ inert.
       would just be a second request. data-poll is what the If-None-Match
       listener keys on, which is how a mutation's request never carries a tag.
     {% endcomment %}
-    <section class="ib-rail" aria-label="Conversations">
+    <section class="ib-rail" aria-label="Conversations"
+             x-data="inboxSelection()"
+             x-on:inbox-list-changed.camel.window="clear()">
+      {% comment %}
+        The bulk bar. Outside #inbox-list so the three-second poll cannot swap it
+        away mid-action, and hidden until something is selected.
+      {% endcomment %}
+      {% if can_reply and label_options %}
+        <form class="ib-bulk" x-show="count" x-cloak
+              hx-post="{% url 'inbox:bulk_label' workspace_id=request.workspace.id %}"
+              hx-swap="none"
+              x-on:htmx:after-request.camel="clear()">
+          {% csrf_token %}
+          <template x-for="id in ids" :key="id">
+            <input type="hidden" name="conversation" :value="id">
+          </template>
+          <span class="text-xs" x-text="count + (count === 1 ? ' selected' : ' selected')"></span>
+          <label class="sr-only" for="bulk-label">Label</label>
+          <select id="bulk-label" class="bb-select" name="label" required>
+            <option value="">Choose a label…</option>
+            {% for option in label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
+          </select>
+          <button type="submit" class="btn-outline btn-inline" name="action" value="add">Add</button>
+          <button type="submit" class="btn-outline btn-inline" name="action" value="remove">Remove</button>
+          <button type="button" class="btn-link btn-inline" @click="clear()">Clear</button>
+        </form>
+      {% endif %}
       <div id="inbox-list" class="ib-rail-scroll"
            data-poll
            hx-get="{% url 'inbox:rows' workspace_id=request.workspace.id %}"
@@ -222,83 +248,97 @@ inert.
 </script>
 
 <script nonce="{{ request.csp_nonce }}">
-  // The compose box's two issue-#24 affordances: attachments and "send later".
+  // The compose box's issue-#24 affordances: attachments, the library picker,
+  // and "send later".
   //
   // Defined here rather than in inbox/_composer.html because that partial is
   // re-fetched after every send, and a script inside it would be re-evaluated
   // each time. Alpine needs the x-data factory to already exist when the swapped
   // markup arrives, which this block — rendered before Alpine's own deferred
   // tag — is exactly the window for.
-  function inboxAttachments() {
+  // Bulk selection for the conversation list. Its state lives out here, not in
+  // the rows, because the rows are replaced every three seconds — binding the
+  // checkboxes to this restores them on every swap instead of losing a
+  // half-made selection to the poll.
+  function inboxSelection() {
     return {
-      items: [],
-      add(item) {
-        if (this.items.some((existing) => existing.id === item.id)) return;
-        this.items.push(item);
+      ids: [],
+      get count() { return this.ids.length; },
+      isSelected(id) { return this.ids.indexOf(id) !== -1; },
+      toggle(id, on) {
+        if (on) {
+          if (!this.isSelected(id)) this.ids.push(id);
+        } else {
+          this.ids = this.ids.filter((value) => value !== id);
+        }
       },
+      clear() { this.ids = []; },
+    };
+  }
+
+  function inboxComposer(config) {
+    return {
+      conversationId: config.conversationId,
+      items: [],
+      scheduling: false,
+      picker: { open: false, loading: false, error: '', term: '', results: [] },
+
       drop(id) {
         this.items = this.items.filter((item) => item.id !== id);
       },
+
+      togglePicker() {
+        this.picker.open = !this.picker.open;
+        if (this.picker.open && !this.picker.results.length) this.loadPicker();
+      },
+
+      closePicker() {
+        this.picker.open = false;
+      },
+
+      // One page from apps/media_library/picker.py. `platform` populates
+      // platform_warnings and never filters, so the kind filter is ours: the
+      // list only offers what this channel can actually carry, which is the
+      // same table apps/inbox/views.py reads server-side.
+      loadPicker() {
+        const url = new URL(config.pickerUrl, window.location.origin);
+        url.searchParams.set('platform', config.platform);
+        if (this.picker.term) url.searchParams.set('q', this.picker.term);
+        this.picker.loading = true;
+        this.picker.error = '';
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' })
+          .then((response) => {
+            if (!response.ok) throw new Error('unavailable');
+            return response.json();
+          })
+          .then((payload) => {
+            this.picker.results = (payload.results || []).filter(
+              (asset) => config.kinds.indexOf(asset.kind) !== -1
+            );
+          })
+          .catch(() => {
+            this.picker.error = 'The media library could not be reached.';
+            this.picker.results = [];
+          })
+          .finally(() => {
+            this.picker.loading = false;
+          });
+      },
+
+      // Store the id, never the url — the picker's contract is explicit that the
+      // url is minted per request, and the view resolves the id to a fresh
+      // signed one at send time.
+      attach(asset) {
+        if (this.items.length >= config.max) {
+          this.picker.error = 'That is as many attachments as one message can carry.';
+          return;
+        }
+        if (!this.items.some((item) => item.id === asset.id)) {
+          this.items.push({ id: asset.id, name: asset.title || asset.filename });
+        }
+        this.closePicker();
+      },
     };
   }
-</script>
-
-<script nonce="{{ request.csp_nonce }}">
-  // Delegated from the document, not bound to the buttons: the composer is
-  // replaced wholesale on every send, and a listener attached to a button
-  // inside it would be thrown away with the markup.
-  (function () {
-    document.addEventListener('click', function (event) {
-      var toggle = event.target.closest('[data-schedule-toggle]');
-      if (toggle) {
-        var panel = document.getElementById(toggle.getAttribute('aria-controls'));
-        if (!panel) return;
-        var open = panel.hasAttribute('hidden');
-        panel.toggleAttribute('hidden', !open);
-        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-        return;
-      }
-
-      var picker = event.target.closest('[data-media-picker]');
-      if (picker) openPicker(picker);
-    });
-
-    // The library picker (#16). Its payload is documented in
-    // apps/media_library/picker.py; two rules from that contract are load-bearing
-    // here. Store `id`, never `url` — the URL is minted per request. And
-    // `platform_warnings` is advisory: the target platform is not fixed until
-    // send time, so an asset too large for one channel is still fine on another.
-    function openPicker(button) {
-      var url = new URL(button.getAttribute('data-picker-url'), window.location.origin);
-      url.searchParams.set('platform', button.getAttribute('data-platform') || '');
-      fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' })
-        .then(function (response) { return response.ok ? response.json() : null; })
-        .then(function (payload) {
-          if (!payload) return;
-          var kinds = (button.getAttribute('data-kinds') || '').split(',').filter(Boolean);
-          var choices = (payload.results || []).filter(function (asset) {
-            return kinds.indexOf(asset.kind) !== -1;
-          });
-          if (!choices.length) {
-            window.dispatchEvent(new CustomEvent('showToast', {
-              detail: { tone: 'info', title: 'Nothing to attach', body: 'This channel takes ' + kinds.join(', ') + '.' },
-            }));
-            return;
-          }
-          var box = button.closest('form').querySelector('.ib-attachments');
-          var state = box && window.Alpine ? window.Alpine.$data(box) : null;
-          if (!state) return;
-          var max = parseInt(button.getAttribute('data-max'), 10) || 1;
-          choices.slice(0, max - state.items.length).forEach(function (asset) {
-            state.add({ id: asset.id, name: asset.title || asset.filename });
-          });
-        })
-        .catch(function () {
-          window.dispatchEvent(new CustomEvent('showToast', {
-            detail: { tone: 'error', title: 'Library unavailable', body: 'Could not load the media library.' },
-          }));
-        });
-    }
-  })();
 </script>
 {% endblock %}

@@ -230,3 +230,23 @@ class TestNotificationFailures:
         assert reminder.action.status == ActionStatus.PENDING
         assert reminder.action.run_at > timezone.now()
         assert reminder.action.last_error
+
+
+class TestASupersededAction:
+    def test_a_superseded_action_does_not_notify(self, tenancy, conversation):
+        """Same shape as the scheduled reply's: an action the row no longer
+        points at must not fire, however it got claimed."""
+        from apps.inbox.handlers import handle_reminder
+
+        reminder = _schedule(conversation, tenancy.user_for("agent"))
+        stale = reminder.action
+        # Arm a second time, as a reschedule would.
+        services._arm(reminder, services.REMINDER, reminder.remind_at, {"reminder_id": str(reminder.pk)})
+        reminder.refresh_from_db()
+        assert reminder.action_id != stale.pk
+
+        handle_reminder({"reminder_id": str(reminder.pk)}, stale)
+
+        assert not Notification.objects.filter(event_type="inbox_reminder").exists()
+        reminder.refresh_from_db()
+        assert reminder.status == DeferredStatus.PENDING

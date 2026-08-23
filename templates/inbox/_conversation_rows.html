@@ -11,6 +11,7 @@ renders under Django's default autoescaping and none of it is marked safe.
   <p class="p-4 text-xs" style="color: var(--text-tertiary);">No conversations match these filters.</p>
 {% else %}
   {% for row in conversations %}
+    <div class="ib-row-wrap">
     {% comment %}
       A real link, not a button with hx-get, and both halves of that matter.
 
@@ -25,6 +26,19 @@ renders under Django's default autoescaping and none of it is marked safe.
       issues the same request from the document instead, so the poll can replace
       these rows underneath it without losing the navigation.
     {% endcomment %}
+    {% comment %}
+      The bulk-select checkbox, a sibling of the row rather than inside it: a
+      checkbox inside an <a> is a control the link swallows.
+
+      Its state lives in the `inboxSelection` component wrapping the list, which
+      is *outside* this partial — so the three-second poll can replace these rows
+      underneath a half-made selection and x-bind restores every tick. The same
+      arrangement contacts/list.html uses, for the same reason.
+    {% endcomment %}
+    <input type="checkbox" class="ib-row-select"
+           aria-label="Select {{ row.conversation.contact.display_name }}"
+           x-bind:checked="isSelected('{{ row.conversation.id }}')"
+           x-on:change="toggle('{{ row.conversation.id }}', $event.target.checked)">
     <a href="{% url 'inbox:thread' workspace_id=request.workspace.id conversation_id=row.conversation.id %}"
        data-conversation="{{ row.conversation.id }}"
        class="ib-row{% if row.unread %} is-unread{% endif %}{% if open_conversation_id == row.conversation.id|stringformat:'s' %} is-current{% endif %}"
@@ -66,5 +80,6 @@ renders under Django's default autoescaping and none of it is marked safe.
         </span>
       {% endif %}
     </a>
+    </div>
   {% endfor %}
 {% endif %}

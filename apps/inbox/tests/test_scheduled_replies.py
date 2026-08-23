@@ -345,3 +345,49 @@ class TestDoubleSubmit:
         from apps.inbox.models import InboxReminder
 
         assert InboxReminder.objects.for_workspace(tenancy.workspace).count() == 2
+
+
+class TestASupersededAction:
+    def test_a_claimed_action_cannot_send_at_the_old_time(self, tenancy, conversation, identity):
+        """The reschedule race with teeth.
+
+        ``_cancel_action`` can only cancel a PENDING queue row, so rescheduling
+        after the worker has already claimed the original leaves that claimed
+        action running with nothing to stop it — while the row is pending again,
+        pointing at its replacement. The row-derived idempotency key is no help:
+        it stops the *replacement* sending twice, which is the wrong one of the
+        two to stop.
+        """
+        reply = _due_now(_schedule(conversation, tenancy.user_for("agent")))
+        claimed = reply.action
+        # The worker has it in hand; `_cancel_action` filters on PENDING and so
+        # leaves it alone.
+        ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=claimed.pk).update(
+            status=ActionStatus.RUNNING
+        )
+        services.reschedule_reply(reply, body=BODY, send_at=timezone.now() + timedelta(hours=5))
+        reply.refresh_from_db()
+        assert reply.action_id != claimed.pk
+
+        with registered(Platform.TELEGRAM) as adapter:
+            handle_scheduled_reply({"scheduled_reply_id": str(reply.pk)}, claimed)
+
+        assert adapter.sends == []
+        reply.refresh_from_db()
+        assert reply.status == DeferredStatus.PENDING
+
+    def test_the_replacement_still_sends_when_it_comes_due(self, tenancy, conversation, identity):
+        reply = _due_now(_schedule(conversation, tenancy.user_for("agent")))
+        claimed = reply.action
+        ScheduledAction.objects.for_workspace(tenancy.workspace).filter(pk=claimed.pk).update(
+            status=ActionStatus.RUNNING
+        )
+        services.reschedule_reply(reply, body=BODY, send_at=timezone.now() + timedelta(hours=5))
+        reply.refresh_from_db()
+        _due_now(reply)
+
+        with registered(Platform.TELEGRAM) as adapter:
+            handle_scheduled_reply({"scheduled_reply_id": str(reply.pk)}, claimed)
+            handle_scheduled_reply({"scheduled_reply_id": str(reply.pk)}, reply.action)
+
+        assert len(adapter.sends) == 1

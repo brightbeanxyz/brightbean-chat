@@ -219,7 +219,7 @@ def _add_labels(conversation: Any, label_ids: list[str]) -> None:
 
 
 def _assign(conversation: Any, user_id: str) -> None:
-    """Assign the thread — **only when nobody has it**.
+    """Assign the thread — **only when nobody has it**, and atomically.
 
     This stage runs during an agent takeover (``RUNS_WHILE_PAUSED``), so the
     unguarded version has a failure mode with real teeth: an agent claims a
@@ -227,19 +227,37 @@ def _assign(conversation: Any, user_id: str) -> None:
     the rule names. Assigning only an unassigned thread is both what a helpdesk
     wants and what makes the action idempotent under replay.
 
+    **Reading first is not enough.** ``apps/flows/triggers/pipeline.py`` runs
+    this stage without the contact lock on purpose, so between a bare read and
+    the write an agent can claim the thread from the inbox and the rule
+    overwrites them — the exact outcome the guard exists to prevent, in a window
+    the guard itself creates. That module names the remedy: "If a rule of yours
+    needs the lock, take it yourself, in your own transaction, via
+    ``apps.queueing.locks.contact_lock``." This is the one action that does.
+
+    ``try_contact_lock`` rather than the blocking one, because inline this is a
+    webhook request and SPEC §9.6 is explicit that it must not wait behind
+    whatever the worker is doing to this contact. Contention means a flow step is
+    in flight for the same person; the rule's other actions have already applied,
+    and skipping the assignment is a better answer than either blocking the ack
+    or stealing a thread. On the worker path the lock is already held by
+    ``process_action`` and advisory locks are re-entrant per session, so this
+    always acquires and costs nothing.
+
     Through ``apps.messaging.services`` and nowhere else — ROADMAP contract 1,
     and ``apps/messaging/tests/test_write_sites.py`` scans for the alternative.
     """
+    from django.db import transaction
+
     from apps.members.models import WorkspaceMembership
     from apps.messaging import services as messaging
+    from apps.queueing.locks import try_contact_lock
 
-    fresh = _reload(conversation)
-    if fresh is None or fresh.assignee_id is not None:
-        return
     # WorkspaceMembership is not workspace-scoped, so this is a plain filter on
     # the column — the shape apps/inbox/views.py::_membership uses. Re-checked
     # here as well as at save time because a member can leave a workspace
-    # between the two.
+    # between the two. Outside the lock: it is about the assignee, not the
+    # thread, so it does not need to be serialised with the read below.
     membership = (
         WorkspaceMembership.objects.filter(workspace_id=conversation.workspace_id, user_id=user_id)
         .select_related("user")
@@ -247,7 +265,17 @@ def _assign(conversation: Any, user_id: str) -> None:
     )
     if membership is None:
         return
-    messaging.assign_conversation(fresh, membership.user)
+
+    with transaction.atomic(), try_contact_lock(conversation.contact_id) as acquired:
+        if not acquired:
+            logger.debug("Skipping a rule assignment on conversation %s: the contact is locked.", conversation.pk)
+            return
+        # Re-read **under the lock**. The value this decision rests on has to be
+        # one nothing else can change before the write lands.
+        fresh = _reload(conversation)
+        if fresh is None or fresh.assignee_id is not None:
+            return
+        messaging.assign_conversation(fresh, membership.user)
 
 
 def _mark_done(conversation: Any) -> None:

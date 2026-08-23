@@ -258,3 +258,50 @@ class TestTheRuleLabelCap:
             route_events(connection, [raw_event(connection, text="hi", user="u1")])
 
         assert "Zzz brand new" in _names(conversation)
+
+
+class TestTheBulkSelectUi:
+    """The endpoint existed before anything could reach it.
+
+    These assert the wiring, not the styling: a checkbox per row bound to state
+    that lives *outside* the polled region, and a form that posts the selected
+    ids to ``inbox:bulk_label``.
+    """
+
+    def test_the_list_renders_a_checkbox_per_row(self, tenancy, agent_client, url_for, conversation, inbound):
+        inbound(text="hello")
+
+        page = agent_client.get(url_for("rows")).content.decode()
+
+        assert f"toggle('{conversation.pk}'" in page
+        assert f"isSelected('{conversation.pk}')" in page
+
+    def test_the_selection_state_lives_outside_the_polled_region(self, tenancy, agent_client, url_for):
+        """If it lived in the rows, the three-second poll would wipe a half-made
+        selection on every tick."""
+        services.create_label(tenancy.workspace, name="Refunds")
+
+        page = agent_client.get(url_for("list")).content.decode()
+
+        # The binding, not the factory: the factory is defined in the
+        # alpine_components block near the end of the document, which is fine
+        # and says nothing about scope. What matters is that the element
+        # carrying the state encloses the polled div rather than living in it.
+        assert page.index('x-data="inboxSelection()"') < page.index('id="inbox-list"')
+        assert page.count('x-data="inboxSelection()"') == 1
+
+    def test_the_bulk_bar_posts_to_the_endpoint(self, tenancy, agent_client, url_for):
+        services.create_label(tenancy.workspace, name="Refunds")
+
+        page = agent_client.get(url_for("list")).content.decode()
+
+        assert url_for("bulk_label") in page
+        assert 'name="action" value="add"' in page
+        assert 'name="action" value="remove"' in page
+
+    def test_a_viewer_gets_no_bulk_bar(self, tenancy, viewer_client, url_for):
+        services.create_label(tenancy.workspace, name="Refunds")
+
+        page = viewer_client.get(url_for("list")).content.decode()
+
+        assert url_for("bulk_label") not in page

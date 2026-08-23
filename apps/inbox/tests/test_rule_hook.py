@@ -415,3 +415,72 @@ class TestIdempotence:
         _deliver(connection, event(connection, text="hi", event_id="evt-2"))
 
         assert InboxRuleApplication.objects.for_workspace(tenancy.workspace).count() == 2
+
+
+@pytest.mark.django_db(transaction=True)
+class TestAssignmentIsAtomic:
+    def test_it_skips_rather_than_stealing_when_the_contact_is_locked(
+        self, tenancy, connection, identity, conversation
+    ):
+        """A bare read-then-write leaves a window this stage cannot close: the
+        router runs it without the contact lock, so an agent can claim the thread
+        between the read and the write and the rule overwrites them.
+
+        Holding the contact lock from another connection stands in for that
+        window. Inline this uses ``try_contact_lock``, so contention means the
+        assignment is skipped — never applied to a stale read.
+        """
+        import threading
+
+        from django.db import connections, transaction
+
+        from apps.queueing.locks import contact_lock
+
+        agent = tenancy.user_for("agent")
+        _rule(
+            tenancy.workspace,
+            condition={"channel": {"platforms": ["telegram"]}},
+            actions=[
+                {"type": "assign_to_member", "user_id": str(agent.pk)},
+                {"type": "add_label", "label_id": str(_label(tenancy.workspace).pk)},
+            ],
+        )
+
+        held = threading.Event()
+        release = threading.Event()
+
+        def holder() -> None:
+            try:
+                with transaction.atomic(), contact_lock(conversation.contact_id):
+                    held.set()
+                    release.wait(timeout=15)
+            finally:
+                connections.close_all()
+
+        thread = threading.Thread(target=holder)
+        thread.start()
+        try:
+            assert held.wait(timeout=10)
+            _deliver(connection, event(connection, text="hi"))
+        finally:
+            release.set()
+            thread.join(timeout=15)
+
+        conversation.refresh_from_db()
+        assert conversation.assignee_id is None
+        # The rule's other action still applied: one contended write does not
+        # cost the rest of the rule.
+        assert _labels_on(conversation) == ["Refunds"]
+
+    def test_it_assigns_when_nothing_is_holding_the_contact(self, tenancy, connection, identity, conversation):
+        agent = tenancy.user_for("agent")
+        _rule(
+            tenancy.workspace,
+            condition={"channel": {"platforms": ["telegram"]}},
+            actions=[{"type": "assign_to_member", "user_id": str(agent.pk)}],
+        )
+
+        _deliver(connection, event(connection, text="hi"))
+
+        conversation.refresh_from_db()
+        assert conversation.assignee_id == agent.pk
