@@ -1,0 +1,47 @@
+{% comment %}
+A ref-URL trigger's deep links and QR codes (SPEC §21 phase 2).
+
+One row per connection the trigger covers — an unbound ref trigger reaches
+Telegram, Messenger and Instagram, and those are three different accounts with
+three different links, which is why the QR endpoint is addressed by connection
+rather than by trigger.
+
+The QR is generated on this server by segno. No external image service ever sees
+which accounts this deployment runs.
+{% endcomment %}
+<div class="mt-2 space-y-2">
+    {% for link in links %}
+    <div class="rounded-lg border p-2" style="border-color: var(--border); background: var(--surface-2);">
+        <div class="flex items-center gap-1.5 text-xs mb-1" style="color: var(--text-tertiary);">
+            <span class="pi-chip pi-{{ link.platform }}" style="width: 1rem; height: 1rem;">
+                {% include "partials/_platform_icon.html" with platform=link.platform size="sm" %}
+            </span>
+            <span class="truncate">{{ link.connection.display_name }}</span>
+            <span class="status-pill status-pill-{{ link.connection.status }}">{{ link.connection.get_status_display }}</span>
+        </div>
+
+        {% if link.available %}
+        <div class="flex items-start gap-2" x-data="{ copied: false }">
+            <img src="{% url 'flows:trigger_qr' workspace_id=request.workspace.id flow_id=trigger.flow_id trigger_id=trigger.id connection_id=link.connection.id %}"
+                 width="96" height="96" alt="QR code for {{ link.connection.display_name }}"
+                 class="rounded" style="background: var(--surface-0);">
+            <div class="min-w-0 flex-1">
+                <code class="block text-xs break-all" style="color: var(--text-secondary);">{{ link.url }}</code>
+                <div class="flex flex-wrap items-center gap-2 mt-1.5">
+                    <button type="button" class="btn-outline btn-inline"
+                            @click="navigator.clipboard.writeText($el.closest('div').parentElement.querySelector('code').textContent).then(() => { copied = true; setTimeout(() => copied = false, 1500) })">
+                        <span x-text="copied ? 'Copied' : 'Copy link'">Copy link</span>
+                    </button>
+                    <a class="btn-link text-xs"
+                       href="{% url 'flows:trigger_qr' workspace_id=request.workspace.id flow_id=trigger.flow_id trigger_id=trigger.id connection_id=link.connection.id %}?format=svg&amp;download=1">SVG</a>
+                    <a class="btn-link text-xs"
+                       href="{% url 'flows:trigger_qr' workspace_id=request.workspace.id flow_id=trigger.flow_id trigger_id=trigger.id connection_id=link.connection.id %}?format=png&amp;download=1">PNG</a>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <p class="text-xs" style="color: var(--text-tertiary);">{{ link.unavailable_reason }}</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>

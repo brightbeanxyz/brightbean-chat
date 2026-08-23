@@ -37,6 +37,7 @@ from apps.flows import services
 from apps.flows.models import Flow
 from apps.flows.picklists import picklists
 from apps.flows.schema import MAX_GRAPH_BYTES, empty_graph, json_schema, limits
+from apps.flows.triggers import services as trigger_services
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
 from apps.members.roles import WorkspaceRole
@@ -140,7 +141,7 @@ def _detail_read(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     # schema this same response links to, and {} fails it — the client would get
     # three envelope errors about a graph nobody authored.
     graph = draft.graph_json if draft else empty_graph()
-    result = services.validate_for_workspace(graph, request.workspace)
+    result = services.validate_for_workspace(graph, request.workspace, flow=flow)
     return JsonResponse(
         {
             "flow": _flow_payload(flow),
@@ -148,6 +149,13 @@ def _detail_read(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             "graph": graph,
             "published_version": published.as_dict() if published else None,
             "picklists": picklists(request.workspace),
+            # Read-only. The builder does not edit triggers — the HTMX panel on
+            # the same page does — so this is a summary and never the raw
+            # config, which would make the React store a second place a
+            # trigger's configuration lives. Always present, empty list
+            # included: TestPicklists pins that rule for picklists and it is the
+            # same rule, so a client never branches on a key being absent.
+            "triggers": trigger_services.summaries(flow),
             "validation": result.as_dict(),
             "limits": limits(),
             "schema_url": reverse("flows:api_schema", kwargs={"workspace_id": workspace_id}),
@@ -169,7 +177,9 @@ def _detail_save(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     # — and the graph is a subtree of that body, so it is a valid upper bound
     # for the size cap. It saves re-serialising the whole graph on every
     # two-second autosave.
-    result = services.validate_for_workspace(payload["graph"], request.workspace, known_size=len(request.body))
+    result = services.validate_for_workspace(
+        payload["graph"], request.workspace, known_size=len(request.body), flow=flow
+    )
     if result.blocks_save:
         # Structural findings only: the document is too big, too deep, or
         # carries a key no node type declares. A half-wired graph — a dangling

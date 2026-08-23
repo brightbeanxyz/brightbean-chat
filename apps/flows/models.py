@@ -30,17 +30,24 @@ from django.conf import settings
 from django.db import models
 
 from apps.common.scoping import WorkspaceScopedModel
+from apps.contacts.errors import WorkspaceMismatchError
 from apps.contacts.models import ContactScopedModel
 from apps.flows.schema import empty_graph
+from apps.flows.triggers.types import TriggerType
 
 __all__ = [
     "LIVE_STATUSES",
+    "DefaultReplyState",
     "ExecutionStatus",
     "Flow",
     "FlowExecution",
     "FlowStatus",
     "FlowVersion",
+    "HandledComment",
+    "RoutedEvent",
     "StartedBy",
+    "Trigger",
+    "TriggerType",
 ]
 
 
@@ -294,3 +301,284 @@ class FlowExecution(ContactScopedModel):
     def is_live(self) -> bool:
         """True while this execution still owns its contact (SPEC §9.2)."""
         return self.status in LIVE_STATUSES
+
+
+class Trigger(WorkspaceScopedModel):
+    """What starts a flow — SPEC §5's ``trigger`` row, SPEC §10's behaviour.
+
+    Matching runs in priority order, lower first, and **the first match wins per
+    event**. That makes ``Meta.ordering`` load-bearing rather than cosmetic: with
+    ``priority`` alone two triggers at the same number tie, and a tie means the
+    same message can start different flows on different days depending on how
+    Postgres felt about the seq scan. ``created_at`` then ``id`` closes it — uuid7
+    is monotonic, so "the one that was there first" is also the stable answer.
+
+    ``channel_connection`` is nullable, and SPEC §5 says what null means: *all
+    connections of matching platform*. "Matching" is not a wildcard — it is
+    :data:`apps.flows.triggers.types.PLATFORMS_FOR_TYPE`, SPEC §10's Channels
+    column as data. A welcome trigger with no connection covers this workspace's
+    Telegram and Messenger connections and not its SMS one, because a welcome is
+    a thing only those two platforms send.
+
+    There is deliberately **no uniqueness** on (workspace, type, connection).
+    Two default replies on one channel are legal and resolved by priority, like
+    every other type: SPEC §10 gives one resolution rule for all ten types, and
+    carving out an exception would also mean a toggle button that can answer
+    ``IntegrityError`` when someone enables a staged replacement before disabling
+    the old one. The panel warns about the duplicate instead, which is the part
+    the author actually needs to know.
+    """
+
+    flow = models.ForeignKey(Flow, on_delete=models.CASCADE, related_name="triggers")
+
+    # CASCADE, not SET_NULL: null already means something specific here ("every
+    # connection of a matching platform"), so a deleted connection quietly
+    # widening a trigger from one channel to all of them is the one outcome that
+    # must not happen.
+    channel_connection = models.ForeignKey(
+        "channels.ChannelConnection",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="triggers",
+    )
+
+    type = models.CharField(max_length=20, choices=TriggerType.choices)
+    config_json = models.JSONField(default=dict, blank=True)
+    enabled = models.BooleanField(default=True)
+    priority = models.IntegerField(default=0)
+
+    class Meta:
+        db_table = "flows_trigger"
+        ordering = ["priority", "created_at", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(priority__gte=0),
+                name="flows_trigger_priority_non_negative",
+            ),
+        ]
+        indexes = [
+            # SPEC §5, verbatim: "Index (workspace_id, type, enabled)". It is the
+            # matcher's candidate query, which runs once per inbound event.
+            models.Index(fields=["workspace", "type", "enabled"], name="flows_trigger_ws_type_idx"),
+            # The panel's query: this flow's triggers, in the order they match.
+            models.Index(fields=["flow", "priority"], name="flows_trigger_flow_prio_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_type_display()} → {self.flow_id}"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """Derive ``workspace`` from the flow, and refuse a peer from elsewhere.
+
+        Same discipline as :class:`apps.contacts.models.ContactScopedModel`,
+        which this cannot inherit because a trigger hangs off a *flow*, not a
+        contact. The connection check is the one that matters: a trigger is the
+        join between a flow and a channel, and the two disagreeing about their
+        workspace is how one tenant's message starts another tenant's flow.
+        """
+        self.workspace_id = self.flow.workspace_id
+        connection = self.channel_connection if self.channel_connection_id is not None else None
+        if connection is not None and connection.workspace_id != self.flow.workspace_id:
+            raise WorkspaceMismatchError("That channel connection belongs to a different workspace than the flow.")
+        update_fields = kwargs.get("update_fields")
+        if update_fields:
+            # Only widen a non-empty set — an empty one means "save nothing" and
+            # Django returns before touching the database.
+            kwargs["update_fields"] = {*update_fields, "workspace"}
+        super().save(*args, **kwargs)
+
+    @property
+    def covers_all_connections(self) -> bool:
+        """Whether this trigger applies to every connection of a matching platform."""
+        return self.channel_connection_id is None
+
+
+class HandledComment(WorkspaceScopedModel):
+    """One comment this workspace has already acted on (SPEC §10, comment trigger).
+
+    Two rules live here, and they are different rules with different keys.
+
+    **Idempotency**, on ``(connection, comment_id)``: Meta redelivers webhooks,
+    and without this a redelivery is a second private reply to the same person
+    about the same comment.
+
+    **Once per contact per post**, on ``(connection, post_id, commenter_ref)``
+    and *partial* on the flag: SPEC §10 makes ``once_per_contact_per_post`` a
+    per-trigger setting defaulting to true, so rows written while it was off must
+    stay out of the index. Storing the flag on the row rather than reading the
+    trigger's config at query time also means turning the setting off later does
+    not retroactively unlock history.
+
+    The guard key is ``commenter_ref`` — the platform's user id — and **not**
+    ``contact``. That is the whole reason this is workspace-scoped rather than
+    contact-scoped: ``apps/messaging/ingest.py`` deliberately creates no contact
+    for a comment event, so ``contact`` is NULL at the moment the guard has to be
+    taken, and Postgres treats NULLs as distinct — a unique constraint over a
+    NULL column would never fire for exactly the concurrent race this table
+    exists to lose gracefully. The contact is filled in later, when the private
+    reply creates the DM identity.
+    """
+
+    channel_connection = models.ForeignKey(
+        "channels.ChannelConnection",
+        on_delete=models.CASCADE,
+        related_name="handled_comments",
+    )
+    trigger = models.ForeignKey(
+        Trigger,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="handled_comments",
+    )
+
+    #: Platform ids. Attacker-controlled text: escape on render, never trust the
+    #: length, and note they are bounded on write rather than truncated.
+    comment_id = models.CharField(max_length=200)
+    post_id = models.CharField(max_length=200)
+    commenter_ref = models.CharField(max_length=200)
+
+    contact = models.ForeignKey(
+        "contacts.Contact",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="handled_comments",
+    )
+
+    #: When the platform says the comment was written, clamped to "not in the
+    #: future" on write. SPEC §10's private reply has a 7-day deadline measured
+    #: from here, and a forged timestamp must not be able to buy extra days.
+    commented_at = models.DateTimeField()
+
+    #: The trigger's setting at the moment this row was written. See the class
+    #: docstring: it is what the partial unique index is conditioned on.
+    once_per_contact_per_post = models.BooleanField(default=True)
+
+    private_reply_sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "flows_handled_comment"
+        ordering = ["-commented_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["channel_connection", "comment_id"],
+                name="flows_handledcomment_unique_comment",
+            ),
+            models.UniqueConstraint(
+                fields=["channel_connection", "post_id", "commenter_ref"],
+                condition=models.Q(once_per_contact_per_post=True),
+                name="flows_handledcomment_once_per_commenter_per_post",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["workspace", "post_id"], name="flows_hcomment_ws_post_idx"),
+            # The housekeeping sweep: rows whose deadline has passed.
+            models.Index(fields=["commented_at"], name="flows_hcomment_commented_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"comment {self.comment_id} on post {self.post_id}"
+
+
+class DefaultReplyState(WorkspaceScopedModel):
+    """SPEC §10's fixed 24-hour default-reply guard, per contact per channel.
+
+    Deliberately a table rather than :func:`apps.common.ratelimit.hit`, on three
+    counts. That limiter's window is **clock-aligned**, so a default reply at
+    23:59:59 and another at 00:00:01 both pass — which is precisely the "two
+    identical fallbacks seconds apart" complaint the guard exists to prevent. Its
+    key is a SHA-256 digest, so an operator asking "why did this person get two"
+    has nothing readable to look at. And ``hit()`` prunes the whole counter table
+    on every new key, on the inbound path, inside SPEC §7.1's 1.5-second budget.
+
+    A row per (contact, connection) with a rolling ``last_sent_at`` is none of
+    those things, and it is what "durable" in the issue asks for.
+
+    Workspace-scoped rather than contact-scoped for one reason: the claim below
+    is a single ``UPDATE ... WHERE``, and ``ContactScopedModel.save()`` exists to
+    police the ``save()`` path, which the claim does not use on its hot leg.
+    ``contact`` and ``channel_connection`` are checked against the workspace by
+    the service that writes them.
+    """
+
+    contact = models.ForeignKey(
+        "contacts.Contact",
+        on_delete=models.CASCADE,
+        related_name="default_reply_states",
+    )
+    channel_connection = models.ForeignKey(
+        "channels.ChannelConnection",
+        on_delete=models.CASCADE,
+        related_name="default_reply_states",
+    )
+    last_sent_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "flows_default_reply_state"
+        ordering = ["-last_sent_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["contact", "channel_connection"],
+                name="flows_defaultreply_one_per_contact_channel",
+            ),
+        ]
+        indexes = [models.Index(fields=["last_sent_at"], name="flows_defaultreply_sent_idx")]
+
+    def __str__(self) -> str:
+        return f"default reply to {self.contact_id} at {self.last_sent_at:%Y-%m-%d %H:%M}"
+
+
+class RoutedEvent(WorkspaceScopedModel):
+    """One inbound event the **worker** has finished routing. Exactly-once, durably.
+
+    Only the deferred path writes here, and the reason is specific enough to be
+    worth stating. ``apps.queueing.worker.process_action`` runs a handler and
+    marks the row done in one transaction, so a crash rolls both back and the
+    retry is honest. But zombie recovery resets a ``running`` row after ten
+    minutes, so a genuinely slow handler can be claimed a second time while the
+    first is still in flight. Both take the blocking contact lock, so they
+    serialise — and the second then re-runs the pipeline over the first's
+    committed work, calling ``start_flow`` again.
+
+    ``send_outbound``'s idempotency key does not save us there: it is
+    ``exec:{execution_id}:node:...``, and a second ``start_flow`` mints a *new*
+    execution id, so the second welcome message is a legitimately different send.
+    SPEC §21 asks for zero duplicate sends across a thousand forced retries.
+
+    So the handler's first act is this insert, and it commits with the work:
+    rolled back together when the handler fails (a retry re-runs, correctly),
+    committed together when it succeeds (a zombie re-run is a no-op). The inline
+    path is single-shot by construction — ``webhook_event_log`` has already
+    deduplicated the delivery — and does not pay a write per event.
+    """
+
+    channel_connection = models.ForeignKey(
+        "channels.ChannelConnection",
+        on_delete=models.CASCADE,
+        related_name="routed_events",
+    )
+    #: The platform's event id, bounded the way ``messaging.identities`` bounds
+    #: keys: hashed when over-long, never truncated, because two different long
+    #: ids sharing a prefix would collapse into one another's guard.
+    provider_event_id = models.CharField(max_length=200)
+    #: The stage the deferred run resumed from, so a hand-off at ``trigger`` and
+    #: one at ``resume`` are distinguishable in an operator's read of the table.
+    stage = models.CharField(max_length=32)
+    #: What routing did with it, for the same reason. Free text, ours, bounded.
+    outcome = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "flows_routed_event"
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["channel_connection", "provider_event_id"],
+                name="flows_routedevent_unique_conn_event",
+            ),
+        ]
+        indexes = [models.Index(fields=["workspace", "created_at"], name="flows_routedevent_ws_idx")]
+
+    def __str__(self) -> str:
+        return f"{self.provider_event_id} ({self.stage})"

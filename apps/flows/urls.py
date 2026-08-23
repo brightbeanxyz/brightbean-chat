@@ -9,7 +9,7 @@ is SPEC §16's path with the workspace segment RBACMiddleware requires prepended
 
 from django.urls import path
 
-from apps.flows import api, views
+from apps.flows import api, views, views_triggers
 
 app_name = "flows"
 
@@ -21,6 +21,24 @@ urlpatterns = [
     path("flows/<uuid:flow_id>/duplicate/", views.flow_duplicate, name="duplicate"),
     path("flows/<uuid:flow_id>/archive/", views.flow_archive, name="archive"),
     path("flows/<uuid:flow_id>/restore/", views.flow_restore, name="restore"),
+    # The Triggers panel (issue #11). Partials and one image, all under the
+    # existing flow page, so `flows:edit` stays the route the nav lights up for.
+    path("flows/<uuid:flow_id>/triggers/", views_triggers.trigger_panel, name="trigger_panel"),
+    path("flows/<uuid:flow_id>/triggers/form/", views_triggers.trigger_form, name="trigger_form"),
+    path("flows/<uuid:flow_id>/triggers/create/", views_triggers.trigger_create, name="trigger_create"),
+    path("flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/", views_triggers.trigger_update, name="trigger_update"),
+    path(
+        "flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/toggle/", views_triggers.trigger_toggle, name="trigger_toggle"
+    ),
+    path("flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/move/", views_triggers.trigger_move, name="trigger_move"),
+    path(
+        "flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/delete/", views_triggers.trigger_delete, name="trigger_delete"
+    ),
+    path(
+        "flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/qr/<uuid:connection_id>/",
+        views_triggers.trigger_qr,
+        name="trigger_qr",
+    ),
     # SPEC §16's data API. `schema/` is listed before the uuid route for
     # readability only — the converter would never match it either way.
     path("api/flows/schema/", api.flow_schema, name="api_schema"),
