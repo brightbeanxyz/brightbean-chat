@@ -1,18 +1,47 @@
 {% comment %}
-A comment trigger. Everything here is platform-agnostic and takes effect as soon
-as an Instagram or Messenger adapter parses comment events — L4-A ships the
-config, the matcher and the once-per-commenter guard; L5-A and L5-B add the
-public reply, the like and the post picker, which is why post ids are typed in
-for now.
+A comment trigger. Everything here is platform-agnostic: L4-A shipped the config,
+the matcher and the once-per-commenter guard, and each adapter registers what its
+own API can do (apps/flows/triggers/comments.py). Nothing below names a platform.
+
+Two things are driven by that registry rather than by markup:
+
+* the post picker appears once per platform that ships one, and loads over htmx
+  into the panel below the textarea — which stays editable, because an older post
+  that is not on the first page is still configurable by pasting its id;
+* "Like the comment" appears only while some platform this trigger can fire on
+  has an API for it. Instagram has none — Meta's IG Comment reference exposes
+  like_count as read-only and only hide and replies as write operations — so on
+  an Instagram-only deployment the option is absent rather than silently ignored.
 {% endcomment %}
+<div x-data="{
+       pick(id) {
+         if (!id) { return; }
+         const box = $refs.postIds;
+         const lines = box.value.split('\n').map(s => s.trim()).filter(Boolean);
+         if (!lines.includes(id)) { lines.push(id); }
+         box.value = lines.join('\n');
+         $refs.postScope.value = 'specific';
+       }
+     }">
 <label class="block text-xs font-medium mb-1" for="trigger-post-scope" style="color: var(--text-primary);">Posts</label>
-<select id="trigger-post-scope" name="post_scope" class="form-input-styled mb-2">
+<select id="trigger-post-scope" name="post_scope" class="form-input-styled mb-2" x-ref="postScope">
     <option value="all" {% if config.post_scope != "specific" %}selected{% endif %}>Any post</option>
     <option value="specific" {% if config.post_scope == "specific" %}selected{% endif %}>Only these posts</option>
 </select>
-<textarea name="post_ids" rows="2" class="form-input-styled mb-3"
+<textarea name="post_ids" rows="2" class="form-input-styled mb-2" x-ref="postIds"
           placeholder="One post id per line">{{ config.post_ids|join:"
 " }}</textarea>
+{% if post_pickers %}
+<div class="flex items-center gap-2 mb-1">
+    {% for picker in post_pickers %}
+    <button type="button" class="btn-outline btn-inline text-xs"
+            hx-get="{{ picker.url }}"
+            hx-target="#trigger-post-picker"
+            hx-swap="innerHTML">Choose from {{ picker.label }}</button>
+    {% endfor %}
+</div>
+<div id="trigger-post-picker" class="mb-3"></div>
+{% endif %}
 
 <label class="block text-xs font-medium mb-1" for="trigger-include" style="color: var(--text-primary);">Only when the comment contains</label>
 <textarea id="trigger-include" name="include_keywords" rows="2" class="form-input-styled mb-3"
@@ -31,10 +60,20 @@ for now.
     <input type="checkbox" name="once_per_contact_per_post" {% if config.once_per_contact_per_post %}checked{% endif %}>
     Only reply once per person per post
 </label>
+{% if like_supported %}
 <label class="flex items-center gap-2 text-xs mb-3" style="color: var(--text-primary);">
     <input type="checkbox" name="like_comment" {% if config.like_comment %}checked{% endif %}>
     Like the comment
 </label>
+{% elif config.like_comment %}
+{% comment %}
+Hidden, not dropped. An unchecked checkbox posts nothing, so simply omitting the
+control would silently clear a setting the author made — on an unrelated edit,
+with nothing to say so. The value is their stated intent, and whether a platform
+can honour it is a fact that changes when an adapter ships.
+{% endcomment %}
+<input type="hidden" name="like_comment" value="1">
+{% endif %}
 
 <label class="block text-xs font-medium mb-1" for="trigger-public-reply" style="color: var(--text-primary);">Public reply</label>
 <select id="trigger-public-reply" name="public_reply_mode" class="form-input-styled mb-2">
@@ -46,5 +85,7 @@ for now.
           placeholder="One reply per line">{{ config.public_reply.texts|join:"
 " }}</textarea>
 <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-    Public replies and likes are sent once an Instagram or Messenger channel is connected.
+    The public reply goes out first; the flow's first message follows as a private
+    reply, once per comment and within seven days of it.
 </p>
+</div>

@@ -7,12 +7,13 @@ makes "lower first" a total order rather than a partial one, and
 :func:`match` stops at the first matcher that says yes rather than collecting
 candidates and choosing afterwards.
 
-The per-type matchers are a **registry**, not a chain of ``if``s, so L5-A can
-make story triggers real and L6-A can bind rule triggers by registering a
-callable from their own ``ready()``. Three types register a stub that always
-declines (:data:`apps.flows.triggers.types.STUB_TYPES`) rather than nothing at
-all, so "this type exists but cannot fire yet" is visible in
-:func:`registered_matchers` instead of being an absence.
+The per-type matchers are a **registry**, not a chain of ``if``s, so L6-A can
+bind rule triggers by registering a callable from its own ``ready()``. A type
+whose platform signal has not landed registers a stub that always declines
+(:data:`apps.flows.triggers.types.STUB_TYPES`) rather than nothing at all, so
+"this type exists but cannot fire yet" is visible in
+:func:`registered_matchers` instead of being an absence. That set is empty since
+#17 (L5-A) made the three Instagram types real.
 """
 
 import logging
@@ -286,14 +287,41 @@ def _match_comment(trigger: Trigger, context: MatchContext) -> bool:
     return True
 
 
-def _decline(trigger: Trigger, context: MatchContext) -> bool:
-    """A registered stub that always declines — the three Instagram-only types.
+def _match_always(trigger: Trigger, context: MatchContext) -> bool:
+    """SPEC §10 gives ``story_mention`` and ``follow`` no configuration at all.
 
-    Registered rather than left absent so ``registered_matchers()`` shows the
-    type exists and cannot fire yet, and so L5-A's change is one
-    ``register_matcher(..., replace=True)`` line in its own ``ready()`` rather
-    than an edit here. ``story_reply``'s keyword config is already validated and
-    stored; only the deciding is deferred.
+    The event arriving *is* the match. There is nothing to compare, which is why
+    both take an empty config schema rather than ``any_json()`` — "no
+    configuration" and "any configuration" are opposites, and only one of them
+    refuses a key somebody typed by mistake.
+
+    Reaching this at all is already narrow: :data:`EVENT_TRIGGER_TYPES` lets a
+    ``story_mention`` event select only a ``story_mention`` trigger, and
+    :func:`eligible_triggers` has already checked that the connection's platform
+    is one SPEC §10's Channels column lists for the type.
+    """
+    return True
+
+
+def _match_story_reply(trigger: Trigger, context: MatchContext) -> bool:
+    """SPEC §10: "optional keywords". No keywords means every story reply matches.
+
+    The same keyword machinery as the keyword trigger, deliberately: an author
+    who writes ``refund`` in a story-reply trigger expects it to behave the way
+    ``refund`` behaves everywhere else in the product, modes and all.
+    """
+    keywords = trigger.config_json.get("keywords") or ()
+    return not keywords or keyword_matching.matches_any(context.text, keywords)
+
+
+def _decline(trigger: Trigger, context: MatchContext) -> bool:
+    """A registered stub that always declines, for a type nothing delivers yet.
+
+    :data:`apps.flows.triggers.types.STUB_TYPES` is empty as of #17, so nothing
+    uses this today. It is kept, and kept registered from that set, because the
+    mechanism is the point: a type whose platform signal has not landed shows up
+    in ``registered_matchers()`` as present-but-inert rather than as an absence,
+    and turning it on is one line in the owning issue rather than an edit here.
     """
     return False
 
@@ -302,6 +330,9 @@ register_matcher(TriggerType.KEYWORD, _match_keyword)
 register_matcher(TriggerType.REF_URL, _match_ref_url)
 register_matcher(TriggerType.WELCOME, _match_welcome)
 register_matcher(TriggerType.COMMENT, _match_comment)
+register_matcher(TriggerType.STORY_MENTION, _match_always)
+register_matcher(TriggerType.STORY_REPLY, _match_story_reply)
+register_matcher(TriggerType.FOLLOW, _match_always)
 for _stub in sorted(STUB_TYPES):
     register_matcher(_stub, _decline)
 

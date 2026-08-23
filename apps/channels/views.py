@@ -54,9 +54,9 @@ PLATFORM_LABELS = dict(Platform.choices)
 #: placeholder panels so an operator looking at an empty page knows whether they
 #: have misconfigured something or are simply early.
 CONNECT_FLOW_ISSUES: dict[str, str] = {
-    # Telegram and WhatsApp are absent: #12 and #19 shipped their guided flows,
-    # and the list template links to those instead of naming an issue.
-    Platform.INSTAGRAM: "#17 (L5-A)",
+    # Telegram, Instagram and WhatsApp are absent: #12, #17 and #19 shipped
+    # their guided flows, and the list template links to those instead of
+    # naming an issue.
     Platform.MESSENGER: "#18 (L5-B)",
     Platform.SMS: "#20 (L5-D)",
     Platform.EMAIL: "#21 (L5-E)",
@@ -68,6 +68,10 @@ CONNECT_FLOW_ISSUES: dict[str, str] = {
 #: silently became wrong for the second platform that got a flow.
 CONNECT_HINTS: dict[str, str] = {
     Platform.TELEGRAM: "paste a BotFather token and we do the rest.",
+    # Added on the #17/#19 merge: Instagram's guided flow landed while this dict
+    # was being introduced, so its row rendered "set it up — " with nothing
+    # after the dash. Neither branch could have seen it alone.
+    Platform.INSTAGRAM: "sign in with the Instagram account and grant the messaging permissions.",
     Platform.WHATSAPP: "paste your Cloud API ids and system user token; we verify them with Meta first.",
 }
 

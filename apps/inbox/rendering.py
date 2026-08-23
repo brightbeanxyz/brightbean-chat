@@ -40,6 +40,8 @@ from apps.messaging.codes import describe
 from apps.messaging.models import Message, MessageDirection, MessageStatus
 
 __all__ = [
+    "DELETED_PREVIEW",
+    "DELETED_REASON",
     "Button",
     "Card",
     "Gallery",
@@ -54,6 +56,11 @@ __all__ = [
 
 #: Media kinds ``apps.channels.events.MediaBlock`` can carry.
 _MEDIA_KINDS = frozenset({"image", "audio", "video", "file"})
+
+#: What a retracted message says in the thread and in the list. Copy, written
+#: here, never anything derived from the payload — there is no payload left.
+DELETED_REASON = "This message was deleted."
+DELETED_PREVIEW = "[deleted]"
 
 #: How much of a message the conversation list shows. Inbound text is capped at
 #: ``ingest.MAX_TEXT_CHARS`` (100k), so a list of a hundred rows would otherwise
@@ -159,6 +166,17 @@ class RenderedMessage:
         return self.message.status == MessageStatus.FAILED
 
     @property
+    def is_deleted(self) -> bool:
+        """Retracted at the platform's request (SPEC §6.3, §19).
+
+        The row is kept and its body redacted by ``apps.messaging.ingest``, so
+        the thread keeps its shape and an agent can see that something was here
+        and is not any more — which is the whole point of redacting rather than
+        deleting.
+        """
+        return self.message.status == MessageStatus.DELETED
+
+    @property
     def can_retry(self) -> bool:
         """A failed outbound send a human can ask for again.
 
@@ -181,7 +199,13 @@ def render_message(message: Message) -> RenderedMessage:
     parts: list[Part] = []
     for item in raw_blocks if isinstance(raw_blocks, list) else []:
         parts.append(_part(item))
-    if not parts:
+    if _is_redacted(message, body):
+        # Its own reason, rather than the generic empty-body one below. "This
+        # message has no displayable content" is what a reader sees for a
+        # payload we could not parse, and telling that apart from "they unsent
+        # it" is the difference between a bug report and an explanation.
+        parts = [Tombstone(reason=DELETED_REASON)]
+    elif not parts:
         parts.append(Tombstone(reason="This message has no displayable content."))
     return RenderedMessage(
         message=message,
@@ -194,6 +218,17 @@ def render_message(message: Message) -> RenderedMessage:
     )
 
 
+def _is_redacted(message: Message, body: dict[str, Any]) -> bool:
+    """Whether this row was retracted at the platform's request.
+
+    Either signal is enough. The status is what ``apps.messaging.ingest`` writes
+    and what the inbox filters on; the ``deleted`` marker inside the body is what
+    a GDPR export or a hand-repaired row carries. Requiring both would mean a row
+    that lost one of them renders its (empty) content as if nothing had happened.
+    """
+    return message.status == MessageStatus.DELETED or body.get("deleted") is True
+
+
 def preview_of(message: Message) -> str:
     """One line for the conversation list.
 
@@ -202,6 +237,8 @@ def preview_of(message: Message) -> str:
     payload size and layout, not safety.
     """
     body = message.body if isinstance(message.body, dict) else {}
+    if _is_redacted(message, body):
+        return DELETED_PREVIEW
     raw_blocks = body.get("blocks")
     # One pass, remembering the best non-text answer seen. Text wins wherever it
     # appears in the block list, so a second full traversal would only be there

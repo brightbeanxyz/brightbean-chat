@@ -457,6 +457,14 @@ class HandledComment(WorkspaceScopedModel):
     once_per_contact_per_post = models.BooleanField(default=True)
 
     private_reply_sent_at = models.DateTimeField(null=True, blank=True)
+    #: When the trigger's public reply was posted under the comment, if it
+    #: configured one. Separate from ``private_reply_sent_at`` because the two
+    #: are different calls to different endpoints with different failure modes,
+    #: and because the queue's handler contract (``apps.queueing.registry``)
+    #: says a handler "must be safe to run more than once" — zombie recovery
+    #: re-runs one that committed without being marked done. Without a durable
+    #: record, that re-run posts a second visible comment on the customer's post.
+    public_reply_sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "flows_handled_comment"
@@ -476,6 +484,18 @@ class HandledComment(WorkspaceScopedModel):
             models.Index(fields=["workspace", "post_id"], name="flows_hcomment_ws_post_idx"),
             # The housekeeping sweep: rows whose deadline has passed.
             models.Index(fields=["commented_at"], name="flows_hcomment_commented_idx"),
+            # "Is this person's next message a private reply?" — asked by an
+            # adapter on the send path, which SPEC §7.1 budgets at 1.5 s of wall
+            # clock including the outbound call, so it has to be an index lookup
+            # rather than a scan. **Partial**, on the unanswered rows only: the
+            # answer is no for every row this table keeps after its reply went
+            # out, so indexing them would grow the index for ever to answer a
+            # question none of them can answer yes to. Added by #17 (L5-A).
+            models.Index(
+                fields=["channel_connection", "commenter_ref"],
+                condition=models.Q(private_reply_sent_at__isnull=True),
+                name="flows_hcomment_pending_idx",
+            ),
         ]
 
     def __str__(self) -> str:

@@ -100,11 +100,6 @@ class TestContractFieldsAreExactlyAsWritten:
         fields = {f.name for f in dataclasses.fields(Capabilities)}
         assert fields == self.SPEC_6_1_FLAGS | self.MEDIA_CEILING_FIELDS | self.RENDERING_FIELDS
 
-    def test_only_whatsapp_has_an_exclusive_interaction(self) -> None:
-        """Every other platform shows buttons and quick replies together."""
-        exclusive = {p for p in Platform.values if capabilities_for(p).interaction_is_exclusive}
-        assert exclusive == {Platform.WHATSAPP}
-
     def test_a_media_ceiling_is_published_only_for_a_kind_the_platform_takes(self) -> None:
         """A ceiling on an unsupported kind is the drift #19 removed.
 
@@ -123,6 +118,11 @@ class TestContractFieldsAreExactlyAsWritten:
         # unconstrained getattr would answer for a field that is not a kind.
         assert capabilities_for(Platform.WHATSAPP).max_bytes_for("text") == 0
         assert capabilities_for(Platform.WHATSAPP).max_bytes_for("text_len") == 0
+
+    def test_only_whatsapp_has_an_exclusive_interaction(self) -> None:
+        """Every other platform shows buttons and quick replies together."""
+        exclusive = {p for p in Platform.values if capabilities_for(p).interaction_is_exclusive}
+        assert exclusive == {Platform.WHATSAPP}
 
     def test_tables_are_frozen(self) -> None:
         # Module-level singletons shared by every request in the worker.
@@ -212,7 +212,8 @@ class TestRegistry:
         ``unregistered`` rather than naming a platform that happens to have no
         adapter yet: every Layer-5 issue fills one more slot, and a test that
         picked whichever was still empty would have to be rewritten five times
-        and would silently stop testing anything on the sixth.
+        and would silently stop testing anything on the sixth. #17 and #19 both
+        landed on this one.
         """
         with unregistered(Platform.WHATSAPP):
             entry = entry_for(Platform.WHATSAPP)
@@ -223,9 +224,15 @@ class TestRegistry:
     def test_register_and_resolve(self) -> None:
         with registered(Platform.TELEGRAM) as adapter_cls:
             assert has_adapter(Platform.TELEGRAM)
-            # Membership rather than equality: every Layer-5 adapter adds one
-            # more, and the claim under test is that this one is registered.
-            assert Platform.TELEGRAM in registered_platforms()
+            # The contract is **enum order**, and it is asserted against
+            # Platform.values rather than against the function's own filter —
+            # comparing to `tuple(v for v in Platform.values if has_adapter(v))`
+            # would restate registered_platforms()' implementation and could
+            # never fail. Every shipped adapter registers itself at startup, so
+            # the *membership* is not pinned to a literal; the ordering is.
+            platforms = registered_platforms()
+            assert Platform.TELEGRAM in platforms
+            assert list(platforms) == sorted(platforms, key=Platform.values.index)
             assert isinstance(adapter_for(Platform.TELEGRAM), adapter_cls)
             assert isinstance(adapter_for(Platform.TELEGRAM), Adapter)
         # Restored, not cleared. Telegram has a real adapter since issue #12 and

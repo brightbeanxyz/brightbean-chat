@@ -55,10 +55,22 @@ __all__ = [
 
 
 class EventType(StrEnum):
-    """SPEC §7.2's event types, exactly.
+    """SPEC §7.2's event types, plus one the spec's own §6.3 forces.
 
     A ``StrEnum`` so ``event.type == "message"`` reads true and the value
     serialises into the event log without a conversion step.
+
+    ``MESSAGE_DELETED`` is the addition, and it is deliberate rather than
+    incidental. SPEC §7.2 lists nine types; SPEC §6.3 separately requires
+    Instagram's ``message_deletions`` webhook field to be handled ("redact
+    message body, keep row with status deleted") and §19 repeats it, so the
+    signal has to arrive as *something*. The alternative considered was a
+    ``DELIVERY_STATUS`` event carrying ``status="deleted"``, which would mean
+    widening ``apps.messaging.ingest.RECEIPT_STATUSES`` and the pure
+    ``_next_status`` ladder — both deliberately narrow, and neither is about
+    deletion. A deletion is not a rung on the delivery ladder; it is the row
+    being retracted. So it gets its own type, and this enum is shared, so the
+    addition is called out in the PR that made it (#17, L5-A).
     """
 
     MESSAGE = "message"
@@ -69,6 +81,8 @@ class EventType(StrEnum):
     REFERRAL = "referral"
     FOLLOW = "follow"
     DELIVERY_STATUS = "delivery_status"
+    #: The platform says a message it delivered no longer exists. SPEC §6.3.
+    MESSAGE_DELETED = "message_deleted"
     OPT_OUT = "opt_out"
 
 

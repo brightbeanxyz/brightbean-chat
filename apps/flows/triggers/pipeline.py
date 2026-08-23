@@ -74,7 +74,9 @@ ROUTING_PROCESSOR = "routing"
 
 #: A delivery receipt routes nowhere: persistence already walked the message
 #: status ladder with it, and there is no contact-authored content to react to.
-ROUTABLE_EVENTS = frozenset(EventType) - {EventType.DELIVERY_STATUS}
+#: A deletion is the same shape of thing — persistence redacted the row, and
+#: "they unsent a message" is not something a trigger should be able to fire on.
+ROUTABLE_EVENTS = frozenset(EventType) - {EventType.DELIVERY_STATUS, EventType.MESSAGE_DELETED}
 
 
 def register_routing() -> None:

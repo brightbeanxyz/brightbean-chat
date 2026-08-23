@@ -1,0 +1,24 @@
+{
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "17841400000000001",
+      "time": 1755950000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "6789012345678901"
+          },
+          "recipient": {
+            "id": "17841400000000001"
+          },
+          "timestamp": 1755950000123,
+          "message": {
+            "mid": "aWdfZG1fMTox",
+            "text": "Do you ship to Berlin?"
+          }
+        }
+      ]
+    }
+  ]
+}
