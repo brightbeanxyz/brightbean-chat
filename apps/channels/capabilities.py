@@ -185,9 +185,13 @@ CAPABILITIES: dict[str, Capabilities] = {
         max_buttons=3,
         max_text_len=4096,
     ),
-    # SPEC §6.6. Text only in v1 — no MMS, no rich blocks, nothing to press.
-    # 1600 characters is Twilio's ceiling for a concatenated message.
+    # SPEC §6.6. Text plus MMS images (issue #20): no audio, video or file, no
+    # rich blocks and nothing to press, so buttons and quick replies downgrade
+    # to the numbered options the renderer produces and the contact types back.
+    # 1600 characters is Twilio's ceiling for a concatenated message — well past
+    # one segment, which apps.channels.segments is what actually prices.
     Platform.SMS: Capabilities(
+        image=True,
         proactive_send=True,
         broadcast_allowed=True,
         max_text_len=1600,

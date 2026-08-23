@@ -120,7 +120,13 @@ class TestHostileText:
 
         body = _thread(agent_client, url_for, conversation)
 
-        assert "49" not in body
+        # ``"49 and"`` rather than a bare ``"49"``. The evaluated form of this
+        # payload is "49 and …", so the longer needle proves exactly as much —
+        # while a bare "49" is scanned against the *whole* rendered thread,
+        # which carries message timestamps. Any run at 16:49 failed this
+        # assertion on a page that had done nothing wrong, roughly one minute
+        # in sixty, on every open PR.
+        assert "49 and" not in body
         assert "{{ 7*7 }}" in body
 
     @pytest.mark.parametrize("payload", OVERSIZED)

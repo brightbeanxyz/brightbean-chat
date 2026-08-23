@@ -1,0 +1,13 @@
+{
+  "NumMedia": "0",
+  "SmsStatus": "received",
+  "Body": "HELP",
+  "To": "+15550001111",
+  "NumSegments": "1",
+  "MessageSid": "SM55555555555555555555555555555555",
+  "SmsSid": "SM55555555555555555555555555555555",
+  "AccountSid": "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "From": "+15557778888",
+  "OptOutType": "HELP",
+  "ApiVersion": "2010-04-01"
+}
