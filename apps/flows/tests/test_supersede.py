@@ -10,13 +10,15 @@ which no constraint would catch.
 """
 
 import pytest
+from django.db import transaction
 from django.utils import timezone
 
-from apps.flows.engine import start_flow
+from apps.flows.engine import start_flow, stop_automation
 from apps.flows.engine.results import Wait
 from apps.flows.models import LIVE_STATUSES, ExecutionStatus, FlowExecution, StartedBy
 from apps.flows.services import latest_version, save_draft
 from apps.flows.tests.support import contact_for, graph, node, node_runtime, published_flow
+from apps.queueing.locks import contact_lock
 from apps.queueing.models import ActionStatus, ActionType
 from apps.queueing.registry import schedule
 
@@ -182,3 +184,95 @@ class TestDraftPreview:
 
         live.refresh_from_db()
         assert live.status == ExecutionStatus.EXPIRED
+
+
+@pytest.mark.django_db
+class TestStoppingAnExecutionByHand:
+    """``stop_automation`` — the manual half of the same rule (issues #13, #14).
+
+    An operator taking a conversation over from automation wants exactly what a
+    new ``start_flow`` would have done to the contact's live run, without
+    starting anything. It is public because the alternative is every caller
+    writing ``status`` itself, and one function per terminal state is the reason
+    an execution's status can be reasoned about at all.
+
+    Exercised at the engine level here; ``apps/contacts/tests/test_crm.py``
+    covers it from the contact page, and the inbox from its stop button.
+    """
+
+    def test_it_expires_the_live_execution(self, tenancy):
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
+        contact = contact_for(tenancy.workspace)
+        execution = _waiting(tenancy.workspace, contact, flow)
+
+        stopped = stop_automation(contact)
+
+        execution.refresh_from_db()
+        assert stopped == 1
+        assert execution.status == ExecutionStatus.EXPIRED
+
+    def test_it_cancels_the_timers_that_would_have_woken_it(self, tenancy):
+        """A stopped execution's followup timer would otherwise fire hours
+        later. ``resume_execution``'s status check would catch it, but a
+        cancelled row never wakes a worker at all."""
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
+        contact = contact_for(tenancy.workspace)
+        _waiting(tenancy.workspace, contact, flow)
+        action = schedule(
+            ActionType.FOLLOWUP_TIMER,
+            timezone.now() + timezone.timedelta(hours=2),
+            {},
+            workspace=tenancy.workspace,
+            contact=contact.pk,
+            idempotency_key="timer:stop-test",
+        )
+
+        stop_automation(contact)
+
+        action.refresh_from_db()
+        assert action.status == ActionStatus.CANCELLED
+
+    def test_a_contact_with_nothing_running_is_a_no_op(self, tenancy):
+        contact = contact_for(tenancy.workspace)
+
+        assert stop_automation(contact) == 0
+
+    def test_it_leaves_a_terminal_execution_alone(self, tenancy):
+        """Only the three live statuses "own" the contact; re-expiring a
+        completed run would rewrite history."""
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
+        contact = contact_for(tenancy.workspace)
+        execution = _waiting(tenancy.workspace, contact, flow)
+        execution.status = ExecutionStatus.COMPLETED
+        execution.save(update_fields=["status", "updated_at"])
+
+        stopped = stop_automation(contact)
+
+        execution.refresh_from_db()
+        assert stopped == 0
+        assert execution.status == ExecutionStatus.COMPLETED
+
+    def test_it_is_safe_while_the_caller_already_holds_the_contact_lock(self, tenancy):
+        """``_supersede``'s only caller holds the lock already; this wrapper
+        takes one because its callers do not. Advisory locks are counted per
+        session, so the case where both happen — a worker mid-action asking for
+        a stop — costs nothing rather than deadlocking against itself.
+        """
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
+        contact = contact_for(tenancy.workspace)
+        execution = _waiting(tenancy.workspace, contact, flow)
+
+        with transaction.atomic(), contact_lock(contact):
+            stopped = stop_automation(contact)
+
+        execution.refresh_from_db()
+        assert stopped == 1
+        assert execution.status == ExecutionStatus.EXPIRED
+
+    def test_it_is_part_of_the_engines_public_surface(self):
+        """L4-C's contact page needs the same call, so the name is a contract
+        rather than an implementation detail."""
+        import apps.flows.engine as engine
+
+        assert "stop_automation" in engine.__all__
+        assert engine.stop_automation is stop_automation

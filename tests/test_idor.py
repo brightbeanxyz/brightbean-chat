@@ -62,9 +62,32 @@ class TestCrossTenantIsolation:
         names = {route.name for route in iter_tenant_routes()}
 
         assert {
-            "inbox",
             "sequences",
             "broadcasts",
+        } <= names
+
+    def test_the_sweep_covers_the_inbox_app(self):
+        """Issue #14 replaced the `inbox` placeholder with the real app. Every
+        route below names a conversation — the attacker-content surface of the
+        product — so the sweep has to reach all of them, mutations included."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "inbox:list",
+            "inbox:rows",
+            "inbox:thread",
+            "inbox:messages",
+            "inbox:composer",
+            "inbox:header",
+            "inbox:sidebar",
+            "inbox:send",
+            "inbox:note",
+            "inbox:assign",
+            "inbox:state",
+            "inbox:pause",
+            "inbox:stop",
+            "inbox:tags",
+            "inbox:retry",
         } <= names
 
     def test_the_sweep_covers_the_contacts_routes(self):

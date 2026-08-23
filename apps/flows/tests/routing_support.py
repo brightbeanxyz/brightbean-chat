@@ -15,8 +15,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from apps.channels.capabilities import capabilities_for
-from apps.channels.registry import register_adapter, unregister_adapter
-from apps.channels.tests.fake_adapter import FakeAdapter
+from apps.channels.tests.fake_adapter import FakeAdapter, swapped_adapter
 
 __all__ = ["RoutingFakeAdapter", "routing_adapter"]
 
@@ -61,8 +60,10 @@ def routing_adapter(platform: str, *, delay: float = 0.0) -> Iterator[type[Routi
             "delay": delay,
         },
     )
-    register_adapter(platform, adapter_cls)
-    try:
+    # Through the shared helper: this used to register and unregister directly,
+    # which was the same thing right up until #12 shipped a real Telegram
+    # adapter that ready() installs in every process. Then the bare register hit
+    # the duplicate guard and the bare unregister would have left the slot empty
+    # for the rest of the run.
+    with swapped_adapter(platform, adapter_cls):
         yield adapter_cls
-    finally:
-        unregister_adapter(platform)

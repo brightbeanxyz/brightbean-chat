@@ -1,0 +1,26 @@
+{% comment %}
+What the compliance engine says about replying here, right now (SPEC §8).
+
+A pre-flight, rendered above the history so an agent knows before composing
+rather than after. There is deliberately NO platform branching in this file:
+apps/messaging/compliance.py returns a decision derived from
+apps.channels.policy as data, and apps/messaging/codes.py returns its sentence.
+A `{% if platform == "whatsapp" %}` here would be a second, drifting copy of a
+policy table that already exists.
+
+The one piece of prose that is passed through rather than looked up is
+`allowed_use_text`: SPEC §6.4 requires Meta's allowed-use wording to be shown
+verbatim, so the policy row carries it.
+{% endcomment %}
+{% if not compliance.allowed %}
+  <div class="ib-banner ib-banner-blocked">
+    <span>
+      {{ compliance.reason }}
+      {% if compliance.allowed_use_text %} {{ compliance.allowed_use_text }}{% endif %}
+    </span>
+  </div>
+{% elif compliance.tag %}
+  <div class="ib-banner ib-banner-info">
+    <span>{{ compliance.reason }}</span>
+  </div>
+{% endif %}

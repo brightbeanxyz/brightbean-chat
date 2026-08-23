@@ -20,8 +20,18 @@ class TestTheSeam:
         """Registering under an existing name replaces *in place*, so routing
         inherits the slot messaging's no-op was holding rather than appending
         after it — which is what makes "routing sees what persistence wrote"
-        true without either app knowing about the other."""
-        assert channels_ingest.registered_processors() == (PERSISTENCE_PROCESSOR, ROUTING_PROCESSOR)
+        true without either app knowing about the other.
+
+        Asserted as an ordering, not as the whole registry. Contract 6 is a
+        seam later streams register into, so pinning the exact tuple made this
+        test fail on somebody else's addition rather than on a change to the
+        property it is about — which is what happened when #12's "test on
+        Telegram" registered a preview stage at LATE_ORDER. The order is the
+        contract; the guest list is not.
+        """
+        names = channels_ingest.registered_processors()
+
+        assert names.index(PERSISTENCE_PROCESSOR) < names.index(ROUTING_PROCESSOR)
         assert channels_ingest._PROCESSORS[ROUTING_PROCESSOR] is route_events
 
     def test_messagings_guard_never_puts_the_no_op_back(self):

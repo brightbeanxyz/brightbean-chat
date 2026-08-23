@@ -1,0 +1,82 @@
+{% comment %}
+One conversation: header controls, the polled body, and the compose box.
+
+The split matters. #inbox-thread-body is swapped every three seconds when
+something changed; the composer sits OUTSIDE it and refreshes only after a send
+(`inboxSent from:body`), because it is the one element on this page holding
+unsaved work and a poll that swapped it would delete a half-typed reply.
+{% endcomment %}
+{% load common_extras %}
+<div class="ib-thread">
+{% comment %}
+  Refreshed on the same event the body and the panel listen for — see
+  inbox/_thread_header.html for why it is a separate request.
+{% endcomment %}
+<div id="inbox-thread-header"
+     hx-get="{% url 'inbox:header' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+     hx-trigger="inboxThreadChanged from:body"
+     hx-target="this"
+     hx-swap="innerHTML">
+  {% include "inbox/_thread_header.html" %}
+</div>
+
+<div id="inbox-thread-scroll" class="ib-thread-scroll">
+  {% comment %}
+    hx-include is what makes "load earlier" survive the poll. The response
+    renders the window it used into a hidden field inside this element, and
+    every poll sends it back — so a reader who has opened more history keeps it,
+    and a message arriving still lands. Without it the poll would ask for the
+    default page three seconds later and throw them back to the bottom.
+
+    hx-disinherit is the load-bearing half. hx-include is an INHERITED
+    attribute, so without it every request from inside this element picks it up:
+    a relative `find [name=limit]` re-resolves against the descendant and logs
+    an error per request, and an id selector — which does resolve — is worse
+    still, because "load earlier" then sends the *current* window alongside the
+    wider one it is asking for and silently gets nowhere. The children here have
+    their own parameters and want none of this element's.
+  {% endcomment %}
+  <div id="inbox-thread-body"
+       data-poll
+       hx-get="{% url 'inbox:messages' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+       hx-trigger="every 3s, inboxThreadChanged from:body"
+       hx-target="this"
+       hx-swap="innerHTML"
+       hx-include="#inbox-thread-limit"
+       hx-disinherit="hx-include">
+    {% include "inbox/_thread_body.html" %}
+  </div>
+</div>
+
+<div id="inbox-composer"
+     hx-get="{% url 'inbox:composer' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+     hx-trigger="inboxSent from:body"
+     hx-target="this"
+     hx-swap="innerHTML">
+  {% include "inbox/_composer.html" %}
+</div>
+
+</div>
+
+{% comment %}
+  Hidden below `lg` rather than dropped: on a narrow screen the list and the
+  thread are already competing for width, and the contact detail is the least
+  urgent of the three. It refreshes on its own event because a tag edit changes
+  nothing in the thread.
+{% endcomment %}
+<aside id="inbox-sidebar" class="ib-side hidden lg:block"
+       hx-get="{% url 'inbox:sidebar' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+       {% comment %}
+         inboxThreadChanged as well as its own event: this panel's pause toggle
+         and window status both move when a reply goes out, and a control still
+         offering "Pause automation" on a conversation an agent has just paused
+         by replying is worse than no control.
+
+         Not polled, though — it refetches on a change rather than every three
+         seconds, because nothing in here moves on its own.
+       {% endcomment %}
+       hx-trigger="inboxContactChanged from:body, inboxThreadChanged from:body"
+       hx-target="this"
+       hx-swap="innerHTML">
+  {% include "inbox/_sidebar.html" %}
+</aside>

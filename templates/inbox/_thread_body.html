@@ -1,0 +1,150 @@
+{% comment %}
+The polled half of a thread: pause banner, compliance notice, message history.
+
+EVERY string below arrived from a stranger (SECURITY-BASELINE §2) — message
+text, captions, card titles, button labels, attachment URLs. Three rules hold
+here and they are checked by apps/inbox/tests/test_hostile_content.py:
+
+  * Nothing is marked safe. Default autoescaping is the whole defence for text.
+  * No URL reaches an href or a src unless apps/inbox/rendering.py already put
+    it in an Image/Link/Card, which it only does after
+    apps.common.validators.is_renderable_url said http(s). A rejected one is
+    already a Tombstone by the time it gets here, so there is no {% if %} in
+    this file deciding it — the decision is made in Python, once.
+  * `rel="noopener noreferrer"` and `target="_blank"` on every outbound link:
+    the destination is chosen by the same stranger.
+
+An <img> but never an <audio>/<video>: the CSP's img-src allows https: while
+media-src is 'self' blob: only, so an inline player pointed at a platform CDN
+would be blocked by the browser and render as a broken control. Non-image media
+is a link, and rendering.py is where that is decided.
+{% endcomment %}
+
+{% comment %}
+  The window this render used. The polled element hx-includes it, so the next
+  poll asks for the same amount of history rather than resetting to one page.
+{% endcomment %}
+<input type="hidden" id="inbox-thread-limit" name="limit" value="{{ limit }}">
+
+{% if is_paused %}
+  <div class="ib-banner ib-banner-paused">
+    {% comment %}
+      An absolute time, not "29 minutes left". A countdown is a number that goes
+      wrong on its own while the markup that carries it stays byte-identical —
+      and this region only re-renders when its ETag changes. The ETag does track
+      *whether* the pause is live (apps/inbox/views.py folds it in), so the
+      banner appears and disappears on time; what it must not do is claim a
+      precision the refresh cannot back.
+    {% endcomment %}
+    <span>Automation is paused until {{ paused_until|time:"H:i" }}. Flows will not reply to this contact.</span>
+    {% if can_reply %}
+      <form class="ml-auto" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="resume">
+        <button type="submit" class="btn-link btn-inline">Resume</button>
+      </form>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% include "inbox/_compliance_notice.html" %}
+
+{% if has_more %}
+  <div class="text-center mb-3">
+    {% comment %}
+      Widens the window rather than paging to a cursor: the response is the same
+      shape the poll asks for, one page taller, so the two compose instead of
+      overwriting each other. At MAX_THREAD_MESSAGES next_limit stops growing
+      and the button stops being offered.
+    {% endcomment %}
+    {% if next_limit > limit %}
+      <button type="button" class="btn-outline btn-inline"
+              hx-get="{% url 'inbox:messages' workspace_id=request.workspace.id conversation_id=conversation.id %}?limit={{ next_limit }}"
+              hx-target="#inbox-thread-body"
+              hx-swap="innerHTML">Load earlier messages</button>
+    {% else %}
+      <p class="text-xs" style="color: var(--text-tertiary);">Showing the most recent {{ limit }} messages.</p>
+    {% endif %}
+  </div>
+{% endif %}
+
+<ol class="space-y-3 list-none p-0 m-0">
+  {% for item in rendered %}
+    <li class="flex flex-col {% if item.is_inbound %}items-start{% else %}items-end{% endif %}">
+      <div class="ib-bubble {% if item.is_note %}ib-bubble-note{% elif item.is_inbound %}ib-bubble-in{% else %}ib-bubble-out{% endif %}{% if item.is_failed %} ib-bubble-failed{% endif %}">
+        {% for part in item.parts %}
+          {% if part.kind == "text" %}
+            <span class="ib-text">{{ part.text }}</span>
+          {% elif part.kind == "image" %}
+            <a href="{{ part.url }}" target="_blank" rel="noopener noreferrer">
+              <img class="ib-media" src="{{ part.url }}" alt="{{ part.caption|default:'Attached image' }}" loading="lazy">
+            </a>
+            {% if part.caption %}<div class="ib-bubble-meta">{{ part.caption }}</div>{% endif %}
+          {% elif part.kind == "link" %}
+            <a href="{{ part.url }}" target="_blank" rel="noopener noreferrer">{{ part.caption|default:part.media_kind }}</a>
+            <span class="ib-chip">{{ part.media_kind }}</span>
+          {% elif part.kind == "card" %}
+            {% include "inbox/_card.html" with card=part %}
+          {% elif part.kind == "gallery" %}
+            {% for card in part.cards %}
+              {% include "inbox/_card.html" with card=card %}
+            {% endfor %}
+          {% else %}
+            <div class="ib-tombstone">{{ part.reason }}</div>
+          {% endif %}
+        {% endfor %}
+
+        {% for button in item.buttons %}
+          {% if button.url %}
+            <a class="ib-chip" href="{{ button.url }}" target="_blank" rel="noopener noreferrer">{{ button.label }}</a>
+          {% else %}
+            <span class="ib-chip">{{ button.label }}</span>
+          {% endif %}
+        {% endfor %}
+        {% for reply in item.quick_replies %}<span class="ib-chip">{{ reply.label }}</span>{% endfor %}
+      </div>
+
+      <div class="ib-bubble-meta flex items-center gap-2">
+        {% if item.is_note %}<span class="ib-chip">Internal note — never sent</span>{% endif %}
+        {% if item.button_id %}<span class="ib-chip">Pressed: {{ item.button_id }}</span>{% endif %}
+        {% if item.ref %}<span class="ib-chip">Ref: {{ item.ref }}</span>{% endif %}
+        <span>{{ item.message.created_at|date:"j M H:i" }}</span>
+        {% if not item.is_inbound and not item.is_note %}
+          {% comment %}
+            Ticks read off the status rather than being computed here.
+            apps.messaging.ingest refuses to move a message backwards down
+            DELIVERY_PROGRESS, so what is stored is already the furthest rung
+            reached.
+          {% endcomment %}
+          {% if item.message.status == "read" %}<span class="ib-tick ib-tick-read" title="Read">✓✓</span>
+          {% elif item.message.status == "delivered" %}<span class="ib-tick" title="Delivered">✓✓</span>
+          {% elif item.message.status == "sent" %}<span class="ib-tick" title="Sent">✓</span>
+          {% elif item.message.status == "failed" %}<span class="ib-tick ib-tick-failed" title="Failed">!</span>
+          {% else %}<span class="ib-tick" title="Queued">…</span>{% endif %}
+        {% endif %}
+      </div>
+
+      {% if item.is_failed and item.reason %}
+        <div class="ib-bubble-error flex items-center gap-2">
+          <span>{{ item.reason }}</span>
+          {% if item.can_retry and can_reply %}
+            <form hx-post="{% url 'inbox:retry' workspace_id=request.workspace.id conversation_id=conversation.id message_id=item.message.id %}" hx-swap="none">
+              {% csrf_token %}
+              {% comment %}
+                One token per rendered bubble, so a double-click sends one
+                message: both submits carry the same idempotency key and the
+                second collapses on message_unique_conv_idem. A re-render after
+                the first retry issues a new token, which is what makes a
+                deliberate second attempt possible.
+              {% endcomment %}
+              <input type="hidden" name="token" value="{{ retry_token }}">
+              <button type="submit" class="btn-link btn-inline">Try again</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
+    </li>
+  {% empty %}
+    <li class="ib-empty">No messages yet.</li>
+  {% endfor %}
+</ol>

@@ -1,0 +1,62 @@
+{% comment %}
+The thread's identity line and its two conversation controls.
+
+Its own partial with its own endpoint because it holds *state*, and state goes
+stale: "Mark done" posts and gets a 204 back, so without a refresh the button
+kept its old label and its old hidden value, and the only transition an agent
+could make was the one they had just made. inboxThreadChanged already told the
+body and the panel; this listens to the same event.
+
+Not folded into the polled body instead, which would have been one fewer
+request: the assignee <select> lives here, and a three-second swap would close
+it under the reader mid-choice.
+{% endcomment %}
+{% load common_extras %}
+<header class="ib-thread-header">
+  {% comment %}
+    Below `lg` the two panes take turns (see the media query in styles.css), so
+    the thread needs a way back to the list. A plain link, because on a phone
+    "back" is a whole-page change and there is no second pane to swap.
+  {% endcomment %}
+  <a class="btn-icon-hover lg:hidden" href="{% url 'inbox:list' workspace_id=request.workspace.id %}"
+     aria-label="Back to conversations">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+    </svg>
+  </a>
+  <span class="pi-chip {{ conversation.channel_connection.platform|platform_class }}" aria-hidden="true">
+    {% include "partials/_platform_icon.html" with platform=conversation.channel_connection.platform size="sm" %}
+  </span>
+  <div class="ib-thread-title">
+    <div class="text-sm font-semibold truncate" style="color: var(--text-primary);">{{ conversation.contact.display_name }}</div>
+    <div class="text-xs truncate" style="color: var(--text-tertiary);">{{ conversation.channel_connection.display_name }}</div>
+  </div>
+
+  {% if can_reply %}
+    <form hx-post="{% url 'inbox:state' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+      {% csrf_token %}
+      {% if conversation.state == "done" %}
+        <input type="hidden" name="state" value="open">
+        <button type="submit" class="btn-outline btn-inline" data-shortcut="done">Reopen</button>
+      {% else %}
+        <input type="hidden" name="state" value="done">
+        <button type="submit" class="btn-outline btn-inline" data-shortcut="done">Mark done</button>
+      {% endif %}
+    </form>
+
+    <form hx-post="{% url 'inbox:assign' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+          hx-swap="none"
+          hx-trigger="change">
+      {% csrf_token %}
+      <label class="sr-only" for="assignee-{{ conversation.id }}">Assignee</label>
+      <select class="bb-select" id="assignee-{{ conversation.id }}" name="assignee">
+        <option value="">Unassigned</option>
+        {% for membership in members %}
+          <option value="{{ membership.user_id }}" {% if conversation.assignee_id == membership.user_id %}selected{% endif %}>{{ membership.user.display_name }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  {% else %}
+    <span class="ib-chip">Read only</span>
+  {% endif %}
+</header>

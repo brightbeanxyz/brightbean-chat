@@ -1,0 +1,28 @@
+{% comment %}
+One card — a standalone `card` block, or one of a `gallery`'s.
+
+Shared, because it was not: the gallery branch grew a copy that rendered the
+image, title and link and quietly dropped the subtitle and the buttons, so a
+carousel arrived in the thread with its text and its actions missing. Two
+copies of markup this fiddly diverge; one cannot.
+
+Every URL here reached the view model through is_renderable_url, so an href is
+already known to be http(s) — see apps/inbox/rendering.py. `rel` and `target`
+are still explicit: the destination was chosen by the same stranger who wrote
+the message.
+{% endcomment %}
+<div>
+  {% if card.image_url %}<img class="ib-media" src="{{ card.image_url }}" alt="" loading="lazy">{% endif %}
+  {% if card.title %}<div class="font-semibold">{{ card.title }}</div>{% endif %}
+  {% if card.subtitle %}<div>{{ card.subtitle }}</div>{% endif %}
+  {% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Open</a>{% endif %}
+  {% for button in card.buttons %}
+    {% if button.url %}
+      <a class="ib-chip" href="{{ button.url }}" target="_blank" rel="noopener noreferrer">{{ button.label }}</a>
+    {% else %}
+      {% comment %}A postback: its target was the contact's app, so there is
+      nothing here for a team member to press.{% endcomment %}
+      <span class="ib-chip">{{ button.label }}</span>
+    {% endif %}
+  {% endfor %}
+</div>
