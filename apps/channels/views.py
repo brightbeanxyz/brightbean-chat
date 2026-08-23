@@ -55,14 +55,12 @@ PLATFORM_LABELS = dict(Platform.choices)
 #: placeholder panels so an operator looking at an empty page knows whether they
 #: have misconfigured something or are simply early.
 CONNECT_FLOW_ISSUES: dict[str, str] = {
-    # Telegram and Instagram are absent: #12 and #17 shipped their guided
-    # flows, and the list template links to those instead of naming an issue.
+    # Telegram, Instagram, SMS and Email are absent: #12, #17, #20 and #21
+    # shipped their guided flows, and the list template links to those instead
+    # of naming an issue. A platform leaves this table on the day its connect
+    # view lands, so what is left is what is genuinely still to come.
     Platform.MESSENGER: "#18 (L5-B)",
     Platform.WHATSAPP: "#19 (L5-C)",
-    Platform.SMS: "#20 (L5-D)",
-    # Email is absent for the same reason Telegram is: #21 shipped its guided
-    # flow, so registry.CONNECT_ROUTES has an entry and the list template links
-    # to it instead of naming an issue.
 }
 
 #: Statuses an operator may set by hand. ``needs_reauth`` is absent because an
@@ -84,10 +82,19 @@ def _webhook_url(request: WorkspaceRequest, connection: ChannelConnection) -> st
 
     Per-connection for SMS and email, one shared URL per platform for the rest.
     Absolute, because that is the form the operator has to type somewhere else.
+
+    **SMS goes through the adapter's own builder**, which reads ``APP_URL``
+    rather than this request. Twilio's signature is an HMAC over the URL it was
+    configured with, so ``verify_webhook`` recomputes that string — and a page
+    that showed ``request.build_absolute_uri`` while the adapter verified
+    ``APP_URL`` would, behind any reverse proxy, hand the operator a URL whose
+    every delivery is then rejected with nothing to say why.
     """
     if connection.platform == Platform.SMS:
-        path = reverse("webhook_sms", kwargs={"connection_id": connection.pk})
-    elif connection.platform == Platform.EMAIL:
+        from apps.channels.providers import sms
+
+        return sms.webhook_url(connection)
+    if connection.platform == Platform.EMAIL:
         path = reverse(
             "webhook_email",
             kwargs={"provider": _email_provider(connection), "connection_id": connection.pk},
@@ -129,6 +136,11 @@ def _connection_context(
     return {
         "connection": connection,
         "label": PLATFORM_LABELS.get(connection.platform, connection.platform),
+        # The per-platform settings page, where the platform has one. SMS is the
+        # first: SPEC §6.6's mandated replies and the A2P checklist belong to the
+        # workspace rather than to one number, so they are not fields on this
+        # row — but this page is where an operator looking at that number goes.
+        "settings_url": _settings_url(connection, request.workspace.pk),
         "webhook_url": _webhook_url(request, connection),
         "capabilities": capabilities_for(connection.platform),
         "policy": policy_for(connection.platform),
@@ -139,6 +151,16 @@ def _connection_context(
         # is the whole cost anyway.
         "last_event_at": _last_event_at(connection) if last_event_at is _UNFETCHED else last_event_at,
     }
+
+
+#: Platforms with a workspace-level settings page beyond the connection row.
+SETTINGS_ROUTES: dict[str, str] = {Platform.SMS.value: "channels:sms_settings"}
+
+
+def _settings_url(connection: ChannelConnection, workspace_id: Any) -> str:
+    """The platform's own settings page, or "" where it has none."""
+    route = SETTINGS_ROUTES.get(connection.platform, "")
+    return reverse(route, kwargs={"workspace_id": workspace_id}) if route else ""
 
 
 def _connect_url(platform: str, workspace_id: str) -> str:

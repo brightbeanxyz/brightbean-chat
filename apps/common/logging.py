@@ -119,6 +119,32 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
     (re.compile(r"\bxox[baprs]-[A-Za-z0-9\-]{10,}"), REDACTED),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), REDACTED),
+    # Twilio account SIDs and API keys: a two-letter prefix plus 32 hex.
+    #
+    # The account SID is not itself a secret, but it identifies the account and
+    # it is the one Twilio credential that ends up in a URL path
+    # (``/2010-04-01/Accounts/AC…/Messages.json``), which httpx logs at INFO —
+    # the same route by which a Telegram bot token used to reach a log
+    # (SECURITY-BASELINE §5). ``SK`` API-key SIDs take the identical shape and
+    # are used as a username, so both are covered by one pattern.
+    #
+    # The **auth token** is deliberately not here, and this is the honest
+    # reason: it is 32 hex characters with no prefix, which is also the shape of
+    # an MD5 digest, a UUID without its dashes and half the ids in a webhook
+    # payload. A pattern that matched it would redact all of those. What keeps
+    # it out of logs instead is that it never appears in a URL — Twilio
+    # authenticates with HTTP Basic, and the ``Authorization`` header is already
+    # covered by the auth-scheme rule at the top of this table.
+    (re.compile(r"\b(?:AC|SK)[0-9a-fA-F]{32}\b"), REDACTED),
+    # BrightBean Chat's own public-API keys (issue #25, SPEC §17):
+    # ``bb_<43 url-safe chars>_<8 hex>``. Registered as its own shape rather
+    # than left to the key=value rule above, because the one place this
+    # credential predictably reaches a log is an ``Authorization`` header echoed
+    # into an exception or a request dump, where there is no ``key=`` to anchor
+    # on. The trailing group is deliberately not anchored to exactly 8 hex
+    # characters: a truncated key in a log line is still key material.
+    (re.compile(r"\bbb_[A-Za-z0-9_\-]{20,}"), REDACTED),
+
     # Resend API keys and Svix webhook signing secrets (issue #21). Both reach a
     # log the same way an AWS key does — pasted into a support ticket, or echoed
     # by a provider's own error text — and neither is caught by the key=value

@@ -67,3 +67,11 @@ bcrypt==5.0.0             # BCryptSHA256PasswordHasher's runtime dep; Django doe
 # has to be generated locally because SPEC forbids handing a workspace's deep
 # link to an external image service.
 segno==1.6.6
+
+# Public REST API v1 (issue #25, SPEC §17). django-ninja gives request/response
+# schemas, OpenAPI generation and a bearer-auth hook without the class-based
+# indirection DRF adds; its `HttpBearer` is what `apps/api/auth.py` extends to
+# resolve an API key to a workspace. Pulls pydantic 2 transitively — that is the
+# schema layer, and it is what enforces `extra="forbid"` on every request body
+# (SECURITY-BASELINE §7's mass-assignment guard).
+django-ninja==1.6.3

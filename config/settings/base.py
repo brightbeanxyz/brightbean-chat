@@ -158,6 +158,7 @@ LOCAL_APPS = [
     "apps.inbox",
     "apps.notifications",
     "apps.queueing",
+    "apps.api",
     "theme",
 ]
 
@@ -431,6 +432,62 @@ EMAIL_SMTP_ALLOW_INTERNAL = env.bool("EMAIL_SMTP_ALLOW_INTERNAL", default=False)
 # flow variable is not a place to put a megabyte, and the request runs with the
 # contact's advisory lock held.
 EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = env.int("EXTERNAL_REQUEST_MAX_RESPONSE_BYTES", default=1024 * 1024)
+
+# ---------------------------------------------------------------------------
+# Public REST API v1 and outbound webhooks (issue #25; SPEC §17)
+# ---------------------------------------------------------------------------
+# Request body cap for /api/v1/, enforced before the JSON parser and before any
+# database work (SECURITY-BASELINE §7). Matches WEBHOOK_MAX_BODY_BYTES above for
+# the same reason: an API call that legitimately needs more than a quarter of a
+# megabyte of JSON is not a shape this API has.
+API_MAX_BODY_BYTES = env.int("API_MAX_BODY_BYTES", default=256 * 1024)
+
+# Nesting cap on request bodies, applied to the raw bytes before json.loads.
+API_MAX_JSON_DEPTH = env.int("API_MAX_JSON_DEPTH", default=20)
+
+# SPEC §17's 10 req/s per key, counted by apps.common.ratelimit's Postgres
+# fixed-window limiter. One second is the whole window, so Retry-After is
+# always 1 and is truthful rather than a guess. Per key, so one integration
+# cannot starve another.
+API_RATE_LIMIT_PER_SECOND = env.int("API_RATE_LIMIT_PER_SECOND", default=10)
+
+# Failed-bearer throttle, per client address. A correct integration never fails
+# auth, so repeated failures are a misconfiguration or someone guessing keys;
+# checked before the HMAC so a guessing script does not get to pay only the
+# hash cost per attempt.
+API_AUTH_FAILURE_LIMIT = env.int("API_AUTH_FAILURE_LIMIT", default=20)
+API_AUTH_FAILURE_WINDOW_SECONDS = env.int("API_AUTH_FAILURE_WINDOW_SECONDS", default=300)
+
+# Wall clock for one outbound webhook delivery, passed to guarded_request as its
+# total deadline. Deliveries run on the worker, not in a request, but a slow
+# receiver still holds a queue slot.
+API_WEBHOOK_TIMEOUT_SECONDS = env.int("API_WEBHOOK_TIMEOUT_SECONDS", default=10)
+
+# The "send test event" button is the one delivery that runs inside a request
+# rather than on the worker, because an operator clicking Test wants the answer
+# and not a "queued" toast. That makes its deadline a web-tier concern: it is
+# time a gunicorn thread spends unavailable, so it is deliberately shorter than
+# the worker's. A receiver that cannot answer in three seconds has told the
+# operator what they needed to know.
+#
+# It bounds the HTTP phase only. DNS resolution sits outside guarded_request's
+# deadline (see its module docstring), so a hostname whose resolver black-holes
+# queries can still hold the thread for the system resolver's own timeout.
+API_WEBHOOK_TEST_TIMEOUT_SECONDS = env.int("API_WEBHOOK_TEST_TIMEOUT_SECONDS", default=3)
+
+# Tolerance a receiver is told to allow on X-BrightBean-Timestamp, published in
+# docs/api/v1.md. We do not enforce it — the receiver does — but the number has
+# to be written down somewhere both the docs and the tests can read.
+API_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = env.int("API_WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS", default=300)
+
+# Consecutive failed deliveries before an endpoint is switched off and its admins
+# notified (SPEC §17). A "failure" is one delivery that exhausted its queue
+# retries, not one HTTP attempt: the queue already retries five times on the
+# standard backoff, so 100 here is roughly a day and a half of a dead receiver.
+API_WEBHOOK_MAX_CONSECUTIVE_FAILURES = env.int("API_WEBHOOK_MAX_CONSECUTIVE_FAILURES", default=100)
+
+# Delivery-log rows kept per webhook; the settings page shows this many.
+API_WEBHOOK_DELIVERY_LOG_KEEP = env.int("API_WEBHOOK_DELIVERY_LOG_KEEP", default=50)
 
 # ---------------------------------------------------------------------------
 # Deployment-level platform credentials — the bottom of the SPEC §4 chain

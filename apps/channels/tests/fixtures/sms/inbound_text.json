@@ -1,0 +1,22 @@
+{
+  "ToCountry": "US",
+  "ToState": "CA",
+  "SmsMessageSid": "SM11111111111111111111111111111111",
+  "NumMedia": "0",
+  "ToCity": "SAN FRANCISCO",
+  "FromZip": "10001",
+  "SmsSid": "SM11111111111111111111111111111111",
+  "FromState": "NY",
+  "SmsStatus": "received",
+  "FromCity": "NEW YORK",
+  "Body": "Hello there",
+  "FromCountry": "US",
+  "To": "+15550001111",
+  "MessagingServiceSid": "MGXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "ToZip": "94105",
+  "NumSegments": "1",
+  "MessageSid": "SM11111111111111111111111111111111",
+  "AccountSid": "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "From": "+15557778888",
+  "ApiVersion": "2010-04-01"
+}

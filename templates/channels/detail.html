@@ -17,6 +17,10 @@
     <dt>Status</dt>
     <dd><span class="status-pill status-pill-{{ connection.status }}">{{ connection.get_status_display }}</span></dd>
     <dt>Webhook URL</dt><dd><code>{{ webhook_url }}</code></dd>
+    {% if settings_url %}
+      <dt>Channel settings</dt>
+      <dd><a href="{{ settings_url }}">{{ label }} settings for this workspace</a></dd>
+    {% endif %}
     <dt>Last event received</dt>
     <dd>
       {% if last_event_at %}

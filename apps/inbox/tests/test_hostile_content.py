@@ -116,16 +116,18 @@ class TestHostileText:
     ) -> None:
         """SECURITY-BASELINE §3's SSTI ban, from the reader's side: a contact who
         types a template tag sees a template tag."""
-        message = inbound("{{ 7*7 }} and {% load static %}")
+        inbound("{{ 7*7 }} and {% load static %}")
 
         body = _thread(agent_client, url_for, conversation)
 
+        # ``"49 and"`` rather than a bare ``"49"``. The evaluated form of this
+        # payload is "49 and …", so the longer needle proves exactly as much —
+        # while a bare "49" is scanned against the *whole* rendered thread,
+        # which carries message timestamps. Any run at 16:49 failed this
+        # assertion on a page that had done nothing wrong, roughly one minute
+        # in sixty, on every open PR.
+        assert "49 and" not in body
         assert "{{ 7*7 }}" in body
-        # "49" is checked against the message's own parts rather than the whole
-        # page. The bubble's metadata renders `created_at|date:"j M H:i"`, so
-        # for one minute in every hour the page legitimately contains "49" and
-        # a page-wide assertion failed on the clock rather than on evaluation.
-        assert all("49" not in getattr(part, "text", "") for part in render_message(message).parts)
 
     @pytest.mark.parametrize("payload", OVERSIZED)
     def test_an_oversized_message_renders_without_blowing_up(

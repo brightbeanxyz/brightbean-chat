@@ -1,0 +1,27 @@
+{% extends "layouts/settings.html" %}
+{% block title %}API key issued · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>API key issued</h1>{% endblock %}
+
+{% block content %}
+  {% comment %}
+  The one and only render of this value. It is not in the session, not in a
+  message and not fetchable again: the row holds a keyed digest, not the key
+  (CONTRIBUTING → Secrets). This is a direct response to the POST rather than a
+  redirect for the reason apps/api/views_keys.py documents — the messages
+  framework stores in the session, which is a database table here.
+  {% endcomment %}
+  <p><strong>Copy this key now. It is not shown again.</strong></p>
+  <p><code>{{ plaintext }}</code></p>
+
+  <h2>Using it</h2>
+  <p>Send it as a bearer token on every request:</p>
+  <p><code>Authorization: Bearer {{ plaintext }}</code></p>
+  <p class="muted">
+    “{{ api_key.name }}” acts in <strong>{{ workspace.name }}</strong> and nowhere
+    else. Revoking it takes effect on the very next request. If you lose it,
+    revoke it and issue another — it cannot be recovered.
+  </p>
+
+  <p><a href="{% url 'api_docs' %}">Read the API reference</a></p>
+  <p><a href="{{ back_url }}">Done</a></p>
+{% endblock %}

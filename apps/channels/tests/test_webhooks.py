@@ -307,11 +307,12 @@ class TestIdIndistinguishability:
     ) -> None:
         """The other half: 503 to every id while the platform has no adapter.
 
-        The empty slot is now something the test has to arrange. Email got a
-        real adapter in #21, exactly as Telegram did in #12, so "no adapter
-        exists" stopped being the shipped state and ``unregistered`` is how a
-        test says it depends on it — which is better anyway, because the
-        dependency used to be invisible.
+        Neither of these is in that state any more — SMS got an adapter in #20
+        and email in #21, as Telegram did in #12 — so the empty slot is now
+        something the test arranges rather than inherits. That is better anyway:
+        "this assertion depends on there being no adapter" used to be invisible.
+        ``unregistered`` restores whatever was there, so the rest of the run
+        still has its adapter.
         """
         real = ChannelConnection(
             workspace=connection.workspace,

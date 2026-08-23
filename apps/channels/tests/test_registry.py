@@ -206,9 +206,13 @@ class TestRegistry:
             register_adapter(Platform.TELEGRAM, fake_adapter_for(Platform.TELEGRAM))
 
     def test_registering_the_same_class_twice_is_idempotent(self) -> None:
-        adapter_cls = fake_adapter_for(Platform.SMS)
-        register_adapter(Platform.SMS, adapter_cls)
+        # WhatsApp because its slot is still empty. SMS held this role until
+        # #20 shipped a real adapter, at which point registering over it hit
+        # the duplicate guard — the exact trap fake_adapter.swapped_adapter
+        # exists to keep out of test modules.
+        adapter_cls = fake_adapter_for(Platform.WHATSAPP)
+        register_adapter(Platform.WHATSAPP, adapter_cls)
         try:
-            register_adapter(Platform.SMS, adapter_cls)
+            register_adapter(Platform.WHATSAPP, adapter_cls)
         finally:
-            unregister_adapter(Platform.SMS)
+            unregister_adapter(Platform.WHATSAPP)

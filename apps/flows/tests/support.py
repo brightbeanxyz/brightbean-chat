@@ -143,6 +143,32 @@ class FakeFacade:
 
 
 @contextmanager
+def without_node_runtime(node_type: str) -> Iterator[None]:
+    """Take ``node_type``'s runtime away for the duration of the block.
+
+    For the tests about what the runner does with a node it cannot run. That
+    used to need no setup — there was always some schema type still waiting for
+    its runtime, and a test could just name it — but every type now has one, so
+    the absence has to be arranged. Which is better anyway: a test that borrowed
+    whichever node happened to be unimplemented broke each time somebody
+    implemented it, and said nothing about the runner in the meantime.
+
+    Restores the real class on the way out, including when the body raises: the
+    registry is process-global, and a leaked hole would fail an unrelated test
+    in a later module.
+    """
+    from apps.flows.engine.registry import node_class_for, register_node, unregister_node
+
+    original = node_class_for(node_type)
+    unregister_node(node_type)
+    try:
+        yield
+    finally:
+        if original is not None:
+            register_node(original, replace=True)
+
+
+@contextmanager
 def node_runtime(
     node_type: str,
     execute: Callable[[Any], Any],

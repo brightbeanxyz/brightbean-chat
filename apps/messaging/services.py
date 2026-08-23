@@ -79,7 +79,7 @@ from apps.messaging.compliance import Allowed, can_send
 
 # The single write site for `opted_out_at` (ROADMAP contract 3). No cycle:
 # ingest.py reads identities and models, never this module.
-from apps.messaging.ingest import apply_opt_out
+from apps.messaging.ingest import apply_opt_in, apply_opt_out
 from apps.messaging.models import (
     ContactChannelIdentity,
     Conversation,
@@ -99,8 +99,10 @@ __all__ = [
     "close_conversation",
     "open_conversation",
     "pause_automation",
+    "record_opt_in",
     "record_opt_out",
     "send_as_agent",
+    "send_compliance_reply",
     "send_outbound",
     "send_via_api",
     "upsert_contact_identity",
@@ -220,6 +222,28 @@ def record_opt_out(identity: ContactChannelIdentity, *, source: str = "") -> boo
     changed = apply_opt_out(identity)
     if changed:
         logger.info("Identity %s opted out manually (source=%s)", identity.pk, source or "manual")
+    return changed
+
+
+def record_opt_in(identity: ContactChannelIdentity, *, source: str = OptInSource.MESSAGE_IN) -> bool:
+    """Restore consent the contact withdrew. ``True`` when this call changed something.
+
+    The counterpart to :func:`record_opt_out`, and pointedly **not** its mirror
+    image: that one is reachable from the CRM, and this one is not. SPEC §19 puts
+    opt-out at a chokepoint so it cannot be bypassed, so re-consent has to come
+    from the contact — a channel adapter's re-subscribe keyword (SPEC §6.6's
+    ``START``/``UNSTOP``), never a toggle on the team's side of the conversation.
+    ``record_opt_out``'s own docstring names that asymmetry and this function is
+    the other end of it.
+
+    **It does not write ``opted_out_at``.** It delegates to
+    :func:`apps.messaging.ingest.apply_opt_in`, which ROADMAP contract 3 makes
+    the single write site, so the facade is the door a caller uses without the
+    column growing a second writer.
+    """
+    changed = apply_opt_in(identity, source=source)
+    if changed:
+        logger.info("Identity %s opted back in (source=%s)", identity.pk, source)
     return changed
 
 
@@ -468,6 +492,63 @@ def send_via_api(
         source=MessageSource.API.value,
         idempotency_key=idempotency_key,
     )
+
+
+def send_compliance_reply(
+    *,
+    workspace: Any,
+    contact: Any,
+    connection: Any,
+    outbound: OutboundMessage,
+    idempotency_key: str,
+) -> Message:
+    """A reply the law requires us to send, exempt from opt-out suppression only.
+
+    The one sanctioned way past :func:`~apps.messaging.compliance.can_send`, and
+    it exists because the alternative is worse. SPEC §6.6 requires an SMS
+    ``STOP`` to be answered with a confirmation and a ``HELP`` to be answered at
+    all — both after the identity is already suppressed, and both are carrier
+    obligations rather than messages anybody chose to send. Without a door here
+    an adapter would have to call ``adapter.send`` itself, and the confirmation
+    would then have no message row, no idempotency key and no rate token: an
+    agent looking at the thread would see ``HELP`` and no answer.
+
+    **Exempt from the compliance verdict, and from nothing else.** The
+    conversation, the message row, SPEC §9.4's idempotency key, the connection's
+    token bucket, the tombstone check on a deleted contact and the adapter
+    dispatch are all the ordinary path — this function is ``send_outbound``
+    minus one call. In particular a send with no identity still fails with
+    ``no_identity``: there is no address to answer, and being mandatory does not
+    conjure one.
+
+    It carries **no platform knowledge**, deliberately. Contract 4's promise is
+    that a Layer-5 platform costs one module and one registry line, and a branch
+    in here naming SMS would be the first crack in it. What makes a reply
+    mandatory is the caller's business; L5-E's unsubscribe confirmation is the
+    next one through this door.
+
+    ``source`` is fixed to ``automation``. SPEC §5 fixes the vocabulary at
+    ``automation, agent, api, broadcast, sequence`` and none of them means
+    "the law made us", so the closest true one is used rather than a sixth value
+    invented here. It emphatically must not be ``agent``: that would pause
+    automation on the conversation for thirty minutes because somebody typed
+    STOP, and nobody has taken anything over.
+    """
+    source = MessageSource.AUTOMATION.value
+    if not idempotency_key:
+        raise ValueError("send_compliance_reply() needs a non-empty idempotency_key (SPEC §9.4).")
+
+    conversation = open_conversation(workspace=workspace, contact=contact, connection=connection)
+    identity = _identity_for(workspace, contact, connection)
+    if identity is None:
+        return _failed(conversation, outbound, source, idempotency_key, Denial.NO_IDENTITY.value)
+
+    message, created = _record(conversation, outbound, source, idempotency_key)
+    if not created and message.status != MessageStatus.QUEUED:
+        # Somebody already sent this exact reply. A redelivered STOP must not
+        # produce a second confirmation (SPEC §9.4).
+        return message
+    return _dispatch(message, connection, identity, outbound, blocking=False)
 
 
 def _record(

@@ -549,6 +549,13 @@ jobs:
       # main's complete ancestry, so a credential-shaped fixture still needs its
       # `.gitleaks.toml` allowlist entry before it lands, and a secret committed
       # and later deleted is still caught.
+      #
+      # The empty-range guard is the other half, and it is the one that keeps
+      # this from being a downgrade. A range selecting no commits makes gitleaks
+      # scan nothing and exit 0 — a security gate switching itself off silently,
+      # which is a worse failure than the cross-branch noise above. So the count
+      # is checked and an empty range fails the job loudly; `set -euo pipefail`
+      # does the same for a ref that does not resolve at all.
       - name: Run gitleaks
         # Scoped to the ref under test. Without a range `gitleaks detect` walks
         # every commit in the clone, and `fetch-depth: 0` above brings down every
@@ -564,11 +571,20 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [ -n "$BASE_SHA" ]; then
-            RANGE="$BASE_SHA..$HEAD_SHA"
-            echo "Scanning $RANGE (this pull request's own commits)"
+          set -euo pipefail
+          if [ -n "${BASE_SHA}" ]; then
+            RANGE="${BASE_SHA}..${HEAD_SHA}"
+            echo "Scanning ${RANGE} (this pull request's own commits)"
           else
             RANGE="HEAD"
             echo "Scanning HEAD (this ref's full ancestry, and no other branch)"
           fi
-          gitleaks detect --source . --redact --verbose --no-banner --log-opts="$RANGE"
+
+          COUNT="$(git rev-list --count "${RANGE}")"
+          if [ "${COUNT}" -eq 0 ]; then
+            echo "::error::gitleaks range '${RANGE}' selected no commits; refusing to report a clean scan."
+            exit 1
+          fi
+          echo "${COUNT} commit(s) in range."
+
+          gitleaks detect --source . --redact --verbose --no-banner --log-opts="${RANGE}"

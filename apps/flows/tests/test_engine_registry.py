@@ -28,9 +28,11 @@ from apps.flows.tests.support import node_runtime
 #: Node types whose schema ships in L2-D and whose runtime is somebody else's.
 #:
 #: Pinned so a type joining or leaving the set is a line in a diff.
-#: ``external_request`` left it in L4-E and ``send_email`` in L5-E; ``send_sms``
-#: is L5-D's and is the last one.
-EXPECTED_WITHOUT_RUNTIME = {"send_sms"}
+#: ``external_request`` left it in L4-E, ``send_sms`` in L5-D (#20) and
+#: ``send_email`` in L5-E (#21). The set is empty: every node type the schema
+#: declares now has a runtime, and a new one arriving without one is what this
+#: turns red.
+EXPECTED_WITHOUT_RUNTIME: set[str] = set()
 
 #: SPEC §7.1's inline-safe set, verbatim: "send message, action, condition,
 #: randomizer, start flow". ``note`` joins it for free — it does nothing.
