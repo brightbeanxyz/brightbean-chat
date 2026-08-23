@@ -141,10 +141,10 @@ no secret there is no way to tell a real one from a forged one.
 |---|---|---|
 | `messages` | `message` | Echoes of our own sends (`is_echo`) are dropped; ingesting them would file every outbound message as inbound and reopen the messaging window on our own traffic. Attachments arrive as URLs, which are **recorded, never fetched**. |
 | `messages` with `quick_reply` | `postback` | A tapped chip is a button press. Treating it as a message would let the chip's label fire a keyword trigger and let a default reply answer a button the flow itself offered. |
-| `messaging_postbacks` | `postback` | `GET_STARTED` fires SPEC §10's welcome trigger. Meta sends no id for a postback, so one is derived from the content **and the timestamp** — otherwise two presses of the same button would deduplicate into one. |
+| `messaging_postbacks` | `postback` | `GET_STARTED` fires SPEC §10's welcome trigger. Meta sends no id for a postback, so one is derived from the content **and the platform's own timestamp** — without the timestamp two presses of the same button would deduplicate into one, and using our clock when the payload's is unreadable would make every redelivery a new event. |
 | `messaging_referrals` | `referral` | `m.me/<page>?ref=<ref>` → SPEC §10's Ref URL trigger. A ref also arrives *inside* the get-started postback on a first contact, and that produces both events rather than one. |
 | `message_deliveries` | `delivery_status` | One event per message id Meta names. |
-| `message_reads` | `delivery_status` | Meta sends a **watermark**, not message ids, so it is resolved against this contact's own recent outbound messages — scoped to the person, bounded, read-only. |
+| `message_reads` | `delivery_status` | Meta sends a **watermark**, not message ids, so it is resolved against this contact's own recent outbound messages — scoped to the person, bounded, read-only. A watermark that cannot be read marks **nothing**: falling back to "now" would be the most permissive cutoff there is. |
 | `feed` (`item: comment`, `verb: add`) | `comment` | The page's own comments are ignored, or our public reply would fire the trigger at ourselves. |
 
 Anything else — `optin`, `account_linking`, reactions, message edits, the
@@ -243,15 +243,34 @@ trigger:
 2. the rest is queued, because a public reply, a like and a private reply are
    three round trips to Meta and the webhook has a 1.5-second budget for
    everything (SPEC §7.1);
-3. the worker posts the public reply and the like, if the trigger asks for them;
-4. it then opens the DM thread and starts the flow — and the flow's **first
-   message is the private reply**, addressed by comment id.
+3. one queued action posts the public reply and the like, if the trigger asks for
+   them;
+4. a **second** queued action opens the DM thread and starts the flow — and the
+   flow's **first message is the private reply**, addressed by comment id.
 
-That last point is a Meta rule rather than a stylistic choice: a page may send
-**exactly one** message in reply to a comment, and only within **7 days** of it.
-An opener followed by the flow's real first message would have the second one
-refused. Past the seven days nothing is claimed at all, because claiming would
-spend the once-per-person-per-post guard on a reply the platform will not accept.
+Steps 3 and 4 are two queue rows rather than one, and the split is deliberate.
+Meta gives no way to make a comment or a like idempotent, so that half runs **at
+most once**: a retry would put a second public reply under a customer's comment,
+which is worse than the one a transient failure costs. The DM half is idempotent
+by construction and is the half the public reply just promised, so it **is**
+retried. With one shared row, anything that went wrong opening the thread put the
+public reply back on the queue too.
+
+Point 4 is a Meta rule rather than a stylistic choice: a page may send **exactly
+one** message in reply to a comment, and only within **7 days** of it. An opener
+followed by the flow's real first message would have the second one refused. Past
+the seven days nothing is claimed at all, because claiming would spend the
+once-per-person-per-post guard on a reply the platform will not accept.
+
+The adapter cannot see *which* send it is about to make, so the claim is offered
+only to a send in the **ten minutes** after it is recorded, not for the platform's
+full seven days. That covers the real case — the worker starts the flow and its
+first node sends — and excludes the one that would go wrong: a flow that opens
+with a condition or a delay leaves the claim standing, and days later an agent's
+inbox reply or a broadcast would otherwise be delivered as a reply to a stale
+comment, spending the one private reply Meta allows. Past the ten minutes the
+flow's first message goes out as an ordinary DM through the 24-hour window the
+comment opened — a plainer reply, not a failed one.
 
 The **post picker** in the trigger's configuration lists the page's recent posts
 so a trigger can be scoped to specific ones without pasting ids by hand.

@@ -111,6 +111,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "COMMENT_ACTION",
+    "COMMENT_DM_ACTION",
     "GET_STARTED_PAYLOAD",
     "SUBSCRIBED_FIELDS",
     "MessengerAdapter",
@@ -145,9 +146,20 @@ SUBSCRIBED_FIELDS: tuple[str, ...] = (
 #: recognises, so SPEC §10's welcome trigger needs no Messenger-specific matcher.
 GET_STARTED_PAYLOAD = "GET_STARTED"
 
-#: The queued action that answers a claimed comment. Registered at the foot of
+#: The queued actions that answer a claimed comment. Registered at the foot of
 #: this module, beside the adapter.
+#:
+#: **Two, not one, and the split is the whole design.** The public half posts a
+#: comment and a like — neither of which the platform lets us make idempotent, so
+#: a retry would put a second reply under a customer's comment. The DM half is
+#: idempotent by construction (the claim guard, ``persist_events``' dedup and SPEC
+#: §9.2's one-execution-per-contact rule all hold), and it is the half worth
+#: retrying, because it is the half the customer was promised.
+#:
+#: So they get opposite retry policies — see :func:`enqueue_comment_actions` — and
+#: a failure in either cannot cost the other.
 COMMENT_ACTION = "messenger_comment_actions"
+COMMENT_DM_ACTION = "messenger_comment_dm"
 
 _CAPABILITIES: Capabilities = capabilities_for(Platform.MESSENGER)
 
@@ -206,6 +218,15 @@ COMMENT_TEXT_KEY = "comment_text"
 #: means asking which of our own messages it covers; the bound is what keeps a
 #: forged watermark from turning into an unbounded scan.
 MAX_READ_RECEIPT_MESSAGES = 25
+
+#: How many message ids one ``message_deliveries`` event may carry.
+#:
+#: Its own constant, not the read-receipt one. They bound different mechanisms —
+#: this is "how many ids did Meta name", that is "how far back does a watermark
+#: reach" — and sharing one would mean tuning either silently moved the other.
+#: Generous, because a receipt past the cap is a message stuck at ``sent``
+#: forever: Meta does not resend a delivery receipt.
+MAX_DELIVERY_MIDS = 100
 
 #: How many read receipts in **one delivery** are resolved at all.
 #:
@@ -602,22 +623,59 @@ def _text(value: Any, limit: int = MAX_INBOUND_TEXT_CHARS) -> str:
     return meta_common.text_value(value, limit)
 
 
+def _epoch_ms(raw: Any) -> datetime | None:
+    """A Meta millisecond timestamp as a datetime, or None if it is not one.
+
+    The strict half of :func:`_timestamp`, split out because two callers need to
+    tell "the platform told us when" from "we had to guess". ``fromtimestamp``
+    raises on values outside the platform's range and the division itself raises on
+    an integer too large to be a float — both are exactly what a hostile payload
+    sends, and both are caught.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(raw / 1000, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _timestamp(raw: Any, fallback: Any = None) -> datetime:
     """A Meta millisecond timestamp as a datetime, or now.
 
     A wrong clock on an event is a cosmetic problem; refusing the event because
-    its ``timestamp`` was a string is a lost message. ``fromtimestamp`` raises on
-    values outside the platform's range, which is exactly what a hostile payload
-    would send.
+    its ``timestamp`` was a string is a lost message.
+
+    Callers that put the result in a **deduplication key** must not use this —
+    see :func:`_event_clock`, which is what those use instead.
     """
     for candidate in (raw, fallback):
-        if isinstance(candidate, bool) or not isinstance(candidate, (int, float)):
-            continue
-        try:
-            return datetime.fromtimestamp(candidate / 1000, UTC)
-        except (OverflowError, OSError, ValueError):
-            continue
+        parsed = _epoch_ms(candidate)
+        if parsed is not None:
+            return parsed
     return timezone.now()
+
+
+def _event_clock(raw: Any, fallback: Any = None) -> str:
+    """The platform's own time as a stable string, or "" when it did not give one.
+
+    Meta sends no id for a postback or a referral, so the id is derived from the
+    event's content — and the content has to include the time, or two genuine
+    presses of the same button collide into one and the second vanishes.
+
+    The whole point of the empty string is the case :func:`_timestamp` papers
+    over. If a delivery's timestamps are unreadable, ``_timestamp`` falls back to
+    ``timezone.now()``, and hashing *that* would give the same event a different id
+    on every redelivery — so Meta's retry would be processed a second time, firing
+    the welcome or ref_url flow twice. Omitting the clock instead makes the id
+    depend only on values the platform actually sent, which is what a redelivery
+    reproduces exactly.
+    """
+    for candidate in (raw, fallback):
+        parsed = _epoch_ms(candidate)
+        if parsed is not None:
+            return parsed.isoformat()
+    return ""
 
 
 def _sender_extra(item: dict[str, Any]) -> dict[str, Any]:
@@ -755,26 +813,46 @@ class MessengerAdapter(Adapter):
         # spent budget and silently drop receipts.
         self._read_receipt_budget = MAX_READ_RECEIPTS_PER_DELIVERY
 
+        entries = meta_common.entries(payload)
+        # One query for the whole batch, not one per entry. A delivery may carry
+        # up to ``meta_common.MAX_ENTRIES`` entries, and resolving them
+        # individually put that many round trips inside SPEC §7.1's 1.5-second
+        # budget — on the path the layer's own ack-latency test holds to 500 ms.
+        owners = meta_common.resolve_by_page_ids(
+            self.platform,
+            (
+                page_id
+                for page_id in (meta_common.bounded_id(entry.get("id")) for entry in entries)
+                if page_id and page_id != connection.external_id
+            ),
+        )
+
         events: list[NormalizedEvent] = []
-        for entry in meta_common.entries(payload):
-            owner = self._entry_connection(entry, connection)
+        for entry in entries:
+            owner = self._entry_connection(entry, connection, owners)
             if owner is None:
                 continue
             events.extend(self._from_entry(owner, entry))
         return events
 
-    def _entry_connection(self, entry: dict[str, Any], verified: ChannelConnection) -> ChannelConnection | None:
+    def _entry_connection(
+        self,
+        entry: dict[str, Any],
+        verified: ChannelConnection,
+        owners: dict[str, ChannelConnection],
+    ) -> ChannelConnection | None:
         """The connection one ``entry`` belongs to, or None to drop it.
 
         An entry naming the verified page — or naming no page at all — is the
-        verified connection. An entry naming another page is looked up, and a page
-        this deployment does not hold is dropped: the signature proves the sender
-        holds the app secret, not that every id in the body is ours to write.
+        verified connection. An entry naming another page is looked up in ``owners``,
+        the batch resolved once by the caller, and a page this deployment does not
+        hold is dropped: the signature proves the sender holds the app secret, not
+        that every id in the body is ours to write.
         """
         page_id = meta_common.bounded_id(entry.get("id"))
         if not page_id or page_id == verified.external_id:
             return verified
-        owner = meta_common.resolve_by_page_id(self.platform, page_id)
+        owner = owners.get(page_id)
         if owner is None:
             logger.info("Dropped a Messenger entry for a page this deployment does not hold.")
         return owner
@@ -814,6 +892,9 @@ class MessengerAdapter(Adapter):
         if not psid:
             return []
         timestamp = _timestamp(item.get("timestamp"), entry_time)
+        # What the platform actually sent, for the two events whose id is derived
+        # rather than given. See :func:`_event_clock`.
+        clock = _event_clock(item.get("timestamp"), entry_time)
 
         message = item.get("message")
         if isinstance(message, dict):
@@ -821,11 +902,11 @@ class MessengerAdapter(Adapter):
 
         postback = item.get("postback")
         if isinstance(postback, dict):
-            return self._from_postback(connection, item, postback, psid, timestamp)
+            return self._from_postback(connection, item, postback, psid, timestamp, clock)
 
         referral = item.get("referral")
         if isinstance(referral, dict):
-            return self._referral_event(connection, item, referral, psid, timestamp, source="ref")
+            return self._referral_event(connection, item, referral, psid, timestamp, clock, source="ref")
 
         delivery = item.get("delivery")
         if isinstance(delivery, dict):
@@ -913,6 +994,7 @@ class MessengerAdapter(Adapter):
         postback: dict[str, Any],
         psid: str,
         timestamp: datetime,
+        clock: str,
     ) -> list[NormalizedEvent]:
         """A button press, and the referral that may be riding with it.
 
@@ -937,7 +1019,7 @@ class MessengerAdapter(Adapter):
                     # content — with the timestamp in it, which is what keeps two
                     # genuine presses of the same button from colliding.
                     provider_event_id=channels_ingest.synthetic_event_id(
-                        {"psid": psid, "payload": payload, "ts": timestamp.isoformat()},
+                        {"psid": psid, "payload": payload, "ts": clock},
                         prefix="fb:pb:",
                     ),
                     timestamp=timestamp,
@@ -951,7 +1033,7 @@ class MessengerAdapter(Adapter):
 
         referral = postback.get("referral")
         if isinstance(referral, dict) and _referral_ref(referral):
-            events.extend(self._referral_event(connection, item, referral, psid, timestamp, source="postback"))
+            events.extend(self._referral_event(connection, item, referral, psid, timestamp, clock, source="postback"))
         return events
 
     def _referral_event(
@@ -961,6 +1043,7 @@ class MessengerAdapter(Adapter):
         referral: dict[str, Any],
         psid: str,
         timestamp: datetime,
+        clock: str,
         *,
         source: str,
     ) -> list[NormalizedEvent]:
@@ -979,7 +1062,7 @@ class MessengerAdapter(Adapter):
                 connection=connection,
                 platform_user_id=psid,
                 provider_event_id=channels_ingest.synthetic_event_id(
-                    {"psid": psid, "ref": ref, "ts": timestamp.isoformat(), "src": source},
+                    {"psid": psid, "ref": ref, "ts": clock, "src": source},
                     prefix="fb:ref:",
                 ),
                 timestamp=timestamp,
@@ -1008,8 +1091,17 @@ class MessengerAdapter(Adapter):
         mids = delivery.get("mids")
         if not isinstance(mids, list):
             return []
+        if len(mids) > MAX_DELIVERY_MIDS:
+            # Said out loud rather than sliced silently: everything dropped here
+            # is a message that will sit at ``sent`` forever, because Meta does
+            # not resend a delivery receipt.
+            logger.warning(
+                "Messenger: a delivery receipt named %s message ids; only the first %s were applied.",
+                len(mids),
+                MAX_DELIVERY_MIDS,
+            )
         events: list[NormalizedEvent] = []
-        for raw in mids[:MAX_READ_RECEIPT_MESSAGES]:
+        for raw in mids[:MAX_DELIVERY_MIDS]:
             mid = meta_common.bounded_id(raw)
             if not mid:
                 continue
@@ -1061,8 +1153,16 @@ class MessengerAdapter(Adapter):
         The import is deferred because ``apps.messaging`` imports ``apps.channels``
         — a module-scope import here would be a cycle.
         """
-        watermark = read.get("watermark")
-        if isinstance(watermark, bool) or not isinstance(watermark, (int, float)):
+        raw_watermark = read.get("watermark")
+        cutoff = _epoch_ms(raw_watermark)
+        if cutoff is None:
+            # **Fails closed, and that is the whole point.** ``_timestamp`` would
+            # have answered ``now()`` here, which is the most permissive cutoff
+            # there is: a watermark of ``Infinity`` — which ``json.loads`` accepts
+            # by default — would mark this contact's entire recent thread read,
+            # including messages they demonstrably have not seen. A receipt we
+            # cannot read refers to nothing.
+            logger.info("Messenger: a read receipt on connection %s carried no usable watermark.", connection.pk)
             return []
         if self._read_receipt_budget <= 0:
             logger.info(
@@ -1071,7 +1171,6 @@ class MessengerAdapter(Adapter):
             )
             return []
         self._read_receipt_budget -= 1
-        cutoff = _timestamp(watermark)
 
         from apps.messaging.models import ContactChannelIdentity, Message, MessageDirection, MessageStatus
 
@@ -1091,7 +1190,13 @@ class MessengerAdapter(Adapter):
                 conversation__contact_id=contact_id,
                 direction=MessageDirection.OUT,
                 status__in=(MessageStatus.SENT, MessageStatus.DELIVERED),
-                created_at__lte=cutoff,
+                # ``updated_at``, not ``created_at``: a row is created when the
+                # message is *queued* and stamped again when the send is
+                # finalised. A message queued at T and actually sent an hour later
+                # — rate-limit deferral, or a retry after an outage — would
+                # otherwise match a watermark from the intervening half hour and
+                # be marked read before it had reached the platform at all.
+                updated_at__lte=cutoff,
             )
             .exclude(provider_message_id="")
             .order_by("-created_at")
@@ -1107,7 +1212,12 @@ class MessengerAdapter(Adapter):
                 status="read",
                 # The watermark is part of the id so a later read of a later
                 # message is a new event rather than a duplicate of this one.
-                event_id=f"fb:read:{int(watermark)}:{mid}",
+                # Formatted from the *parsed* value, never from the raw one:
+                # ``int(float("inf"))`` raises OverflowError and ``int(float("nan"))``
+                # raises ValueError, and either would escape a parser whose whole
+                # contract is that it never raises — costing the entire delivery,
+                # including every good event batched beside this receipt.
+                event_id=f"fb:read:{cutoff.isoformat()}:{mid}",
             )
             for mid in mids
         ]
@@ -1388,7 +1498,7 @@ def _seconds_to_ms(raw: Any) -> Any:
 
 
 def enqueue_comment_actions(claim: Any) -> None:
-    """Hand a freshly claimed comment to the worker.
+    """Hand a freshly claimed comment to the worker, as two independent actions.
 
     Registered on ``apps.flows.triggers.comments``' seam, which is called from
     inside the webhook request. Answering a comment is a public reply, a like and
@@ -1396,40 +1506,43 @@ def enqueue_comment_actions(claim: Any) -> None:
     for the whole inline path — so this enqueues and returns, the way
     ``telegram._answer_callback_query`` does for a spinner.
 
-    One action per claim, keyed on the ``HandledComment`` row: a redelivery cannot
-    reach here (the claim is what stops it) but a retried routing pass can, and two
-    queue rows would mean two public replies.
+    The two actions are keyed separately on the ``HandledComment`` row, so a
+    redelivery or a retried routing pass produces no second copy of either.
     """
     row = claim.row
     connection = claim.connection
-    try:
-        queue_schedule(
-            COMMENT_ACTION,
-            timezone.now(),
-            {"connection_id": str(connection.pk), "handled_comment_id": str(row.pk)},
-            workspace=connection.workspace,
-            idempotency_key=f"fb-comment:{row.pk}",
-            # Three calls to Meta and a flow start. Worth retrying a few times —
-            # unlike a spinner — but not for six hours: the private reply has a
-            # seven-day deadline and the guard re-checks it on every attempt.
-            max_attempts=3,
-        )
-    except Exception:
-        logger.warning("Messenger: could not enqueue comment actions for %s.", row.pk)
+    payload = {"connection_id": str(connection.pk), "handled_comment_id": str(row.pk)}
+    for action_type, key, attempts in (
+        # **At most once.** Meta gives us no way to make a comment or a like
+        # idempotent, so a retry means a second public reply under somebody's
+        # comment — worse than the missing one a transient failure costs.
+        (COMMENT_ACTION, f"fb-comment:{row.pk}", 1),
+        # **Worth retrying.** Every step of it is idempotent, and it is the half
+        # the public reply just promised the customer. Not for six hours, though:
+        # the private reply has a seven-day deadline and a ten-minute hand-off
+        # window, and the guards re-check both on every attempt.
+        (COMMENT_DM_ACTION, f"fb-comment-dm:{row.pk}", 3),
+    ):
+        try:
+            queue_schedule(
+                action_type,
+                timezone.now(),
+                payload,
+                workspace=connection.workspace,
+                idempotency_key=key,
+                max_attempts=attempts,
+            )
+        except Exception:
+            logger.warning("Messenger: could not enqueue %s for %s.", action_type, row.pk)
 
 
-@register_handler(COMMENT_ACTION)
-def _run_comment_actions(payload: dict[str, Any], action: Any) -> None:
-    """Answer one claimed comment: public reply, like, then the flow (SPEC §10).
+def _claimed_comment(payload: dict[str, Any]) -> tuple[Any, Any] | None:
+    """``(connection, row)`` for a queued comment action, or None to stop.
 
     Reads everything back by id rather than trusting the payload — the queue row
     is ours, but the ids in it were derived from an inbound webhook, and a handler
     that took a comment id or a page from a payload would be a way to make the
     worker post as an arbitrary page.
-
-    The order is the order a person would do it in, and each step is independent:
-    a public reply that fails must not cost the private reply, which is the half
-    that actually starts the conversation.
     """
     from apps.flows.models import HandledComment
     from apps.flows.triggers import guards
@@ -1437,13 +1550,13 @@ def _run_comment_actions(payload: dict[str, Any], action: Any) -> None:
     connection_id = payload.get("connection_id")
     row_id = payload.get("handled_comment_id")
     if not isinstance(connection_id, str) or not isinstance(row_id, str):
-        return
+        return None
 
     # Cross-tenant by necessity: a worker drains the whole deployment and has no
     # session workspace. The queue row it is acting on named this connection.
     connection = ChannelConnection.objects.unscoped().filter(pk=connection_id).first()
     if connection is None:
-        return
+        return None
     row = (
         HandledComment.objects.for_workspace(connection.workspace_id)
         .filter(pk=row_id, channel_connection=connection)
@@ -1453,11 +1566,39 @@ def _run_comment_actions(payload: dict[str, Any], action: Any) -> None:
     if row is None or not guards.may_private_reply(row):
         # Already answered, or past SPEC §10's seven-day deadline. Both are
         # ordinary outcomes for a retry rather than failures.
-        return
+        return None
+    return connection, row
 
+
+@register_handler(COMMENT_ACTION)
+def _run_comment_actions(payload: dict[str, Any], action: Any) -> None:
+    """The public half: reply to the comment and like it (SPEC §10).
+
+    Scheduled at most once (see :data:`COMMENT_ACTION`), so nothing here has to be
+    idempotent — and nothing here can be. Each step swallows its own failure, so a
+    refused like does not cost the reply.
+    """
+    found = _claimed_comment(payload)
+    if found is None:
+        return
+    connection, row = found
     config = row.trigger.config_json if row.trigger is not None else {}
     _public_reply(connection, row, config)
     _like_comment(connection, row, config)
+
+
+@register_handler(COMMENT_DM_ACTION)
+def _run_comment_dm(payload: dict[str, Any], action: Any) -> None:
+    """The private half: open the DM thread and start the trigger's flow.
+
+    Retryable, and it **raises** rather than logging when something transient goes
+    wrong — that is the difference the split buys. Before it, a failure here put
+    the whole handler back on the queue and the public reply was posted again.
+    """
+    found = _claimed_comment(payload)
+    if found is None:
+        return
+    connection, row = found
     _start_comment_flow(connection, row)
 
 
@@ -1467,7 +1608,10 @@ def _public_reply(connection: ChannelConnection, row: Any, config: dict[str, Any
     if not isinstance(reply, dict):
         return
     mode = reply.get("mode")
-    texts = [text for text in (reply.get("texts") or []) if isinstance(text, str) and text.strip()]
+    raw = reply.get("texts")
+    # A list, checked rather than assumed: ``config_json`` is a JSONField, and
+    # iterating a bare string here would post a single character.
+    texts = [text for text in raw if isinstance(text, str) and text.strip()] if isinstance(raw, list) else []
     if mode == "static":
         message = texts[0] if texts else ""
     elif mode == "random":
@@ -1526,10 +1670,11 @@ def _start_comment_flow(connection: ChannelConnection, row: Any) -> None:
     must not go round the routing stages, or the comment's own text could fire a
     keyword trigger on top of the comment trigger that already matched it.
     """
+    from apps.flows.triggers import comments
     from apps.messaging import ingest as messaging_ingest
     from apps.messaging.models import ContactChannelIdentity
 
-    if row.trigger is None or row.trigger.flow is None:
+    if row.trigger is None:
         logger.info("Messenger: a claimed comment has no trigger left to run.")
         return
     if not row.commenter_ref:
@@ -1560,21 +1705,17 @@ def _start_comment_flow(connection: ChannelConnection, row: Any) -> None:
         .first()
     )
     if identity is None or identity.contact is None:
-        logger.warning("Messenger: opening a thread from a comment did not produce a contact.")
-        return
-
-    from apps.flows.engine import FlowNotRunnableError, start_flow
-    from apps.flows.models import StartedBy
+        # ``persist_events`` catches and logs its own per-event failures, so the
+        # only way to learn it did not write the identity is to look. **Raised**,
+        # not logged: this is transient (a contact-row race, a database blip), the
+        # customer has just been promised a DM in public, and this action is the
+        # retryable half precisely so that promise is kept. Returning quietly here
+        # marked the action done and lost the conversation for good.
+        raise RuntimeError(f"opening a thread from comment {row.pk} produced no contact")
 
     try:
-        start_flow(
-            identity.contact,
-            row.trigger.flow,
-            started_by=StartedBy.stamp(StartedBy.TRIGGER, row.trigger.pk),
-            variables={"trigger_type": row.trigger.type},
-            connection=connection,
-        )
-    except FlowNotRunnableError as exc:
+        comments.start_claimed_flow(row, identity.contact, connection)
+    except comments.ClaimedFlowNotRunnableError as exc:
         # A trigger pointing at a flow with no publishable version. A configuration
         # problem retries cannot fix, so it is logged and the claim stands.
         logger.warning("Messenger: comment trigger %s cannot start its flow: %s", row.trigger_id, exc)

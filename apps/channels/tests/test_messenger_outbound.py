@@ -459,6 +459,70 @@ class TestErrorsThatMeanSomethingDurable:
         assert page.status == ConnectionStatus.ACTIVE
 
 
+class TestParkingIsTransactionSafe:
+    def test_a_failed_park_does_not_poison_the_surrounding_transaction(
+        self, page: ChannelConnection, monkeypatch: Any
+    ) -> None:
+        """``mark_needs_reauth`` runs from ``send``, which the routing pipeline
+        calls inside ``transaction.atomic()`` while holding the contact lock.
+
+        Catching a database error there without a savepoint leaves the transaction
+        marked aborted, so every later query in it fails with "current transaction
+        is aborted" — the message row could not be finalised and the whole event
+        would be lost rather than one send failing.
+        """
+        from django.db import IntegrityError, transaction
+
+        from apps.channels.providers import meta_common
+
+        def refuse(*args: Any, **kwargs: Any) -> None:
+            raise IntegrityError("nope")
+
+        with transaction.atomic():
+            monkeypatch.setattr(type(page), "save", refuse)
+            meta_common.mark_needs_reauth(page, platform_label="Facebook Messenger")
+            monkeypatch.undo()
+            # The proof: the transaction is still usable.
+            assert ChannelConnection.objects.unscoped().filter(pk=page.pk).exists()
+
+
+class TestTheAppSecretIsNotResolvedPerDelivery:
+    def test_it_is_memoised_within_the_window(self, page: ChannelConnection, monkeypatch: Any) -> None:
+        """Every delivery used to pay two queries and an AES decrypt before a
+        single byte was verified, on the path SPEC §7.1 budgets at 1.5 s."""
+        import apps.credentials.resolution as resolution
+        from apps.channels.providers import meta_common
+
+        meta_common.forget_app_secrets()
+        calls: list[str] = []
+        real = resolution.resolve_platform_credentials
+
+        def counted(*args: Any, **kwargs: Any) -> Any:
+            calls.append("resolved")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(resolution, "resolve_platform_credentials", counted)
+        for _ in range(5):
+            assert meta_common.app_secret_for(page)
+        assert len(calls) == 1
+        meta_common.forget_app_secrets()
+
+    def test_a_missing_secret_is_never_cached(self, page: ChannelConnection, settings: Any) -> None:
+        """An operator who has just configured one must not wait out the window."""
+        from apps.channels.providers import meta_common
+
+        meta_common.forget_app_secrets()
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {}
+        assert meta_common.app_secret_for(page) == ""
+        # Both keys: SPEC §4's chain only uses a level that is *complete*, so a
+        # secret with no app id beside it is still "nothing configured".
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {
+            page.platform: {"client_id": "1234567890", "client_secret": "now-configured"}
+        }
+        assert meta_common.app_secret_for(page) == "now-configured"
+        meta_common.forget_app_secrets()
+
+
 class TestCourtesies:
     @pytest.mark.parametrize(
         ("method", "action"),

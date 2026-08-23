@@ -53,13 +53,17 @@ direction.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
+
+from django.utils import timezone
 
 from apps.flows.models import HandledComment
 from apps.flows.triggers.guards import may_private_reply
 
 __all__ = [
+    "PRIVATE_REPLY_HANDOFF",
+    "ClaimedFlowNotRunnableError",
     "CommentClaim",
     "actions_for",
     "mark_private_reply_sent",
@@ -67,6 +71,7 @@ __all__ = [
     "register_comment_actions",
     "registered_platforms",
     "run_actions",
+    "start_claimed_flow",
 ]
 
 logger = logging.getLogger(__name__)
@@ -153,8 +158,75 @@ def run_actions(claim: CommentClaim) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Starting the claimed comment's flow
+# ---------------------------------------------------------------------------
+
+
+class ClaimedFlowNotRunnableError(RuntimeError):
+    """The claimed comment's trigger points at a flow that cannot start.
+
+    A configuration problem — a trigger whose flow has no publishable version, or
+    whose trigger row has since been deleted — so a caller should log it and stop
+    rather than retry. Distinguished from every other failure precisely so the
+    ones that *are* worth retrying can propagate.
+    """
+
+
+def start_claimed_flow(row: HandledComment, contact: Any, connection: Any) -> None:
+    """Run the flow the claimed comment's trigger points at, for ``contact``.
+
+    Here rather than in the adapter that calls it, which is the point: starting a
+    flow is ``apps.flows``' own vocabulary — the ``StartedBy`` stamp, the variables
+    a trigger passes, which exception means "configuration problem, do not retry".
+    A channels provider that spelled all that out itself would be a second copy of
+    ``stages._start``, silently diverging the first time L6-A adds a variable or a
+    new non-retryable case.
+
+    Raises :class:`ClaimedFlowNotRunnableError` for the one failure retrying cannot
+    fix. Everything else propagates, so a caller running on the queue retries it.
+    """
+    from apps.flows.engine import FlowNotRunnableError, start_flow
+    from apps.flows.models import StartedBy
+
+    trigger = row.trigger
+    if trigger is None:
+        raise ClaimedFlowNotRunnableError(f"handled comment {row.pk} has no trigger left to run")
+    try:
+        start_flow(
+            contact,
+            trigger.flow,
+            started_by=StartedBy.stamp(StartedBy.TRIGGER, trigger.pk),
+            variables={"trigger_type": trigger.type},
+            connection=connection,
+        )
+    except FlowNotRunnableError as exc:
+        raise ClaimedFlowNotRunnableError(str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
 # The private-reply question, asked by adapters
 # ---------------------------------------------------------------------------
+
+
+#: How long after a claim is recorded its private reply is still offered to a send.
+#:
+#: **Not** SPEC §10's seven days — that is the platform's outside limit, and it is
+#: still enforced by ``guards.may_private_reply``. This is a much shorter
+#: hand-off window, and it exists because the adapter cannot see *which* send it
+#: is about to make.
+#:
+#: The claim is answered by whatever message reaches the contact first. Over seven
+#: days that is far too loose a net: if the trigger's flow opens with a condition,
+#: a delay or an action, or fails to start at all, the claim stays open and the
+#: next message of *any* kind — an agent's inbox reply, a broadcast fan-out, an
+#: unrelated flow — would be addressed as a reply to a week-old comment, spending
+#: the one private reply Meta allows on a message that is not the comment
+#: trigger's first. Minutes covers the real case (the worker starts the flow and
+#: its first node sends) and excludes that one.
+#:
+#: Past it the flow's first message goes out as an ordinary DM instead, through
+#: the 24-hour window the comment opened — a worse-looking reply, not a failed one.
+PRIVATE_REPLY_HANDOFF = timedelta(minutes=10)
 
 
 def pending_private_reply(connection: Any, commenter_ref: str, *, now: datetime | None = None) -> HandledComment | None:
@@ -171,6 +243,9 @@ def pending_private_reply(connection: Any, commenter_ref: str, *, now: datetime 
     one leads to. A query keyed on the contact would therefore match nothing at
     exactly the moment it is asked.
 
+    **Bounded by :data:`PRIVATE_REPLY_HANDOFF`**, which is the answer to "which
+    send is this?" — see that constant.
+
     Scoped through the connection's workspace like every other tenant read: the
     caller is a worker or a webhook with no session, so the workspace comes from
     the connection rather than from a request. ``may_private_reply`` is re-checked
@@ -181,19 +256,23 @@ def pending_private_reply(connection: Any, commenter_ref: str, *, now: datetime 
     """
     if connection is None or not commenter_ref:
         return None
+    moment = now or timezone.now()
     rows = (
         HandledComment.objects.for_workspace(connection.workspace_id)
         .filter(
             channel_connection=connection,
             commenter_ref=commenter_ref,
             private_reply_sent_at__isnull=True,
+            created_at__gte=moment - PRIVATE_REPLY_HANDOFF,
         )
-        # Oldest first: if a person somehow has two unanswered claims, the one
-        # closest to its deadline is the one worth spending this message on.
-        .order_by("commented_at")[:5]
+        # Newest first. Every row here is inside the hand-off window, so they are
+        # all answerable; the most recent comment is the one this send is most
+        # likely to be about. Ordering oldest-first with a fixed slice used to be
+        # able to hide an answerable claim behind expired ones.
+        .order_by("-commented_at")
     )
     for row in rows:
-        if may_private_reply(row, now=now):
+        if may_private_reply(row, now=moment):
             return row
     return None
 

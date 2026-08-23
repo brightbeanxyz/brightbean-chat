@@ -88,14 +88,15 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     if spec is None:
         return toast_response(tone="error", title="Unknown trigger type", body="Pick one from the list.")
 
+    connection_options = _connection_options(request, spec)
     context = _panel_context(request, flow)
     context.update(
         {
             "trigger": trigger,
             "spec": spec,
             "config": trigger.config_json if trigger is not None else spec.default_config(),
-            "connection_options": _connection_options(request, spec),
-            "post_picker_connections": _post_picker_connections(request, spec, flow),
+            "connection_options": connection_options,
+            "post_picker_connections": _post_picker_connections(request, spec, flow, connection_options),
             "rule_events": _RULE_EVENTS,
         }
     )
@@ -373,13 +374,20 @@ def _connection_options(request: WorkspaceRequest, spec: Any) -> list[dict[str, 
     ]
 
 
-def _post_picker_connections(request: WorkspaceRequest, spec: Any, flow: Flow) -> list[dict[str, str]]:
+def _post_picker_connections(
+    request: WorkspaceRequest,
+    spec: Any,
+    flow: Flow,
+    options: list[dict[str, str]],
+) -> list[dict[str, str]]:
     """Connections whose posts the comment trigger's picker can list.
 
-    A subset of :func:`_connection_options`, narrowed by
-    ``apps.channels.posts.supports_post_listing`` — a platform whose adapter has
-    not registered a lister has no picker to offer, and offering a button that
-    can only fail is worse than offering none.
+    A subset of ``options`` — the list the caller has already built — narrowed by
+    ``apps.channels.posts.supports_post_listing``: a platform whose adapter has not
+    registered a lister has no picker to offer, and offering a button that can only
+    fail is worse than offering none. Taking the list as an argument rather than
+    rebuilding it means one query per form render instead of two, and means the
+    picker and the connection dropdown cannot disagree about what is on offer.
 
     The URL is built here rather than in the template because the connection id
     is a path segment, which is what puts this route inside ``tests/idor.py``'s
@@ -402,7 +410,7 @@ def _post_picker_connections(request: WorkspaceRequest, spec: Any, flow: Flow) -
                 },
             ),
         }
-        for option in _connection_options(request, spec)
+        for option in options
         if channel_posts.supports_post_listing(option["platform"])
     ]
 

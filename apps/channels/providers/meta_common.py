@@ -46,9 +46,12 @@ answers with a row or with None.
 import hashlib
 import logging
 import threading
+import time
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from django.db import transaction
 
 from apps.channels import security
 from apps.channels.models import ChannelConnection, ConnectionStatus
@@ -70,11 +73,13 @@ __all__ = [
     "app_secret_for",
     "bounded_id",
     "entries",
+    "forget_app_secrets",
     "graph_call",
     "is_reauth_error",
     "mark_needs_reauth",
     "page_token",
     "resolve_by_page_id",
+    "resolve_by_page_ids",
     "store_page_token",
     "text_value",
     "verify_signature",
@@ -224,12 +229,23 @@ def mark_needs_reauth(connection: ChannelConnection, *, platform_label: str) -> 
     Idempotent — a page that fails ten sends in a minute must not send ten
     notifications — and best effort. It is called from an error path, so it must
     never raise on top of the failure it is describing.
+
+    **Both writes sit in their own savepoint, and that is not optional.** This runs
+    from ``adapter.send``, which the routing pipeline calls inside
+    ``transaction.atomic()`` while holding the contact advisory lock. Catching a
+    database error there without a savepoint leaves the surrounding transaction
+    marked aborted, so every later query in it fails with "current transaction is
+    aborted" — the message row could not be finalised and the whole event would be
+    lost, rather than one send failing. It is the hazard ``views_telegram._connect``,
+    ``triggers.guards.claim_default_reply`` and ``views_webhooks._log_event`` each
+    open a savepoint for.
     """
     if connection.status == ConnectionStatus.NEEDS_REAUTH:
         return
     try:
-        connection.status = ConnectionStatus.NEEDS_REAUTH
-        connection.save(update_fields=["status", "updated_at"])
+        with transaction.atomic():
+            connection.status = ConnectionStatus.NEEDS_REAUTH
+            connection.save(update_fields=["status", "updated_at"])
     except Exception:
         logger.exception("Could not park connection %s as needing reconnection.", connection.pk)
         return
@@ -237,16 +253,17 @@ def mark_needs_reauth(connection: ChannelConnection, *, platform_label: str) -> 
     try:
         from apps.notifications.engine import notify
 
-        notify(
-            connection.workspace,
-            "channel_needs_reauth",
-            context={
-                # Attacker-influenced (a page names itself), so it is escaped on
-                # render like every other stored display string.
-                "channel_name": connection.display_name,
-                "platform_label": platform_label,
-            },
-        )
+        with transaction.atomic():
+            notify(
+                connection.workspace,
+                "channel_needs_reauth",
+                context={
+                    # Attacker-influenced (a page names itself), so it is escaped
+                    # on render like every other stored display string.
+                    "channel_name": connection.display_name,
+                    "platform_label": platform_label,
+                },
+            )
     except Exception:
         logger.exception("Could not notify about connection %s needing reconnection.", connection.pk)
 
@@ -288,6 +305,29 @@ def store_page_token(connection: ChannelConnection, token: str, **extra: Any) ->
     connection.credentials = {TOKEN_KEY: token, **extra}  # type: ignore[assignment]
 
 
+#: How long a resolved app secret is reused within one process, in seconds.
+#:
+#: Short on purpose. The value it caches changes only when an operator edits
+#: credentials, and the cost it removes is real: without it every inbound delivery
+#: pays a workspace-override query, an organization query and an AES-GCM decrypt
+#: before a single byte is verified — on the ack path SPEC §7.1 budgets at 1.5 s
+#: and the layer's own latency test holds to a 500 ms p95. Telegram's equivalent
+#: check is a compare against a column already in hand.
+#:
+#: A minute is the window in which a rotated secret still verifies against the old
+#: one. That is the right direction to be wrong in: the alternative is a rotation
+#: that instantly refuses deliveries the platform is still signing with the value
+#: it was given, and Meta retries a refused delivery for a limited time only.
+APP_SECRET_CACHE_SECONDS = 60
+
+#: ``(platform, workspace_id) -> (secret, expires_at_monotonic)``. Per process,
+#: never shared, and never persisted — a credential does not belong in a cache
+#: another process can read.
+_APP_SECRETS: dict[tuple[str, Any], tuple[str, float]] = {}
+
+_APP_SECRET_LOCK = threading.Lock()
+
+
 def app_secret_for(connection: ChannelConnection) -> str:
     """The Meta app secret this connection's deliveries are signed with.
 
@@ -297,21 +337,43 @@ def app_secret_for(connection: ChannelConnection) -> str:
     ``client_secret``; ``REQUIRED_CREDENTIAL_KEYS`` already accepts both spellings,
     so both are read here.
 
-    Returns "" when nothing is configured, which
-    :func:`verify_signature` turns into a refused delivery. Failing closed is the
-    only option: a deployment with no app secret cannot tell a real delivery from
-    a forged one, and guessing on its behalf would make the webhook endpoint
-    unauthenticated.
+    Memoised for :data:`APP_SECRET_CACHE_SECONDS` per ``(platform, workspace)`` —
+    see that constant for why, and for the one behaviour it changes.
+
+    Returns "" when nothing is configured, which :func:`verify_signature` turns
+    into a refused delivery. Failing closed is the only option: a deployment with
+    no app secret cannot tell a real delivery from a forged one, and guessing on
+    its behalf would make the webhook endpoint unauthenticated. A missing secret is
+    **not** cached, so an operator who has just configured one does not wait out
+    the window.
     """
+    key = (connection.platform, connection.workspace_id)
+    now = time.monotonic()
+    cached = _APP_SECRETS.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+
     from apps.credentials.resolution import resolve_platform_credentials
 
     resolution = resolve_platform_credentials(connection.platform, workspace=connection.workspace)
     credentials = resolution.credentials
-    for key in ("client_secret", "app_secret"):
-        value = credentials.get(key)
+    secret = ""
+    for name in ("client_secret", "app_secret"):
+        value = credentials.get(name)
         if isinstance(value, str) and value:
-            return value
-    return ""
+            secret = value
+            break
+
+    if secret:
+        with _APP_SECRET_LOCK:
+            _APP_SECRETS[key] = (secret, now + APP_SECRET_CACHE_SECONDS)
+    return secret
+
+
+def forget_app_secrets() -> None:
+    """Drop every memoised app secret. For tests, and for a credential change."""
+    with _APP_SECRET_LOCK:
+        _APP_SECRETS.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +430,31 @@ def resolve_by_page_id(platform: str, page_id: str) -> ChannelConnection | None:
         .select_related("workspace")
         .first()
     )
+
+
+def resolve_by_page_ids(platform: str, page_ids: "Iterable[str]") -> dict[str, ChannelConnection]:
+    """Every connection named by ``page_ids``, keyed by id, in **one** query.
+
+    The batched form of :func:`resolve_by_page_id`, and the one a parser should
+    reach for: a Meta delivery may carry up to :data:`MAX_ENTRIES` entries, and
+    resolving them one at a time puts that many round trips inside SPEC §7.1's
+    1.5-second ack budget — on the path the layer's own latency test holds to a
+    500 ms p95.
+
+    Crosses tenants for the same reason the single-id form does, and is no more
+    permissive: whatever comes back is still checked by ``views_webhooks._usable``
+    and still has to clear the workspace check in ``_event_connection``.
+    """
+    wanted = sorted({page_id for page_id in page_ids if page_id})
+    if not wanted:
+        return {}
+    return {
+        # Cross-tenant by necessity: a webhook identifies pages, not a session.
+        connection.external_id: connection
+        for connection in ChannelConnection.objects.unscoped()
+        .filter(platform=platform, external_id__in=wanted)
+        .select_related("workspace")
+    }
 
 
 def entries(payload: Any) -> list[dict[str, Any]]:

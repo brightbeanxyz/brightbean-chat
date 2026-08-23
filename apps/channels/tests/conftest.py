@@ -32,6 +32,20 @@ def secret(connection: ChannelConnection) -> str:
     return connection.webhook_secret
 
 
+@pytest.fixture(autouse=True)
+def _forget_app_secrets() -> Iterator[None]:
+    """Start and end every test in this app with no memoised Meta app secret.
+
+    ``meta_common.app_secret_for`` caches per process for a minute so the webhook
+    ack path does not pay the SPEC §4 credential chain on every delivery. That
+    cache would otherwise outlive the test that populated it and let the next one
+    verify against a secret its own settings never configured.
+    """
+    meta_common.forget_app_secrets()
+    yield
+    meta_common.forget_app_secrets()
+
+
 @pytest.fixture
 def app_secret(settings: Any) -> str:
     """Configure the deployment-level Meta app — the bottom of SPEC §4's chain.

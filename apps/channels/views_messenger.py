@@ -35,11 +35,13 @@ a cookie — and it is carried **encrypted**, with the same AES-256-GCM utility
 every credential column uses, because SECURITY-BASELINE §5 says tokens live in
 encrypted fields and ``django_session.session_data`` is a plain column.
 
-It is deleted the moment a page is chosen, and it expires on its own
-(:data:`PENDING_MAX_AGE`) so an abandoned attempt does not leave a live token in a
-row nobody looks at. **Page** tokens are never held at all: the chooser re-reads
-``/me/accounts`` on the POST, so the credential that ends up on the connection has
-existed only inside one request.
+It is deleted the moment a page is chosen, the moment the chooser finds it too
+old (:data:`PENDING_MAX_AGE`), and the moment the connect page is opened again —
+that last one because nothing sweeps the session on its own, so without it an
+abandoned attempt would keep a live token for the session's own 14-day life
+instead of for fifteen minutes. **Page** tokens are never held at all: the chooser
+re-reads ``/me/accounts`` on the POST, so the credential that ends up on the
+connection has existed only inside one request.
 """
 
 import logging
@@ -125,6 +127,14 @@ def messenger_connect(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
     the state parameter protects the return leg, and the two are different
     problems.
     """
+    # Any attempt still on the session is finished with the moment this page is
+    # reached again — the operator is starting over, or came back to read the
+    # instructions. Dropping it here is what makes ``PENDING_MAX_AGE`` mean
+    # something: nothing else sweeps the session, so an abandoned attempt used to
+    # leave a live long-lived Facebook user token in ``django_session`` for the
+    # session's own 14-day life rather than for fifteen minutes.
+    _clear_pending(request)
+
     credentials = _app_credentials(request.workspace)
     if request.method == "POST":
         if not credentials:

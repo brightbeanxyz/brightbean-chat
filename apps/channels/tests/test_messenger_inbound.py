@@ -284,6 +284,126 @@ class TestDeliveryReceipts:
         assert parse(payload, page) == []
 
 
+class TestReceiptsAreNeverAnOracleOrACrash:
+    """The bugs the first pass of this suite could not reach."""
+
+    @pytest.fixture
+    def sent(self, tenancy: Any, page: ChannelConnection) -> Any:
+        """One outbound message on this page, addressed to the fixtures' person.
+
+        The reason the hostile suite missed the crash below: with no outbound
+        message the identity lookup returns early, two lines before the code that
+        raised.
+        """
+        from django.utils import timezone
+
+        from apps.contacts.services import create_contact
+        from apps.messaging.models import (
+            ContactChannelIdentity,
+            Conversation,
+            Message,
+            MessageDirection,
+            MessageSource,
+            MessageStatus,
+        )
+
+        contact = create_contact(tenancy.workspace, first_name="Sam")
+        ContactChannelIdentity.objects.create(
+            contact=contact,
+            channel_connection=page,
+            platform=page.platform,
+            platform_user_id=PSID,
+            opt_in=True,
+            # The audit trio the ``identity_optin_is_audited`` constraint wants:
+            # SPEC §11.8 refuses consent that cannot say when it was given or how.
+            opt_in_at=timezone.now(),
+            opt_in_source="message_in",
+        )
+        conversation = Conversation.objects.create(contact=contact, channel_connection=page)
+        return Message.objects.create(
+            conversation=conversation,
+            direction=MessageDirection.OUT,
+            source=MessageSource.AUTOMATION,
+            status=MessageStatus.SENT,
+            provider_message_id="mid.out-1",
+            idempotency_key="out-1",
+        )
+
+    @pytest.mark.parametrize("watermark", [float("inf"), float("-inf"), float("nan")])
+    def test_a_non_finite_watermark_does_not_raise(self, watermark: float, page: ChannelConnection, sent: Any) -> None:
+        """``json.loads`` accepts ``Infinity`` and ``NaN`` by default.
+
+        ``int(float("inf"))`` raises OverflowError and ``int(float("nan"))`` raises
+        ValueError, and either escaping ``parse_events`` costs the **whole**
+        delivery — every good event batched beside the receipt.
+        """
+        payload = load_delivery("read")
+        payload["entry"][0]["messaging"][0]["read"]["watermark"] = watermark
+        assert parse(payload, page) == []
+
+    def test_an_unreadable_watermark_marks_nothing_read(self, page: ChannelConnection, sent: Any) -> None:
+        """It fails closed. Falling back to ``now()`` was the most permissive
+        possible cutoff: a garbage watermark would mark the whole thread read."""
+        for value in (float("inf"), "yesterday", None, 10**400):
+            payload = load_delivery("read")
+            payload["entry"][0]["messaging"][0]["read"]["watermark"] = value
+            assert parse(payload, page) == [], value
+
+    def test_a_usable_watermark_still_resolves(self, page: ChannelConnection, sent: Any) -> None:
+        from django.utils import timezone
+
+        payload = load_delivery("read")
+        payload["entry"][0]["messaging"][0]["read"]["watermark"] = int(timezone.now().timestamp() * 1000) + 1000
+        (event,) = parse(payload, page)
+        assert event.payload.extra == {"provider_message_id": "mid.out-1", "status": "read"}
+
+    def test_a_delivery_naming_more_ids_than_the_cap_says_so(self, page: ChannelConnection, caplog: Any) -> None:
+        """Silently slicing left messages stuck at ``sent`` with nothing to say why.
+
+        The bound is also its own constant now: it answers "how many ids did Meta
+        name", which is a different question from how far a watermark reaches.
+        """
+        import logging
+
+        from apps.channels.providers.messenger import MAX_DELIVERY_MIDS, MAX_READ_RECEIPT_MESSAGES
+
+        assert MAX_DELIVERY_MIDS is not MAX_READ_RECEIPT_MESSAGES
+        caplog.set_level(logging.WARNING)
+        payload = load_delivery("delivery")
+        payload["entry"][0]["messaging"][0]["delivery"]["mids"] = [f"mid.{i}" for i in range(MAX_DELIVERY_MIDS + 5)]
+        assert len(parse(payload, page)) == MAX_DELIVERY_MIDS
+        assert "only the first" in caplog.text
+
+
+class TestDedupIdsNeverHashOurOwnClock:
+    """Meta names no id for a postback or a referral, so one is derived."""
+
+    @pytest.mark.parametrize("fixture", ["postback_button", "referral"])
+    def test_a_redelivery_with_unreadable_timestamps_still_deduplicates(
+        self, fixture: str, page: ChannelConnection
+    ) -> None:
+        """The id must depend only on what the platform actually sent.
+
+        Hashing the ``timezone.now()`` fallback gave the same event a different id
+        on every redelivery, so Meta's retry was processed again — firing the
+        welcome or ref_url flow twice.
+        """
+        payload = load_delivery(fixture)
+        payload["entry"][0]["time"] = "not a timestamp"
+        payload["entry"][0]["messaging"][0]["timestamp"] = "not a timestamp"
+
+        (first,) = parse(payload, page)
+        (again,) = parse(payload, page)
+        assert first.provider_event_id == again.provider_event_id
+
+    def test_two_real_presses_are_still_two_events(self, page: ChannelConnection) -> None:
+        """The other half: a readable clock still separates genuine repeats."""
+        first = load_delivery("postback_button")
+        second = load_delivery("postback_button")
+        second["entry"][0]["messaging"][0]["timestamp"] = 1712345699000
+        assert parse(first, page)[0].provider_event_id != parse(second, page)[0].provider_event_id
+
+
 class TestMultiPageDeliveries:
     def test_each_entry_resolves_its_own_connection(self, tenancy: Any, page: ChannelConnection) -> None:
         """One Meta delivery legitimately spans several pages.
@@ -319,6 +439,39 @@ class TestMultiPageDeliveries:
         payload = load_delivery("message_text")
         payload["entry"][0]["id"] = "999999999999999"
         assert parse(payload, page) == []
+
+    def test_a_batch_costs_one_connection_query_however_many_entries(
+        self, tenancy: Any, page: ChannelConnection, django_assert_num_queries: Any
+    ) -> None:
+        """A delivery may carry up to ``MAX_ENTRIES`` entries.
+
+        Resolving them one at a time put that many round trips inside SPEC §7.1's
+        1.5-second ack budget, on the path the layer's own latency test holds to a
+        500 ms p95.
+        """
+        from apps.channels.providers import meta_common
+
+        other = ChannelConnection(
+            workspace=tenancy.workspace,
+            platform=Platform.MESSENGER.value,
+            display_name="Second page",
+            external_id="333333333333333",
+        )
+        meta_common.store_page_token(other, "EAAsecondpagetoken0123456789abcdef")
+        other.rotate_webhook_secret()
+        other.save()
+
+        one = load_delivery("message_text")["entry"][0]
+        entries = []
+        for index in range(20):
+            clone = json.loads(json.dumps(one))
+            clone["id"] = other.external_id if index % 2 else page.external_id
+            clone["messaging"][0]["message"]["mid"] = f"m_{index}"
+            entries.append(clone)
+
+        with django_assert_num_queries(1):
+            events = parse({"object": "page", "entry": entries}, page)
+        assert len(events) == 20
 
     def test_an_entry_with_no_page_id_belongs_to_the_verified_connection(self, page: ChannelConnection) -> None:
         payload = load_delivery("message_text")

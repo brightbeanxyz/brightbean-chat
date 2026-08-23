@@ -109,7 +109,15 @@ def deliver_comment(client: Client, *, comment_id: str = "", message: str = "") 
     return response, calls
 
 
-def run_queued_actions() -> Any:
+#: Both halves of the follow-up, in the order the worker would reach them.
+COMMENT_ACTIONS = (messenger_adapter.COMMENT_ACTION, messenger_adapter.COMMENT_DM_ACTION)
+
+
+def queued(*types: str) -> Any:
+    return ScheduledAction.objects.unscoped().filter(type__in=types or COMMENT_ACTIONS).order_by("type")
+
+
+def run_queued_actions(*types: str) -> Any:
     """Drain the comment follow-up the webhook enqueued.
 
     Through ``apps.queueing.worker.process_action`` rather than by calling the
@@ -117,7 +125,7 @@ def run_queued_actions() -> Any:
     the path — the same reasoning ``apps/flows/tests/test_handlers.py`` gives.
     """
     with fake_graph() as calls:
-        for action in ScheduledAction.objects.unscoped().filter(type=messenger_adapter.COMMENT_ACTION):
+        for action in queued(*types):
             process_action(action)
     return calls
 
@@ -134,7 +142,9 @@ class TestTheClaim:
         assert row.commenter_ref == PSID
         assert row.contact_id is None  # no contact until the DM opens one
 
-        assert ScheduledAction.objects.unscoped().filter(type=messenger_adapter.COMMENT_ACTION).count() == 1
+        # Two actions, not one: the public reply and the DM have opposite retry
+        # policies, so they cannot share a queue row (see ``COMMENT_ACTION``).
+        assert sorted(row.type for row in queued()) == sorted(COMMENT_ACTIONS)
         # Nothing was called inline: three Graph round trips would blow SPEC
         # §7.1's 1.5 s budget for the whole webhook path.
         assert inline.calls == []
@@ -145,7 +155,7 @@ class TestTheClaim:
         deliver_comment(client)
         deliver_comment(client)
         assert HandledComment.objects.unscoped().count() == 1
-        assert ScheduledAction.objects.unscoped().filter(type=messenger_adapter.COMMENT_ACTION).count() == 1
+        assert queued().count() == len(COMMENT_ACTIONS)
 
     def test_a_comment_that_does_not_match_the_keywords_claims_nothing(
         self, client: Client, tenancy: Tenancy, comment_flow: Flow, page: ChannelConnection
@@ -173,7 +183,7 @@ class TestTheClaim:
     def test_a_comment_with_no_trigger_claims_nothing(self, client: Client, page: ChannelConnection) -> None:
         deliver_comment(client)
         assert not HandledComment.objects.unscoped().exists()
-        assert not ScheduledAction.objects.unscoped().filter(type=messenger_adapter.COMMENT_ACTION).exists()
+        assert not queued().exists()
 
 
 class TestTheFollowUp:
@@ -209,7 +219,7 @@ class TestTheFollowUp:
         deliver_comment(client)
         with fake_graph() as calls:
             calls.reply("/comments", Reply(status=500))
-            for action in ScheduledAction.objects.unscoped().filter(type=messenger_adapter.COMMENT_ACTION):
+            for action in queued():
                 process_action(action)
         assert calls.bodies("/messages")
 
@@ -328,6 +338,116 @@ class TestTheWindowIsOpenedByTheOneWriteSite:
         assert texts == [PRIVATE_REPLY]
 
 
+class TestTheTwoHalvesFailIndependently:
+    """Why the follow-up is two queue rows rather than one."""
+
+    def test_the_public_half_is_scheduled_at_most_once(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """Meta gives no way to make a comment or a like idempotent.
+
+        So a retry would put a second public reply under a customer's comment,
+        which is worse than the missing one a transient failure costs.
+        """
+        deliver_comment(client)
+        public = queued(messenger_adapter.COMMENT_ACTION).get()
+        assert public.max_attempts == 1
+
+    def test_the_dm_half_is_retryable(self, client: Client, page: ChannelConnection, comment_trigger: Trigger) -> None:
+        """Every step of it is idempotent, and it is the half the reply promised."""
+        deliver_comment(client)
+        dm = queued(messenger_adapter.COMMENT_DM_ACTION).get()
+        assert dm.max_attempts > 1
+
+    def test_a_failing_dm_never_re_posts_the_public_reply(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger, monkeypatch: Any
+    ) -> None:
+        """The regression this split exists for.
+
+        With one action, anything raised by the DM half put the whole handler back
+        on the queue — and the public reply, which had already succeeded, was
+        posted again on every attempt.
+        """
+        deliver_comment(client)
+        run_queued_actions(messenger_adapter.COMMENT_ACTION)
+
+        def explode(connection: Any, row: Any) -> None:
+            raise RuntimeError("the database blinked")
+
+        monkeypatch.setattr(messenger_adapter, "_start_comment_flow", explode)
+        with fake_graph() as calls:
+            for _ in range(3):
+                for action in queued(messenger_adapter.COMMENT_DM_ACTION):
+                    with pytest.raises(RuntimeError):
+                        messenger_adapter._run_comment_dm(action.payload, action)
+        assert calls.bodies(f"/{HandledComment.objects.unscoped().get().comment_id}/comments") == []
+
+    def test_a_thread_that_never_materialises_raises_so_the_dm_retries(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger, monkeypatch: Any
+    ) -> None:
+        """``persist_events`` swallows its own per-event failures.
+
+        The only way to learn it did not write the identity is to look — and the
+        answer has to be raised, not logged, or the action is marked done and the
+        customer never gets the DM they were just promised in public.
+        """
+        from apps.messaging import ingest as messaging_ingest
+
+        deliver_comment(client)
+        monkeypatch.setattr(messaging_ingest, "persist_events", lambda connection, events: None)
+        (action,) = list(queued(messenger_adapter.COMMENT_DM_ACTION))
+        with fake_graph(), pytest.raises(RuntimeError, match="produced no contact"):
+            messenger_adapter._run_comment_dm(action.payload, action)
+
+
+class TestThePrivateReplyHandoffIsBounded:
+    """The claim is answered by whatever sends first, so the window is short."""
+
+    def test_a_send_long_after_the_claim_is_an_ordinary_dm(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """An agent reply days later must not become a reply to a stale comment.
+
+        SPEC §10 allows the platform seven days, but the adapter cannot see *which*
+        send it is making — so an open claim would otherwise let any later message
+        spend the one private reply Meta permits.
+        """
+        from apps.flows.triggers import comments
+
+        deliver_comment(client)
+        run_queued_actions()
+        row = HandledComment.objects.unscoped().get()
+        # Undo the flow's own reply so a genuinely open claim is under test.
+        row.private_reply_sent_at = None
+        row.save(update_fields=["private_reply_sent_at"])
+
+        stale = timezone.now() + comments.PRIVATE_REPLY_HANDOFF + timedelta(minutes=1)
+        assert comments.pending_private_reply(page, PSID, now=stale) is None
+        # Still inside the platform's own seven days — this is our narrower bound.
+        from apps.flows.triggers.guards import may_private_reply
+
+        assert may_private_reply(row, now=stale) is True
+
+    def test_a_send_inside_the_window_still_gets_the_private_reply(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        from apps.flows.triggers import comments
+
+        deliver_comment(client)
+        assert comments.pending_private_reply(page, PSID) is not None
+
+    def test_an_answerable_claim_is_never_hidden_behind_older_ones(
+        self, client: Client, page: ChannelConnection, comment_trigger: Trigger
+    ) -> None:
+        """The fixed slice this replaced could bury a live claim behind expired ones."""
+        from apps.flows.triggers import comments
+
+        for index in range(8):
+            deliver_comment(client, comment_id=f"111111111111111_92{index:02d}", message=f"question {index}")
+        assert HandledComment.objects.unscoped().count() == 1  # once per person per post
+        assert comments.pending_private_reply(page, PSID) is not None
+
+
 class TestTheSeamIsPlatformAgnostic:
     def test_the_registry_is_what_dispatches(self) -> None:
         """L5-A adds one ``register_comment_actions`` line, not an edit to stages."""
@@ -349,7 +469,7 @@ class TestTheSeamIsPlatformAgnostic:
             comments._ACTIONS["messenger"] = registered
 
         assert HandledComment.objects.unscoped().count() == 1
-        assert not ScheduledAction.objects.unscoped().filter(type=messenger_adapter.COMMENT_ACTION).exists()
+        assert not queued().exists()
 
     def test_a_failing_actions_callable_never_rolls_back_the_claim(
         self, client: Client, page: ChannelConnection, comment_trigger: Trigger

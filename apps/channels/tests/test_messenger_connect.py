@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.channels import oauth_meta
 from apps.channels.models import ChannelConnection, ConnectionStatus
@@ -259,6 +260,47 @@ class TestChoosingAPage:
         with fake_graph(graph_for_connect(pages=[])):
             response = client.get(pages_url(tenancy))
         assert b"granted no pages" in response.content
+
+
+class TestAnAbandonedAttemptLeavesNothingBehind:
+    def test_opening_the_connect_page_again_drops_the_stashed_token(
+        self, tenancy: Tenancy, client_for: Any, app_secret: str
+    ) -> None:
+        """Nothing sweeps the session, so ``PENDING_MAX_AGE`` needs a trigger.
+
+        Without this, an operator who finished Facebook's consent screen and then
+        closed the tab left a live long-lived user token in ``django_session`` for
+        the session's own 14-day life — while the Facebook token itself stays valid
+        for about sixty days.
+        """
+        client = admin(tenancy, client_for)
+        complete_callback(client, tenancy)
+        assert PENDING_SESSION_KEY in client.session
+
+        client.get(connect_url(tenancy))
+        assert PENDING_SESSION_KEY not in client.session
+
+    def test_starting_over_drops_it_too(self, tenancy: Tenancy, client_for: Any, app_secret: str) -> None:
+        client = admin(tenancy, client_for)
+        complete_callback(client, tenancy)
+        client.post(connect_url(tenancy))
+        assert PENDING_SESSION_KEY not in client.session
+
+    def test_an_attempt_older_than_the_window_is_refused_and_cleared(
+        self, tenancy: Tenancy, client_for: Any, app_secret: str
+    ) -> None:
+        client = admin(tenancy, client_for)
+        complete_callback(client, tenancy)
+        session = client.session
+        session[PENDING_SESSION_KEY] = {
+            **session[PENDING_SESSION_KEY],
+            "at": timezone.now().timestamp() - oauth_meta.STATE_MAX_AGE - 60,
+        }
+        session.save()
+
+        response = client.get(pages_url(tenancy))
+        assert response.status_code == 302
+        assert PENDING_SESSION_KEY not in client.session
 
 
 class TestConnectingThePage:
