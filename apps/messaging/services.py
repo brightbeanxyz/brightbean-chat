@@ -72,9 +72,14 @@ from django.utils import timezone
 from apps.channels.events import OutboundMessage, SendResult, SendStatus
 from apps.channels.providers.exceptions import APIError, RateLimitError
 from apps.channels.registry import adapter_for
+from apps.contacts.models import ContactStatus
 from apps.messaging import buckets
 from apps.messaging.codes import Denial, Failure
 from apps.messaging.compliance import Allowed, can_send
+
+# The single write site for `opted_out_at` (ROADMAP contract 3). No cycle:
+# ingest.py reads identities and models, never this module.
+from apps.messaging.ingest import apply_opt_out
 from apps.messaging.models import (
     ContactChannelIdentity,
     Conversation,
@@ -94,6 +99,7 @@ __all__ = [
     "close_conversation",
     "open_conversation",
     "pause_automation",
+    "record_opt_out",
     "send_as_agent",
     "send_outbound",
     "send_via_api",
@@ -185,6 +191,36 @@ def _extend_automation_pause(conversation: Conversation, by: timedelta) -> Conve
 # ---------------------------------------------------------------------------
 # Identities
 # ---------------------------------------------------------------------------
+
+
+def record_opt_out(identity: ContactChannelIdentity, *, source: str = "") -> bool:
+    """Withdraw consent on one identity, by hand. ``True`` when it was not already out.
+
+    The operator-facing half of SPEC §19. A contact who asks a human to stop
+    messaging them has withdrawn consent exactly as surely as one who typed STOP,
+    and before this the CRM had no audited way to record it: :func:`record_consent`
+    only ever *adds* consent, and the inbound path was private.
+
+    **This function does not write ``opted_out_at``.** It delegates to
+    :func:`apps.messaging.ingest.apply_opt_out`, which ROADMAP contract 3 makes the
+    single write site — so the facade is the door a caller uses without the column
+    growing a second writer. Issue #13's contact detail page is the first caller.
+
+    There is deliberately **no matching re-subscribe**. ``opted_out_at`` is set once
+    and never cleared from here: SPEC §19 puts opt-out at a chokepoint precisely so
+    it cannot be bypassed, and an operator toggle that could un-say it is a bypass
+    with a nicer name. Re-consent arrives the way consent did — from the contact,
+    through L5-D's keyword hook — not from the team's side of the conversation.
+
+    ``source`` is recorded in the log line only. It does not touch ``opt_in_source``,
+    which is the *consent* audit: overwriting "they messaged us" with "an operator
+    opted them out" would destroy the record of how permission was obtained at the
+    moment it stopped applying, which is the pair a regulator asks to see together.
+    """
+    changed = apply_opt_out(identity)
+    if changed:
+        logger.info("Identity %s opted out manually (source=%s)", identity.pk, source or "manual")
+    return changed
 
 
 def upsert_contact_identity(
@@ -492,9 +528,12 @@ def _dispatch(
     *,
     blocking: bool,
 ) -> Message:
-    """Resolve the adapter, claim the attempt, take a token, send, record.
+    """Refuse a tombstone, resolve the adapter, claim, take a token, send, record.
 
     That order is load-bearing and was arrived at the wrong way round once.
+
+    The **tombstone check first**, because it is free and because everything
+    after it spends something — an adapter lookup, an attempt, a rate token.
 
     The **adapter first**, because a platform with no adapter installed can never
     send and must not spend anything finding that out. The **claim second**,
@@ -504,6 +543,16 @@ def _dispatch(
     never happened. The **token last**, so the only thing that consumes rate is
     a send that is actually about to be attempted.
     """
+    if message.conversation.contact.status != ContactStatus.ACTIVE:
+        # The last gate before a provider call, and the only one that catches a
+        # contact deleted *after* the message was queued. `send_outbound` cannot
+        # do it alone: `handle_send_retry` re-enters here directly, so a pending
+        # send_retry for somebody an operator removed an hour ago would still
+        # reach the platform. Issue #13's delete cancels those queue rows, but
+        # the invariant belongs here rather than resting on every caller of
+        # `delete_contact` remembering to tidy up.
+        return _finalize(message, status=MessageStatus.FAILED, error=Denial.CONTACT_DELETED.value)
+
     try:
         adapter = adapter_for(connection.platform)
     except LookupError:

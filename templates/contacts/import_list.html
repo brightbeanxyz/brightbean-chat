@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% comment %}
+The CSV import landing page: the upload form, and this workspace's past runs.
+
+The consent checkbox is the load-bearing part of this page. It states the one
+thing about importing that surprises people — an imported contact is not
+reachable on any channel until they message in — and the importer backs that up
+by never creating a ContactChannelIdentity. Ticking it is recorded on the run,
+so there is a record that the person who imported the list was told.
+{% endcomment %}
+
+{% block title %}Import contacts · {{ request.workspace.name }}{% endblock %}
+
+{% block page_header %}
+  <h1>Import contacts</h1>
+  <p class="muted">Upload a CSV, map its columns, check it, then import.</p>
+{% endblock %}
+
+{% block content %}
+<section class="crm-panel">
+  <h2>Upload a file</h2>
+  <form hx-post="{% url 'contacts:import_upload' workspace_id=request.workspace.id %}"
+        hx-encoding="multipart/form-data"
+        hx-swap="none"
+        hx-on::after-request="if (event.detail.successful) { const id = JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').importCreated; if (id) window.location = window.location.pathname + id + '/'; }">
+    <label for="import-file">CSV file</label>
+    <input type="file" id="import-file" name="file" accept=".csv,text/csv" required>
+    <p class="muted text-xs">
+      Up to {{ max_mb }} MB and {{ max_rows|intcomma }} rows. The first row must hold the column names.
+    </p>
+
+    <label class="flex items-start gap-2 mt-3" for="import-consent">
+      <input type="checkbox" id="import-consent" name="consent_ack" class="bb-checkbox mt-0.5" required>
+      <span class="text-xs" style="font-weight: 400;">
+        I understand that imported contacts are <strong>not reachable on any channel</strong>
+        until they message this workspace first. Importing an email address or a phone number
+        does not create a messaging identity and is not a record of consent.
+      </span>
+    </label>
+
+    <button type="submit" class="btn-brand btn-inline mt-3">Upload</button>
+  </form>
+</section>
+
+<section class="crm-panel">
+  <h2>Recent imports</h2>
+  {% if runs %}
+    <table>
+      <thead><tr><th>File</th><th>Status</th><th>Rows</th><th>Result</th><th>Started by</th><th></th></tr></thead>
+      <tbody>
+        {% for run in runs %}
+          <tr>
+            <td>{{ run.original_filename|default:"—" }}<br><span class="muted text-xs">{{ run.created_at }}</span></td>
+            <td><span class="status-pill status-pill-{% if run.status == 'done' %}active{% elif run.status == 'failed' %}disabled{% else %}needs_reauth{% endif %}">{{ run.get_status_display }}</span></td>
+            <td>{{ run.processed_rows }}{% if run.total_rows %} / {{ run.total_rows }}{% endif %}</td>
+            <td class="text-xs">
+              {{ run.created_count }} created · {{ run.updated_count }} updated ·
+              {{ run.skipped_count }} skipped · {{ run.error_count }} error{{ run.error_count|pluralize }}
+            </td>
+            <td class="text-xs">{{ run.created_by.email|default:"—" }}</td>
+            <td><a href="{% url 'contacts:import_detail' workspace_id=request.workspace.id import_id=run.id %}">Open</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No imports yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

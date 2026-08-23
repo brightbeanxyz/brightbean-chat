@@ -82,6 +82,7 @@ __all__ = [
     "locked_execution",
     "resume_execution",
     "start_flow",
+    "stop_automation",
 ]
 
 logger = logging.getLogger(__name__)
@@ -210,6 +211,32 @@ def start_flow(
             superseded,
         )
         return _run(execution, graph)
+
+
+def stop_automation(contact: Any) -> int:
+    """Expire whatever this contact is currently running. Returns how many stopped.
+
+    The engine-side half of issue #13's "stop automation" button. A support agent
+    looking at a contact stuck part-way through an onboarding flow needs a way to
+    end it, and the wrong way to build that is a view assigning
+    ``execution.status``: it would leave the queue rows that resume the execution
+    armed, so the run the operator believed they had stopped would wake up on its
+    next timer and carry on.
+
+    So this is :func:`_supersede` — the same body SPEC §22's one-live-execution
+    rule already uses — with the lock and the transaction it needs of its own.
+    Expiring is deliberately not failing: the run did not go wrong, somebody
+    ended it, and L7-A's per-node counters read ``failed`` as a flow that needs
+    fixing.
+
+    Blocking rather than ``try_contact_lock``: the caller is an operator who
+    clicked a button and is waiting for the answer, not the inline webhook path
+    SPEC §9.6 keeps off a blocking acquisition.
+    """
+    with transaction.atomic(), contact_lock(contact):
+        stopped = _supersede(contact)
+    logger.info("Automation stopped for contact %s: %s execution(s) expired.", contact.pk, stopped)
+    return stopped
 
 
 def resume_execution(

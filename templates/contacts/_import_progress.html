@@ -1,0 +1,73 @@
+{% comment %}
+The progress bar and the report for one import run.
+
+Polled while a run is working and inert once it is not: `hx-trigger` carries the
+poll interval only for a running row, so a finished import is not a request every
+two seconds for as long as somebody leaves the tab open.
+
+`importChanged` also refreshes it, so pressing "Check the file" or "Import"
+redraws this panel without a reload.
+{% endcomment %}
+<section class="crm-panel" id="import-progress"
+         hx-get="{% url 'contacts:import_progress' workspace_id=request.workspace.id import_id=run.id %}"
+         hx-trigger="importChanged from:body{% if run.is_running %}, every 2s{% endif %}"
+         hx-swap="outerHTML">
+
+  <div class="flex items-center justify-between gap-3">
+    <h2 class="mb-0">{{ run.get_status_display }}</h2>
+    {% if run.total_rows %}
+      <span class="muted text-xs">{{ run.processed_rows }} of {{ run.total_rows }} rows</span>
+    {% endif %}
+  </div>
+
+  {% if run.is_running or run.total_rows %}
+    <div class="media-quota-bar mt-2" role="progressbar"
+         aria-valuenow="{{ run.percent_complete }}" aria-valuemin="0" aria-valuemax="100">
+      <div class="media-quota-fill" style="width: {{ run.percent_complete }}%"></div>
+    </div>
+  {% endif %}
+
+  <p class="text-xs mt-2">
+    {{ run.created_count }} created · {{ run.updated_count }} updated ·
+    {{ run.skipped_count }} skipped · {{ run.error_count }} error{{ run.error_count|pluralize }}
+    {% if run.status == "validated" %}
+      <br><span class="muted">Nothing has been written yet. These are the numbers the import would produce.</span>
+    {% endif %}
+  </p>
+
+  {% if run.errors %}
+    <h3 class="mt-3">Rows that will not import</h3>
+    <table>
+      <thead><tr><th>Row</th><th>Column</th><th>Problem</th></tr></thead>
+      <tbody>
+        {% for error in run.errors|slice:":20" %}
+          <tr>
+            <td>{{ error.row }}</td>
+            <td>{{ error.column|default:"—" }}</td>
+            <td>{{ error.message }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if run.error_count > 20 %}
+      <p class="muted text-xs">Showing 20 of {{ run.error_count }}. Download the report for the rest.</p>
+    {% endif %}
+    {% if run.errors_truncated %}
+      <p class="muted text-xs">
+        Only the first {{ run.errors|length }} row errors were stored; the remaining
+        {{ run.hidden_error_count }} were counted but not recorded.
+      </p>
+    {% endif %}
+    <p><a href="{% url 'contacts:import_report' workspace_id=request.workspace.id import_id=run.id %}">Download the report (CSV)</a></p>
+  {% endif %}
+
+  {% if run.status == "validated" %}
+    <form class="mt-3"
+          hx-post="{% url 'contacts:import_run' workspace_id=request.workspace.id import_id=run.id %}"
+          hx-swap="none"
+          hx-confirm="Import {{ run.total_rows }} row(s) now?">
+      <button type="submit" class="btn-brand btn-inline">Import for real</button>
+      <span class="muted text-xs">Rows listed above are skipped; everything else is written.</span>
+    </form>
+  {% endif %}
+</section>

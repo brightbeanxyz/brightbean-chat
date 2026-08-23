@@ -1762,6 +1762,227 @@ span.flatpickr-weekday {
    its utilities and component classes must win without a fight. Base
    sits below both.
    ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   LAYER 4 — CONTACTS CRM (issue #13)
+   The list toolbar, the §11.4 filter builder, the bulk bar and the
+   contact detail panes.
+
+   Unlayered, like every component class above, and therefore beating
+   Tailwind's @layer utilities regardless of specificity or source
+   order. So each class below sets only the properties it owns: the
+   ones that would fight a utility on the same element — width on
+   inputs, display on containers a template toggles — are left alone
+   deliberately, and the markup uses utilities for those.
+
+   Two to watch, because they DO set properties a utility might try
+   to override, and unlayered wins:
+
+     .crm-chip sets `display: inline-flex`, so `class="crm-chip hidden"`
+       renders a visible chip. Toggle it on a wrapper instead.
+     .crm-avatar sets width and height, so `class="crm-avatar w-8"`
+       stays 2.5rem. Add a modifier here for another size.
+
+   Utilities remain correct for everything neither class touches —
+   margin, flex placement, text colour.
+   ═══════════════════════════════════════════════════════════════ */
+
+.crm-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.crm-toolbar form { margin-bottom: 0; }
+
+/* ── Filter builder ─────────────────────────────────────────── */
+
+.crm-filters {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.crm-filters-head,
+.crm-filters-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.crm-filters-foot { margin-top: 0.5rem; }
+.crm-filters-save {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.crm-rule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+  margin-top: 0.5rem;
+}
+.crm-rule-value { display: flex; align-items: center; gap: 0.5rem; }
+.crm-rule-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-ghost);
+  font-size: 1.125rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  cursor: pointer;
+}
+.crm-rule-remove:hover { color: var(--error-700); }
+
+/* ── Bulk bar ───────────────────────────────────────────────── */
+
+.crm-bulkbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+.crm-bulkbar form { margin-bottom: 0; }
+
+/* ── Chips ──────────────────────────────────────────────────── */
+
+.crm-chips { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; }
+.crm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  margin-right: 0.25rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.crm-chip-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-ghost);
+  cursor: pointer;
+  font-size: 0.875rem;
+  line-height: 1;
+  padding: 0;
+}
+.crm-chip-remove:hover { color: var(--error-700); }
+
+/* ── Tag typeahead ──────────────────────────────────────────── */
+
+.crm-typeahead { position: relative; }
+.crm-suggestion {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.crm-suggestion:hover { background: var(--surface-2); color: var(--text-primary); }
+.crm-suggestion-new { color: var(--primary); font-weight: 600; }
+
+/* ── Detail page ────────────────────────────────────────────── */
+
+.crm-detail { display: flex; flex-direction: column; gap: 1rem; }
+@media (min-width: 1024px) {
+  .crm-detail { flex-direction: row; align-items: flex-start; }
+  .crm-detail-main { flex: 1 1 auto; min-width: 0; }
+  .crm-detail-side { flex: 0 0 22rem; }
+}
+
+.crm-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  padding: 0.875rem 1rem;
+  margin-bottom: 1rem;
+}
+.crm-panel h2 { margin-bottom: 0.5rem; }
+
+.crm-inline-field { margin-bottom: 0.625rem; }
+.crm-inline-field form { margin-bottom: 0; }
+
+.crm-avatar {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.crm-avatar-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+.crm-channel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+.crm-channel:first-of-type { border-top: 0; }
+.crm-channel form { margin-bottom: 0; }
+.crm-channel-state { display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center; }
+
+.crm-automation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.crm-msg {
+  padding: 0.5rem 0.625rem;
+  margin-bottom: 0.375rem;
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--border);
+  background: var(--surface-1);
+}
+.crm-msg-in { border-left-color: var(--primary); }
+.crm-msg-out { border-left-color: var(--neutral-400); }
+.crm-msg-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.6875rem;
+  color: var(--text-ghost);
+  margin-bottom: 0.125rem;
+}
+.crm-msg-body {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  /* Message text is a stranger's. A long unbroken string must wrap rather
+     than widening the pane and pushing the layout sideways. */
+  overflow-wrap: anywhere;
+}
+
 @layer base {
   .app-content h1 { font-size: 1.125rem; font-weight: 600; color: var(--text-primary); }
   .app-content h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem; }

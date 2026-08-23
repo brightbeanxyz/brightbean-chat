@@ -1,0 +1,51 @@
+{% comment %}
+The contact's tags, plus a typeahead that can attach one.
+
+Refreshes itself on `contactTagsChanged`, which the add and remove endpoints'
+toasts carry — the same event/refetch pairing `_tag_rows.html` uses.
+
+There is no tag *editor* here: renaming, merging and deleting tags live on the
+settings page, and duplicating them beside this control was the named failure
+mode for this issue. This attaches and detaches, which is what a contact page is
+for.
+{% endcomment %}
+<section class="crm-panel" id="contact-tag-chips"
+         hx-get="{% url 'contacts:tags' workspace_id=request.workspace.id contact_id=contact.id %}"
+         hx-trigger="contactTagsChanged from:body"
+         hx-swap="outerHTML">
+  <h2>Tags</h2>
+
+  <div class="crm-chips">
+    {% for tag in contact_tags %}
+      <span class="crm-chip">
+        {{ tag.name }}
+        {% if can_edit_contacts %}
+          <button type="button" class="crm-chip-remove"
+                  aria-label="Remove {{ tag.name }}"
+                  hx-post="{% url 'contacts:tag_remove' workspace_id=request.workspace.id contact_id=contact.id tag_id=tag.id %}"
+                  hx-swap="none">&times;</button>
+        {% endif %}
+      </span>
+    {% empty %}
+      <span class="muted text-xs">No tags yet.</span>
+    {% endfor %}
+  </div>
+
+  {% if can_edit_contacts %}
+    {% comment %}
+      The typeahead is a plain htmx GET into a results list. `name` is sent
+      rather than a chosen id only when the caller may also create tags — the
+      view enforces that split, and `_tag_suggestions.html` only renders the
+      "create" affordance for a `manage_crm` holder, so the two agree.
+    {% endcomment %}
+    <div class="crm-typeahead mt-2">
+      <label for="tag-search" class="sr-only">Find a tag</label>
+      <input type="search" id="tag-search" name="q" placeholder="Find or add a tag" maxlength="100"
+             hx-get="{% url 'contacts:tag_suggest' workspace_id=request.workspace.id contact_id=contact.id %}"
+             hx-trigger="input changed delay:200ms, focus"
+             hx-target="#tag-suggestions"
+             hx-swap="innerHTML">
+      <div id="tag-suggestions"></div>
+    </div>
+  {% endif %}
+</section>

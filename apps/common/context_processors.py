@@ -157,7 +157,18 @@ MAIN_NAV: list[NavGroup] = [
                 badge_key="unread_inbox",
                 workspace_scoped=True,
             ),
-            NavItem(key="contacts", label="Contacts", icon="contacts", url_name="contacts:list", workspace_scoped=True),
+            NavItem(
+                key="contacts",
+                label="Contacts",
+                icon="contacts",
+                url_name="contacts:list",
+                # The detail page and the import wizard are the same section to
+                # a reader, so the row stays lit while either is open (issue #13).
+                url_names=frozenset(
+                    {"contacts:list", "contacts:detail", "contacts:import_list", "contacts:import_detail"}
+                ),
+                workspace_scoped=True,
+            ),
             NavItem(
                 key="flows",
                 label="Flows",

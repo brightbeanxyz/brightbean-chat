@@ -16,7 +16,6 @@ Deliberately **not** here:
   off a channel connection, so it lands with the messaging spine (issue #8).
 * Hard delete and export. ``status`` is a soft-delete flag; GDPR erasure is
   issue #29, which needs identities and message bodies to mean anything.
-* CSV import/export and the contact detail page — issue #13.
 
 Four shape decisions, each argued in the PR:
 
@@ -44,6 +43,7 @@ Four shape decisions, each argued in the PR:
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
 from django.db import models
@@ -379,6 +379,175 @@ class Segment(WorkspaceScopedModel):
             validate(self.workspace_id, self.filter_json, exclude_segment_id=self.pk)
         except ConditionValidationError as exc:
             raise ValidationError({"filter_json": str(exc)}) from exc
+
+
+class ImportStatus(models.TextChoices):
+    """Where a CSV import has got to (SPEC §2: contacts includes import/export).
+
+    ``validating`` and ``importing`` are the two states a worker moves through,
+    and they are distinct because only the second one writes. An operator who
+    reloads the page mid-run has to be able to tell "we are checking your file"
+    from "we are creating your contacts", because only one of those is worth
+    interrupting.
+    """
+
+    UPLOADED = "uploaded", "Uploaded"
+    VALIDATING = "validating", "Checking"
+    VALIDATED = "validated", "Checked"
+    IMPORTING = "importing", "Importing"
+    DONE = "done", "Finished"
+    FAILED = "failed", "Failed"
+
+
+#: Statuses no worker will move on from. Read by the housekeeping prune.
+FINISHED_IMPORT_STATUSES: frozenset[str] = frozenset({ImportStatus.DONE.value, ImportStatus.FAILED.value})
+
+
+class ImportDedupe(models.TextChoices):
+    """What to do with a row whose email or phone already names a contact.
+
+    The choice is the operator's rather than a house rule, because both answers
+    are right for different files: a re-export from another CRM should update,
+    and a list of new leads that happens to share an address with an existing
+    contact may genuinely be a second person at a shared inbox.
+    """
+
+    UPDATE = "update", "Update the contact that is already there"
+    CREATE = "create", "Create a second contact anyway"
+    SKIP = "skip", "Skip the row"
+
+
+def import_upload_to(instance: "ContactImport", filename: str) -> str:
+    """``contact-imports/<workspace>/<import id>.csv`` — ``filename`` is ignored.
+
+    The parameter exists because Django's ``upload_to`` protocol passes it, and
+    ignoring it is the point: every component of the stored path is a value this
+    server chose, so an uploaded name of ``../../etc/passwd`` decides nothing.
+    ``original_filename`` keeps the human-readable half, escaped at render.
+
+    Copied in shape from ``apps.media_library.storage.asset_upload_to`` rather
+    than imported from it: that module's path is ``media/…`` and its extension
+    comes from the media MIME table, neither of which applies here.
+    """
+    return f"contact-imports/{instance.workspace_id}/{instance.pk}.csv"
+
+
+class ContactImport(WorkspaceScopedModel):
+    """One CSV import run: the file, the mapping, the progress and the errors.
+
+    A row rather than a session key because the work is a background job (SPEC
+    §15) that outlives the request that started it, and because the operator has
+    to be able to come back to the report. The four counters and ``next_offset``
+    are the resume point: :mod:`apps.contacts.imports` processes a bounded slice
+    of rows per queued action and re-schedules itself, so a 50 000-row file never
+    sits inside one web request *or* one long database transaction.
+
+    ``errors`` is a **capped** list. A file where every row is malformed would
+    otherwise put fifty thousand error objects in a jsonb column — the row would
+    be larger than the upload that caused it. Past
+    :data:`MAX_REPORTED_ROW_ERRORS` the entries stop accumulating and
+    ``error_count`` keeps counting, so the report says how many it is not
+    showing rather than quietly appearing complete.
+
+    Not covered here: identities. An imported contact is **not reachable on any
+    channel** until they message in, and this app never fabricates a
+    ``ContactChannelIdentity`` to pretend otherwise — see
+    :mod:`apps.contacts.imports` and the consent copy on the upload step.
+    """
+
+    #: How many row errors are stored in full. The rest are counted only.
+    MAX_REPORTED_ROW_ERRORS: ClassVar[int] = 1000
+
+    file = models.FileField(upload_to=import_upload_to, max_length=512)
+    #: As uploaded. Attacker-controlled text (SECURITY-BASELINE §2): displayed
+    #: escaped, never used to build a path — see :func:`import_upload_to`.
+    original_filename = models.CharField(max_length=255, blank=True, default="")
+
+    status = models.CharField(max_length=16, choices=ImportStatus.choices, default=ImportStatus.UPLOADED)
+
+    #: ``{csv column name: target}``, where target is ``system:<name>``,
+    #: ``field:<uuid>`` or ``tags``. Absent means "ignore this column".
+    #: Validated by :mod:`apps.contacts.imports` on every read, not only on the
+    #: write that stored it: a mapping naming a custom field somebody has since
+    #: deleted is a document that was valid when it was saved.
+    mapping = models.JSONField(default=dict, blank=True)
+    dedupe = models.CharField(max_length=16, choices=ImportDedupe.choices, default=ImportDedupe.UPDATE)
+
+    #: The operator ticked the box saying imported contacts are not
+    #: channel-reachable. Stored rather than merely required, because it is the
+    #: record that the person who imported the list was told.
+    consent_ack = models.BooleanField(default=False)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contact_imports",
+    )
+
+    total_rows = models.PositiveIntegerField(default=0)
+    processed_rows = models.PositiveIntegerField(default=0)
+    created_count = models.PositiveIntegerField(default=0)
+    updated_count = models.PositiveIntegerField(default=0)
+    skipped_count = models.PositiveIntegerField(default=0)
+    error_count = models.PositiveIntegerField(default=0)
+
+    #: The next data row (0-based, header excluded) a batch should start at.
+    next_offset = models.PositiveIntegerField(default=0)
+
+    #: ``[{"row": int, "column": str, "message": str}]``, capped — see the class
+    #: docstring.
+    errors = models.JSONField(default=list, blank=True)
+
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "contacts_contact_import"
+        ordering = ["-created_at"]
+        indexes = [
+            # The housekeeping prune: finished runs older than the retention
+            # window, across every workspace.
+            models.Index(fields=["status", "finished_at"], name="contactimport_status_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.original_filename or 'import'} ({self.get_status_display()})"
+
+    @property
+    def is_running(self) -> bool:
+        """A worker is checking or importing this file. Drives the progress poll."""
+        return self.status in {ImportStatus.VALIDATING, ImportStatus.IMPORTING}
+
+    @property
+    def is_writing(self) -> bool:
+        """Contacts are being created or updated right now.
+
+        Narrower than :attr:`is_running` on purpose, and it is what gates
+        re-mapping. A dry run in flight writes nothing, so an operator who spots
+        a mistake in their column mapping should be able to fix it and check
+        again — the new pass resets ``next_offset``, which strands the old pass's
+        next batch on the offset guard. An import in flight is a different
+        matter: its mapping is already half-applied to real rows.
+        """
+        return self.status == ImportStatus.IMPORTING
+
+    @property
+    def errors_truncated(self) -> bool:
+        """More rows failed than the report stores in full."""
+        return self.error_count > len(self.errors)
+
+    @property
+    def hidden_error_count(self) -> int:
+        """How many row errors were counted but not recorded."""
+        return max(0, self.error_count - len(self.errors))
+
+    @property
+    def percent_complete(self) -> int:
+        """Progress for the bar. 0 while the row count is still unknown."""
+        if not self.total_rows:
+            return 0
+        return min(100, round(self.processed_rows * 100 / self.total_rows))
 
 
 @receiver(m2m_changed, sender=Contact.tags.through)

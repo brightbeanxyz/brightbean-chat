@@ -1,0 +1,74 @@
+{% load common_extras %}{% comment %}
+The contact's channel identities — read-only except for the one-way opt-out.
+
+These rows live on apps/messaging's models and this page only reads them. The
+one mutation goes through apps.contacts.activity → the messaging facade → the
+single write site in messaging/ingest.py, which is what keeps ROADMAP contract 3
+("opted_out_at is written in one place") literally true rather than true by
+convention.
+
+There is deliberately no un-opt-out. SPEC §19 puts opt-out at a chokepoint so it
+cannot be bypassed, and a toggle an operator could flip back is a bypass with a
+friendlier label — re-consent has to come from the contact.
+
+`platform_user_id` and `extra.username` are platform-supplied and therefore
+attacker-controlled (SECURITY-BASELINE §2): rendered escaped, never as a link.
+{% endcomment %}
+<section class="crm-panel" id="contact-channels"
+         hx-get="{% url 'contacts:channels' workspace_id=request.workspace.id contact_id=contact.id %}"
+         hx-trigger="contactChannelsChanged from:body"
+         hx-swap="outerHTML">
+  <h2>Channels</h2>
+
+  {% for channel in channels %}
+    <div class="crm-channel">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="pi-chip {{ channel.platform|platform_class }} w-6 h-6">
+          {% include "partials/_platform_icon.html" with platform=channel.platform size="sm" %}
+        </span>
+        <div class="min-w-0">
+          <div class="text-sm truncate">{{ channel.username|default:channel.address }}</div>
+          <div class="muted text-xs truncate">{{ channel.address }}</div>
+        </div>
+      </div>
+
+      <div class="crm-channel-state">
+        {% if channel.is_opted_out %}
+          <span class="status-pill status-pill-disabled">Opted out {{ channel.opted_out_at }}</span>
+        {% elif channel.opt_in %}
+          <span class="status-pill status-pill-active">Opted in</span>
+        {% else %}
+          <span class="status-pill status-pill-needs_reauth">No consent recorded</span>
+        {% endif %}
+
+        {% if channel.is_pending %}
+          {% comment %}
+            An address captured before any connection of that platform existed
+            (ROADMAP contract 1). It is upgraded lazily at first send, so there
+            is nothing wrong here — but it is worth saying, because the row has
+            no channel behind it yet.
+          {% endcomment %}
+          <span class="status-pill status-pill-disabled" title="Captured before a connection existed; it attaches at first send">Pending</span>
+        {% elif channel.window_open %}
+          <span class="status-pill status-pill-active">Window closes in {{ channel.window_expires_at|timeuntil:now }}</span>
+        {% else %}
+          <span class="status-pill status-pill-disabled">Window closed</span>
+        {% endif %}
+      </div>
+
+      {% if can_edit_contacts and not channel.is_opted_out %}
+        <form class="mb-0"
+              hx-post="{% url 'contacts:identity_opt_out' workspace_id=request.workspace.id contact_id=contact.id identity_id=channel.identity.id %}"
+              hx-swap="none"
+              hx-confirm="Opt this contact out on {{ channel.platform }}? This cannot be undone from here — only the contact can re-subscribe.">
+          <button type="submit" class="btn-outline btn-inline btn-danger-soft">Opt out</button>
+        </form>
+      {% endif %}
+    </div>
+  {% empty %}
+    <p class="muted text-xs">
+      No channels yet. A contact becomes reachable when they message one of this
+      workspace's connections — importing an address does not create one.
+    </p>
+  {% endfor %}
+</section>

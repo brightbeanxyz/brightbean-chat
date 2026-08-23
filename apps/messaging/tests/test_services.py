@@ -864,3 +864,62 @@ class TestRateDeferral:
         assert second.status == MessageStatus.QUEUED
         assert second.error == Failure.RATE_DEFERRED
         assert ScheduledAction.objects.unscoped().filter(type=ActionType.SEND_RETRY).count() == 1
+
+
+class TestDeletedContacts:
+    """SPEC §5 makes ``status`` a soft-delete marker, and every read surface
+    starts from active contacts — but nothing in the send path checked it, so a
+    message queued before an operator removed somebody still reached them.
+
+    The guard sits in ``_dispatch`` rather than in ``send_outbound`` because
+    ``handle_send_retry`` re-enters there directly: a pending ``send_retry`` is
+    precisely the case where the deletion happens *after* the decision to send.
+    That half is covered in ``test_send_retry.py``, which owns the retry path
+    and already has the fixtures for leaving a message queued.
+    """
+
+    def _deleted(self, contact: Any) -> Any:
+        from apps.contacts.services import delete_contact
+
+        delete_contact(contact)
+        return contact
+
+    def test_a_fresh_send_to_a_tombstone_is_refused(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        self._deleted(contact)
+
+        with registered(Platform.TELEGRAM) as adapter:
+            calls: list[Any] = []
+
+            def record(*args: Any, **kwargs: Any) -> SendResult:
+                calls.append(args)
+                return SendResult(status=SendStatus.SENT)
+
+            adapter.send = record  # type: ignore[method-assign,assignment]
+            message = send(tenancy, contact, connection)
+
+        assert calls == []
+        assert message.status == MessageStatus.FAILED
+        assert message.error == Denial.CONTACT_DELETED
+
+    def test_an_active_contact_is_unaffected(self, tenancy: Any, contact: Any, connection: Any, identity: Any) -> None:
+        with registered(Platform.TELEGRAM) as adapter:
+            adapter.send = lambda *a, **k: SendResult(  # type: ignore[method-assign,assignment]
+                status=SendStatus.SENT, provider_message_id="pm-1"
+            )
+            message = send(tenancy, contact, connection)
+
+        assert message.status == MessageStatus.SENT
+
+    def test_an_internal_note_about_a_deleted_contact_is_still_stored(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """A note never reaches a platform, so the guard must not swallow it —
+        the inbox's record of what happened outlives the contact."""
+        self._deleted(contact)
+
+        message = send(tenancy, contact, connection, internal=True, idempotency_key="note-1")
+
+        assert message.internal is True
+        assert message.status != MessageStatus.FAILED
