@@ -1,0 +1,39 @@
+{% comment %}
+One page of recipients, filtered by outcome. Bounded to a hundred rows: a
+ten-thousand-recipient broadcast has a counter for the whole and a list for the
+part an operator can act on.
+
+The reason is a machine-readable Denial code on the row; the sentence comes from
+apps.messaging.codes.describe, which is the same copy the inbox shows for the
+same code. Contact names are attacker-controlled and are escaped like any other
+template value (SECURITY-BASELINE §2).
+{% endcomment %}
+<form class="bc-row mb-2"
+      hx-get="{% url 'broadcasts:recipients' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+      hx-target="#broadcast-recipients"
+      hx-swap="innerHTML"
+      hx-trigger="change">
+    <label for="recipient-status" class="bc-hint">Show</label>
+    <select id="recipient-status" name="status" class="bb-filter-select">
+        {% for value, label in status_options %}
+        <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+</form>
+
+<table class="w-full text-sm">
+    <tbody>
+        {% for row in rows %}
+        <tr style="border-top: 1px solid var(--border);">
+            <td class="py-1">
+                <a class="btn-link" href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=row.contact_id %}">
+                    {{ row.contact.first_name }} {{ row.contact.last_name }}
+                </a>
+            </td>
+            <td class="py-1 text-right" style="color: var(--text-secondary);">{{ row.reason_label }}</td>
+        </tr>
+        {% empty %}
+        <tr><td class="py-4 text-center" style="color: var(--text-tertiary);">Nobody in this group.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>

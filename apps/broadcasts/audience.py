@@ -1,0 +1,284 @@
+"""Who a broadcast goes to, and who it does not (SPEC §13.2).
+
+Two reserved seams meet here and nothing else does:
+
+    apps.contacts.conditions.queryset(workspace, filter_json)   # contract 8
+    apps.messaging.compliance.annotate_eligibility(...)         # "Exported for L6-B"
+
+Targeting is the same engine saved segments use, so **an audience and a segment
+agree by construction**. Eligibility is the same rule list ``can_send`` walks,
+in the same order, because ``compliance._rules`` returns each predicate in two
+spellings and both evaluators compile the one list — which is what stops a
+preview from counting people the send then refuses.
+
+Nothing here re-derives a messaging window, an opt-out or a template
+requirement. If you find yourself reaching for ``window_expires_at`` in this
+file, the answer you want is a ``send_decision`` code from the annotation.
+
+--------------------------------------------------------------------------
+One send per contact, not per identity
+--------------------------------------------------------------------------
+
+``annotate_eligibility`` narrows to "this connection's identities, plus the
+pending records for its platform" — deliberately, so a contact whose address was
+captured before the connection existed is counted rather than silently dropped.
+The consequence is that one contact can match more than once: a real row on the
+connection and a leftover pending row for the platform.
+
+SPEC §13.2 inserts "one ``broadcast_send`` action per contact", so this module
+collapses that. :func:`iter_candidates` keeps the **best** row per contact —
+eligible first, then the connection-bound one, then by id so it is deterministic
+— and a contact matching no identity at all is reported under ``no_identity``
+rather than vanishing from the totals. Counting identity rows instead would
+report an audience larger than the number of messages sent, and the acceptance
+criterion is that those reconcile.
+
+--------------------------------------------------------------------------
+The preview is advisory; the recipient rows are the record
+--------------------------------------------------------------------------
+
+:func:`preview` is set-wise — three aggregate queries whatever the audience size,
+because a ten-thousand-contact count must not walk ten thousand objects behind a
+composer keystroke. ``eligible`` is exact. The per-reason skip counts are exact
+except in one bounded case: a contact holding **two** addresses on the same
+connection with two different denials is counted under both, so the reasons can
+sum to slightly more than ``total - eligible``. The authoritative per-reason
+numbers are the ``BroadcastRecipient`` rows fanout writes, where each contact has
+exactly one row by unique constraint.
+"""
+
+import logging
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Any
+
+from django.db.models import Case, Count, IntegerField, QuerySet, Value, When
+
+from apps.channels.events import OutboundMessage
+from apps.contacts import conditions
+from apps.contacts.models import Contact
+from apps.messaging.codes import Denial
+from apps.messaging.compliance import ALLOWED_CODES, DECISION_FIELD, annotate_eligibility
+from apps.messaging.models import ContactChannelIdentity, MessageSource
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "AudiencePreview",
+    "Candidate",
+    "PREVIEW_SAMPLE",
+    "SOURCE",
+    "iter_candidates",
+    "preview",
+    "probe_for",
+    "target_queryset",
+]
+
+#: How many named examples the composer's preview carries per skip reason. A
+#: reason with a count and no example is a number an operator cannot act on; a
+#: reason with ten thousand examples is a page nobody can read.
+PREVIEW_SAMPLE = 5
+
+#: The source every question this module asks is asked as. Fixed rather than a
+#: parameter: a preview computed as ``automation`` would answer a different
+#: question from the one the send will ask, which is the exact drift
+#: ``compliance``'s "one rule list, two evaluators" design exists to prevent.
+SOURCE = MessageSource.BROADCAST.value
+
+#: Sort key that puts an eligible candidate ahead of a refused one.
+_ELIGIBLE_FIRST = Case(
+    When(**{f"{DECISION_FIELD}__in": sorted(ALLOWED_CODES)}, then=Value(0)),
+    default=Value(1),
+    output_field=IntegerField(),
+)
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One contact, the identity a send would use, and the verdict on it."""
+
+    contact_id: Any
+    identity_id: Any
+    decision: str
+
+    @property
+    def is_eligible(self) -> bool:
+        return self.decision in ALLOWED_CODES
+
+
+@dataclass(frozen=True)
+class AudiencePreview:
+    """What the composer shows before anybody presses send."""
+
+    #: Everyone the filter matches, whatever compliance then says.
+    total: int = 0
+    #: How many of them a send would actually be allowed to. Exact.
+    eligible: int = 0
+    #: Denial code -> count. Keys are :class:`apps.messaging.codes.Denial`
+    #: values, so the copy comes from ``codes.describe`` at render time rather
+    #: than being written here.
+    skipped: dict[str, int] = field(default_factory=dict)
+    #: Denial code -> a few contact names, for the "why?" panel.
+    samples: dict[str, list[str]] = field(default_factory=dict)
+
+    @property
+    def skipped_total(self) -> int:
+        """Everyone the filter matched who would not receive it."""
+        return self.total - self.eligible
+
+    def needs(self, code: str) -> int:
+        """How many people are blocked by one specific denial.
+
+        The composer's Messenger and WhatsApp gates are both this question —
+        ``needs(Denial.NEEDS_TAG)`` and ``needs(Denial.NEEDS_TEMPLATE)`` — asked
+        of the same annotation the preview came from, so a gate and the number
+        printed beside it cannot disagree.
+        """
+        return self.skipped.get(code, 0)
+
+
+def probe_for(broadcast: Any) -> OutboundMessage:
+    """The message shape compliance needs in order to answer at all.
+
+    ``can_send`` reads exactly two fields of the outbound message — ``tag`` and
+    ``template_ref`` — because they are what SPEC §8's outside-window escapes
+    turn on. Blocks and buttons take no part in a compliance decision, so the
+    probe carries none: rendering the real message per contact just to ask
+    whether it may be sent would be ten thousand renders for one boolean.
+    """
+    template = broadcast.whatsapp_template
+    return OutboundMessage(
+        tag=broadcast.message_tag or None,
+        template_ref=template.reference if template is not None else None,
+    )
+
+
+def target_queryset(workspace: Any, filter_json: Any) -> QuerySet[Contact]:
+    """The contacts a filter document matches — contract 8, and nothing else.
+
+    ``conditions.queryset`` already restricts to active contacts, so a
+    soft-deleted person can never enter a send path through here.
+    """
+    return conditions.queryset(workspace, filter_json)
+
+
+def _annotated(broadcast: Any, contacts: QuerySet[Contact]) -> QuerySet[ContactChannelIdentity]:
+    """Every candidate identity for this audience, carrying its verdict."""
+    identities = ContactChannelIdentity.objects.for_workspace(broadcast.workspace_id).filter(
+        contact__in=contacts.values("pk")
+    )
+    return annotate_eligibility(
+        identities,
+        connection=broadcast.channel_connection,
+        source=SOURCE,
+        outbound=probe_for(broadcast),
+    )
+
+
+def iter_candidates(broadcast: Any, *, after: Any = None, limit: int | None = None) -> Iterator[Candidate]:
+    """One :class:`Candidate` per contact, in contact-id order, resumable.
+
+    ``after`` is the last contact id a previous chunk saw, which is what lets
+    fanout walk a ten-thousand-contact audience five hundred at a time across
+    several worker cycles without an ``OFFSET`` that shifts under inserts.
+
+    The per-contact pick is done here in Python rather than with ``DISTINCT ON``
+    because a chunk is five hundred rows, the ordering does the work, and this is
+    also the only place that can notice a contact with **no** identity at all —
+    which the identity join cannot produce a row for and which SPEC §13.2 still
+    wants counted.
+    """
+    contacts = target_queryset(broadcast.workspace_id, broadcast.target_filter_json)
+    if after is not None:
+        contacts = contacts.filter(pk__gt=after)
+    # values_list before the slice: a sliced queryset refuses further filtering,
+    # and taking the ids first keeps the chunk boundary on the same ordering the
+    # cursor is expressed in.
+    ids = contacts.order_by("pk").values_list("pk", flat=True)
+    contact_ids = list(ids[:limit] if limit is not None else ids)
+    if not contact_ids:
+        return
+
+    rows = (
+        _annotated(broadcast, Contact.objects.for_workspace(broadcast.workspace_id).filter(pk__in=contact_ids))
+        .annotate(_rank=_ELIGIBLE_FIRST)
+        # Eligible first, then the connection-bound row (NULL sorts last
+        # ascending in Postgres, and NULL is exactly the pending record), then
+        # by id so two addresses on one connection resolve the same way twice.
+        .order_by("contact_id", "_rank", "channel_connection_id", "pk")
+        .values_list("contact_id", "pk", DECISION_FIELD)
+    )
+
+    best: dict[Any, tuple[Any, str]] = {}
+    for contact_id, identity_id, decision in rows:
+        best.setdefault(contact_id, (identity_id, str(decision)))
+
+    for contact_id in contact_ids:
+        found = best.get(contact_id)
+        if found is None:
+            # No row on this connection and no pending record for the platform.
+            # A real skip with a real reason, not an absence.
+            yield Candidate(contact_id=contact_id, identity_id=None, decision=Denial.NO_IDENTITY.value)
+            continue
+        yield Candidate(contact_id=contact_id, identity_id=found[0], decision=found[1])
+
+
+def preview(broadcast: Any) -> AudiencePreview:
+    """The composer's live count. Set-wise, whatever the audience size."""
+    contacts = target_queryset(broadcast.workspace_id, broadcast.target_filter_json)
+    total = contacts.count()
+    if not total:
+        return AudiencePreview()
+
+    annotated = _annotated(broadcast, contacts)
+    eligible_contacts = annotated.filter(**{f"{DECISION_FIELD}__in": sorted(ALLOWED_CODES)}).values("contact_id")
+    eligible = eligible_contacts.distinct().count()
+
+    skipped: dict[str, int] = {}
+    for row in (
+        annotated.exclude(contact_id__in=eligible_contacts)
+        .values(DECISION_FIELD)
+        .annotate(n=Count("contact_id", distinct=True))
+    ):
+        skipped[str(row[DECISION_FIELD])] = int(row["n"])
+
+    # Contacts the identity join produced no row for at all. A subtraction rather
+    # than a second scan, and floored at zero because the bounded double-count
+    # the module docstring describes can otherwise push it negative.
+    unaccounted = total - eligible - sum(skipped.values())
+    if unaccounted > 0:
+        skipped[Denial.NO_IDENTITY.value] = skipped.get(Denial.NO_IDENTITY.value, 0) + unaccounted
+
+    return AudiencePreview(total=total, eligible=eligible, skipped=skipped, samples=_samples(broadcast, skipped))
+
+
+def _samples(broadcast: Any, skipped: dict[str, int]) -> dict[str, list[str]]:
+    """A few names per skip reason, so "why?" has an answer a person recognises.
+
+    One query for every reason rather than one per reason, and bounded: the slice
+    is the number of reasons times :data:`PREVIEW_SAMPLE` with headroom for rows
+    that land in a bucket already full.
+    """
+    wanted = sorted(code for code in skipped if code != Denial.NO_IDENTITY.value)
+    if not wanted:
+        return {}
+
+    contacts = target_queryset(broadcast.workspace_id, broadcast.target_filter_json)
+    rows = (
+        _annotated(broadcast, contacts)
+        .filter(**{f"{DECISION_FIELD}__in": wanted})
+        .order_by("contact_id")
+        .values_list(DECISION_FIELD, "contact__first_name", "contact__last_name", "contact__email")[
+            : len(wanted) * PREVIEW_SAMPLE * 4
+        ]
+    )
+
+    samples: dict[str, list[str]] = {}
+    for decision, first, last, email in rows:
+        bucket = samples.setdefault(str(decision), [])
+        if len(bucket) < PREVIEW_SAMPLE:
+            # Never HTML — these are contact-authored strings on the
+            # attacker-content path (SECURITY-BASELINE §2) and the template
+            # escapes them like any other value.
+            bucket.append(" ".join(part for part in (first, last) if part) or email or "Unnamed contact")
+    return samples

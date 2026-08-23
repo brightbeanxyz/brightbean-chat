@@ -1,0 +1,53 @@
+{% load common_extras %}
+{% comment %}
+The broadcast table. One renderer for the toolbar's fetch and for every
+mutation's refresh event.
+
+The status chip is `status-pill status-pill-{{ broadcast.status }}`: the five
+classes exist in styles.css, named for the stored values, so this template never
+branches on which one a row is in.
+
+The counters come off the row's stored `stats` (SPEC §5), not from a per-row
+aggregate — a list of fifty broadcasts must not be fifty GROUP BYs. The detail
+page is where the live figures are computed, and it writes them back here.
+{% endcomment %}
+<table class="w-full text-sm">
+    <thead>
+        <tr style="color: var(--text-tertiary);">
+            <th class="text-left font-medium pb-2">Name</th>
+            <th class="text-left font-medium pb-2">Channel</th>
+            <th class="text-left font-medium pb-2">Status</th>
+            <th class="text-right font-medium pb-2">Sent</th>
+            <th class="text-right font-medium pb-2">Skipped</th>
+            <th class="text-left font-medium pb-2 pl-4">When</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for broadcast in broadcasts %}
+        <tr style="border-top: 1px solid var(--border);">
+            <td class="py-2">
+                <a class="btn-link"
+                   href="{% if broadcast.status == 'draft' %}{% url 'broadcasts:compose' workspace_id=request.workspace.id broadcast_id=broadcast.id %}{% else %}{% url 'broadcasts:detail' workspace_id=request.workspace.id broadcast_id=broadcast.id %}{% endif %}">{{ broadcast.name }}</a>
+            </td>
+            <td class="py-2">
+                <span class="pi-chip {{ broadcast.channel_connection.platform|platform_class }}"></span>
+                <span style="color: var(--text-secondary);">{{ broadcast.channel_connection.display_name }}</span>
+            </td>
+            <td class="py-2">
+                <span class="status-pill status-pill-{{ broadcast.status }}">{{ broadcast.get_status_display }}</span>
+            </td>
+            <td class="py-2 text-right" style="font-variant-numeric: tabular-nums;">{{ broadcast.stats.sent|default:0 }}</td>
+            <td class="py-2 text-right" style="font-variant-numeric: tabular-nums;">{{ broadcast.stats.skipped|default:0 }}</td>
+            <td class="py-2 pl-4" style="color: var(--text-secondary);">
+                {% if broadcast.finished_at %}Finished {{ broadcast.finished_at }}
+                {% elif broadcast.scheduled_at %}{{ broadcast.scheduled_at }}
+                {% else %}Created {{ broadcast.created_at }}{% endif %}
+            </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="py-6 text-center" style="color: var(--text-tertiary);">
+            No broadcasts yet.
+        </td></tr>
+        {% endfor %}
+    </tbody>
+</table>

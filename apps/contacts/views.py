@@ -247,8 +247,13 @@ def _querystring(query: ContactQuery, *, page: int = 0) -> str:
     return urlencode(params)
 
 
-def _filter_config(workspace: Any, query: ContactQuery) -> dict[str, Any]:
+def filter_config(workspace: Any, query: ContactQuery) -> dict[str, Any]:
     """Everything the filter builder needs to render §11.4, in one payload.
+
+    Public because the broadcast composer (#23) renders the same filter bar over
+    the same ``templates/contacts/_filter_bar.html``. A second assembly of this
+    payload in that app would be a second list of sources and operators, which is
+    exactly what the ``x-brightbean`` extension block exists to prevent.
 
     ``CONDITION_SCHEMA["x-brightbean"]`` already carries the operator tables, the
     valueless-operator set, the operator labels, the system fields, the relative
@@ -313,7 +318,7 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     return render(
         request,
         "contacts/list.html",
-        {**context, "filter_config": _filter_config(request.workspace, context["query"])},
+        {**context, "filter_config": filter_config(request.workspace, context["query"])},
     )
 
 

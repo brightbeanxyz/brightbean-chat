@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% load common_extras %}
+{% comment %}
+The broadcast list (SPEC §13). Everything below the toolbar is _rows.html, so
+the table has exactly one renderer: the filters fetch it, and every mutation
+answers with a `broadcastsChanged` event that makes it re-fetch itself.
+
+The "New broadcast" form offers only connections the policy table says permit
+broadcasts — apps/broadcasts/composer.py::broadcastable_connections — which is
+where SPEC §13.2's "Instagram never appears in the broadcast channel selector"
+actually happens. There is no platform name in this file.
+{% endcomment %}
+
+{% block title %}Broadcasts · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Broadcasts</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            One message to many contacts, filtered for compliance before it goes out.
+        </p>
+    </div>
+    {% if connections %}
+    <form class="flex items-center gap-2"
+          hx-post="{% url 'broadcasts:create' workspace_id=request.workspace.id %}"
+          hx-swap="none"
+          x-data
+          @htmx:after-request="$el.reset()">
+        {% csrf_token %}
+        <input type="text" name="name" maxlength="200" required placeholder="New broadcast name"
+               class="form-input-styled" style="width: 14rem;" aria-label="New broadcast name">
+        <label class="sr-only" for="new-broadcast-connection">Channel</label>
+        <select id="new-broadcast-connection" name="connection_id" class="bb-filter-select" required>
+            {% for connection in connections %}
+            <option value="{{ connection.id }}">{{ connection.display_name }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn-brand btn-inline">Create</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+{% if not connections %}
+<div class="alert-info mb-4">
+    No channel in this workspace accepts broadcasts yet. Connect one in
+    <a href="{% url 'channels:list' workspace_id=request.workspace.id %}">channel settings</a> first.
+</div>
+{% endif %}
+
+<div x-data="{
+        q: '{{ q|escapejs }}',
+        status: '{{ status|escapejs }}',
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+     }">
+
+    <form id="broadcast-filters" x-ref="filters"
+          class="crm-toolbar"
+          hx-get="{% url 'broadcasts:rows' workspace_id=request.workspace.id %}"
+          hx-target="#broadcast-rows"
+          hx-swap="innerHTML"
+          hx-trigger="input changed delay:300ms, filters-changed, broadcastsChanged from:body, broadcastChanged from:body"
+          @submit.prevent>
+        <label class="sr-only" for="broadcast-q">Search</label>
+        <input id="broadcast-q" type="search" name="q" x-model="q" placeholder="Search broadcasts"
+               class="form-input-styled" style="width: 16rem;">
+        <input type="hidden" name="status" :value="status">
+        {% ui_select model="status" options=status_options placeholder="Any status" icon="status" onchange="reload()" %}
+    </form>
+
+    <div id="broadcast-rows">
+        {% include "broadcasts/_rows.html" %}
+    </div>
+</div>
+{% endblock %}

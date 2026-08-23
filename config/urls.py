@@ -25,7 +25,6 @@ _WS_SETTINGS_LAYOUT = "workspace_settings"
 # workspace, and tests/idor.py walks it automatically.
 _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = [
     ("sequences/", "sequences", "Sequences", "#22 (L6-A)", _APP_LAYOUT, "edit_flows"),
-    ("broadcasts/", "broadcasts", "Broadcasts", "#23 (L6-B)", _APP_LAYOUT, "send_broadcasts"),
 ]
 
 # Not workspace-scoped, so login is the whole gate.
@@ -99,6 +98,11 @@ urlpatterns = [
     # _WORKSPACE_STUBS above. A deep prefix, so it joins this group rather than
     # the workspace-root includes below.
     path("w/<uuid:workspace_id>/inbox/", include("apps.inbox.urls")),
+    # Broadcasts (issue #23) replace the placeholder that used to sit in
+    # _WORKSPACE_STUBS above, at the same path and under the same permission —
+    # so the nav entry's target moves from a stub view to a real one and nothing
+    # else about the route changes.
+    path("w/<uuid:workspace_id>/broadcasts/", include("apps.broadcasts.urls")),
     # apps.contacts owns two disjoint stretches of the workspace URL space —
     # contacts/ and the two settings pages — so it mounts once at the root of
     # the prefix and spells the sub-paths itself (issue #3). It goes last of the

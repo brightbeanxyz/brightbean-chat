@@ -1,0 +1,49 @@
+{% comment %}
+Step 4 — when (SPEC §13.1: "schedule now/later, flatpickr, workspace timezone").
+
+The picker writes a naive local value and the server interprets it in
+Workspace.effective_timezone (apps/broadcasts/views.py::_when): an operator
+picking 09:00 means nine in the morning where they work, and a server in UTC
+would otherwise send it at whatever nine UTC happens to be for them. The zone is
+printed beside the field so that promise is visible rather than assumed.
+
+This is the button that puts the fanout in the queue, so it is also where every
+compliance gate is enforced. They are refused server-side, by count — "N of
+these contacts are outside the messaging window" — because the same annotation
+answers the preview and the gate, and a client-side check would be a second
+opinion that could disagree.
+{% endcomment %}
+<form class="bc-panel"
+      x-data="{ when: 'now' }"
+      hx-post="{% url 'broadcasts:save_schedule' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+      hx-target="#broadcast-wizard"
+      hx-swap="innerHTML">
+    {% csrf_token %}
+    <div class="bc-panel-head">
+        <span class="bc-panel-title">When should it go out?</span>
+        <span class="bc-hint">Times are in {{ request.workspace.effective_timezone }}.</span>
+    </div>
+
+    <div class="bc-row">
+        <label><input type="radio" name="when" value="now" x-model="when"> Send now</label>
+        <label><input type="radio" name="when" value="later" x-model="when"> Schedule for later</label>
+    </div>
+
+    <div class="bc-row mt-2" x-show="when === 'later'">
+        <label for="scheduled-at" class="sr-only">Send at</label>
+        <input id="scheduled-at" type="text" name="scheduled_at" class="form-datetime" style="width: 16rem;"
+               placeholder="YYYY-MM-DD HH:MM"
+               x-init="$nextTick(() => {
+                   if (!window.flatpickr) return;
+                   window.flatpickr($el, { enableTime: true, time_24hr: true, dateFormat: 'Y-m-d H:i', allowInput: true });
+               })">
+    </div>
+
+    <p class="bc-hint mt-3">
+        A scheduled broadcast can be cancelled up to the moment it starts, and while it is sending.
+    </p>
+
+    <div class="bc-actions">
+        <button type="submit" class="btn-brand btn-inline">Send</button>
+    </div>
+</form>

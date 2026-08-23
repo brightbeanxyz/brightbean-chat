@@ -162,9 +162,11 @@ class OutboundWebhook(WorkspaceScopedModel):
 
     ``events`` is a list of catalog names, validated against
     :data:`apps.api.events.SUBSCRIBABLE_EVENTS`. It may name an event nothing
-    emits yet — ``broadcast.finished`` arrives with L6-B — which is deliberate:
-    the subscription is data, so the event starts being delivered the moment its
-    emitter lands, with no change here.
+    emits yet, which is deliberate: the subscription is data, so the event starts
+    being delivered the moment its emitter lands, with no change here.
+    ``broadcast.finished`` was the worked example and is now the proof — issue
+    #23 shipped its emitter in ``apps/broadcasts/``, and a subscription already
+    storing that name began delivering with nothing in this app touched.
 
     ``url`` is user-supplied, which makes every delivery the exact case
     ``apps.common.outbound.guarded_request`` exists for (SECURITY-BASELINE §6).

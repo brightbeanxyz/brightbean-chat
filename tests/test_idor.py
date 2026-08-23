@@ -63,7 +63,34 @@ class TestCrossTenantIsolation:
 
         assert {
             "sequences",
-            "broadcasts",
+        } <= names
+
+    def test_the_sweep_covers_the_broadcasts_app(self):
+        """Issue #23 replaced the `broadcasts` placeholder with the real app.
+
+        Every route below names a broadcast, and a broadcast names an audience —
+        so a cross-tenant read here would leak both the message and who it went
+        to. The composer's mutations are in the list too: they are the ones that
+        put work in the queue, and a placeholder never had them."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "broadcasts:list",
+            "broadcasts:rows",
+            "broadcasts:create",
+            "broadcasts:detail",
+            "broadcasts:counters",
+            "broadcasts:recipients",
+            "broadcasts:compose",
+            "broadcasts:wizard",
+            "broadcasts:save_channel",
+            "broadcasts:save_audience",
+            "broadcasts:audience_preview",
+            "broadcasts:save_content",
+            "broadcasts:save_schedule",
+            "broadcasts:cancel",
+            "broadcasts:duplicate",
+            "broadcasts:delete",
         } <= names
 
     def test_the_sweep_covers_the_inbox_app(self):

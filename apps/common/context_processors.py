@@ -198,7 +198,15 @@ MAIN_NAV: list[NavGroup] = [
             ),
             NavItem(key="sequences", label="Sequences", icon="sequences", url_name="sequences", workspace_scoped=True),
             NavItem(
-                key="broadcasts", label="Broadcasts", icon="broadcasts", url_name="broadcasts", workspace_scoped=True
+                key="broadcasts",
+                label="Broadcasts",
+                icon="broadcasts",
+                url_name="broadcasts:list",
+                # The composer and a broadcast's detail page are the same section
+                # to a reader, so the row stays lit while either is open
+                # (issue #23) — the same shape the inbox and contacts rows use.
+                url_names=frozenset({"broadcasts:list", "broadcasts:detail", "broadcasts:compose"}),
+                workspace_scoped=True,
             ),
             # Issue #16. The detail page is the same section to a reader, so it
             # lights the same row — that is what url_names is for.

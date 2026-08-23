@@ -1,0 +1,136 @@
+{% comment %}
+The composer's Alpine component.
+
+Its own file for the reason templates/contacts/_filter_bar_script.html is: it is
+a hundred lines of JavaScript and the step it belongs to is already a page. It
+is included from compose.html's alpine_components block, which base.html renders
+before Alpine's own deferred script — the window in which a global x-data
+factory has to be defined for x-data to be able to call it, and the reason it is
+NOT included from the step partial htmx swaps in.
+
+It knows the *shape* of a send_message config — blocks, buttons, quick replies —
+and nothing about which of them a platform allows. Every limit and every
+affordance is read out of `config`, which the view fills from
+apps/broadcasts/composer.py::composer_config, which reads the capability and
+policy tables. Hard-coding "WhatsApp allows three buttons" here would be the
+second capability table contract 4 exists to prevent.
+
+It also does not validate. The server does, through the flow schema
+(apps/flows/schema), which rejects unknown keys at any depth — so a hand-crafted
+POST gets the same treatment as this form, which is the only place validation can
+honestly live (SECURITY-BASELINE §7).
+{% endcomment %}
+<script nonce="{{ request.csp_nonce }}">
+  function broadcastComposer(config, savedConfig, savedTag, savedTemplateId, savedVariables) {
+    // A stored block -> the editor's working shape, and back. The schema is a
+    // tagged union on `type`, so an editor field that does not belong to the
+    // block's kind has to be dropped on the way out: every object in the graph
+    // is closed (additionalProperties: false), and a stray `caption` on a text
+    // block would be refused by the server rather than ignored.
+    function packBlock(block) {
+      if (block.type === 'text') {
+        return block.text ? { type: 'text', text: block.text } : null;
+      }
+      if (block.type === 'card') {
+        if (!block.title) return null;
+        var card = { type: 'card', title: block.title };
+        if (block.subtitle) card.subtitle = block.subtitle;
+        if (block.image) card.image = block.image;
+        return card;
+      }
+      // image / audio / video / file — the schema wants media_id or url, one of
+      // the two, so a blank row is dropped rather than sent as an empty string.
+      if (!block.media_id) return null;
+      var media = { type: block.type, media_id: block.media_id };
+      if (block.caption) media.caption = block.caption;
+      return media;
+    }
+
+    function packButton(button, index) {
+      if (!button.label) return null;
+      var id = button.id || ('b' + (index + 1));
+      if (button.action === 'url') {
+        return button.url ? { id: id, label: button.label, action: 'url', url: button.url } : null;
+      }
+      return { id: id, label: button.label, action: 'postback' };
+    }
+
+    return {
+      config: config,
+      mode: savedTemplateId ? 'template' : 'message',
+      blocks: (savedConfig && savedConfig.blocks ? savedConfig.blocks : []).map(function (block) {
+        return {
+          type: block.type,
+          text: block.text || '',
+          media_id: block.media_id || '',
+          caption: block.caption || '',
+          title: block.title || '',
+          subtitle: block.subtitle || '',
+          image: block.image || '',
+        };
+      }),
+      buttons: (savedConfig && savedConfig.buttons ? savedConfig.buttons : []).map(function (button) {
+        return { id: button.id, label: button.label, action: button.action, url: button.url || '' };
+      }),
+      tag: savedTag || '',
+      templateId: savedTemplateId || '',
+      variables: savedVariables && !Array.isArray(savedVariables) ? savedVariables : {},
+
+      addBlock: function (kind) {
+        this.blocks.push({ type: kind, text: '', media_id: '', caption: '', title: '', subtitle: '', image: '' });
+      },
+      addButton: function () {
+        if (this.buttons.length >= this.config.max_buttons) return;
+        this.buttons.push({ id: '', label: '', action: 'postback', url: '' });
+      },
+
+      get selectedTemplate() {
+        var id = this.templateId;
+        return this.config.templates.find(function (template) { return template.id === id; }) || null;
+      },
+
+      get costHint() {
+        var hint = this.config.cost_hint;
+        var template = this.selectedTemplate;
+        if (!hint || !template) return '';
+        if (!hint.configured) {
+          return 'No per-message price is set for this workspace yet.';
+        }
+        // The composer multiplies; apps/channels/segments.py and the cost-hint
+        // table both deliberately stop short of a price times a count.
+        return 'About ' + hint[template.category] + ' ' + hint.currency + ' per message.';
+      },
+
+      // SPEC §6.6's segment-count preview. The arithmetic is NOT here: the
+      // server-rendered hint below is a fallback, and the live count is a
+      // deliberate approximation of apps/channels/segments.py for the keystroke
+      // case — GSM-7 versus UCS-2 and the 160/70 split. Anything that decides a
+      // *cost* uses the Python one.
+      get segments() {
+        if (!this.config.counts_segments) return 0;
+        var text = this.blocks.filter(function (b) { return b.type === 'text'; })
+                              .map(function (b) { return b.text || ''; }).join('\n');
+        if (!text) return 0;
+        var gsm = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-./0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà\^{}\\\[~\]|€]*$/.test(text);
+        var single = gsm ? 160 : 70;
+        var concat = gsm ? 153 : 67;
+        return text.length <= single ? 1 : Math.ceil(text.length / concat);
+      },
+      get segmentHint() {
+        var n = this.segments;
+        return n ? (n + (n === 1 ? ' segment' : ' segments')) : '';
+      },
+
+      get serialisedConfig() {
+        var packed = this.blocks.map(packBlock).filter(function (b) { return b !== null; });
+        var out = { blocks: packed };
+        var buttons = this.buttons.map(packButton).filter(function (b) { return b !== null; });
+        if (buttons.length) out.buttons = buttons;
+        return JSON.stringify(out);
+      },
+      get serialisedVariables() {
+        return JSON.stringify(this.variables || {});
+      },
+    };
+  }
+</script>

@@ -1,0 +1,30 @@
+{% comment %}
+One step of the composer, plus the rail that navigates between them.
+
+The step to render is chosen in Python (apps/broadcasts/views.py::_requested_step)
+against a fixed tuple, so nothing here builds a template name out of a request
+parameter. The four includes are spelled out for the same reason.
+{% endcomment %}
+<div class="bc-rail" role="navigation" aria-label="Composer steps">
+    {% for name in steps %}
+    <button type="button"
+            class="bc-step{% if name == step %} bc-step-current{% endif %}"
+            hx-get="{% url 'broadcasts:wizard' workspace_id=request.workspace.id broadcast_id=broadcast.id %}?step={{ name }}"
+            hx-target="#broadcast-wizard"
+            hx-swap="innerHTML"
+            {% if name == step %}aria-current="step"{% endif %}>
+        <span class="bc-step-index">{{ forloop.counter }}</span>
+        <span class="capitalize">{{ name }}</span>
+    </button>
+    {% endfor %}
+</div>
+
+{% if error %}
+<div class="alert-error mb-3" role="alert">{{ error }}</div>
+{% endif %}
+
+{% if step == "channel" %}{% include "broadcasts/_step_channel.html" %}
+{% elif step == "audience" %}{% include "broadcasts/_step_audience.html" %}
+{% elif step == "content" %}{% include "broadcasts/_step_content.html" %}
+{% else %}{% include "broadcasts/_step_schedule.html" %}
+{% endif %}
