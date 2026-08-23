@@ -40,6 +40,7 @@ from apps.channels.providers.exceptions import APIError, RateLimitError
 if TYPE_CHECKING:
     from django.http import HttpRequest
 
+    from apps.channels.media import MediaSource
     from apps.channels.models import ChannelConnection
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,41 @@ class Adapter(ABC):
         extra keys, and drop an event you cannot understand rather than raising
         — one malformed event in a batch must not cost the whole delivery.
         """
+
+    def media_source(self, connection: "ChannelConnection", media_id: str) -> "MediaSource | None":
+        """Where a ``media_id`` from :attr:`EventPayload.media_ids` can be fetched.
+
+        Not in SPEC §6.1's list, and here for the same reason
+        :meth:`on_disconnect` is: every platform has a version of it and the
+        alternative is the same fetch written once per adapter. Two adapters
+        store an identifier rather than a URL because the platform's address
+        needs *this connection's* credentials — a Telegram ``file_id`` becomes a
+        URL only after a ``getFile`` call, a Twilio ``MediaUrl`` answers 401
+        without the Account SID — and only the adapter knows which of those it
+        is.
+
+        Return :class:`apps.channels.media.MediaSource`: a URL, plus any headers
+        the fetch needs. **Not the bytes.** The download is identical on every
+        platform and is done once, under the SSRF guard, by
+        :func:`apps.channels.media.fetch_media`; an adapter that fetches media
+        itself has stepped outside SECURITY-BASELINE §6's single call site.
+        Credentials belong in ``headers``, never in the URL's userinfo, which
+        the guard refuses.
+
+        An adapter may make a platform API call here — that is what ``getFile``
+        is — through :func:`request_json`, which is the right helper for it: a
+        fixed host, built from constants and a stored token.
+
+        Returning None means "nothing to fetch": no adapter support, no stored
+        credentials, an id the platform no longer recognises. The caller turns
+        it into a 404 and a tombstone, so an implementation may return None
+        freely rather than raising, and should not raise for an ordinary
+        platform refusal.
+
+        The default returns None, so a platform that never fills ``media_ids``
+        — which is most of them — writes nothing.
+        """
+        return None
 
     # -- outbound -----------------------------------------------------------
 

@@ -416,6 +416,19 @@ EXTERNAL_REQUEST_ALLOW_PRIVATE = env.bool("EXTERNAL_REQUEST_ALLOW_PRIVATE", defa
 # contact's advisory lock held.
 EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = env.int("EXTERNAL_REQUEST_MAX_RESPONSE_BYTES", default=1024 * 1024)
 
+# The same question for a contact's inbound attachment (apps/channels/media.py),
+# and a separate knob because the answer is genuinely different: the setting
+# above sizes a JSON body bound for a flow variable, this one sizes a
+# photograph. Its own name rather than a hard-coded argument at the call site,
+# so an operator hardening a deployment can see and change it — passing
+# `max_bytes=` to the guard overrides EXTERNAL_REQUEST_MAX_RESPONSE_BYTES, and a
+# cap that silently ignores the operator's is worse than no cap at all.
+#
+# It is an allocation bound, not a bandwidth one: the guard buffers what it
+# reads, so this times the number of concurrent readers is memory the web
+# process will hold. Four request slots ship by default (see the Procfile).
+INBOUND_MEDIA_MAX_BYTES = env.int("INBOUND_MEDIA_MAX_BYTES", default=16 * 1024 * 1024)
+
 # ---------------------------------------------------------------------------
 # Deployment-level platform credentials — the bottom of the SPEC §4 chain
 # ---------------------------------------------------------------------------

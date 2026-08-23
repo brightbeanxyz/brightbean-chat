@@ -22,21 +22,23 @@ so an unchanged poll is a 304 with no body. Nothing else on this page is
 conditional: a mutation's response is never cacheable and never asks.
 """
 
+import logging
 import uuid
 from dataclasses import replace
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
-from django.http import Http404, HttpResponse
+from django.http import Http404, HttpResponse, HttpResponseNotModified
 from django.shortcuts import render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.channels.events import OutboundMessage, TextBlock
+from apps.channels.media import MEDIA_CACHE_CONTROL, MediaUnavailableError, fetch_media, media_response
 from apps.channels.models import ChannelConnection
 from apps.common.htmx import toast_response
-from apps.common.polling import conditional, version_etag
+from apps.common.polling import conditional, if_none_match, version_etag
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.contacts import services as contact_services
 from apps.contacts.models import CustomField, Tag
@@ -59,11 +61,14 @@ from apps.messaging.models import (
 )
 from apps.messaging.rendering import outbound_from_body
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "assign",
     "composer",
     "header",
     "inbox",
+    "media",
     "messages",
     "pause",
     "retry",
@@ -644,6 +649,82 @@ def retry(request: WorkspaceRequest, workspace_id: str, conversation_id: str, me
     if message.status == MessageStatus.FAILED:
         return toast_response(tone="error", title="Still not sent", body=describe(message.error), events=events)
     return toast_response(tone="success", title="Sent", events=events)
+
+
+@login_required
+@require_permission("use_inbox")
+@require_GET
+def media(
+    request: WorkspaceRequest, workspace_id: str, conversation_id: str, message_id: str, index: int
+) -> HttpResponse:
+    """Serve one inbound attachment that is stored as a platform identifier.
+
+    ``use_inbox`` and not ``reply_in_inbox``: this is a read, and a Viewer who
+    can see the message text can see its picture.
+
+    **The identifier comes from the row, never from the request.** The URL names
+    a message and a block position; this view looks the block up and takes the
+    id out of it. That ordering is the whole authorisation story for the fetch
+    it triggers — a request cannot name an arbitrary ``file_id`` or an arbitrary
+    Twilio media resource and have this deployment's stored credentials go and
+    get it. ``apps/channels/media.py`` explains why that is a better property
+    than a signed URL would have been.
+
+    Everything unresolvable is a bare 404: a message in another workspace (never
+    403 — SECURITY-BASELINE §1), an index past the end, a block that is not a
+    media block, and every failure the platform hands back. The reader already
+    has a tombstone in the thread; the response's job is not to explain.
+
+    **Conditional, and the 304 comes before the platform call.** Every fetch is
+    a live upstream request — two of them on Telegram — held on one of the four
+    request slots this deployment ships with. The bytes behind a given
+    ``(message, block index)`` never change (an inbound row is not rewritten),
+    so the ETag is stable and a revalidation can be answered without resolving
+    anything at all. ``apps.common.polling.conditional`` is deliberately *not*
+    reused: it forces ``Cache-Control: no-store``, which is right for a poller
+    driven by JavaScript and wrong for an ``<img>`` that should sit in the
+    browser cache — so this composes the same two helpers under its own policy.
+    """
+    conversation = _conversation(request, conversation_id)
+    message = get_scoped_object_or_404(Message, request.workspace, pk=message_id, conversation=conversation)
+
+    body = message.body if isinstance(message.body, dict) else {}
+    blocks = body.get("blocks")
+    if not isinstance(blocks, list) or not 0 <= index < len(blocks):
+        raise Http404("No such block on this message.")
+    block = blocks[index]
+    if not isinstance(block, dict) or block.get("type") != "media":
+        raise Http404("That block is not resolvable media.")
+    # ``body`` is jsonb, so its shape is a claim rather than a guarantee — a row
+    # written before this block type existed, or by a future ingest, can hold
+    # anything. ``fetch_media`` checks again; this check is what keeps the call
+    # honestly typed rather than passing it whatever the column held.
+    media_id = block.get("media_id")
+    if not isinstance(media_id, str):
+        raise Http404("That block carries no identifier.")
+
+    # The identifier itself, not just the position: a row rewritten to point at
+    # different media (nothing does this today) must not be served from a cache
+    # keyed on a tag that did not move.
+    etag = version_etag("inbox-media", message.pk, index, media_id)
+    if if_none_match(request, etag):
+        response: HttpResponse = HttpResponseNotModified()
+    else:
+        try:
+            resolved = fetch_media(message.channel_connection, media_id)
+        except MediaUnavailableError as exc:
+            # The reason is copy this deployment wrote, and it is still not
+            # sent: a 404 body that varies by cause is an oracle, and the thread
+            # has already told the reader as much as it can.
+            logger.info("Inbox media %s[%s] is unavailable: %s", message.pk, index, exc)
+            raise Http404("That attachment could not be fetched.") from exc
+        response = media_response(resolved)
+    # On the 304 too: RFC 9110 §15.4.5 wants the headers a 200 would have
+    # carried, and a revalidation that came back without one would make the
+    # browser drop the entry and re-ask on the next render.
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = MEDIA_CACHE_CONTROL
+    return response
 
 
 def _recomposed(original: Message) -> OutboundMessage:

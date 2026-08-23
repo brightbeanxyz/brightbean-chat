@@ -30,10 +30,36 @@ because the answer comes from the Content-Security-Policy in
 ``<img>``; ``media-src`` is ``'self' blob:`` only, so an ``<audio>`` or
 ``<video>`` pointing at a platform CDN would be blocked by the browser and
 render as a broken control. Those become labelled links.
+
+**Media identifiers are the other kind of block.** A ``media`` block holds no
+URL at all — it holds the id the platform gave us, because fetching it needs
+that connection's credentials (``apps.channels.events.EventPayload`` draws the
+line, ``apps.channels.media`` does the resolving). What this module puts in the
+view model is a link to :func:`apps.inbox.views.media`, our own workspace-scoped
+route, so the address in the DOM is one we minted and not one a stranger chose —
+which is why :func:`is_renderable_url` is not consulted for it, and must not be:
+the function answers a question about somebody else's string.
+
+The block carries ``media_kind`` — what the platform *called* it — and that
+decides the tag, exactly as it does for a ``file``/``audio``/``video`` block: an
+image (or a platform that did not say) becomes a :class:`Media` part rendered as
+an ``<img>``, and anything else becomes the same :class:`Link` part every other
+non-image attachment already uses. Without it every voice note and PDF rendered
+as a broken image icon.
+
+Using the platform's word here is **not** in tension with SECURITY-BASELINE §9's
+"sniff, do not trust". The two answer different questions: this one picks a tag
+before any bytes exist, while §9 governs the ``Content-Type`` and the
+disposition on the bytes themselves, which :mod:`apps.channels.media` still
+decides by reading them. A platform that lies about the kind gets a link where a
+picture would have been, or a broken ``<img>`` — never an inline render of
+something that should have been an attachment.
 """
 
 from dataclasses import dataclass
 from typing import Any
+
+from django.urls import NoReverseMatch, reverse
 
 from apps.common.validators import is_renderable_url
 from apps.messaging.codes import describe
@@ -45,6 +71,7 @@ __all__ = [
     "Gallery",
     "Image",
     "Link",
+    "Media",
     "RenderedMessage",
     "Text",
     "Tombstone",
@@ -75,6 +102,18 @@ class Image:
     caption: str = ""
     kind: str = "image"
 
+    @property
+    def default_alt(self) -> str:
+        """The accessible name when there is no caption.
+
+        Here rather than in the template because it is copy, like
+        ``Tombstone.reason`` — and because :class:`Media` shares the template
+        branch while being able to say strictly less about itself. Merging the
+        two branches without this quietly demoted every image's alt text to the
+        weaker of the two.
+        """
+        return "Attached image"
+
 
 @dataclass(frozen=True)
 class Link:
@@ -87,6 +126,30 @@ class Link:
     media_kind: str
     caption: str = ""
     kind: str = "link"
+
+
+@dataclass(frozen=True)
+class Media:
+    """Media held as an identifier, pointed at our own resolution route.
+
+    ``url`` is a path this application reversed, never anything from the
+    payload. Only produced for media the platform called an image, or did not
+    name at all — a known ``audio``/``video``/``file`` becomes a :class:`Link`.
+    """
+
+    url: str
+    caption: str = ""
+    kind: str = "media"
+
+    @property
+    def default_alt(self) -> str:
+        """Deliberately vaguer than :attr:`Image.default_alt`.
+
+        This part is produced both for a declared image and for media no
+        platform named, and an alt that promised "image" for the second case
+        would be describing a guess.
+        """
+        return "Attachment"
 
 
 @dataclass(frozen=True)
@@ -130,7 +193,7 @@ class Tombstone:
 
 
 #: Anything :func:`render_message` can put in ``parts``.
-type Part = Text | Image | Link | Card | Gallery | Tombstone
+type Part = Text | Image | Link | Media | Card | Gallery | Tombstone
 
 
 @dataclass(frozen=True)
@@ -179,8 +242,11 @@ def render_message(message: Message) -> RenderedMessage:
     body = message.body if isinstance(message.body, dict) else {}
     raw_blocks = body.get("blocks")
     parts: list[Part] = []
-    for item in raw_blocks if isinstance(raw_blocks, list) else []:
-        parts.append(_part(item))
+    # The index is load-bearing, not decoration: a ``media`` block's delivery URL
+    # addresses it by position in this list, which is how the view reads the id
+    # back out of the row instead of taking it from the request.
+    for index, item in enumerate(raw_blocks if isinstance(raw_blocks, list) else []):
+        parts.append(_part(item, index, message))
     if not parts:
         parts.append(Tombstone(reason="This message has no displayable content."))
     return RenderedMessage(
@@ -215,18 +281,26 @@ def preview_of(message: Message) -> str:
             text = " ".join(_text(item.get("text")).split())
             if text:
                 return text[:PREVIEW_CHARS]
+        elif not fallback and kind == "media":
+            # What the platform called it, when it said — the same label a
+            # platform-hosted attachment of that kind would get, so a list row
+            # does not read differently depending on which field carried it.
+            declared = _text(item.get("media_kind"))
+            fallback = f"[{declared}]" if declared in _MEDIA_KINDS else "[attachment]"
         elif not fallback and (kind in _MEDIA_KINDS or kind in ("card", "gallery")):
             fallback = f"[{kind}]"
     return fallback
 
 
-def _part(item: Any) -> Part:
+def _part(item: Any, index: int, message: Message) -> Part:
     if not isinstance(item, dict):
         return Tombstone(reason="Unreadable content.")
     kind = _text(item.get("type"))
     if kind == "text":
         text = _text(item.get("text"))
         return Text(text=text) if text else Tombstone(reason="Empty message.")
+    if kind == "media":
+        return _media_ref(item, index, message)
     if kind in _MEDIA_KINDS:
         return _media(kind, item)
     if kind == "card":
@@ -252,6 +326,46 @@ def _media(kind: str, item: dict[str, Any]) -> Part:
     if kind == "image":
         return Image(url=url, caption=caption)
     return Link(url=url, media_kind=kind, caption=caption)
+
+
+def _media_ref(item: dict[str, Any], index: int, message: Message) -> Part:
+    """A ``media`` block as a link to this deployment's own resolution route.
+
+    The id itself never reaches the URL — only the row and the block's position
+    do, so the view reads it back out of stored, already-verified data. That is
+    what keeps :func:`apps.channels.media.fetch_media` from becoming a way to
+    ask a connection's credentials for an arbitrary identifier.
+
+    A known non-image kind becomes an ordinary :class:`Link`, the same part a
+    platform-hosted audio file or document already produces — one tag decision,
+    written once, rather than a second vocabulary for the proxied case.
+    """
+    if not _text(item.get("media_id")):
+        return Tombstone(reason="An attachment was recorded without an identifier.")
+    try:
+        url = reverse(
+            "inbox:media",
+            kwargs={
+                "workspace_id": message.workspace_id,
+                "conversation_id": message.conversation_id,
+                "message_id": message.pk,
+                "index": index,
+            },
+        )
+    except NoReverseMatch:
+        # Unreachable while the route exists, and a tombstone rather than a
+        # raise regardless: this module's contract is that a thread renders.
+        return Tombstone(reason="An attachment could not be linked.")
+
+    caption = _text(item.get("caption"))
+    kind = _text(item.get("media_kind"))
+    if kind in _MEDIA_KINDS and kind != "image":
+        return Link(url=url, media_kind=kind, caption=caption)
+    # "image", and also "" — a platform that did not say. An <img> is the right
+    # bet for the unknown case: it is what the overwhelming majority of inbound
+    # media is, and when it loses the alt text shows inside a link that still
+    # downloads the file.
+    return Media(url=url, caption=caption)
 
 
 def _card_kwargs(item: dict[str, Any]) -> dict[str, Any]:

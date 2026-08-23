@@ -84,15 +84,58 @@ class EventPayload:
     ``extra`` is the escape hatch for platform-specific detail a later adapter
     needs (a Telegram chat id, a Meta story id) without widening this class for
     every platform. It is untrusted data like the rest.
+
+    **``attachments`` vs ``media_ids``.** Both carry inbound media and the line
+    between them is *who can fetch it*, decided by the adapter at parse time:
+
+    ``attachments``
+        Addresses that resolve for **anyone**, with no credential of ours. A
+        platform that publishes media on a CDN uses this. They are stored on the
+        message body as ``file`` blocks and rendered as links — the reader's own
+        browser follows them, and this deployment never does. That is not a
+        temporary restriction: fetching a stranger's URL server-side is what
+        SECURITY-BASELINE §6's guard exists for, and there is no reason to fetch
+        something the reader can already reach.
+
+    ``media_ids``
+        Identifiers that need **this connection's credentials** to become bytes
+        — a Telegram ``file_id``, a Twilio ``MediaUrl`` under an account with
+        authenticated media. Storing the identifier rather than a URL is the
+        honest record of that, and :mod:`apps.channels.media` is the one path
+        that resolves one: the adapter says where and with what headers, the
+        shared fetch goes through the SSRF guard, and the bytes are served back
+        from our own origin under SECURITY-BASELINE §9.
+
+    An adapter picks one. A platform whose media URL needs a signature, a
+    session or an account credential is ``media_ids``, whatever it looks like.
     """
 
     text: str = ""
-    #: Media URLs the platform delivered. Attacker-controlled: never fetched
-    #: server-side (SECURITY-BASELINE §6 forbids it until the SSRF guard lands).
+    #: Media URLs the platform delivered that need no credential of ours to
+    #: fetch. Attacker-controlled: rendered as links, never fetched server-side.
+    #: Media that *does* need a credential goes in ``media_ids`` — see above.
     attachments: tuple[str, ...] = ()
     button_id: str = ""
     comment_id: str = ""
+    #: Opaque per-platform identifiers for media only a credentialed fetch can
+    #: reach. Resolved on demand by :mod:`apps.channels.media`; see above.
     media_ids: tuple[str, ...] = ()
+    #: What the platform *said* each ``media_ids`` entry is, positionally
+    #: aligned: ``"image"``, ``"audio"``, ``"video"`` or ``"file"``, the same
+    #: vocabulary :class:`MediaBlock` uses.
+    #:
+    #: A separate field rather than a widening of ``media_ids`` so an adapter
+    #: that has not been taught to fill it keeps working — it defaults to empty,
+    #: and a consumer treats a missing or short entry as "unknown". Consumers
+    #: must not assume the two tuples are the same length; the platform is not
+    #: the one keeping them aligned, we are, and one adapter getting it wrong
+    #: must not cost the message.
+    #:
+    #: **A claim, not a fact.** It decides *layout* — whether the inbox bets on
+    #: an ``<img>`` or offers a labelled link — and nothing else. What the bytes
+    #: actually are is decided by sniffing them at fetch time, because the
+    #: platform's claim is exactly what SECURITY-BASELINE §9 exists to distrust.
+    media_kinds: tuple[str, ...] = ()
     #: The ref string from a t.me/?start= or m.me/ deep link — SPEC §10's Ref
     #: URL trigger reads it.
     ref: str = ""

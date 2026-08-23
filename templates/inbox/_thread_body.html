@@ -10,14 +10,20 @@ here and they are checked by apps/inbox/tests/test_hostile_content.py:
     it in an Image/Link/Card, which it only does after
     apps.common.validators.is_renderable_url said http(s). A rejected one is
     already a Tombstone by the time it gets here, so there is no {% if %} in
-    this file deciding it — the decision is made in Python, once.
+    this file deciding it — the decision is made in Python, once. A Media part
+    is the exception that proves it: its URL was *reversed* by rendering.py
+    rather than received from anyone, and running a stranger-string check over
+    one of our own routes would be theatre.
   * `rel="noopener noreferrer"` and `target="_blank"` on every outbound link:
     the destination is chosen by the same stranger.
 
 An <img> but never an <audio>/<video>: the CSP's img-src allows https: while
 media-src is 'self' blob: only, so an inline player pointed at a platform CDN
 would be blocked by the browser and render as a broken control. Non-image media
-is a link, and rendering.py is where that is decided.
+is a link, and rendering.py is where that is decided. A Media part is served
+from our own origin, so media-src would in fact allow a player for it — the
+reason it stays an <img> is not the CSP but that nothing knows what the bytes
+are until they are sniffed at fetch time.
 {% endcomment %}
 
 {% comment %}
@@ -75,9 +81,26 @@ is a link, and rendering.py is where that is decided.
         {% for part in item.parts %}
           {% if part.kind == "text" %}
             <span class="ib-text">{{ part.text }}</span>
-          {% elif part.kind == "image" %}
+          {% elif part.kind == "image" or part.kind == "media" %}
+            {% comment %}
+              One branch for two kinds because the markup is the same and the
+              difference is upstream: an "image" part holds a platform URL that
+              is_renderable_url already vetted, a "media" part holds a path to
+              our own inbox:media route, which resolves an identifier the
+              platform would not serve to a browser. rendering.py decides both.
+
+              A "media" part is produced only for media the platform called an
+              image or did not name at all — a known audio/video/file is a Link
+              part, decided in rendering.py. So the <img> is a bet only in the
+              unnamed case, the alt text is what shows when it loses, and the
+              link around it downloads the file either way.
+
+              `default_alt` comes off the part rather than being written here,
+              because the two kinds can honestly say different things: an Image
+              is known to be one, a Media may only be guessed at.
+            {% endcomment %}
             <a href="{{ part.url }}" target="_blank" rel="noopener noreferrer">
-              <img class="ib-media" src="{{ part.url }}" alt="{{ part.caption|default:'Attached image' }}" loading="lazy">
+              <img class="ib-media" src="{{ part.url }}" alt="{{ part.caption|default:part.default_alt }}" loading="lazy">
             </a>
             {% if part.caption %}<div class="ib-bubble-meta">{{ part.caption }}</div>{% endif %}
           {% elif part.kind == "link" %}

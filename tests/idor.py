@@ -84,6 +84,12 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # The email webhook's provider segment (resend / ses / smtp). It selects a
     # payload shape, not a tenant's object, and is not used for lookup.
     "provider": "resend",
+    # The block position inside a message body (inbox:media). A position, not an
+    # id: it identifies nothing on its own and is read only *after* the message
+    # it indexes has been scoped to the caller's workspace, which is the
+    # message_id resolver's job. Zero is as good as any — the route 404s for an
+    # outsider at the conversation lookup, long before it looks at this.
+    "index": 0,
 }
 
 #: Why the inbound webhook routes cannot answer 404 and are therefore not

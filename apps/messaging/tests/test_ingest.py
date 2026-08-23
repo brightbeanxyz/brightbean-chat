@@ -12,6 +12,9 @@ from apps.channels.policy import policy_for
 from apps.common.platforms import Platform
 from apps.contacts.models import Contact
 from apps.messaging.ingest import (
+    MAX_ATTACHMENTS,
+    MAX_MEDIA_ID_CHARS,
+    MAX_MEDIA_IDS,
     PERSISTENCE_PROCESSOR,
     ROUTING_PROCESSOR,
     persist_events,
@@ -324,12 +327,40 @@ class TestBodyShape:
         assert set(body) >= {"blocks", "buttons", "quick_replies", "tag", "template_ref"}
 
     def test_attachments_are_recorded_but_never_fetched(self, tenancy: Any, connection: Any) -> None:
-        """SECURITY-BASELINE §6 forbids a server-side fetch of a platform-supplied
-        URL until issue #15's guard lands."""
+        """``attachments`` is the field for media a reader's own browser can
+        reach without a credential of ours, so there is nothing here for this
+        deployment to fetch — see ``EventPayload`` on where the line falls."""
         payload = EventPayload(text="", attachments=("https://cdn.example.test/a.jpg",))
         persist_events(connection, [make_event(connection, payload=payload)])
         body = messages(tenancy.workspace).get().body
         assert body["blocks"] == [{"type": "file", "url": "https://cdn.example.test/a.jpg", "caption": ""}]
+
+    def test_media_ids_reach_the_body_as_identifiers(self, tenancy: Any, connection: Any) -> None:
+        """The other side of that line, and the bug this change exists to fix:
+        the body used to read ``attachments`` only, so a picture message
+        arrived as its caption and nothing else."""
+        payload = EventPayload(text="look", media_ids=("AgACAgQAAx0", "AgACAgQAAx1"))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert messages(tenancy.workspace).get().body["blocks"] == [
+            {"type": "text", "text": "look"},
+            {"type": "media", "media_id": "AgACAgQAAx0", "media_kind": "", "caption": ""},
+            {"type": "media", "media_id": "AgACAgQAAx1", "media_kind": "", "caption": ""},
+        ]
+
+    def test_a_media_id_is_never_written_as_a_url(self, tenancy: Any, connection: Any) -> None:
+        """Twilio's identifier *is* a URL, and it is still not one a reader may
+        be handed: rendering it as a link is the leak this field exists to
+        avoid."""
+        url = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1"
+        persist_events(connection, [make_event(connection, payload=EventPayload(media_ids=(url,)))])
+        block = messages(tenancy.workspace).get().body["blocks"][0]
+        assert block == {"type": "media", "media_id": url, "media_kind": "", "caption": ""}
+        assert "url" not in block
+
+    def test_both_kinds_of_media_can_arrive_together(self, tenancy: Any, connection: Any) -> None:
+        payload = EventPayload(attachments=("https://cdn.example.test/a.jpg",), media_ids=("AgAC",))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert [block["type"] for block in messages(tenancy.workspace).get().body["blocks"]] == ["file", "media"]
 
     def test_a_pressed_button_is_recorded_for_the_flow_engine(self, tenancy: Any, connection: Any) -> None:
         payload = EventPayload(text="", button_id="btn:yes")
@@ -360,6 +391,27 @@ class TestMalformedPayloadFields:
         payload = EventPayload(text="", attachments="https://x.test/a.png")  # type: ignore[arg-type]
         persist_events(connection, [make_event(connection, payload=payload)])
         assert messages(tenancy.workspace).get().body["blocks"] == []
+
+    @pytest.mark.parametrize("value", [42, None, {"a": 1}, object()])
+    def test_a_wrongly_typed_media_ids_field_keeps_the_message(self, tenancy: Any, connection: Any, value: Any) -> None:
+        payload = EventPayload(text="still readable", media_ids=value)  # type: ignore[arg-type]
+        persist_events(connection, [make_event(connection, payload=payload)])
+        body = messages(tenancy.workspace).get().body
+        assert body["blocks"] == [{"type": "text", "text": "still readable"}]
+
+    def test_a_string_media_ids_field_is_not_iterated_as_characters(self, tenancy: Any, connection: Any) -> None:
+        payload = EventPayload(text="", media_ids="AgAC")  # type: ignore[arg-type]
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert messages(tenancy.workspace).get().body["blocks"] == []
+
+    def test_media_ids_are_bounded_in_count_and_length(self, tenancy: Any, connection: Any) -> None:
+        """SECURITY-BASELINE §7: ``body`` is jsonb, so an unbounded string in it
+        is an unbounded row."""
+        payload = EventPayload(media_ids=tuple(f"id-{n}" + "x" * 5000 for n in range(MAX_MEDIA_IDS + 5)))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        blocks = messages(tenancy.workspace).get().body["blocks"]
+        assert len(blocks) == MAX_MEDIA_IDS
+        assert all(len(block["media_id"]) == MAX_MEDIA_ID_CHARS for block in blocks)
 
 
 class TestDeliveryStatus:
@@ -470,3 +522,65 @@ class TestDeliveryStatus:
         persist_events(connection, [self.receipt(connection, **extra)])
         sent.refresh_from_db()
         assert sent.status == MessageStatus.SENT
+
+
+class TestTheDeclaredMediaKind:
+    """``media_kinds`` is positionally aligned with ``media_ids`` by the adapter.
+
+    Which means it is aligned by *code we wrote*, not by the platform — so the
+    failure mode to defend against is our own bug, and the cost of getting it
+    wrong must be a mislabelled attachment rather than a lost message
+    (``persist_events`` swallows, so an IndexError here drops the whole row).
+    """
+
+    def test_a_declared_kind_reaches_the_block(self, tenancy: Any, connection: Any) -> None:
+        payload = EventPayload(media_ids=("a", "b"), media_kinds=("image", "audio"))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert [b["media_kind"] for b in messages(tenancy.workspace).get().body["blocks"]] == ["image", "audio"]
+
+    def test_a_short_kinds_tuple_leaves_the_rest_unknown(self, tenancy: Any, connection: Any) -> None:
+        payload = EventPayload(media_ids=("a", "b", "c"), media_kinds=("image",))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert [b["media_kind"] for b in messages(tenancy.workspace).get().body["blocks"]] == ["image", "", ""]
+
+    def test_a_longer_kinds_tuple_is_simply_ignored(self, tenancy: Any, connection: Any) -> None:
+        payload = EventPayload(media_ids=("a",), media_kinds=("image", "audio", "video"))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert [b["media_kind"] for b in messages(tenancy.workspace).get().body["blocks"]] == ["image"]
+
+    def test_an_adapter_that_fills_nothing_still_works(self, tenancy: Any, connection: Any) -> None:
+        """The field defaults to empty so an existing adapter needs no change."""
+        payload = EventPayload(media_ids=("a",))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert messages(tenancy.workspace).get().body["blocks"][0]["media_kind"] == ""
+
+    @pytest.mark.parametrize("kinds", [42, None, {"a": 1}, "image", object()])
+    def test_a_wrongly_typed_kinds_field_keeps_the_message(self, tenancy: Any, connection: Any, kinds: Any) -> None:
+        payload = EventPayload(text="still readable", media_ids=("a",), media_kinds=kinds)  # type: ignore[arg-type]
+        persist_events(connection, [make_event(connection, payload=payload)])
+        blocks = messages(tenancy.workspace).get().body["blocks"]
+        assert blocks[1]["media_kind"] == ""
+
+    @pytest.mark.parametrize("kind", ["sticker", "IMAGE", "<script>", "", 42, None])
+    def test_a_kind_outside_the_vocabulary_is_stored_as_unknown(self, tenancy: Any, connection: Any, kind: Any) -> None:
+        """The value reaches the renderer's tag choice and arrived over a
+        webhook, so it is an allowlist rather than a passthrough."""
+        payload = EventPayload(media_ids=("a",), media_kinds=(kind,))
+        persist_events(connection, [make_event(connection, payload=payload)])
+        assert messages(tenancy.workspace).get().body["blocks"][0]["media_kind"] == ""
+
+
+class TestTheTwoMediaListsAreBoundedSeparately:
+    def test_each_list_has_its_own_budget(self, tenancy: Any, connection: Any) -> None:
+        """Reusing MAX_ATTACHMENTS for both quietly doubled the row bound it
+        expressed (SECURITY-BASELINE §7). Two constants, two budgets, and a
+        worst case that can be read off rather than inferred."""
+        payload = EventPayload(
+            attachments=tuple(f"https://cdn.test/{n}.jpg" for n in range(MAX_ATTACHMENTS + 5)),
+            media_ids=tuple(f"id-{n}" for n in range(MAX_MEDIA_IDS + 5)),
+        )
+        persist_events(connection, [make_event(connection, payload=payload)])
+
+        blocks = messages(tenancy.workspace).get().body["blocks"]
+        assert sum(1 for b in blocks if b["type"] == "file") == MAX_ATTACHMENTS
+        assert sum(1 for b in blocks if b["type"] == "media") == MAX_MEDIA_IDS

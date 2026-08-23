@@ -117,6 +117,83 @@ class TestRecordedShapes:
         assert event.type == EventType.MESSAGE
         assert event.payload.media_ids == (file_id,)
 
+    @pytest.mark.parametrize(
+        ("fixture", "file_id", "kind"),
+        [
+            ("message_audio", "AwACvoice", "audio"),
+            ("message_video", "BAACvideo", "video"),
+            ("message_document", "BQACdoc", "file"),
+            ("message_photo", "AgAClargest", "image"),
+        ],
+    )
+    def test_the_declared_kind_travels_with_the_id(
+        self, telegram_connection: ChannelConnection, fixture: str, file_id: str, kind: str
+    ) -> None:
+        """The inbox needs a tag before it has any bytes, and only the adapter
+        knows what Telegram called the field."""
+        (event,) = parse(load_update(fixture), telegram_connection)
+        assert event.payload.media_ids == (file_id,)
+        assert event.payload.media_kinds == (kind,)
+
+    @pytest.mark.parametrize(
+        ("flags", "kind"),
+        [
+            ({}, "image"),
+            ({"is_video": True}, "video"),
+            ({"is_animated": True}, "file"),
+            # Both set is not a shape Telegram sends, but the payload is a
+            # stranger's: video wins because it is the one with real bytes.
+            ({"is_video": True, "is_animated": True}, "video"),
+        ],
+    )
+    def test_a_sticker_is_classified_by_its_flags(
+        self, telegram_connection: ChannelConnection, flags: dict[str, Any], kind: str
+    ) -> None:
+        """One ``sticker`` key, three different things behind it.
+
+        A WebP sticker is a picture; ``is_video`` means WebM and ``is_animated``
+        means TGS, a gzipped Lottie document. Calling all three "image" put an
+        <img> around bytes the browser cannot render — the broken-image icon
+        ``media_kinds`` exists to remove.
+        """
+        update = load_update("message_photo")
+        del update["message"]["photo"]
+        update["message"]["sticker"] = {"file_id": "CAACsticker", "file_unique_id": "u9", **flags}
+
+        (event,) = parse(update, telegram_connection)
+
+        assert event.payload.media_ids == ("CAACsticker",)
+        assert event.payload.media_kinds == (kind,)
+
+    @pytest.mark.parametrize("flag", ["true", 1, "yes", [], {}, None, 0.1])
+    def test_a_sticker_flag_that_is_not_a_boolean_is_not_believed(
+        self, telegram_connection: ChannelConnection, flag: Any
+    ) -> None:
+        """Webhook JSON: the string "false" is truthy, and so is 0.1."""
+        update = load_update("message_photo")
+        del update["message"]["photo"]
+        update["message"]["sticker"] = {"file_id": "CAACsticker", "file_unique_id": "u9", "is_video": flag}
+
+        (event,) = parse(update, telegram_connection)
+
+        assert event.payload.media_kinds == ("image",)
+
+    def test_kinds_stay_aligned_when_one_message_carries_several(self, telegram_connection: ChannelConnection) -> None:
+        """``media_kinds`` is positionally aligned by *our* code, so the thing
+        to prove is that we keep it aligned."""
+        update = load_update("message_photo")
+        update["message"]["voice"] = {"file_id": "AwACvoice", "file_unique_id": "u4"}
+        update["message"]["document"] = {"file_id": "BQACdoc", "file_unique_id": "u5"}
+
+        (event,) = parse(update, telegram_connection)
+
+        assert len(event.payload.media_ids) == len(event.payload.media_kinds)
+        assert dict(zip(event.payload.media_ids, event.payload.media_kinds, strict=True)) == {
+            "AgAClargest": "image",
+            "AwACvoice": "audio",
+            "BQACdoc": "file",
+        }
+
     def test_contact_falls_back_to_text(self, telegram_connection: ChannelConnection) -> None:
         (event,) = parse(load_update("message_contact"), telegram_connection)
         assert "Grace Hopper" in event.payload.text

@@ -56,7 +56,7 @@ import logging
 import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import httpx
 from django.urls import reverse
@@ -80,6 +80,7 @@ from apps.channels.events import (
     SendStatus,
     TextBlock,
 )
+from apps.channels.media import MEDIA_RESOLVE_TIMEOUT, MediaSource
 from apps.channels.models import ChannelConnection
 from apps.channels.providers.base import BACKGROUND_TIMEOUT, Adapter, request_json
 from apps.channels.providers.exceptions import APIError
@@ -100,6 +101,8 @@ __all__ = [
     "call",
     "deep_link",
     "delete_webhook",
+    "file_download_url",
+    "file_path",
     "get_me",
     "set_webhook",
     "store_bot_token",
@@ -117,6 +120,11 @@ SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"  # noqa: S105 - a header name,
 
 #: Where the token sits inside ``connection.credentials``.
 TOKEN_KEY = "bot_token"  # noqa: S105 - a dict key, not a credential
+
+#: How long a ``getFile`` result may be. Telegram's own paths are short
+#: (``photos/file_42.jpg``); the cap is here because the value is
+#: attacker-adjacent and about to be concatenated into a URL.
+MAX_FILE_PATH_CHARS = 500
 
 #: Update types we ask Telegram to deliver. An allowlist rather than the default
 #: (everything but ``chat_member``), because every type we do not handle is a
@@ -310,6 +318,69 @@ def get_me(token: str) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise APIError("Telegram returned an unexpected getMe result")
     return result
+
+
+def file_path(token: str, file_id: str) -> str:
+    """``getFile``: the storage path a ``file_id`` currently lives at, or "".
+
+    Telegram does not hand out media URLs. A ``file_id`` is resolved by this
+    call into a ``file_path``, and the download link built from it is documented
+    as valid for at least an hour — which is why the id is what gets stored and
+    this call happens on demand.
+
+    ``MEDIA_RESOLVE_TIMEOUT`` (5 s), imported rather than chosen here, because
+    this call is one half of a budget the other half of which lives in
+    :mod:`apps.channels.media` — and the sum has to stay under gunicorn's
+    30-second worker timeout. **Not** ``BACKGROUND_TIMEOUT``: that 30 s is for
+    work nobody is waiting on, and this runs inside a web request where a
+    Django worker is waiting and three others are all the deployment has left.
+
+    Returns "" for anything unusable rather than raising, because every caller's
+    answer to "no path" and "a path I do not trust" is the same 404.
+    """
+    result = call(token, "getFile", {"file_id": file_id}, timeout=MEDIA_RESOLVE_TIMEOUT)
+    if not isinstance(result, dict):
+        return ""
+    return _safe_file_path(_text(result.get("file_path"), MAX_FILE_PATH_CHARS))
+
+
+def _safe_file_path(path: str) -> str:
+    """``path`` if it can only ever address a file under the bot's own prefix.
+
+    ``file_path`` comes back from the platform, and it is about to be
+    concatenated into a URL whose earlier segments carry the bot token. Three
+    shapes are refused outright rather than normalised, because each is a
+    payload rather than a path and none has an innocent form:
+
+    * an absolute path or a scheme, which would try to replace the prefix;
+    * ``..`` in any segment, which walks up towards ``/bot<token>/`` and,
+      further up, off the file endpoint entirely;
+    * a query or fragment marker, which would truncate the path this function
+      was handed and append something of the platform's choosing.
+
+    Everything that survives is percent-encoded with ``/`` left alone, so a
+    space or a character with a meaning in a URL becomes a literal segment
+    byte. The guard would still keep the request on ``api.telegram.org`` — the
+    host is not in this string — so this is defence about *which file*, not
+    about which host.
+    """
+    if not path or path.startswith("/") or "://" in path or "?" in path or "#" in path:
+        return ""
+    if any(segment == ".." for segment in path.split("/")):
+        return ""
+    return quote(path, safe="/")
+
+
+def file_download_url(token: str, path: str) -> str:
+    """The Bot API download URL for a resolved ``file_path``.
+
+    **This string contains the bot token** — that is how the file endpoint
+    authenticates — so it must not be logged, must not reach an error message
+    and must not be stored. It exists for the length of one
+    :func:`apps.channels.media.fetch_media` call. The SSRF guard's failures
+    name only the host, which is what makes handing it there safe.
+    """
+    return f"{API_ROOT}/file/bot{token}/{path}"
 
 
 def set_webhook(token: str, *, url: str, secret_token: str, drop_pending: bool = False) -> None:
@@ -632,31 +703,80 @@ def _sender_extra(sender: Any, chat: Any) -> dict[str, Any]:
     return extra
 
 
-def _media_ids(message: dict[str, Any]) -> tuple[str, ...]:
-    """``file_id``s for whatever media this message carries.
+def _media(message: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(file_ids, kinds)`` for whatever media this message carries.
 
     Deliberately **not** ``EventPayload.attachments``: that field is documented
-    as URLs, and a Telegram ``file_id`` is not one — turning it into a URL needs
-    a ``getFile`` call and produces a link that expires in an hour. Storing an
-    id and resolving it on demand is the honest shape, and it keeps us clear of
-    SECURITY-BASELINE §6, which forbids fetching platform-supplied URLs
-    server-side until the SSRF guard lands.
+    as URLs a consumer can fetch without our credentials, and a Telegram
+    ``file_id`` is not one — turning it into a URL needs a ``getFile`` call and
+    produces a link that expires in an hour. Resolving on demand is what
+    :meth:`TelegramAdapter.media_source` and :mod:`apps.channels.media` do.
+
+    The **kinds** come from ``_MEDIA_FIELDS``' second column, which is where
+    Telegram's vocabulary is already folded into this project's (a voice note is
+    audio, a video note is video). They are carried rather than discarded
+    because the inbox has to choose a tag before it has any bytes, and without
+    them every attachment is rendered as an ``<img>`` — right for a photo,
+    a broken-image icon for a voice note.
+
+    Carrying a kind is **not** the same as trusting it, and the two returns are
+    used in different places for that reason: the kind decides layout, while the
+    ``Content-Type`` served back is sniffed from the bytes at fetch time
+    (SECURITY-BASELINE §9), whatever Telegram called the field.
+
+    The two tuples are positionally aligned by construction — one append to each
+    per usable entry, never one without the other.
     """
     ids: list[str] = []
-    for key, _kind in _MEDIA_FIELDS:
+    kinds: list[str] = []
+    for key, kind in _MEDIA_FIELDS:
         value = message.get(key)
         if isinstance(value, list):
             # A photo arrives as every size Telegram made; the last is the
-            # largest, and one id per photo is what a consumer wants.
+            # largest, and one id per photo is what a consumer wants. Only
+            # ``photo`` is a list, and a photo is always an image, so the table's
+            # kind needs no refining here.
             sizes = [_text(item.get("file_id"), 200) for item in value if isinstance(item, dict)]
             usable = [item for item in sizes if item]
             if usable:
                 ids.append(usable[-1])
+                kinds.append(kind)
         elif isinstance(value, dict):
             file_id = _text(value.get("file_id"), 200)
             if file_id:
                 ids.append(file_id)
-    return tuple(ids)
+                kinds.append(_refined_kind(key, kind, value))
+    return tuple(ids), tuple(kinds)
+
+
+def _refined_kind(key: str, kind: str, value: dict[str, Any]) -> str:
+    """``kind`` from the table, corrected where the payload contradicts it.
+
+    ``_MEDIA_FIELDS`` maps one message key to one kind, which is true of every
+    field except ``sticker``. Telegram serves three different things under that
+    one key and only one of them is a picture: a ``Sticker`` with ``is_video``
+    set is WebM, one with ``is_animated`` set is TGS — a gzipped Lottie
+    document — and the rest are WebP.
+
+    Taking the table at its word for all three is what the kind was carried to
+    avoid: the inbox would put an ``<img>`` around bytes the browser cannot
+    render, which is the broken-image icon this whole field exists to remove.
+    An animated sticker becomes ``file`` rather than ``image`` because nothing
+    in the sniffer's allowlist recognises TGS, so it is served as an
+    octet-stream attachment — "a thing you can download" is the honest label
+    for it, and the kind picking the tag should agree with what the bytes will
+    turn out to be.
+
+    ``is True`` rather than a truthiness test, because this is webhook JSON: the
+    string ``"false"`` is truthy, and so is ``0.1``.
+    """
+    if key != "sticker":
+        return kind
+    if value.get("is_video") is True:
+        return "video"
+    if value.get("is_animated") is True:
+        return "file"
+    return kind
 
 
 def _contact_text(contact: Any) -> str:
@@ -777,7 +897,7 @@ class TelegramAdapter(Adapter):
             return []
 
         text = _text(message.get("text")) or _text(message.get("caption"))
-        media_ids = _media_ids(message)
+        media_ids, media_kinds = _media(message)
         if not text and not media_ids:
             # contact and location have no text of their own; SPEC §7.2 has no
             # field for either, so they arrive as the sentence a person would
@@ -820,7 +940,7 @@ class TelegramAdapter(Adapter):
                 platform_user_id=chat_id,
                 provider_event_id=provider_event_id,
                 timestamp=timestamp,
-                payload=EventPayload(text=text, media_ids=media_ids, extra=extra),
+                payload=EventPayload(text=text, media_ids=media_ids, media_kinds=media_kinds, extra=extra),
                 raw=raw,
             )
         ]
@@ -992,6 +1112,43 @@ class TelegramAdapter(Adapter):
             logger.debug("Telegram: typing indicator failed on connection %s.", connection.pk)
 
     # `mark_seen` stays the base class's no-op: bots have no read receipts.
+
+    # -- media --------------------------------------------------------------
+
+    def media_source(self, connection: ChannelConnection, media_id: str) -> MediaSource | None:
+        """Resolve a ``file_id`` from :func:`_media` into a download URL.
+
+        Two calls, and they are deliberately different kinds. ``getFile`` goes
+        through :func:`call` — a fixed host, a URL built from constants and a
+        stored token, which is what
+        :func:`apps.channels.providers.base.request_json` is for. The download
+        it points at is made by :func:`apps.channels.media.fetch_media` under
+        the SSRF guard, because its path came back from the platform.
+
+        No headers: the Bot API's file endpoint authenticates by the token in
+        the path, so the credential is in the URL whether we like it or not.
+        That is the reason :func:`file_download_url` says, at its own site, that
+        the string must not be logged — and the reason nothing in this method
+        puts it anywhere but the return value.
+
+        Every failure is None. A ``file_id`` for media Telegram has since
+        expired is an ordinary 404 in a months-old thread, not an incident, and
+        the caller renders the same tombstone whatever went wrong.
+        """
+        token = bot_token(connection)
+        if not token:
+            logger.info("Telegram: connection %s has no token; media cannot be resolved.", connection.pk)
+            return None
+        try:
+            path = file_path(token, media_id)
+        except APIError as exc:
+            # `exc` is the adapter's own sentence plus a numeric code — never
+            # Telegram's prose and never the URL (see `call`).
+            logger.info("Telegram: getFile failed on connection %s: %s", connection.pk, exc)
+            return None
+        if not path:
+            return None
+        return MediaSource(url=file_download_url(token, path))
 
     # -- lifecycle ----------------------------------------------------------
 
