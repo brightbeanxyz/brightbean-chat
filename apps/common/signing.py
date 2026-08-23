@@ -36,8 +36,23 @@ generic failure
     No error text, no distinguishable status codes, and constant-time
     comparison underneath (``django.core.signing`` uses
     ``constant_time_compare``), so a caller learns nothing from a failure.
+
+**The other half: signing bodies we send.** ``sign`` mints a token *we* later
+verify; :func:`sign_webhook` signs a request body a *third party* verifies
+(#25's outbound webhooks, SPEC §17). Those are different jobs — a Django signed
+payload is a self-contained blob only this deployment can read, which is exactly
+the wrong shape for a receiver holding a shared secret — so the second one lives
+here beside the first rather than in a second module inventing a second format.
+
+Its inbound twin is ``apps.channels.security.sign_body``, which verifies a
+signature a *platform* produced over a bare body. The difference is the
+timestamp: an outbound delivery signs ``b"<unix>." + body`` so a captured request
+cannot be replayed, whereas the inbound shapes are fixed by whichever platform
+wrote them and we do not get a vote.
 """
 
+import hashlib
+import hmac
 from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
@@ -47,13 +62,20 @@ from django.http import Http404
 
 __all__ = [
     "CURRENT_VERSION",
+    "WEBHOOK_SIGNATURE_VERSION",
     "InvalidTokenError",
     "sign",
+    "sign_webhook",
     "unsign",
     "unsign_or_404",
+    "webhook_signature_matches",
 ]
 
 CURRENT_VERSION = 1
+
+#: Version tag on the outbound-webhook signature header value, so the scheme can
+#: change without every receiver breaking on the same day.
+WEBHOOK_SIGNATURE_VERSION = "v1"
 
 _VERSION_KEY = "v"
 
@@ -129,3 +151,38 @@ def unsign_or_404(
         return unsign(token, purpose=purpose, max_age=max_age, accept_versions=accept_versions)
     except InvalidTokenError:
         raise Http404 from None
+
+
+def sign_webhook(secret: str, *, timestamp: int, raw_body: bytes) -> str:
+    """Return the ``X-BrightBean-Signature`` value for one outbound delivery.
+
+    HMAC-SHA256 over ``b"<timestamp>." + raw_body``, keyed on the endpoint's own
+    secret rather than on ``SECRET_KEY``: the receiver holds that secret and has
+    to be able to recompute this, which is the whole point.
+
+    The timestamp is signed rather than merely sent, so a receiver that checks it
+    against its own clock gets replay resistance for free. It is repeated in the
+    ``X-BrightBean-Timestamp`` header because a receiver has to know the value in
+    order to verify the digest.
+
+    Returns ``"v1=<hex>"``. The version prefix is what lets a future scheme ship
+    alongside this one rather than instead of it; receivers split on ``"="`` and
+    reject a version they do not implement.
+    """
+    payload = str(int(timestamp)).encode("ascii") + b"." + raw_body
+    digest = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return f"{WEBHOOK_SIGNATURE_VERSION}={digest}"
+
+
+def webhook_signature_matches(secret: str, *, timestamp: int, raw_body: bytes, presented: str) -> bool:
+    """Constant-time check of a presented ``X-BrightBean-Signature`` value.
+
+    BrightBean Chat never receives its own webhooks in production; this exists so
+    the verification snippet published in ``docs/api/v1.md`` has an executable
+    counterpart the test suite can hold to account. A documented verifier that is
+    never run is a documented verifier that is eventually wrong.
+    """
+    if not secret or not presented:
+        return False
+    expected = sign_webhook(secret, timestamp=timestamp, raw_body=raw_body)
+    return hmac.compare_digest(expected, presented)

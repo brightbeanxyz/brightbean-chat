@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% comment %}
+The public API reference. Server-rendered rather than Swagger UI: SECURITY-BASELINE
+§8 puts a nonce-based CSP on every page, which blocks a CDN-loaded console, and
+vendoring one would add an npm dependency to the audit job for a page read a
+handful of times per deployment. The machine-readable document is linked below.
+
+The endpoint table is generated from the OpenAPI schema (apps/api/views_docs.py),
+so it cannot disagree with the routes.
+{% endcomment %}
+
+{% block title %}API reference · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+  <h1 class="text-lg font-semibold" style="color: var(--text-primary);">BrightBean Chat API v1</h1>
+  <p class="text-sm mb-6" style="color: var(--text-secondary);">
+    A bearer-authenticated JSON API, plus signed outbound webhooks.
+  </p>
+{% endblock %}
+
+{% block content %}
+  <h2>Authentication</h2>
+  <p>Every request carries an API key issued from Settings → Organization → API keys:</p>
+  <p><code>Authorization: Bearer {{ token_prefix }}…</code></p>
+  <p class="muted">
+    A key is scoped to exactly one workspace; there is no cross-workspace call and
+    no way to widen a key after issuance. Requests without a valid key get
+    <code>401</code>. Outside development a key sent over plain HTTP is refused —
+    it has already been logged by every hop that saw it.
+  </p>
+
+  <h3>Scopes</h3>
+  <table>
+    <thead><tr><th>Scope</th><th>Grants</th></tr></thead>
+    <tbody>
+      {% for row in scope_rows %}
+        <tr><td><code>{{ row.scope }}</code></td><td>{{ row.permissions }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">
+    <code>write</code> includes everything <code>read</code> does. No scope grants
+    key, channel, member or workspace-settings management: an API key cannot mint
+    another API key.
+  </p>
+
+  <h2>Rate limits</h2>
+  <p>
+    {{ rate_limit }} requests per second per key. Over the limit the answer is
+    <code>429</code> with a <code>Retry-After</code> header; the window is one
+    second, so the header is the exact wait. Keys never contend with each other.
+  </p>
+
+  <h2>Requests</h2>
+  <p>
+    JSON in, JSON out. Bodies are capped at {{ max_body_bytes }} bytes, and unknown
+    keys are rejected rather than ignored — a typo in a field name is a
+    <code>422</code>, not a silently dropped value.
+  </p>
+
+  <h2>Pagination</h2>
+  <p>Every list endpoint answers with the same envelope:</p>
+  <pre><code>{
+  "data": [ … ],
+  "has_more": true,
+  "next_cursor": "eyJvIjo1MH0"
+}</code></pre>
+  <p class="muted">
+    Pass <code>?limit=</code> (1–{{ max_limit }}, default {{ default_limit }}) and
+    <code>?cursor=</code>. The cursor is opaque: echo back <code>next_cursor</code>
+    and never construct one. Keep paging while <code>has_more</code> is true. There
+    is no total — counting a workspace's contacts costs more than the page does.
+  </p>
+
+  <h2>Errors</h2>
+  <p>Every non-2xx answer has the same shape:</p>
+  <pre><code>{
+  "error": {
+    "code": "compliance_denied",
+    "message": "This contact opted out of messages on this channel.",
+    "detail": {"reason": "opted_out"}
+  }
+}</code></pre>
+  <table>
+    <thead><tr><th>Code</th><th>Status</th><th>Meaning</th></tr></thead>
+    <tbody>
+      {% for code, status, meaning in error_codes %}
+        <tr><td><code>{{ code }}</code></td><td>{{ status }}</td><td>{{ meaning }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">
+    An object belonging to another workspace answers <code>404</code>, exactly as a
+    non-existent one does. That is deliberate: a <code>403</code> would confirm the
+    id names something real.
+  </p>
+
+  <h2>Endpoints</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>What it does</th></tr></thead>
+    <tbody>
+      {% for endpoint in endpoints %}
+        <tr>
+          <td><code>{{ endpoint.method }}</code></td>
+          <td><code>{{ endpoint.path }}</code></td>
+          <td>{{ endpoint.summary|default:endpoint.description }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a href="{{ openapi_url }}">OpenAPI document (JSON)</a></p>
+
+  <h2>Outbound webhooks</h2>
+  <p>
+    Configure endpoints per workspace under Settings → Workspace → Webhooks. Each
+    delivery is a POST carrying:
+  </p>
+  <pre><code>{
+  "id": "0192f0c1-…",
+  "event": "contact.tag_added",
+  "workspace_id": "0192e8aa-…",
+  "occurred_at": "2026-08-23T09:14:02.481Z",
+  "data": {"contact_id": "0192e8ab-…", "tag_id": "0192e8ac-…"}
+}</code></pre>
+  <p class="muted">
+    Ids only, never message bodies. Headers:
+    <code>{{ signature_header }}</code>, <code>{{ timestamp_header }}</code>,
+    <code>{{ event_header }}</code> and <code>{{ delivery_header }}</code>.
+  </p>
+
+  <h3>Events</h3>
+  <table>
+    <thead><tr><th>Event</th><th>Fires when</th></tr></thead>
+    <tbody>
+      {% for row in event_rows %}
+        <tr><td><code>{{ row.name }}</code></td><td>{{ row.label }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3>Verifying a delivery</h3>
+  <p>
+    The signature is <code>v1=</code> followed by the hex HMAC-SHA256, over the
+    timestamp, a literal dot, and the raw request body — in that order, on the
+    bytes you received, before any JSON parsing.
+  </p>
+  <pre><code>import hashlib, hmac, time
+
+def verify(secret, headers, raw_body, tolerance={{ timestamp_tolerance }}):
+    timestamp = headers["{{ timestamp_header }}"]
+    presented = headers["{{ signature_header }}"]
+    if abs(time.time() - int(timestamp)) > tolerance:
+        return False
+    signed = timestamp.encode() + b"." + raw_body
+    expected = "v1=" + hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, presented)</code></pre>
+  <p class="muted">
+    Compare in constant time, check the timestamp, and treat
+    <code>{{ delivery_header }}</code> as the deduplication key — delivery is
+    at-least-once. Answer <code>2xx</code> to acknowledge. A delivery that fails is
+    retried on a backoff; after {{ failure_limit }} consecutive failed deliveries
+    the endpoint is switched off and the workspace admins are notified.
+  </p>
+{% endblock %}
