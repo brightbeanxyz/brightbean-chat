@@ -31,6 +31,7 @@ from datetime import datetime
 from typing import Any
 
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from apps.common.logging import scrub
@@ -243,7 +244,14 @@ def _storable(message: str) -> str:
 
 
 def record_success(webhook: Any) -> None:
-    """A delivery landed: clear the failure streak."""
+    """A delivery landed: clear the failure streak.
+
+    No row lock, unlike :func:`record_failure`, because there is nothing to
+    read: every value written here is a constant. It still serialises correctly
+    against a concurrent failure — an ``UPDATE`` conflicts with that function's
+    ``SELECT … FOR UPDATE`` at the row level, so one waits for the other and
+    whichever lands last is the true outcome.
+    """
     from apps.api.models import OutboundWebhook
 
     now = timezone.now()
@@ -262,27 +270,55 @@ def record_failure(webhook: Any) -> bool:
     "Consecutive failures" counts *deliveries*, not HTTP attempts: the delivery
     has already been retried across the full backoff schedule by the time this
     is called, so a receiver that blips for a minute never gets here.
+
+    **The counter is read and written under a row lock**, because this is a
+    read-modify-write and SPEC §20 runs several worker processes (plus
+    ``/internal/tick``) against one database. Incrementing from the caller's
+    in-memory copy loses updates whenever two deliveries for the same endpoint
+    finish at once: two failures from 98 both store 99, so a genuinely dead
+    receiver can sit one short of the threshold indefinitely and never
+    auto-disable. Re-reading inside the lock also makes the disable decision
+    exactly-once, so the admin notification cannot fire twice.
     """
     from apps.api.models import OutboundWebhook
 
     now = timezone.now()
     limit = settings.API_WEBHOOK_MAX_CONSECUTIVE_FAILURES
-    failures = (webhook.consecutive_failures or 0) + 1
-    disable = failures >= limit
 
-    fields: dict[str, Any] = {"consecutive_failures": failures, "last_delivery_at": now, "updated_at": now}
-    webhook.consecutive_failures = failures
-    webhook.last_delivery_at = now
-    if disable:
-        fields["enabled"] = False
-        fields["disabled_at"] = now
-        webhook.enabled = False
-        webhook.disabled_at = now
+    with transaction.atomic():
+        locked = (
+            OutboundWebhook.objects.for_workspace(webhook.workspace_id)
+            .select_for_update()
+            .filter(pk=webhook.pk)
+            .first()
+        )
+        if locked is None:
+            # Deleted while the delivery was in flight; nothing to count.
+            return False
 
-    OutboundWebhook.objects.for_workspace(webhook.workspace_id).filter(pk=webhook.pk).update(**fields)
+        failures = (locked.consecutive_failures or 0) + 1
+        # Only the *transition* disables and notifies. Deliveries already in
+        # flight when the threshold is crossed still land here afterwards, and
+        # without the `locked.enabled` term each of them would re-disable an
+        # endpoint that is already off and mail the admins about it again.
+        disable = failures >= limit and locked.enabled
 
-    if disable:
-        _notify_disabled(webhook, failures)
+        fields: dict[str, Any] = {"consecutive_failures": failures, "last_delivery_at": now, "updated_at": now}
+        if disable:
+            fields["enabled"] = False
+            fields["disabled_at"] = now
+
+        OutboundWebhook.objects.for_workspace(webhook.workspace_id).filter(pk=webhook.pk).update(**fields)
+
+        # Keep the caller's copy in step with what was actually stored, rather
+        # than with what it guessed before the lock.
+        webhook.consecutive_failures = failures
+        webhook.last_delivery_at = now
+        if disable:
+            webhook.enabled = False
+            webhook.disabled_at = now
+            _notify_disabled(webhook, failures)
+
     return disable
 
 

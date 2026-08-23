@@ -203,6 +203,21 @@ class TestPagination:
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "invalid_cursor"
 
+    def test_an_absurd_offset_is_a_422_not_a_database_error(self, client, tenancy, auth):
+        """The offset reaches Postgres, which types OFFSET as bigint.
+
+        A 51-character cursor carrying 10**30 used to come back as a 500 with
+        `NumericValueOutOfRange` in the logs. Asserted end to end, not just at
+        `decode_cursor`, because the point is that nothing forged gets as far as
+        the query.
+        """
+        from apps.api.pagination import encode_cursor
+
+        response = client.get(f"{CONTACTS}?cursor={encode_cursor(10**30)}", **auth)
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "invalid_cursor"
+
 
 @pytest.mark.django_db
 class TestWrites:

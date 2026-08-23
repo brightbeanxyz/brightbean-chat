@@ -24,6 +24,7 @@ from typing import Any
 __all__ = [
     "DEFAULT_LIMIT",
     "MAX_LIMIT",
+    "MAX_OFFSET",
     "clamp_limit",
     "decode_cursor",
     "encode_cursor",
@@ -33,6 +34,18 @@ __all__ = [
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+
+#: Largest offset a cursor may name.
+#:
+#: Two reasons, and the first is a bug rather than a policy. The offset goes
+#: straight into ``OFFSET``, which Postgres types as ``bigint`` — a cursor
+#: carrying ``{"o": 10**30}`` is 51 characters and would raise
+#: ``NumericValueOutOfRange``, i.e. a 500 where the contract promises a 422.
+#: The second is that paging a million rows deep is not what this endpoint is
+#: for: ``apps/contacts/filters.py`` sizes the contact list at ten thousand rows
+#: per workspace, so anything past this is a caller that should be filtering with
+#: ``updated_after`` instead. Well inside bigint either way.
+MAX_OFFSET = 10_000_000
 
 
 def encode_cursor(offset: int) -> str:
@@ -60,6 +73,11 @@ def decode_cursor(cursor: str | None) -> int:
     offset = payload.get("o", 0)
     # ``bool`` is an ``int`` subclass, so ``{"o": true}`` would otherwise be 1.
     if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise ValueError("Invalid cursor.")
+    if offset > MAX_OFFSET:
+        # Bounded *here* rather than at the query, so a forged cursor is the
+        # documented 422 and never reaches the database as an out-of-range
+        # OFFSET. See MAX_OFFSET.
         raise ValueError("Invalid cursor.")
     return offset
 

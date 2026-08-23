@@ -26,7 +26,7 @@ from apps.api.delivery import (
     handle_webhook_delivery,
     send_test_event,
 )
-from apps.api.models import DeliveryStatus, WebhookDelivery
+from apps.api.models import DeliveryStatus, OutboundWebhook, WebhookDelivery
 from apps.api.tests.support import PUBLIC, RECEIVER, FakeInternet, refusing, serving
 from apps.common.outbound import reset_deployment_cache
 from apps.common.signing import sign_webhook, webhook_signature_matches
@@ -340,6 +340,66 @@ class TestAutoDisable:
         notification = Notification.objects.filter(event_type="outbound_webhook_disabled")
         assert notification.exists()
         assert webhook.url in notification.first().body
+
+    def test_concurrent_failures_do_not_lose_a_count(self, tenancy, webhook, settings):
+        """Two workers finishing a delivery for one endpoint at the same time.
+
+        SPEC §20 runs several worker processes (plus `/internal/tick`) against
+        one database, so each holds its own copy of the row. Incrementing from
+        that copy loses updates: two failures from 98 both stored 99, which left
+        a genuinely dead receiver one short of the threshold — indefinitely,
+        since the same thing happens on the next pair. The counter is read under
+        a row lock for exactly this.
+        """
+        settings.API_WEBHOOK_MAX_CONSECUTIVE_FAILURES = 100
+        OutboundWebhook.objects.for_workspace(tenancy.workspace).filter(pk=webhook.pk).update(consecutive_failures=98)
+        first = OutboundWebhook.objects.for_workspace(tenancy.workspace).get(pk=webhook.pk)
+        second = OutboundWebhook.objects.for_workspace(tenancy.workspace).get(pk=webhook.pk)
+
+        from apps.api.delivery import record_failure
+
+        assert record_failure(first) is False
+        assert record_failure(second) is True
+
+        final = OutboundWebhook.objects.for_workspace(tenancy.workspace).get(pk=webhook.pk)
+        assert final.consecutive_failures == 100
+        assert final.enabled is False
+
+    def test_only_one_of_two_racing_failures_notifies(self, tenancy, webhook, settings):
+        """Disabling is a transition, so the admins are told once.
+
+        Deliveries already in flight when the threshold is crossed still reach
+        `record_failure` afterwards. Counting them is right; mailing the admins
+        once per in-flight delivery is not.
+        """
+        from apps.notifications.models import Notification
+
+        settings.API_WEBHOOK_MAX_CONSECUTIVE_FAILURES = 100
+        OutboundWebhook.objects.for_workspace(tenancy.workspace).filter(pk=webhook.pk).update(consecutive_failures=99)
+        first = OutboundWebhook.objects.for_workspace(tenancy.workspace).get(pk=webhook.pk)
+        second = OutboundWebhook.objects.for_workspace(tenancy.workspace).get(pk=webhook.pk)
+
+        from apps.api.delivery import record_failure
+
+        assert record_failure(first) is True
+        assert record_failure(second) is False, "the second failure is not a second transition"
+
+        # `notify` fans one event out to each workspace admin, so the row count
+        # is per recipient. What "notified once" means here is that nobody was
+        # told twice — before the transition guard, each admin got a row per
+        # in-flight delivery.
+        notified = Notification.objects.filter(event_type="outbound_webhook_disabled")
+        assert notified.count() == notified.values("user").distinct().count()
+        assert notified.count() >= 1
+
+    def test_a_failure_for_a_deleted_endpoint_is_a_no_op(self, tenancy, webhook):
+        """The row can vanish while a delivery is in flight."""
+        from apps.api.delivery import record_failure
+
+        stale = OutboundWebhook.objects.for_workspace(tenancy.workspace).get(pk=webhook.pk)
+        webhook.delete()
+
+        assert record_failure(stale) is False
 
     def test_one_success_resets_the_streak(self, tenancy, webhook):
         from apps.api.delivery import record_failure, record_success

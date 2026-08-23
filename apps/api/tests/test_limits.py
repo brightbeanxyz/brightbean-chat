@@ -11,7 +11,14 @@ import json
 
 import pytest
 
-from apps.api.pagination import DEFAULT_LIMIT, MAX_LIMIT, clamp_limit, decode_cursor, encode_cursor
+from apps.api.pagination import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    MAX_OFFSET,
+    clamp_limit,
+    decode_cursor,
+    encode_cursor,
+)
 from apps.api.tests.conftest import bearer
 
 CONTACTS = "/api/v1/contacts"
@@ -83,6 +90,22 @@ class TestCursor:
             return
         with pytest.raises(ValueError):
             decode_cursor(cursor)
+
+    def test_an_offset_past_the_bound_is_refused(self):
+        """A forged cursor must not reach the database as an OFFSET.
+
+        ``{"o": 10**30}`` encodes to 51 characters, so the length guard does not
+        catch it, and Postgres types OFFSET as bigint — without this bound it
+        raises NumericValueOutOfRange and the caller gets a 500 where the
+        contract promises a 422.
+        """
+        oversized = encode_cursor(MAX_OFFSET + 1)
+
+        with pytest.raises(ValueError):
+            decode_cursor(oversized)
+
+        # The bound itself is still usable.
+        assert decode_cursor(encode_cursor(MAX_OFFSET)) == MAX_OFFSET
 
     def test_the_limit_is_clamped_at_both_ends(self):
         assert clamp_limit(None) == DEFAULT_LIMIT
