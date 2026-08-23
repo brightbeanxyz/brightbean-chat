@@ -127,8 +127,8 @@ def unregistered(platform: str) -> Iterator[None]:
 
 
 @contextmanager
-def registered(platform: str) -> Iterator[type[FakeAdapter]]:
-    """Register a fake adapter for ``platform`` for the duration of a test.
+def swapped_adapter(platform: str, adapter_cls: type["Adapter"]) -> Iterator[None]:
+    """Put ``adapter_cls`` in ``platform``'s slot for the duration of a test.
 
     The registry is process-global, so leaving one behind would leak into every
     later test in the same process — including the ones asserting that a
@@ -140,14 +140,27 @@ def registered(platform: str) -> Iterator[type[FakeAdapter]]:
     unregistering left the rest of the run with no Telegram adapter at all, and
     plain registering hit the duplicate guard on the way in. Save-and-restore is
     correct for both an occupied slot and an empty one.
+
+    Shared rather than spelled out per call site, and that is the whole point:
+    ``apps/flows/tests/routing_support.py`` had its own copy written before the
+    real adapter existed, and when #12 landed that copy started raising on the
+    way in — 31 routing tests, in a workstream whose own code had not changed.
+    One helper cannot drift from itself.
     """
-    adapter_cls = fake_adapter_for(platform)
     previous = entry_for(platform).adapter_cls
     unregister_adapter(platform)
     register_adapter(platform, adapter_cls)
     try:
-        yield adapter_cls
+        yield
     finally:
         unregister_adapter(platform)
         if previous is not None:
             register_adapter(platform, previous)
+
+
+@contextmanager
+def registered(platform: str) -> Iterator[type[FakeAdapter]]:
+    """Register a fake adapter for ``platform`` for the duration of a test."""
+    adapter_cls = fake_adapter_for(platform)
+    with swapped_adapter(platform, adapter_cls):
+        yield adapter_cls
