@@ -116,10 +116,12 @@ def seed(workspace: Any, *, nonce: str, label: str, user: Any = None) -> dict[st
 
     noop = {"actions": [{"verb": "remove_tag", "tag": "not-a-tag-here"}]}
     flow = published_flow(workspace, graph([node("a", "action", noop)]), name=f"Flow {label}")
+    version = flow.versions.first()
+    assert version is not None
     execution = FlowExecution.objects.create(
         contact=contact,
         flow=flow,
-        flow_version=flow.versions.first(),
+        flow_version=version,
         status=ExecutionStatus.WAITING_REPLY,
         variables={"answer": f"typed-{nonce}"},
     )
@@ -373,7 +375,8 @@ def contact_references() -> dict[str, str]:
                 continue
             if field.related_model is not Contact or not field.concrete:
                 continue
-            found[f"{model._meta.label}.{field.name}"] = field.remote_field.on_delete.__name__
+            on_delete = getattr(field.remote_field, "on_delete", None)
+            found[f"{model._meta.label}.{field.name}"] = getattr(on_delete, "__name__", "unknown")
     found["queueing.ScheduledAction.contact_id"] = "none"
     return found
 
@@ -721,3 +724,136 @@ class TestTheQueuedPath:
 
         assert record.status == ErasureStatus.DONE
         assert not ScheduledAction.objects.unscoped().filter(type=erasure.ACTION_TYPE).exists()
+
+
+# ---------------------------------------------------------------------------
+# The CRM surface
+# ---------------------------------------------------------------------------
+
+
+def erase_url(tenancy: Tenancy, contact: Any) -> str:
+    return f"/w/{tenancy.workspace.pk}/contacts/{contact.pk}/erase/"
+
+
+def bulk_erase_url(tenancy: Tenancy) -> str:
+    return f"/w/{tenancy.workspace.pk}/contacts/bulk/erase/"
+
+
+def confirmed(contact: Any) -> dict[str, str]:
+    return {"confirm": erasure.CONFIRMATION, "contact_id": str(contact.pk)}
+
+
+class TestGating:
+    """Admin only. ``manage_crm`` holds the reversible delete; this is the other
+    one."""
+
+    @pytest.mark.parametrize("role", ["editor", "agent", "viewer"])
+    def test_everyone_below_admin_is_refused(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any], role: str
+    ) -> None:
+        contact = victim["contact"]
+
+        response = client_for(tenancy.user_for(role)).post(erase_url(tenancy, contact), confirmed(contact))
+
+        assert response.status_code == 403
+        assert Contact.objects.unscoped().filter(pk=contact.pk).exists()
+
+    def test_an_admin_can(self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]) -> None:
+        contact = victim["contact"]
+
+        response = client_for(tenancy.user_for("admin")).post(erase_url(tenancy, contact), confirmed(contact))
+
+        assert response.status_code == 204
+        assert not Contact.objects.unscoped().filter(pk=contact.pk).exists()
+
+    def test_another_tenant_gets_404_not_403(
+        self, tenancy: Tenancy, other_tenancy: Tenancy, client_for: Any, victim: dict[str, Any]
+    ) -> None:
+        """A 403 would confirm the id names something real."""
+        contact = victim["contact"]
+
+        response = client_for(other_tenancy.owner).post(erase_url(tenancy, contact), confirmed(contact))
+
+        assert response.status_code == 404
+        assert Contact.objects.unscoped().filter(pk=contact.pk).exists()
+
+    def test_the_danger_zone_renders_only_for_an_admin(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]
+    ) -> None:
+        detail = f"/w/{tenancy.workspace.pk}/contacts/{victim['contact'].pk}/"
+
+        assert b"Erase permanently" in client_for(tenancy.user_for("admin")).get(detail).content
+        assert b"Erase permanently" not in client_for(tenancy.user_for("editor")).get(detail).content
+
+
+class TestConfirmation:
+    """Server-side, because ``hx-confirm`` is a ``window.confirm``."""
+
+    def test_a_missing_confirmation_changes_nothing(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]
+    ) -> None:
+        contact = victim["contact"]
+
+        client_for(tenancy.owner).post(erase_url(tenancy, contact), {"contact_id": str(contact.pk)})
+
+        assert Contact.objects.unscoped().filter(pk=contact.pk).exists()
+
+    def test_the_wrong_word_changes_nothing(self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]) -> None:
+        contact = victim["contact"]
+
+        client_for(tenancy.owner).post(erase_url(tenancy, contact), {"confirm": "erase", "contact_id": str(contact.pk)})
+
+        assert Contact.objects.unscoped().filter(pk=contact.pk).exists()
+
+    def test_a_stale_pane_posting_the_wrong_contact_id_changes_nothing(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any], bystander: dict[str, Any]
+    ) -> None:
+        """The check that actually matters. The CRM swaps panes with htmx, so a
+        form built for one contact can be submitted at another's URL."""
+        client_for(tenancy.owner).post(
+            erase_url(tenancy, victim["contact"]),
+            {"confirm": erasure.CONFIRMATION, "contact_id": str(bystander["contact"].pk)},
+        )
+
+        assert Contact.objects.unscoped().filter(pk=victim["contact"].pk).exists()
+        assert Contact.objects.unscoped().filter(pk=bystander["contact"].pk).exists()
+
+
+class TestBulkErase:
+    def test_it_queues_the_selection(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any], bystander: dict[str, Any]
+    ) -> None:
+        """Always queued, whatever the size: five hundred teardowns is never a
+        web request."""
+        ids = [str(victim["contact"].pk), str(bystander["contact"].pk)]
+
+        client_for(tenancy.owner).post(bulk_erase_url(tenancy), {"ids": ids, "confirm": erasure.CONFIRMATION})
+
+        assert ContactErasure.objects.for_workspace(tenancy.workspace).count() == 2
+        assert ScheduledAction.objects.unscoped().filter(type=erasure.ACTION_TYPE).count() == 2
+
+    def test_it_refuses_without_the_sentinel(self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]) -> None:
+        client_for(tenancy.owner).post(bulk_erase_url(tenancy), {"ids": [str(victim["contact"].pk)]})
+
+        assert not ContactErasure.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_another_tenants_ids_are_simply_absent(
+        self, tenancy: Tenancy, other_tenancy: Tenancy, client_for: Any
+    ) -> None:
+        """A miss, not a refusal — the house answer for an id in a POST body."""
+        theirs = seed(other_tenancy.workspace, nonce="zqxbulk", label="bk", user=other_tenancy.owner)
+
+        client_for(tenancy.owner).post(
+            bulk_erase_url(tenancy), {"ids": [str(theirs["contact"].pk)], "confirm": erasure.CONFIRMATION}
+        )
+
+        assert Contact.objects.unscoped().filter(pk=theirs["contact"].pk).exists()
+        assert not ContactErasure.objects.for_workspace(tenancy.workspace).exists()
+
+    @pytest.mark.parametrize("role", ["editor", "agent", "viewer"])
+    def test_it_is_admin_only_too(self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any], role: str) -> None:
+        response = client_for(tenancy.user_for(role)).post(
+            bulk_erase_url(tenancy), {"ids": [str(victim["contact"].pk)], "confirm": erasure.CONFIRMATION}
+        )
+
+        assert response.status_code == 403
