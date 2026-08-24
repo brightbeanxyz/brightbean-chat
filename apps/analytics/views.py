@@ -46,18 +46,34 @@ __all__ = ["flow_detail", "overview", "tracking_settings", "update_tracking_sett
 DEFAULT_DAYS = 30
 
 
-def _window(request: WorkspaceRequest) -> Any:
-    """The range this request asks for, clamped. Untrusted input all the way."""
-    return selectors.resolve_range(request.GET.get("days"), default=DEFAULT_DAYS)
-
-
 def _days(request: WorkspaceRequest) -> int:
-    """The chosen range as a number, for the range picker's active state."""
+    """The chosen range, always one of :data:`selectors.RANGE_CHOICES`.
+
+    The pages offer exactly three ranges, so anything else — ``?days=0``,
+    ``?days=99999``, ``?days=nonsense`` — is the default rather than a fourth.
+    """
     try:
         value = int(request.GET.get("days") or "")
     except (TypeError, ValueError):
         return DEFAULT_DAYS
     return value if value in selectors.RANGE_CHOICES else DEFAULT_DAYS
+
+
+def _window(request: WorkspaceRequest) -> Any:
+    """The date range to query, derived from :func:`_days` and nothing else.
+
+    **The same number the heading and the picker show.** Reading the raw query
+    string here instead would let the two disagree for every value outside the
+    three choices: ``?days=99999`` clamps to a 366-day *window* while the picker
+    still highlights 30, and ``?days=0`` queries all time under a heading that
+    says "the last 30 days". Numbers labelled with a range they were not
+    computed over are worse than no numbers.
+
+    The builder's stats API keeps its own, wider ``?days=`` handling
+    (``apps.flows.api.flow_stats``): it has no picker to disagree with, and
+    omitting the parameter there means all time.
+    """
+    return selectors.resolve_range(_days(request))
 
 
 @login_required

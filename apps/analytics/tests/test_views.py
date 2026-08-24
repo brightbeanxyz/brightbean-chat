@@ -88,14 +88,30 @@ class TestFlowDetail:
         ]
         assert response.context["chart"]["series"]["sent"] == [0, 0, 0, 0, 0, 0, 1]
 
-    def test_an_out_of_range_days_value_falls_back_rather_than_erroring(
-        self, tenancy: Any, client_for: Any, flow: Any
+    @pytest.mark.parametrize("value", ["99999", "0", "-5", "nonsense", ""])
+    def test_an_out_of_range_days_value_falls_back_for_the_label_and_the_data(
+        self, tenancy: Any, client_for: Any, flow: Any, value: str
     ) -> None:
-        response = client_for(tenancy.owner).get(f"{flow_url(tenancy, flow)}?days=99999")
+        """The heading and the query have to agree.
+
+        Reading the raw query string for the window while validating it for the
+        picker let the two disagree for every value outside the three choices:
+        ``?days=99999`` queried 366 days under a heading that said 30, and
+        ``?days=0`` queried all time under the same one. Numbers labelled with a
+        range they were not computed over are worse than no numbers.
+        """
+        response = client_for(tenancy.owner).get(f"{flow_url(tenancy, flow)}?days={value}")
 
         assert response.status_code == 200
-        # Not one of the three offered ranges, so the picker shows the default.
         assert response.context["days"] == 30
+        # 30 labelled days is 30 points of data, inclusive of both ends.
+        assert len(response.context["chart"]["labels"]) == 30
+
+    def test_an_offered_range_is_honoured_for_both(self, tenancy: Any, client_for: Any, flow: Any) -> None:
+        response = client_for(tenancy.owner).get(f"{flow_url(tenancy, flow)}?days=7")
+
+        assert response.context["days"] == 7
+        assert len(response.context["chart"]["labels"]) == 7
 
     def test_a_node_since_deleted_from_the_graph_keeps_its_numbers(
         self, tenancy: Any, client_for: Any, flow: Any

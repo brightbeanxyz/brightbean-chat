@@ -7,7 +7,12 @@ const STATS = { sent: 10, delivered: 8, failed: 1, clicked: 2 };
 
 const WITH_URL_BUTTON = {
   buttons: [
-    { id: "b1", label: "Docs", action: "url", url: "https://example.test/docs" },
+    {
+      id: "b1",
+      label: "Docs",
+      action: "url",
+      url: "https://example.test/docs",
+    },
     { id: "b2", label: "Talk", action: "postback" },
   ],
 };
@@ -18,21 +23,70 @@ describe("hasUrlButton", () => {
   });
 
   it("does not treat a postback button as one", () => {
-    expect(hasUrlButton({ buttons: [{ id: "b2", label: "Talk", action: "postback" }] })).toBe(false);
-  });
-
-  it("finds one nested inside a card", () => {
     expect(
       hasUrlButton({
-        blocks: [{ type: "card", title: "Plan", buttons: [{ id: "b1", label: "Buy", url: "https://x.test" }] }],
+        buttons: [{ id: "b2", label: "Talk", action: "postback" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("finds a card's url_button, which carries no id", () => {
+    // The schema's card link is `{label, url}` — apps/flows/schema/nodes.py's
+    // `url_button` ref. An id-based test missed every card in the product.
+    expect(
+      hasUrlButton({
+        blocks: [
+          {
+            type: "card",
+            title: "Plan",
+            url_button: { label: "Buy", url: "https://x.test" },
+          },
+        ],
       }),
     ).toBe(true);
   });
 
+  it("finds one on a card inside a gallery", () => {
+    expect(
+      hasUrlButton({
+        blocks: [
+          {
+            type: "gallery",
+            cards: [
+              { title: "One" },
+              {
+                title: "Two",
+                url_button: { label: "Buy", url: "https://x.test" },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat a card with no link as one", () => {
+    expect(
+      hasUrlButton({
+        blocks: [{ type: "card", title: "Plan", subtitle: "No link" }],
+      }),
+    ).toBe(false);
+  });
+
   it("does not mistake a media block's url for a button", () => {
-    // A media url has no `id` beside it — it is an <img src>, and
-    // apps/analytics/tracking.py never wraps one.
-    expect(hasUrlButton({ blocks: [{ type: "image", url: "https://cdn.test/cat.png" }] })).toBe(false);
+    // An <img src>, which apps/analytics/tracking.py never wraps. It is told
+    // apart by the key that holds it rather than by the absence of an id.
+    expect(
+      hasUrlButton({
+        blocks: [{ type: "image", url: "https://cdn.test/cat.png" }],
+      }),
+    ).toBe(false);
+  });
+
+  it("does not mistake an external_request url for a button", () => {
+    expect(hasUrlButton({ method: "POST", url: "https://api.test/hook" })).toBe(
+      false,
+    );
   });
 
   it("tolerates anything a hand-edited graph might hold", () => {
@@ -53,22 +107,54 @@ describe("chipValues", () => {
   });
 
   it("rounds to one decimal", () => {
-    expect(chipValues({ ...STATS, sent: 3, clicked: 1 }, WITH_URL_BUTTON).ctr).toBe(33.3);
+    expect(
+      chipValues({ ...STATS, sent: 3, clicked: 1 }, WITH_URL_BUTTON).ctr,
+    ).toBe(33.3);
+  });
+
+  it("shows a zero rate for a card link that nobody clicked", () => {
+    // The regression the id-based predicate caused: the backend wraps this link,
+    // so "0% of 10" is the truth and suppressing it hid a real number.
+    const card = {
+      blocks: [
+        {
+          type: "card",
+          title: "Plan",
+          url_button: { label: "Buy", url: "https://x.test" },
+        },
+      ],
+    };
+    expect(chipValues({ ...STATS, clicked: 0 }, card).ctr).toBe(0);
   });
 
   it("has no rate for a node with nothing to click", () => {
     // No url button and no recorded click: there is no link here, so a "0.0%"
     // would read as a failure rather than as an absence.
-    expect(chipValues({ ...STATS, clicked: 0 }, { blocks: [{ type: "text", text: "hi" }] }).ctr).toBeNull();
+    expect(
+      chipValues(
+        { ...STATS, clicked: 0 },
+        { blocks: [{ type: "text", text: "hi" }] },
+      ).ctr,
+    ).toBeNull();
   });
 
   it("has a rate for a node whose only links are in an email body", () => {
     // Nothing in the graph says an authored <a href> is tracked, so recorded
     // clicks are what qualifies the node.
-    expect(chipValues({ ...STATS, clicked: 5 }, { subject: "Hi", html_body: "<p>x</p>" }).ctr).toBe(50);
+    expect(
+      chipValues(
+        { ...STATS, clicked: 5 },
+        { subject: "Hi", html_body: "<p>x</p>" },
+      ).ctr,
+    ).toBe(50);
   });
 
   it("never divides by nothing", () => {
-    expect(chipValues({ sent: 0, delivered: 0, failed: 0, clicked: 0 }, WITH_URL_BUTTON).ctr).toBeNull();
+    expect(
+      chipValues(
+        { sent: 0, delivered: 0, failed: 0, clicked: 0 },
+        WITH_URL_BUTTON,
+      ).ctr,
+    ).toBeNull();
   });
 });

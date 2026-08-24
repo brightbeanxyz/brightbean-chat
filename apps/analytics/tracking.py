@@ -52,6 +52,27 @@ back — so a miss costs a number, never safety.
 
 Media URLs are never wrapped. A ``MediaBlock``'s URL is an ``<img src>``, not
 something a reader clicks, and pointing it at a redirect would break the image.
+
+--------------------------------------------------------------------------
+A wrapper that would not fit is not applied
+--------------------------------------------------------------------------
+
+Signing *expands* a URL — roughly 175 characters of fixed overhead plus base64
+growth on anything that does not compress — and two limits downstream truncate
+rather than refuse:
+
+* ``apps.channels.downgrade`` inlines a URL button into the text for a platform
+  with no button widget and then splits the text at the platform's
+  ``max_text_len``. A 1 515-character target becomes a 1 729-character ``/c/``
+  URL, which is past SMS's 1 600 and gets cut **mid-token** — a link that cannot
+  work at all, where the raw one would have.
+* ``email_html.sanitize`` parses only the first ``MAX_HTML_CHARS`` of a body, so
+  an authored email already near that limit loses its tail to an anchor rewrite,
+  or silently drops an appended pixel.
+
+So both transformations are conditional on the result still fitting. An
+untracked link is a missing number; a truncated one is a broken message, and the
+first is the direction to fail in.
 """
 
 import logging
@@ -64,7 +85,9 @@ from urllib.parse import urljoin
 from django.conf import settings
 from django.urls import reverse
 
+from apps.channels.capabilities import capabilities_for
 from apps.channels.events import Button, Card, CardBlock, GalleryBlock, OutboundMessage
+from apps.channels.providers.email_html import MAX_HTML_CHARS
 from apps.common.platforms import Platform
 from apps.common.signing import sign, unsign_or_404
 from apps.common.validators import is_renderable_url
@@ -97,9 +120,14 @@ WORKSPACE_KEY = "w"
 MESSAGE_KEY = "k"
 
 #: A target longer than this is left unwrapped rather than turned into a token
-#: several times its own length. Nothing in the product produces one; a
-#: hand-edited graph can.
+#: several times its own length. Matches the graph schema's own ``maxLength`` on
+#: a button URL, so nothing the builder produces reaches it; a hand-edited graph
+#: can. The per-platform budget below is the limit that actually binds.
 MAX_TARGET_CHARS = 2000
+
+#: The narrowest ``max_text_len`` in ``apps.channels.capabilities`` (Instagram's
+#: 1 000). What an unrecognised platform is held to — see :func:`_text_budget`.
+_SMALLEST_TEXT_BUDGET = 1000
 
 #: Double-quoted ``href`` values inside an ``<a>`` start tag. ``[^>]*?`` cannot
 #: cross into the following tag, so a malformed document costs a missed count
@@ -227,8 +255,10 @@ def instrument(
     if flow_id is None or workspace_id is None:
         return outbound
 
+    budget = _text_budget(platform)
+
     def wrap(url: str) -> str:
-        return _wrapped(url, flow_id=flow_id, node_id=node_id)
+        return _wrapped(url, flow_id=flow_id, node_id=node_id, budget=budget)
 
     changed = replace(
         outbound,
@@ -241,11 +271,46 @@ def instrument(
     return _email_body(changed, workspace_id=workspace_id, wrap=wrap, idempotency_key=idempotency_key)
 
 
-def _wrapped(url: str, *, flow_id: Any, node_id: str) -> str:
-    """The ``/c/`` stand-in for one target, or the target itself if unwrappable."""
+def _text_budget(platform: str) -> int:
+    """The longest a wrapped URL may be on this platform.
+
+    ``Capabilities.max_text_len`` is the length at which
+    ``apps.channels.downgrade`` splits a message, and a URL button on a platform
+    with no button widget is inlined into exactly that text. It is a ceiling
+    rather than a layout budget — a URL filling the whole of it leaves no room
+    for the message around it — but it is the number that decides whether the
+    link survives at all, which is the question this answers.
+
+    An unknown platform gets the smallest budget in the table rather than an
+    unbounded one: a wrapper that might not fit should not be minted on the
+    strength of a name nobody recognises.
+    """
+    try:
+        return int(capabilities_for(platform).max_text_len)
+    except (KeyError, ValueError, TypeError):
+        return _SMALLEST_TEXT_BUDGET
+
+
+def _wrapped(url: str, *, flow_id: Any, node_id: str, budget: int) -> str:
+    """The ``/c/`` stand-in for one target, or the target itself if unwrappable.
+
+    Three ways to decline, all of them returning the original: a non-http(s)
+    target, one past :data:`MAX_TARGET_CHARS`, and — the one that actually
+    happens — a signed URL too long for the platform to carry. See the module
+    docstring on why an untracked link beats a truncated one.
+    """
     if not is_renderable_url(url) or len(url) > MAX_TARGET_CHARS:
         return url
-    return click_url(flow_id=flow_id, node_id=node_id, target=url)
+    wrapped = click_url(flow_id=flow_id, node_id=node_id, target=url)
+    if len(wrapped) > budget:
+        logger.info(
+            "A tracking URL for node %s would be %s characters, past this platform's %s; left unwrapped.",
+            node_id,
+            len(wrapped),
+            budget,
+        )
+        return url
+    return wrapped
 
 
 def _button(button: Button, wrap: Any) -> Button:
@@ -309,9 +374,24 @@ def _email_body(
 
     html = outbound.html_body
     if row["wrap_email_links"]:
-        html = _ANCHOR_HREF_RE.sub(lambda match: _rewrite_href(match, wrap), html)
+        rewritten = _ANCHOR_HREF_RE.sub(lambda match: _rewrite_href(match, wrap), html)
+        # All of it or none of it. ``email_html.sanitize`` parses only the first
+        # MAX_HTML_CHARS and keeps what it parsed, so a rewrite that pushes an
+        # already-long body over the limit does not fail loudly — it silently
+        # drops the tail, which is content the author wrote and expects to send.
+        # Half a rewritten body is worse than an untracked one.
+        html = rewritten if len(rewritten) <= MAX_HTML_CHARS else html
+
     if row["open_pixel"] and idempotency_key:
-        html += _PIXEL_HTML.format(url=open_url(workspace_id=workspace_id, idempotency_key=idempotency_key))
+        pixel = _PIXEL_HTML.format(url=open_url(workspace_id=workspace_id, idempotency_key=idempotency_key))
+        # Appended last and only if it fits. Over the limit the sanitiser would
+        # cut the pixel off anyway, so adding it would cost the tail of the
+        # message to buy a tag that never survives.
+        if len(html) + len(pixel) <= MAX_HTML_CHARS:
+            html += pixel
+        else:
+            logger.info("An email body is too long to carry an open pixel; sending it without one.")
+
     if html == outbound.html_body:
         return outbound
     return replace(outbound, html_body=html)

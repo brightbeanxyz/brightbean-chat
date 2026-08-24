@@ -13,6 +13,7 @@ one renderer for the table instead of one for the page and one for each action.
 
 from typing import Any
 
+from django.apps import apps as django_apps
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import render
@@ -119,7 +120,16 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         # Issue #26's per-flow stats page. Gated on its own key rather than on
         # edit_flows: reading numbers and changing a graph are different rights,
         # and every role holds this one today.
-        "can_view_analytics": request.workspace_membership.effective_permissions.get("view_analytics", False),
+        #
+        # ANDed with the app being installed, because the template reverses
+        # `analytics:flow_detail` behind this flag and config/urls.py only mounts
+        # that route when apps.analytics is there — a permission check alone
+        # would be a NoReverseMatch on the flow list of a deployment that drops
+        # the app. "May this person see analytics" is false when there are none.
+        "can_view_analytics": (
+            request.workspace_membership.effective_permissions.get("view_analytics", False)
+            and django_apps.is_installed("apps.analytics")
+        ),
         "unfiled_label": UNFILED_LABEL,
     }
 

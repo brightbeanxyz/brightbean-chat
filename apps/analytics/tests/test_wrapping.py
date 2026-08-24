@@ -110,6 +110,62 @@ class TestButtons:
         assert message.buttons[0].url == "mailto:a@b.test"
 
 
+class TestFitsTheChannel:
+    """A wrapper that would be truncated is not applied (see the module docstring)."""
+
+    def long_target(self, length: int) -> str:
+        # High-entropy, because the signer compresses: a repetitive URL of this
+        # length would come back *shorter* than the real worst case.
+        import secrets
+
+        return "https://e.test/" + secrets.token_urlsafe(length)[:length]
+
+    def test_an_ordinary_url_is_still_wrapped_on_sms(self, execution: Any) -> None:
+        message = wrap(
+            execution,
+            OutboundMessage(buttons=(Button(id="b1", label="Pricing", url=TARGET),)),
+            platform=Platform.SMS.value,
+        )
+
+        assert "/c/" in message.buttons[0].url
+
+    def test_a_url_whose_wrapper_would_not_fit_is_left_alone(self, execution: Any) -> None:
+        """SMS splits at 1 600 characters. A 1 515-character target signs to
+        about 1 730, and ``downgrade.split_text`` would cut it mid-token —
+        a link that cannot work at all, where the raw one would have."""
+        target = self.long_target(1500)
+        message = wrap(
+            execution,
+            OutboundMessage(buttons=(Button(id="b1", label="Pricing", url=target),)),
+            platform=Platform.SMS.value,
+        )
+
+        assert message.buttons[0].url == target
+
+    def test_the_same_url_is_wrapped_on_a_roomier_channel(self, execution: Any) -> None:
+        """The refusal is about the platform's budget, not about the URL."""
+        target = self.long_target(1500)
+        message = wrap(
+            execution,
+            OutboundMessage(buttons=(Button(id="b1", label="Pricing", url=target),)),
+            platform=Platform.EMAIL.value,
+        )
+
+        assert wrapped_target(message.buttons[0].url) == target
+
+    def test_an_unknown_platform_gets_the_narrowest_budget(self, execution: Any) -> None:
+        """A wrapper that might not fit is not minted on the strength of a name
+        nobody recognises."""
+        target = self.long_target(1200)
+        message = wrap(
+            execution,
+            OutboundMessage(buttons=(Button(id="b1", label="Pricing", url=target),)),
+            platform="carrier-pigeon",
+        )
+
+        assert message.buttons[0].url == target
+
+
 class TestPreview:
     def test_a_preview_run_is_returned_untouched(self, flow: Any, contact: Any, connection: Any) -> None:
         execution = make_execution(flow, contact, connection, preview=True)
@@ -185,6 +241,41 @@ class TestEmailBody:
         message = wrap(execution, OutboundMessage(html_body=self.BODY), platform=Platform.EMAIL.value)
 
         assert "/c/" in email_html.sanitize(message.html_body)
+
+    def test_a_body_near_the_sanitiser_s_limit_is_not_rewritten(self, tenancy: Any, execution: Any) -> None:
+        """``email_html.sanitize`` parses only the first ``MAX_HTML_CHARS`` and
+        keeps what it parsed, so a rewrite that pushes a long body over the limit
+        drops the author's tail rather than failing. All of it or none of it."""
+        self.opt_in(tenancy.workspace, wrap_email_links=True)
+        filler = "<p>{}</p>".format("x" * (email_html.MAX_HTML_CHARS - 200))
+        body = f'{filler}<p><a href="https://example.test/a">Read more</a></p>'
+        assert len(body) < email_html.MAX_HTML_CHARS
+
+        message = wrap(execution, OutboundMessage(html_body=body), platform=Platform.EMAIL.value)
+
+        assert message.html_body == body
+        assert len(email_html.sanitize(message.html_body)) <= email_html.MAX_HTML_CHARS
+
+    def test_a_body_with_no_room_for_the_pixel_is_sent_without_one(self, tenancy: Any, execution: Any) -> None:
+        """Over the limit the sanitiser would cut the pixel off anyway, so adding
+        it would cost the tail of the message to buy a tag that never survives."""
+        self.opt_in(tenancy.workspace, open_pixel=True)
+        body = "<p>{}</p>".format("x" * (email_html.MAX_HTML_CHARS - 20))
+        assert len(body) < email_html.MAX_HTML_CHARS
+
+        message = wrap(execution, OutboundMessage(html_body=body), platform=Platform.EMAIL.value)
+
+        assert message.html_body == body
+        assert "/o/" not in message.html_body
+
+    def test_an_ordinary_body_still_gets_both(self, tenancy: Any, execution: Any) -> None:
+        """The guards above must not be so eager that they refuse a normal email."""
+        self.opt_in(tenancy.workspace, wrap_email_links=True, open_pixel=True)
+
+        message = wrap(execution, OutboundMessage(html_body=self.BODY), platform=Platform.EMAIL.value)
+
+        assert "/c/" in message.html_body
+        assert "/o/" in message.html_body
 
     def test_a_non_email_platform_never_touches_the_body(self, tenancy: Any, execution: Any) -> None:
         self.opt_in(tenancy.workspace, wrap_email_links=True, open_pixel=True)
