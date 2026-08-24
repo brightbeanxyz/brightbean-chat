@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% comment %}
+The sequence editor: status, ordered steps and the subscriber panel.
+
+Two regions, each with its own HTMX endpoint and its own refresh event, because
+they change for different reasons — adding a step must not re-render a
+subscriber list somebody is scrolling, and subscribing a contact changes the
+per-step counts, which is why subscriber mutations fire both events.
+{% endcomment %}
+
+{% block title %}{{ sequence.name }} · Sequences · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div class="min-w-0">
+        <p class="text-xs" style="color: var(--text-tertiary);">
+            <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
+               class="btn-text-hover-primary">Sequences</a>
+        </p>
+        <h1 class="text-lg font-semibold truncate" style="color: var(--text-primary);">{{ sequence.name }}</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            Steps run in order. Each waits its delay from the moment the previous step actually ran,
+            then opens inside its send window.
+        </p>
+    </div>
+    {% if can_edit %}
+    <form class="flex items-center gap-2"
+          hx-post="{% url 'campaigns:status' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+          hx-swap="none">
+        {% csrf_token %}
+        <label for="sequence-status" class="sr-only">Status</label>
+        <select id="sequence-status" name="status" class="form-input-styled" style="width: 11rem;">
+            {% for value, label in status_options %}
+            <option value="{{ value }}" {% if sequence.status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn-outline btn-inline">Save status</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+{% comment %}
+One column on a phone, two from `md` up — a fixed two-column grid put the
+subscriber panel in a 300px gutter on every narrow screen. Layout utilities
+rather than a component class, which is the split ground rule 9 draws: the
+design system owns component properties, utilities own layout.
+{% endcomment %}
+<div class="grid gap-6 md:grid-cols-3">
+    <div id="sequence-steps" class="md:col-span-2"
+         hx-get="{% url 'campaigns:steps' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+         hx-trigger="sequenceStepsChanged from:body"
+         hx-target="this"
+         hx-swap="innerHTML">
+        {% include "campaigns/_steps.html" %}
+    </div>
+
+    <div id="sequence-subscribers" class="min-w-0"
+         hx-get="{% url 'campaigns:subscribers' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+         hx-trigger="load, sequenceSubscribersChanged from:body"
+         hx-target="this"
+         hx-swap="innerHTML">
+        <p class="text-sm" style="color: var(--text-tertiary);">Loading subscribers…</p>
+    </div>
+</div>
+{% endblock %}

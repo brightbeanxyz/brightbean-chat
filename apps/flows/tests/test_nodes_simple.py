@@ -217,18 +217,34 @@ class TestActionVerbsOnMessagingAndMembers:
 
 
 @pytest.mark.django_db
-class TestSequenceVerbsAreNotImplementedHere:
-    def test_a_verb_with_no_runtime_warns_and_the_node_continues(self, tenancy, caplog):
-        """L6-A registers the sequence verbs; until then this is the behaviour."""
-        config = _action(
-            {"verb": "subscribe_sequence", "sequence": "0192f000-0000-7000-8000-0000000000a1"},
-            {"verb": "add_tag", "tag": "still-ran"},
-        )
-        flow = published_flow(tenancy.workspace, graph([node("a", "action", config)]))
-        contact = contact_for(tenancy.workspace)
+class TestAVerbWithNoRuntime:
+    """A declared verb whose owner has not landed logs and moves on.
 
-        with caplog.at_level("WARNING"):
-            execution = start_flow(contact, flow, started_by=StartedBy.API)
+    Every verb in ``ACTION_VERBS`` has a runtime now that L6-A has registered the
+    sequence pair, so this simulates the state by removing one — which is what
+    ``engine.registry.unregister_verb`` exists for. The path itself is not
+    hypothetical: it is what ``apps/flows/engine/nodes/action.py`` promises for
+    the next verb that ships a schema before its behaviour.
+    """
+
+    def test_it_warns_and_the_rest_of_the_node_still_runs(self, tenancy, caplog):
+        from apps.flows.engine.registry import register_verb, unregister_verb, verb_handler
+
+        restore = verb_handler("subscribe_sequence")
+        unregister_verb("subscribe_sequence")
+        try:
+            config = _action(
+                {"verb": "subscribe_sequence", "sequence": "0192f000-0000-7000-8000-0000000000a1"},
+                {"verb": "add_tag", "tag": "still-ran"},
+            )
+            flow = published_flow(tenancy.workspace, graph([node("a", "action", config)]))
+            contact = contact_for(tenancy.workspace)
+
+            with caplog.at_level("WARNING"):
+                execution = start_flow(contact, flow, started_by=StartedBy.API)
+        finally:
+            if restore is not None:
+                register_verb("subscribe_sequence", restore, replace=True)
 
         assert execution.status == ExecutionStatus.COMPLETED
         assert "has no runtime in this deployment" in caplog.text
@@ -283,18 +299,32 @@ class TestConditionNode:
         assert "condition node c" in execution.last_error
 
     def test_an_unregistered_condition_source_fails_the_run(self, tenancy):
-        """``sequence`` is L6-A's slot, still declared but not evaluable.
+        """A source declared with no ``build_q`` validates at publish and fails at runtime.
 
-        This used to use ``window``, which was L3-A's and is filled now — the
-        rule evaluated, the run completed, and the test failed. The behaviour
-        being checked is unchanged: a source registered as a slot with no
-        ``build_q`` validates at publish and fails by name at runtime.
+        Every declared source has an implementation now — ``window`` came with
+        L3-A and ``sequence`` with L6-A — so the slot state is staged rather than
+        found. The behaviour under test is the contract itself: a filter using an
+        unimplemented source is storable and publishable, and raises by name when
+        a node actually runs it.
         """
-        sequence_id = "00000000-0000-0000-0000-0000000000aa"
-        flow = self._branching_flow(tenancy.workspace, [{"source": "sequence", "key": sequence_id, "op": "subscribed"}])
-        contact = contact_for(tenancy.workspace)
+        from apps.campaigns.models import Sequence
+        from apps.contacts.conditions import ConditionSource, register_source, sources
 
-        execution = start_flow(contact, flow, started_by=StartedBy.API)
+        sequence = Sequence.objects.create(workspace=tenancy.workspace, name="Onboarding")
+        implemented = sources()["sequence"]
+        slot = ConditionSource(
+            implemented.name, implemented.label, implemented.key_kind, implemented.ops, None, implemented.owner
+        )
+        register_source(slot, replace=True)
+        try:
+            flow = self._branching_flow(
+                tenancy.workspace, [{"source": "sequence", "key": str(sequence.pk), "op": "subscribed"}]
+            )
+            contact = contact_for(tenancy.workspace)
+
+            execution = start_flow(contact, flow, started_by=StartedBy.API)
+        finally:
+            register_source(implemented, replace=True)
 
         assert execution.status == ExecutionStatus.FAILED
 

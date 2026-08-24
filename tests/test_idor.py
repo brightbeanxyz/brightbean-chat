@@ -62,8 +62,31 @@ class TestCrossTenantIsolation:
         names = {route.name for route in iter_tenant_routes()}
 
         assert {
-            "sequences",
             "broadcasts",
+        } <= names
+
+    def test_the_sweep_covers_the_campaigns_app(self):
+        """Issue #22 replaced the `sequences` placeholder with the real app.
+        Every route below names a sequence, a step or an enrollment, so the
+        sweep has to reach all of them, mutations included."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "campaigns:list",
+            "campaigns:create",
+            "campaigns:detail",
+            "campaigns:rename",
+            "campaigns:status",
+            "campaigns:delete",
+            "campaigns:steps",
+            "campaigns:step_create",
+            "campaigns:step_update",
+            "campaigns:step_move",
+            "campaigns:step_delete",
+            "campaigns:subscribers",
+            "campaigns:subscriber_suggest",
+            "campaigns:subscriber_add",
+            "campaigns:subscriber_remove",
         } <= names
 
     def test_the_sweep_covers_the_inbox_app(self):

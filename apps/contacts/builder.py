@@ -14,6 +14,7 @@ from typing import Any
 from apps.common.platforms import Platform
 from apps.contacts import conditions
 from apps.contacts.conditions import CONDITION_SCHEMA
+from apps.contacts.filters import sequence_options
 from apps.contacts.models import CustomField, Segment, Tag
 
 __all__ = ["builder_config"]
@@ -39,7 +40,7 @@ def builder_config(workspace: Any, *, document: dict[str, Any] | None = None, se
 
     Only two things are added, because neither can live in a static schema: each
     source's label, evaluability and owning issue from the registry, and this
-    workspace's own tags, fields and segments.
+    workspace's own tags, fields, segments and sequences.
 
     One dict rather than six template variables, because it is one ``x-data``
     argument — and assembling it in the template would put the payload's shape
@@ -72,6 +73,11 @@ def builder_config(workspace: Any, *, document: dict[str, Any] | None = None, se
             {"value": str(row.pk), "label": row.name}
             for row in Segment.objects.for_workspace(workspace).order_by("name")
         ],
+        # Issue #22's `sequence` source. Every sequence, not just the active
+        # ones: "not subscribed to the old onboarding" is a perfectly good rule
+        # about a campaign archived last year. The *enrolment* pickers want the
+        # narrower set and ask `sequence_options(enrollable=True)` for it.
+        "sequences": sequence_options(workspace),
         # The document the builder hydrates from. The caller passes what it
         # holds rather than this function re-reading the URL, so a segment
         # loaded off disk round-trips exactly as stored instead of through a

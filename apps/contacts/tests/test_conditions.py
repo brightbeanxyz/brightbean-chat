@@ -501,27 +501,33 @@ class TestSegments:
 
 @pytest.mark.django_db
 class TestUnimplementedSources:
-    @pytest.mark.parametrize(
-        ("rule", "owner"),
-        [
-            # `window` was here too until issue #8 (L3-A) filled it. It is now
-            # covered by apps/messaging/tests/test_conditions.py, which is where
-            # the behaviour lives; only `sequence` (#22) is still a slot. The
-            # next issue to fill one deletes its row here the same way.
-            ({"source": "sequence", "key": A_SEQUENCE_ID, "op": "subscribed"}, "#22"),
-        ],
-    )
-    def test_a_slot_validates_but_refuses_to_evaluate(self, world, rule, owner):
-        """Issue #6 can ship the whole builder panel before #22 exists, so a
-        filter using a slot must be saveable — and must fail clearly if run."""
+    def test_a_slot_validates_but_refuses_to_evaluate(self, world):
+        """Issue #6 shipped the whole builder panel before #8 and #22 existed,
+        so a filter using a slot has to be saveable — and has to fail clearly,
+        naming its owner, if something runs it.
+
+        Both slots are filled now (``window`` by #8, ``sequence`` by #22), so the
+        state is staged rather than found. The contract is what is under test,
+        and it is the reason the next source can ship its schema a layer before
+        its behaviour.
+        """
         from apps.contacts.conditions import validate
 
-        validate(world.workspace, _filter(rule))
+        implemented = sources()["sequence"]
+        slot = ConditionSource(
+            implemented.name, implemented.label, implemented.key_kind, implemented.ops, None, implemented.owner
+        )
+        register_source(slot, replace=True)
+        try:
+            rule = {"source": "sequence", "key": A_SEQUENCE_ID, "op": "subscribed"}
+            validate(world.workspace, _filter(rule))
 
-        with pytest.raises(SourceNotEvaluableError) as exc:
-            list(queryset(world.workspace, _filter(rule)))
+            with pytest.raises(SourceNotEvaluableError) as exc:
+                list(queryset(world.workspace, _filter(rule)))
+        finally:
+            register_source(implemented, replace=True)
 
-        assert owner in str(exc.value)
+        assert "#22" in str(exc.value)
 
     def test_a_filled_slot_stays_saveable(self, world):
         """Filling a slot supplies behaviour, never vocabulary: a filter written
@@ -549,15 +555,17 @@ class TestTheRegistry:
     def test_all_six_sources_are_declared(self):
         assert tuple(sources()) == SOURCE_NAMES
 
-    def test_the_remaining_slot_is_declared_but_not_evaluable(self):
-        """`window` was the other one until issue #8 registered it from
-        MessagingConfig.ready(); `sequence` waits for #22. The registry is what
-        makes that a one-line change in the owning app rather than an edit
-        here."""
-        assert sources()["sequence"].is_evaluable is False
-        assert all(
-            sources()[name].is_evaluable for name in ("tag", "custom_field", "system_field", "segment", "window")
-        )
+    def test_every_declared_source_now_has_an_implementation(self):
+        """Both slots are filled: `window` by issue #8 (MessagingConfig.ready)
+        and `sequence` by #22 (CampaignsConfig.ready). The registry is what made
+        each a one-line change in the owning app rather than an edit here — and
+        the schema below proves neither changed the vocabulary doing it."""
+        assert all(sources()[name].is_evaluable for name in SOURCE_NAMES)
+        # The schema is a snapshot taken while this module was importing, when
+        # neither slot was filled — and it deliberately still says so, because
+        # issue #6 embedded it and it must not depend on which apps have loaded.
+        # The registry above is what a UI asks; see the schema test below.
+        assert CONDITION_SCHEMA["x-brightbean"]["unimplementedSources"] == ["sequence", "window"]
 
     def test_registering_an_undeclared_source_is_refused(self):
         with pytest.raises(SourceContractError):
@@ -570,33 +578,32 @@ class TestTheRegistry:
             )
 
     def test_registering_the_identical_declaration_twice_is_a_no_op(self):
-        """AppConfig.ready() runs twice under some autoreload paths.
+        """AppConfig.ready() runs twice under some autoreload paths, and both
+        owning apps register from there — so an identical registration has to
+        return early rather than trip the "already implemented" guard."""
+        before = sources()["sequence"]
 
-        Uses ``sequence``, the remaining unimplemented slot: ``window`` is now
-        registered for real by ``MessagingConfig.ready()`` (issue #8), so its
-        "identical" registration is the implemented one and the property under
-        test here is about a declaration."""
-        register_source(sources()["sequence"])
+        register_source(before)
 
-        assert sources()["sequence"].is_evaluable is False
+        assert sources()["sequence"] is before
 
-    def test_registering_an_implementation_then_restoring_it(self):
+    def test_a_second_implementation_needs_an_explicit_replace(self):
+        """Two apps quietly claiming one source is a bug that would otherwise
+        surface as a filter compiled by the wrong code."""
         original = sources()["sequence"]
-        implemented = ConditionSource(
-            original.name, original.label, original.key_kind, original.ops, lambda ctx, rule: Q(), original.owner
+        second = ConditionSource(
+            original.name, original.label, original.key_kind, original.ops, lambda ctx, rule: ~Q(), original.owner
         )
+
+        with pytest.raises(SourceContractError):
+            register_source(second)
+
         try:
-            register_source(implemented)
-            assert sources()["sequence"].is_evaluable is True
-            # A second, different implementation needs an explicit replace=True.
-            second = ConditionSource(
-                original.name, original.label, original.key_kind, original.ops, lambda ctx, rule: ~Q(), original.owner
-            )
-            with pytest.raises(SourceContractError):
-                register_source(second)
+            register_source(second, replace=True)
+            assert sources()["sequence"] is second
         finally:
             register_source(original, replace=True)
-        assert sources()["sequence"].is_evaluable is False
+        assert sources()["sequence"] is original
 
     def test_a_real_registration_is_idempotent(self):
         """The live one, not a stand-in: issue #8 registers ``window`` from
@@ -680,7 +687,7 @@ class TestTheSchema:
             original.name, original.label, original.key_kind, original.ops, lambda ctx, rule: Q(), original.owner
         )
         try:
-            register_source(implemented)
+            register_source(implemented, replace=True)
             assert before == CONDITION_SCHEMA
         finally:
             register_source(original, replace=True)

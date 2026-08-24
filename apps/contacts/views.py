@@ -83,7 +83,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
-from apps.contacts import activity, export, imports, services
+from apps.contacts import activity, export, filters, imports, services
 from apps.contacts.builder import builder_config
 from apps.contacts.conditions import ConditionError
 from apps.contacts.errors import ContactsError
@@ -267,7 +267,15 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     return render(
         request,
         "contacts/list.html",
-        {**context, "filter_config": _filter_config(request.workspace, context["query"])},
+        {
+            **context,
+            "filter_config": _filter_config(request.workspace, context["query"]),
+            # Separate from `filter_config["sequences"]` on purpose: that list
+            # feeds the §11.4 condition picker and has to offer every sequence,
+            # while the bulk enrolment control must offer only the ones
+            # `campaigns.services.subscribe` would accept.
+            "enrollable_sequences": filters.sequence_options(request.workspace, enrollable=True),
+        },
     )
 
 
@@ -397,6 +405,12 @@ def _activity_context(request: WorkspaceRequest, contact: Contact) -> dict[str, 
         "recent_messages": activity.recent_messages(contact),
         "execution": activity.live_execution(contact),
         "startable_flows": activity.startable_flows(request.workspace),
+        # Issue #22's enrolment control. The pane refreshes on its own, so the
+        # picker is built here rather than only in contact_detail — otherwise
+        # starting a flow would redraw the pane with an empty sequence list.
+        # `enrollable`, because `subscribe` takes active sequences only and a
+        # picker offering a draft is a control whose every use is a refusal.
+        "sequences": filters.sequence_options(request.workspace, enrollable=True),
         **_permissions(request),
     }
 
@@ -857,18 +871,69 @@ def bulk_delete(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 @require_permission("manage_crm")
 @require_POST
 def bulk_sequence(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    """Subscribe or unsubscribe the selection — **not yet implemented** (L6-A).
+    """Subscribe or unsubscribe the selection (issue #22, L6-A).
 
-    The endpoint exists and answers politely rather than 404ing, which is what
-    "no-op tolerant until L6-A" asks for: the control is rendered disabled, so
-    only a hand-made POST arrives here, and when issue #22 lands it fills this
-    body in and enables the button. Answering 404 today would mean the route,
-    the template control and the tests all arriving in that PR instead.
+    One endpoint for both directions and for both callers. The contact detail
+    page posts a single ``ids`` value to it rather than growing a third route
+    beside this one: the two do the same thing to a different number of rows,
+    and a second endpoint would be a second permission check to keep in step.
+
+    Row by row through ``campaigns.services`` rather than a bulk insert, for the
+    reason ``bulk_tag`` gives about tags: ``sequence.subscribed`` is what rule
+    triggers and outbound webhooks subscribe to, and an enrollment written
+    behind the services layer is a change the rest of the product never learns
+    about. At the 500-row cap that is a bounded cost paid knowingly.
+
+    ``manage_crm`` rather than ``edit_flows``: this is a bulk write to contacts
+    reached from the CRM, and the permission a route gates on is the one that
+    matches what it changes about the tenant's data. The sequence pages
+    themselves gate on ``edit_flows``.
     """
-    return toast_response(
-        tone="info",
-        title="Sequences are not available yet",
-        body="Subscribing contacts to a sequence arrives with issue #22 (L6-A).",
+    from apps.campaigns import services as campaign_services
+    from apps.campaigns.errors import CampaignsError
+    from apps.campaigns.models import Sequence
+
+    sequence = get_scoped_object_or_404(Sequence, request.workspace, pk=request.POST.get("sequence_id", ""))
+    removing = request.POST.get("mode") == "unsubscribe"
+    contacts = list(_selected(request))
+    if not contacts:
+        return toast_response(tone="info", title="Nothing selected")
+
+    # A refusal for one contact does not abandon the rest, and does not discard
+    # the ones already done. Each `subscribe` commits its own transaction, so
+    # returning early on the first error left a batch that reported failure and
+    # had in fact restarted half the selection — with no refresh event to show
+    # it. The realistic error here is a lost race on a single contact, which is
+    # a reason to skip that contact and say so, not to abandon 499 others.
+    touched = 0
+    refusals: list[str] = []
+    for contact in contacts:
+        try:
+            if removing:
+                touched += int(campaign_services.unsubscribe(sequence, contact) is not None)
+            else:
+                campaign_services.subscribe(sequence, contact, source="manual")
+                touched += 1
+        except CampaignsError as exc:
+            refusals.append(str(exc))
+
+    if not touched and refusals:
+        # Nothing happened at all, so there is no partial state to report and
+        # the reason is the whole story.
+        return toast_response(tone="error", title="Could not update the sequence", body=refusals[0])
+
+    verb = "unsubscribed from" if removing else "subscribed to"
+    detail = (
+        "Unsubscribing stops future steps; anything already running finishes."
+        if removing
+        else "Everyone starts again at step 1."
+    )
+    if refusals:
+        detail = f"{len(refusals)} skipped: {refusals[0]}"
+    return _bulk_result(
+        f"{touched} contact{'' if touched == 1 else 's'} {verb} {sequence.name}",
+        detail,
+        events={"contactsChanged": True, "sequenceSubscribersChanged": True, "sequenceStepsChanged": True},
     )
 
 

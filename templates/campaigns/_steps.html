@@ -1,0 +1,89 @@
+{% comment %}
+The ordered steps, each with the number of people currently waiting on it.
+
+"Waiting" is where an active enrollment's `current_step` points — the rung it
+will run next — which is the count an operator means by "how many people are
+about to get step 3".
+
+The delay/window controls are a plain form per step rather than one big form:
+each step saves independently, so a validation refusal on one cannot discard
+edits to another.
+{% endcomment %}
+<section>
+    <h2 class="text-xs font-semibold uppercase tracking-wide mb-2" style="color: var(--text-tertiary);">Steps</h2>
+
+    {% if not steps %}
+    <div class="rounded-xl border p-8 text-center mb-4" style="border-color: var(--border); background: var(--surface-1);">
+        <p class="text-sm font-medium" style="color: var(--text-primary);">No steps yet</p>
+        <p class="text-sm mt-1" style="color: var(--text-secondary);">
+            A sequence with no steps completes the moment somebody subscribes to it.
+        </p>
+    </div>
+    {% else %}
+    <div class="rounded-xl border divide-y mb-4" style="border-color: var(--border); background: var(--surface-1);">
+        {% for step in steps %}
+        <div class="p-3 sm:p-4" x-data="{ editing: false }">
+            <div class="flex flex-wrap items-center gap-3">
+                <span class="inline-flex items-center justify-center rounded-full text-xs font-semibold"
+                      style="width: 1.75rem; height: 1.75rem; background: var(--primary-soft); color: var(--primary);">{{ step.position }}</span>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium truncate" style="color: var(--text-primary);">{{ step.flow.name }}</p>
+                    <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
+                        Wait {{ step.delay_value }} {{ step.get_delay_unit_display|lower }}{% if step.window.enabled %},
+                        {{ step.window.from }}–{{ step.window.to }}{% if step.window.use_contact_timezone %} in the contact's timezone{% endif %}{% endif %}
+                        · {{ step.waiting_count }} waiting
+                    </p>
+                </div>
+                {% if can_edit %}
+                <div class="flex items-center gap-2">
+                    <button type="button" class="btn-outline btn-inline" @click="editing = !editing">Edit</button>
+                    <button type="button" class="btn-outline btn-inline"
+                            hx-post="{% url 'campaigns:step_move' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
+                            hx-vals='{"direction": "up"}' hx-swap="none" aria-label="Move step up">↑</button>
+                    <button type="button" class="btn-outline btn-inline"
+                            hx-post="{% url 'campaigns:step_move' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
+                            hx-vals='{"direction": "down"}' hx-swap="none" aria-label="Move step down">↓</button>
+                    <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                            hx-post="{% url 'campaigns:step_delete' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
+                            hx-swap="none"
+                            hx-confirm="Remove step {{ step.position }}? Anyone waiting on it moves to whatever takes its place.">Remove</button>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if can_edit %}
+            <form x-show="editing" x-cloak class="mt-3"
+                  hx-post="{% url 'campaigns:step_update' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
+                  hx-swap="none"
+                  @htmx:after-request="editing = false">
+                {% csrf_token %}
+                {% include "campaigns/_step_fields.html" with step=step %}
+                <div class="flex items-center gap-2 mt-3">
+                    <button type="submit" class="btn-brand btn-inline">Save step</button>
+                    <button type="button" class="btn-outline btn-inline" @click="editing = false">Cancel</button>
+                </div>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if can_edit %}
+    <div class="rounded-xl border p-3 sm:p-4" style="border-color: var(--border); background: var(--surface-1);"
+         x-data="{ adding: false }">
+        <button type="button" class="btn-outline btn-inline" x-show="!adding" @click="adding = true">Add a step</button>
+        <form x-show="adding" x-cloak
+              hx-post="{% url 'campaigns:step_create' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+              hx-swap="none"
+              @htmx:after-request="adding = false">
+            {% csrf_token %}
+            {% include "campaigns/_step_fields.html" %}
+            <div class="flex items-center gap-2 mt-3">
+                <button type="submit" class="btn-brand btn-inline">Add step</button>
+                <button type="button" class="btn-outline btn-inline" @click="adding = false">Cancel</button>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+</section>

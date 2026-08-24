@@ -59,12 +59,32 @@ Message text and platform usernames are attacker-controlled
     </form>
 
     {% comment %}
-      Sequence enrolment is L6-A's (#22). Rendered disabled rather than hidden so
-      the shape of the page does not change when it lands.
+      Sequence enrolment (#22). It posts to `contacts:bulk_sequence` with a
+      single `ids` value rather than to a route of its own: the bulk endpoint
+      already does exactly this, and a second one would be a second permission
+      check to keep in step. That endpoint gates on manage_crm, which is why the
+      control is inside this block.
     {% endcomment %}
+    {% if sequences %}
+    <form class="mt-2"
+          hx-post="{% url 'contacts:bulk_sequence' workspace_id=request.workspace.id %}"
+          hx-swap="none">
+      {% csrf_token %}
+      <input type="hidden" name="ids" value="{{ contact.id }}">
+      <label for="enrol-sequence" class="sr-only">Sequence</label>
+      <select id="enrol-sequence" name="sequence_id" required>
+        {% for sequence in sequences %}<option value="{{ sequence.value }}">{{ sequence.label }}</option>{% endfor %}
+      </select>
+      <button type="submit" name="mode" value="subscribe">Enrol</button>
+      <button type="submit" name="mode" value="unsubscribe">Remove</button>
+      <span class="muted text-xs">Enrolling restarts the sequence at step 1.</span>
+    </form>
+    {% else %}
     <p class="muted text-xs">
-      <button type="button" disabled title="Sequences arrive with issue #22 (L6-A)">Enrol in a sequence</button>
+      No sequences yet — <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}">create one</a>
+      to enrol this contact.
     </p>
+    {% endif %}
   {% endif %}
 
   {# ── Messages ────────────────────────────────────────────────── #}

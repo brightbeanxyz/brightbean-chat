@@ -24,7 +24,6 @@ _WS_SETTINGS_LAYOUT = "workspace_settings"
 # endpoint: SECURITY-BASELINE §1 requires it to 404 for a member of another
 # workspace, and tests/idor.py walks it automatically.
 _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = [
-    ("sequences/", "sequences", "Sequences", "#22 (L6-A)", _APP_LAYOUT, "edit_flows"),
     ("broadcasts/", "broadcasts", "Broadcasts", "#23 (L6-B)", _APP_LAYOUT, "send_broadcasts"),
 ]
 
@@ -99,6 +98,11 @@ urlpatterns = [
     # _WORKSPACE_STUBS above. A deep prefix, so it joins this group rather than
     # the workspace-root includes below.
     path("w/<uuid:workspace_id>/inbox/", include("apps.inbox.urls")),
+    # Sequences (issue #22), the same swap: the placeholder is gone from
+    # _WORKSPACE_STUBS and the nav row now reverses `campaigns:list`. The app
+    # label is `campaigns` because apps/flows/picklists.py resolves it by that
+    # name; see apps/campaigns/apps.py.
+    path("w/<uuid:workspace_id>/sequences/", include("apps.campaigns.urls")),
     # apps.contacts owns two disjoint stretches of the workspace URL space —
     # contacts/ and the two settings pages — so it mounts once at the root of
     # the prefix and spells the sub-paths itself (issue #3). It goes last of the

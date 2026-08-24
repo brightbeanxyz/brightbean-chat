@@ -15,7 +15,7 @@ break on the day one of them starts arriving. The stubs, and what fills them:
 ``tags``         ``[]`` until #3 (L2-A) ships ``contacts.Tag``
 ``custom_fields````[]`` until #3 ships ``contacts.CustomField``
 ``connections``  ``[]`` until #4 (L2-B) ships ``ChannelConnection``
-``sequences``    ``[]`` until L6-A ships ``campaigns.Sequence``
+``sequences``    real since L6-A (#22) shipped ``campaigns.Sequence``
 ===============  ===============================================
 
 Every entry is ``{"id", "label"}`` plus whatever else that kind needs, so the
@@ -97,7 +97,12 @@ def _connections(workspace: Any) -> list[dict[str, Any]]:
 
 
 def _sequences(workspace: Any) -> list[dict[str, Any]]:
-    """Documented stub: campaigns.Sequence arrives with L6-A (issue #22)."""
+    """Targets for the subscribe_sequence / unsubscribe_sequence action verbs.
+
+    Resolved through ``installed_model`` rather than imported, which is what let
+    this resolver ship three layers before ``apps.campaigns`` existed — and why
+    L6-A (issue #22) filled it by choosing that app label, with no edit here.
+    """
     model = installed_model("campaigns", "apps.campaigns", "Sequence")
     if model is None:
         return []

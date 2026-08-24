@@ -1,0 +1,17 @@
+{% comment %}
+The subscriber typeahead's results. Each row POSTs the contact it names.
+
+Contacts already walking the sequence are excluded by the view, so the panel
+never offers somebody whose only effect would be to restart them — that is a
+deliberate act, and the CRM's bulk control is where it belongs.
+{% endcomment %}
+{% for contact in suggestions %}
+  <button type="button" class="crm-suggestion"
+          hx-post="{% url 'campaigns:subscriber_add' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+          hx-vals='{"contact_id": "{{ contact.id }}"}'
+          hx-swap="none">{{ contact.display_name }}</button>
+{% empty %}
+  <p class="muted text-xs mt-1">
+    {% if term %}Nobody matches “{{ term }}”.{% else %}Everyone is already on this sequence.{% endif %}
+  </p>
+{% endfor %}

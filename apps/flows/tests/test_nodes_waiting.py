@@ -604,7 +604,7 @@ class TestWindowArithmetic:
     """The window search on its own, where the clock can be pinned exactly."""
 
     def test_it_moves_forward_to_the_next_allowed_weekday(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
 
@@ -613,7 +613,7 @@ class TestWindowArithmetic:
         assert moved == datetime(2026, 8, 24, 9, 0, tzinfo=UTC)
 
     def test_a_moment_before_todays_window_waits_for_it(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
         monday_dawn = datetime(2026, 8, 24, 6, 0, tzinfo=UTC)
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
@@ -621,7 +621,7 @@ class TestWindowArithmetic:
         assert _into_window(monday_dawn, window, UTC) == datetime(2026, 8, 24, 9, 0, tzinfo=UTC)
 
     def test_a_moment_inside_the_window_is_returned_unchanged(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
         monday_noon = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
@@ -629,7 +629,7 @@ class TestWindowArithmetic:
         assert _into_window(monday_noon, window, UTC) == monday_noon
 
     def test_the_window_is_read_in_the_given_clock(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
         auckland = ZoneInfo("Pacific/Auckland")
         window = {"enabled": True, "days": ["sun"], "from": "09:00", "to": "17:00"}

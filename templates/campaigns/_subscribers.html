@@ -1,0 +1,84 @@
+{% comment %}
+The subscriber panel: who is on the sequence, and the manual add/remove SPEC §12
+asks for.
+
+The contact is named by id in the POST body rather than in the URL, so
+tests/idor.py — which walks URL kwargs — cannot reach the lookup. It is scoped in
+the view and covered by a direct cross-tenant test, the same arrangement
+apps/contacts/views.py::_selected documents for the bulk endpoints.
+{% endcomment %}
+<section class="rounded-xl border p-3 sm:p-4" style="border-color: var(--border); background: var(--surface-1);">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-tertiary);">Subscribers</h2>
+        <form hx-get="{% url 'campaigns:subscribers' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+              hx-target="#sequence-subscribers"
+              hx-swap="innerHTML"
+              hx-trigger="change">
+            <label for="subscriber-status" class="sr-only">Status</label>
+            <select id="subscriber-status" name="status" class="form-input-styled" style="width: 10rem;">
+                {% for value, label in status_options %}
+                <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </form>
+    </div>
+
+    {% if can_edit %}
+    {% comment %}
+      A typeahead rather than a form, matching contacts/_tag_chips.html: a plain
+      htmx GET into a results list, and each result POSTs the id it names. There
+      is no submit button because there is nothing to submit — picking a name is
+      the action.
+    {% endcomment %}
+    <div class="crm-typeahead mb-3">
+        <label for="subscriber-search" class="sr-only">Find a contact</label>
+        <input type="search" id="subscriber-search" name="q" placeholder="Find a contact to subscribe" maxlength="200"
+               hx-get="{% url 'campaigns:subscriber_suggest' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+               hx-trigger="input changed delay:200ms, focus"
+               hx-target="#subscriber-suggestions"
+               hx-swap="innerHTML">
+        <div id="subscriber-suggestions"></div>
+    </div>
+    <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+        Or subscribe people in bulk from the
+        <a href="{% url 'contacts:list' workspace_id=request.workspace.id %}" class="btn-text-hover-primary">contact list</a>.
+    </p>
+    {% endif %}
+
+    {% if not enrollments %}
+    <p class="text-sm" style="color: var(--text-secondary);">Nobody here yet.</p>
+    {% else %}
+    {% comment %}
+      The panel says when it has stopped short. A list that silently ends at the
+      cap beside a subscriber count in the thousands is two numbers disagreeing
+      with no explanation, and somebody scanning for one person would conclude
+      they are not enrolled.
+    {% endcomment %}
+    <p class="text-xs mb-2" style="color: var(--text-tertiary);">
+        {% if truncated %}
+            Showing the {{ subscriber_cap }} most recent of {{ subscriber_total }}.
+            Filter or export from the contact list to see the rest.
+        {% else %}
+            {{ subscriber_total }} {% if status == "active" %}active{% else %}{{ status }}{% endif %}.
+        {% endif %}
+    </p>
+    <ul class="divide-y" style="border-color: var(--border);">
+        {% for enrollment in enrollments %}
+        <li class="py-2 flex items-center gap-2">
+            <div class="flex-1 min-w-0">
+                <a href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=enrollment.contact_id %}"
+                   class="text-sm truncate btn-text-hover-primary" style="color: var(--text-primary);">{{ enrollment.contact.display_name }}</a>
+                <p class="text-xs" style="color: var(--text-tertiary);">
+                    Step {{ enrollment.current_step }}{% if enrollment.next_run_at %} · next {{ enrollment.next_run_at }}{% endif %}
+                </p>
+            </div>
+            {% if can_edit and enrollment.status == "active" %}
+            <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                    hx-post="{% url 'campaigns:subscriber_remove' workspace_id=request.workspace.id sequence_id=sequence.id enrollment_id=enrollment.id %}"
+                    hx-swap="none">Remove</button>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>
