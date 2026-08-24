@@ -1,0 +1,98 @@
+{
+  "name": "BrightBean Chat",
+  "description": "Self-hosted chat-marketing automation: flows, broadcasts, sequences and a shared inbox across Telegram, Instagram, Messenger, WhatsApp, SMS and email. Postgres only \u2014 no Redis, no message broker.",
+  "repository": "https://github.com/brightbeanxyz/brightbean-chat",
+  "website": "https://github.com/brightbeanxyz/brightbean-chat",
+  "logo": "https://raw.githubusercontent.com/brightbeanxyz/brightbean-chat/main/static/favicon/web-app-manifest-512x512.png",
+  "keywords": [
+    "django",
+    "chat",
+    "automation",
+    "marketing",
+    "telegram",
+    "instagram",
+    "whatsapp",
+    "self-hosted"
+  ],
+  "success_url": "/accounts/signup/",
+  "stack": "heroku-24",
+  "buildpacks": [
+    {
+      "url": "heroku/nodejs"
+    },
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "addons": [
+    {
+      "plan": "heroku-postgresql:essential-0"
+    }
+  ],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    },
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "env": {
+    "DJANGO_SETTINGS_MODULE": {
+      "description": "Production settings. This is what forces DEBUG off, turns on HSTS and the SSL redirect, and makes the app refuse to boot without the two keys below.",
+      "value": "config.settings.production"
+    },
+    "DJANGO_ENV_FILE": {
+      "description": "Points the settings loader at a path that does not exist, so config vars are the only source of configuration. Do not change this.",
+      "value": "/nonexistent"
+    },
+    "SECRET_KEY": {
+      "description": "Django's signing key, and the input to credential encryption. Generated for you; never share it, and back it up before you need it.",
+      "generator": "secret"
+    },
+    "ENCRYPTION_KEY_SALT": {
+      "description": "HKDF salt for the AES-256-GCM encrypted fields that hold your platform credentials. Generated for you. Losing this makes every stored credential unreadable, so back it up alongside SECRET_KEY and separately from any database dump.",
+      "generator": "secret"
+    },
+    "ALLOWED_HOSTS": {
+      "description": "The hostname this app answers on, with no scheme. If you named the app 'my-chat' above, that is 'my-chat.herokuapp.com'. Add your custom domain here too, comma-separated, once you attach one. Django answers 400 to every request whose Host header is not listed \u2014 including the health check.",
+      "required": true
+    },
+    "APP_URL": {
+      "description": "The public origin, including https://. Used to build unsubscribe, click-tracking and media links, and the webhook URLs you paste into each platform's dashboard. For example https://my-chat.herokuapp.com",
+      "required": true
+    },
+    "TICK_TOKEN": {
+      "description": "Shared secret for /internal/tick, an HTTP wrapper around one worker cycle. The worker dyno below is what normally drains the queue; this is the fallback for running without one (Heroku Scheduler, or an external pinger every minute). The route answers 404 while this is unset, so an unused one exposes nothing.",
+      "generator": "secret",
+      "required": false
+    },
+    "EMAIL_HOST": {
+      "description": "SMTP server for password reset and address verification. Leave blank to skip \u2014 nothing else is gated on email delivery, but password reset cannot work without it.",
+      "required": false
+    },
+    "EMAIL_PORT": {
+      "description": "SMTP port.",
+      "value": "587",
+      "required": false
+    },
+    "EMAIL_HOST_USER": {
+      "description": "SMTP username.",
+      "required": false
+    },
+    "EMAIL_HOST_PASSWORD": {
+      "description": "SMTP password.",
+      "required": false
+    },
+    "DEFAULT_FROM_EMAIL": {
+      "description": "The From address on messages this app sends about itself.",
+      "required": false
+    },
+    "SENTRY_DSN": {
+      "description": "Optional error reporting. Leave blank to disable Sentry entirely.",
+      "required": false
+    }
+  }
+}

@@ -1,0 +1,204 @@
+# The reference production stack (SPEC §20).
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Five services: postgres, a one-shot migrate, the gunicorn app, the queue
+# worker, and Caddy terminating TLS in front of them. `docs/self-hosting.md` is
+# the walkthrough; `deploy/env.prod.example` is the file you copy to `.env`.
+#
+# Two rules shape everything below, and both come from SECURITY-BASELINE §8.
+#
+# 1. NOTHING SECRET HAS A DEFAULT. Every value that must be unique to this
+#    deployment uses compose's `${VAR:?message}` form, so `up` aborts before it
+#    pulls an image, naming the variable. docker-compose.yml (the development
+#    stack) defaults everything on purpose so a fresh clone runs; this file is
+#    the opposite file and defaults nothing that matters.
+#
+# 2. NOTHING IS PUBLISHED EXCEPT CADDY. Postgres holds contacts and the
+#    encrypted platform credentials, so it has no `ports:` key at all — not even
+#    a loopback one. The app is reachable only through the proxy that adds TLS.
+#
+# One hostname configures the deployment. APP_DOMAIN feeds Caddy's site
+# address, Django's ALLOWED_HOSTS and the APP_URL that public links are built
+# from, so there is no way to end up with a permissive ALLOWED_HOSTS by
+# forgetting a second variable. Override ALLOWED_HOSTS or APP_URL individually
+# only when the deployment answers on more than one name.
+
+x-app-environment: &app-environment
+  DJANGO_SETTINGS_MODULE: config.settings.production
+  # Assembled from the parts below so the password exists in exactly one place.
+  # Setting DATABASE_URL directly wins, for a deployment pointed at a managed
+  # Postgres — the nested `:?` is evaluated only when this default is used.
+  DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-brightbean}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD — see deploy/env.prod.example}@postgres:5432/${POSTGRES_DB:-brightbean_chat}}
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY — generate one with `make prod-secrets`, see deploy/env.prod.example}
+  ENCRYPTION_KEY_SALT: ${ENCRYPTION_KEY_SALT:?set ENCRYPTION_KEY_SALT — generate one with `make prod-secrets`, see deploy/env.prod.example}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-${APP_DOMAIN:?set APP_DOMAIN to the hostname this deployment answers on, e.g. chat.example.com — see deploy/env.prod.example}}
+  APP_URL: ${APP_URL:-https://${APP_DOMAIN:?set APP_DOMAIN to the hostname this deployment answers on, e.g. chat.example.com — see deploy/env.prod.example}}
+  # Caddy is the only thing that talks to the app, and it writes
+  # X-Forwarded-For itself, so the auth rate limiter can trust that header from
+  # inside the compose network. Overridable for a deployment behind a second
+  # proxy — see docs/self-hosting.md.
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES-172.16.0.0/12}
+  # The environment is the single source of truth inside the container. A .env
+  # still reaches it through `env_file` below (that is how PLATFORM_* and the
+  # SMTP settings arrive); this stops the settings loader reading the file a
+  # second time and disagreeing with what compose interpolated.
+  DJANGO_ENV_FILE: /nonexistent
+
+# Everything built from the app image shares these. Kept in one anchor so a
+# service cannot quietly miss one.
+x-app-service: &app-service
+  build: .
+  # A tag rather than a floating name: `IMAGE_TAG=v1.4.0 docker compose ... up -d`
+  # is the upgrade story in docs/self-hosting.md.
+  image: brightbean-chat:${IMAGE_TAG:-latest}
+  environment: *app-environment
+  env_file:
+    - path: .env
+      required: false
+  security_opt:
+    - no-new-privileges:true
+  # The image already runs as uid 1001 and binds an unprivileged port, so it
+  # needs no capabilities at all.
+  cap_drop:
+    - ALL
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-brightbean_chat}
+      POSTGRES_USER: ${POSTGRES_USER:-brightbean}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD — generate one with `make prod-secrets`, see deploy/env.prod.example}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Deliberately no `ports:`. Not even 127.0.0.1 — a loopback publish is still
+    # reachable from every other container and from anything that can open an
+    # SSH tunnel. Reach it with `docker compose exec postgres psql`; the backup
+    # and restore recipes in docs/self-hosting.md do exactly that.
+    #
+    # No cap_drop here: the entrypoint starts as root and drops to the postgres
+    # user, which needs CAP_SETUID/CAP_SETGID/CAP_CHOWN.
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-brightbean} -d ${POSTGRES_DB:-brightbean_chat}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    <<: *app-service
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # A one-shot. `restart: unless-stopped` here would loop the migration
+    # forever once it succeeded and the container exited 0.
+    restart: "no"
+
+  app:
+    <<: *app-service
+    # Exec form, so gunicorn is PID 1 and takes SIGTERM directly — `docker
+    # stop` and every rolling upgrade then drain in-flight webhook requests
+    # instead of hard-killing them after the grace period. 4 workers × 2 threads
+    # per SPEC §20.
+    #
+    # No `--access-logfile`: gunicorn's access log records the full request line
+    # including the query string, which is where /internal/tick?token=… and
+    # Meta's hub.verify_token live. The application log is scrubbed
+    # (SECURITY-BASELINE §5); gunicorn's is not. docs/self-hosting.md documents
+    # turning it on deliberately.
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --bind
+      - 0.0.0.0:8000
+      - --workers
+      - "4"
+      - --threads
+      - "2"
+    expose:
+      - "8000"
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # The probe connects to the loopback address but presents APP_URL's hostname
+    # as the Host header. Django resolves ALLOWED_HOSTS against that header, and
+    # a production ALLOWED_HOSTS does not list 127.0.0.1 — so the obvious
+    # spelling of this healthcheck (the one docker-compose.yml uses, where
+    # ALLOWED_HOSTS defaults to include 127.0.0.1) makes Django answer 400
+    # DisallowedHost to every probe. The container then never becomes healthy,
+    # caddy never starts because it waits on it, and nothing in the output says
+    # why. Widening ALLOWED_HOSTS to keep the simpler probe working would trade
+    # a real setting for a convenience.
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import os, urllib.request as r; from urllib.parse import urlparse; h = urlparse(os.environ['APP_URL']).hostname; r.urlopen(r.Request('http://127.0.0.1:8000/healthz', headers={'Host': h}), timeout=4)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    <<: *app-service
+    command: ["python", "manage.py", "process_tasks"]
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Scale it with `--scale worker=N`: the claim statement uses FOR UPDATE SKIP
+    # LOCKED, so concurrent workers take disjoint batches (SPEC §15).
+    #
+    # Deliberately no healthcheck, for the reason docker-compose.yml gives: the
+    # worker serves no port, and a probe that shelled into it would report
+    # "alive" for a process stuck on a handler just as happily as for a healthy
+    # one. Zombie recovery is the real liveness mechanism.
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    # The only service that publishes anything. The ports are variables for a
+    # host that already has something on 80/443 and forwards to these; the
+    # defaults are what automatic HTTPS needs (ACME's HTTP-01 challenge arrives
+    # on port 80).
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN to the hostname this deployment answers on, e.g. chat.example.com — see deploy/env.prod.example}
+      # Let's Encrypt sends expiry warnings here. Required rather than
+      # defaulted: a certificate nobody is told about is one that silently
+      # expires.
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL, the address Let's Encrypt notifies about this certificate — Caddy will not parse an empty one, so set any valid address even when you terminate TLS elsewhere. See deploy/env.prod.example}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and OCSP staples. Losing this volume means re-issuing on
+      # every restart, which hits Let's Encrypt's rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Caddy runs as root in the official image so it can bind 80 and 443.
+    cap_add:
+      - NET_BIND_SERVICE
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  media_data:
+  caddy_data:
+  caddy_config:

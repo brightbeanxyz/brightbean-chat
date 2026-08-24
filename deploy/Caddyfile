@@ -1,0 +1,68 @@
+# TLS termination and edge security headers for the reference stack
+# (SECURITY-BASELINE §8, SPEC §20).
+#
+# Mounted read-only at /etc/caddy/Caddyfile by docker-compose.prod.yml. Both
+# variables come from that file, which requires them, so there is no unset case
+# to handle here.
+#
+# Caddy obtains and renews the certificate itself. Point APP_DOMAIN's A/AAAA
+# record at this host, leave ports 80 and 443 reachable, and the first request
+# completes an ACME HTTP-01 challenge. Setting APP_DOMAIN to `localhost` (or any
+# .localhost name) makes Caddy issue from its own internal CA instead, with no
+# ACME call at all — that is how the stack is smoke-tested locally and in CI.
+{
+	email {$ACME_EMAIL}
+
+	# The admin API is a full control plane for the running server. It binds
+	# 127.0.0.1:2019 inside the container by default, which is already not
+	# reachable from the compose network, but nothing here uses it.
+	admin off
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# `defer` is load-bearing, not stylistic. Without it these operations run
+	# against the response header map BEFORE reverse_proxy copies the upstream
+	# headers over it, so the app's values would win and `-Server` would delete
+	# a header that had not arrived yet. Deferred, the proxy answers first and
+	# the edge has the last word.
+	#
+	# config/settings/production.py sets the same four headers, so a deployment
+	# that terminates TLS somewhere other than here is still hardened. This is
+	# the second copy on purpose: the one the smoke script checks, and the one
+	# that survives a settings mistake.
+	header {
+		defer
+
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+
+		# Version disclosure, and nothing else uses it.
+		-Server
+	}
+
+	# Deliberately no Content-Security-Policy here. Django owns it, with a
+	# per-request nonce on every inline <script> and <style>
+	# (SECURITY-BASELINE §8) — a static copy at the edge could not carry the
+	# nonce and would break every page it "protected".
+
+	# Deliberately no `request_body max_size` either. The application enforces
+	# its own caps, and they are per-endpoint rather than global: 256 KB on
+	# webhook and API bodies, but up to 200 MB for a video in the media library.
+	# One edge number would have to be the largest of those, which protects
+	# nothing the app is not already protecting.
+
+	# Deliberately no `log` directive. Caddy writes no access log unless one is
+	# configured, and the default access-log format records the full URI —
+	# including /internal/tick?token=… and Meta's hub.verify_token. The
+	# application log is scrubbed (SECURITY-BASELINE §5); an edge access log is
+	# not. docs/self-hosting.md covers enabling one deliberately.
+
+	# reverse_proxy sets X-Forwarded-For, X-Forwarded-Proto and X-Forwarded-Host
+	# itself, which is what config/settings/production.py's
+	# SECURE_PROXY_SSL_HEADER reads to know the request arrived over TLS.
+	reverse_proxy app:8000
+}

@@ -1,0 +1,98 @@
+# Render Blueprint — one web service, one background worker, one Postgres.
+#
+# Deploy button: https://render.com/deploy?repo=https://github.com/brightbeanxyz/brightbean-chat
+# Walkthrough: docs/self-hosting.md § Render.
+#
+# THE ENV GROUP IS THE WHOLE POINT OF THIS FILE'S SHAPE. `generateValue: true`
+# generates a DIFFERENT value per service it is written on. Written directly on
+# both services below, the web process and the worker would each get their own
+# SECRET_KEY and ENCRYPTION_KEY_SALT — and every platform credential the worker
+# encrypted would be undecryptable by the web process, and vice versa. It would
+# deploy green and fail on the first channel connection. An env group is
+# generated once and shared, which is the only correct arrangement here.
+
+databases:
+  - name: brightbean-chat-db
+    databaseName: brightbean_chat
+    user: brightbean
+    plan: basic-256mb
+    # Reachable from Render services only. An empty allow list is what closes it
+    # to the public internet; omitting the key leaves it open to any address
+    # (issue #28: the database must not be internet-exposed).
+    ipAllowList: []
+
+envVarGroups:
+  - name: brightbean-chat-secrets
+    envVars:
+      # Django's signing key, and the input to credential encryption.
+      - key: SECRET_KEY
+        generateValue: true
+      # HKDF salt for the AES-256-GCM encrypted fields. Back this and SECRET_KEY
+      # up separately from any database dump — together they decrypt it.
+      - key: ENCRYPTION_KEY_SALT
+        generateValue: true
+      # /internal/tick's shared secret. The worker below is what drains the
+      # queue; this is the fallback for a web-only deployment. The route answers
+      # 404 while it is unset.
+      - key: TICK_TOKEN
+        generateValue: true
+
+services:
+  - type: web
+    name: brightbean-chat
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    # The image's own CMD binds $PORT, which Render sets, so there is no
+    # dockerCommand here — one gunicorn line, in the Dockerfile, not three.
+    healthCheckPath: /healthz
+    # Runs after the image is built and before the new instance takes traffic,
+    # so a migration never races the old release.
+    preDeployCommand: python manage.py migrate --noinput
+    envVars:
+      - fromGroup: brightbean-chat-secrets
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      # Config is the only source of configuration; there is no .env here.
+      - key: DJANGO_ENV_FILE
+        value: /nonexistent
+      - key: DATABASE_URL
+        fromDatabase:
+          name: brightbean-chat-db
+          property: connectionString
+      # Prompted at deploy time rather than defaulted. Django answers 400 to
+      # every request whose Host is not listed, health check included, so a
+      # wildcard here would be the one setting that silently weakens the
+      # deployment. Enter <your-service>.onrender.com, plus any custom domain.
+      - key: ALLOWED_HOSTS
+        sync: false
+      # The public origin including https://, used to build unsubscribe, click
+      # tracking and media links and the webhook URLs you paste into each
+      # platform's dashboard.
+      - key: APP_URL
+        sync: false
+
+  - type: worker
+    name: brightbean-chat-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    # The queue worker (SPEC §15). Without it nothing time-based ever runs:
+    # delays, retries, sequence steps, broadcast fanout and hourly housekeeping
+    # are all rows in Postgres waiting for a process to claim them.
+    dockerCommand: python manage.py process_tasks
+    envVars:
+      # The same group as the web service — see the note at the top of this file.
+      - fromGroup: brightbean-chat-secrets
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: DJANGO_ENV_FILE
+        value: /nonexistent
+      - key: DATABASE_URL
+        fromDatabase:
+          name: brightbean-chat-db
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: APP_URL
+        sync: false
