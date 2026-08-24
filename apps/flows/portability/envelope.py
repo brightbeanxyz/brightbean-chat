@@ -246,7 +246,8 @@ def parse(raw: bytes | str) -> tuple[dict[str, Any] | None, list[Issue]]:
 
     Size first, because the parse is the expense. Depth second, iteratively,
     because a recursive measurement of a hostile document is itself the denial
-    of service it was added to prevent.
+    of service it was added to prevent. Then a NUL scan, because JSON permits a
+    character Postgres cannot store.
     """
     size = len(raw.encode("utf-8") if isinstance(raw, str) else raw)
     if size > MAX_DOCUMENT_BYTES:
@@ -267,7 +268,42 @@ def parse(raw: bytes | str) -> tuple[dict[str, Any] | None, list[Issue]]:
 
     if json_depth(payload, limit=MAX_DOCUMENT_DEPTH) > MAX_DOCUMENT_DEPTH:
         return None, [_issue(f"The file nests deeper than the limit of {MAX_DOCUMENT_DEPTH} levels.", "document")]
+    if _contains_nul(payload):
+        return None, [_issue("The file contains a null character, which cannot be stored.", "document")]
     return payload, []
+
+
+#: The one character JSON allows and Postgres does not.
+NUL = chr(0)
+
+
+def _contains_nul(value: Any) -> bool:
+    """Whether any string in the document — key or value — holds a NUL.
+
+    JSON permits ``\\u0000``; Postgres ``text`` and ``jsonb`` do not. Without
+    this, an uploaded document carrying one would reach ``FlowImport.document``
+    and fail at execute time, which is a 500 for a value a stranger supplied —
+    the same hazard ``apps.common.naming.clean_name`` refuses a name for, and
+    the same shape as the non-finite-number check in the graph envelope.
+
+    Iterative, and after the depth cap, for the reason every walk in this
+    codebase is: recursing over a hostile document is the denial of service the
+    cap exists to prevent.
+    """
+    stack: list[Any] = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, str):
+            if NUL in current:
+                return True
+        elif isinstance(current, dict):
+            for key, item in current.items():
+                if isinstance(key, str) and NUL in key:
+                    return True
+                stack.append(item)
+        elif isinstance(current, list):
+            stack.extend(current)
+    return False
 
 
 # --------------------------------------------------------------------------

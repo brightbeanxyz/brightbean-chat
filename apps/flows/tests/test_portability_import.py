@@ -77,6 +77,21 @@ class TestMalformedInputIsRefused:
             payload = f"[{payload}]"
         assert "nests deeper" in " ".join(_rejected(f'{{"flows": {payload.replace("x", "1")}}}'))
 
+    def test_a_null_character_is_refused(self) -> None:
+        """JSON allows ``\\u0000``; Postgres ``jsonb`` does not.
+
+        Without this the document would reach ``FlowImport.document`` and fail at
+        execute time — a 500 for a value a stranger supplied.
+        """
+        document = _minimal()
+        document["flows"][0]["name"] = "Hello" + chr(0) + "there"
+        assert "null character" in " ".join(_rejected(document))
+
+    def test_a_null_character_in_a_key_is_refused(self) -> None:
+        document = _minimal()
+        document["requirements"]["tag"] = [{"key": chr(0)}]
+        assert "null character" in " ".join(_rejected(document))
+
     def test_an_unknown_envelope_key_is_refused(self) -> None:
         """SECURITY-BASELINE §7's mass-assignment guard, at the envelope."""
         document = _minimal()

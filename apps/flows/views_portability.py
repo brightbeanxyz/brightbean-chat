@@ -346,6 +346,10 @@ def _mapping_from(request: WorkspaceRequest, record: FlowImport) -> dict[str, An
     (SECURITY-BASELINE §7).
     """
     wanted = {(requirement.kind, requirement.key) for requirement in portability.requirements_for(record.document)}
+    # Triggers are not requirements — nothing has to be supplied for one — but
+    # they are skippable, and they ride in the same dictionary so the wizard has
+    # one form and one parser.
+    wanted |= {(portability.TRIGGER_KIND, choice.key) for choice in portability.trigger_choices(record.document)}
     mapping: dict[str, dict[str, Any]] = {}
     for name, value in request.POST.items():
         parts = name.split("|", 2)

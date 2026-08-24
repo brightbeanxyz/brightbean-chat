@@ -63,19 +63,24 @@ from apps.flows.schema.issues import Issue
 __all__ = [
     "ACTION_BLANK",
     "ACTION_CREATE",
+    "ACTION_KEEP",
     "ACTION_MAP",
+    "ACTION_SKIP",
     "CREATABLE_KINDS",
     "OPTIONAL_KINDS",
     "ImportNotReadyError",
     "ImportPlan",
     "Requirement",
     "Resolution",
+    "TRIGGER_KIND",
+    "TriggerChoice",
     "apply_import",
     "default_mapping",
     "outbound_requests",
     "parse_and_validate",
     "plan_import",
     "requirements_for",
+    "trigger_choices",
 ]
 
 logger = logging.getLogger(__name__)
@@ -87,6 +92,14 @@ logger = logging.getLogger(__name__)
 ACTION_CREATE = "create"
 ACTION_MAP = "map"
 ACTION_BLANK = "blank"
+
+#: Triggers are not a *requirement* — nothing has to be supplied for one — but
+#: the issue asks for them to be skippable, and "this template brings a keyword
+#: trigger you may not want" is a real question. They ride in the same mapping
+#: dictionary under this pseudo-kind so the wizard has one form and one parser.
+TRIGGER_KIND = "trigger"
+ACTION_KEEP = "keep"
+ACTION_SKIP = "skip"
 
 #: Kinds the mapping step can create from nothing.
 #:
@@ -168,6 +181,28 @@ class Resolution:
 
 
 @dataclass
+class TriggerChoice:
+    """One trigger in the document, and whether it is being kept.
+
+    Kept by default. Every imported trigger arrives **disabled** whatever this
+    says (see :func:`apply_import`), so the choice is between "disabled and
+    there to switch on" and "not imported at all" — never between off and live.
+    """
+
+    flow_key: str
+    flow_name: str
+    index: int
+    type: str
+    label: str
+    platform: str | None
+    keep: bool = True
+
+    @property
+    def key(self) -> str:
+        return f"{self.flow_key}:trigger-{self.index}"
+
+
+@dataclass
 class ImportPlan:
     """The dry run: everything a person needs before they press the button."""
 
@@ -180,6 +215,8 @@ class ImportPlan:
     #: Findings that do not stop the import: a half-wired graph, a manifest that
     #: disagrees with the document.
     notes: list[str] = field(default_factory=list)
+    #: Every trigger the document carries, and whether it is being kept.
+    triggers: list[TriggerChoice] = field(default_factory=list)
 
     @property
     def unanswered(self) -> list[Resolution]:
@@ -389,7 +426,36 @@ def plan_import(workspace: Any, document: dict[str, Any], mapping: dict[str, Any
         resolutions=resolutions,
         outbound_requests=outbound_requests(document),
         notes=_notes(document),
+        triggers=trigger_choices(document, mapping),
     )
+
+
+def trigger_choices(document: dict[str, Any], mapping: dict[str, Any] | None = None) -> list[TriggerChoice]:
+    """Every trigger in the document, in order, with the keep/skip answer applied.
+
+    Kept unless the mapping says otherwise: a template's triggers are the half of
+    it that says *when* the flow runs, so dropping them by default would import
+    something that can never start. They arrive disabled either way.
+    """
+    from apps.flows.triggers.registry import spec_for
+
+    answers = (mapping or {}).get(TRIGGER_KIND) or {}
+    choices: list[TriggerChoice] = []
+    for flow in document["flows"]:
+        for index, trigger in enumerate(flow["triggers"]):
+            spec = spec_for(str(trigger["type"]))
+            choice = TriggerChoice(
+                flow_key=str(flow["key"]),
+                flow_name=str(flow["name"]),
+                index=index,
+                type=str(trigger["type"]),
+                label=spec.label if spec is not None else str(trigger["type"]),
+                platform=trigger.get("platform"),
+            )
+            answer = answers.get(choice.key) or {}
+            choice.keep = str(answer.get("action") or ACTION_KEEP) != ACTION_SKIP
+            choices.append(choice)
+    return choices
 
 
 def outbound_requests(document: dict[str, Any]) -> list[dict[str, str]]:
@@ -676,6 +742,8 @@ def apply_import(workspace: Any, document: dict[str, Any], mapping: dict[str, An
         if resolution.action == ACTION_CREATE:
             resolution.target_id = str(_create(workspace, resolution))
 
+    kept = {choice.key for choice in plan.triggers if choice.keep}
+
     flows: dict[str, Flow] = {}
     for entry in document["flows"]:
         flows[entry["key"]] = _create_flow(workspace, entry, user=user)
@@ -693,7 +761,7 @@ def apply_import(workspace: Any, document: dict[str, Any], mapping: dict[str, An
         flow = flows[entry["key"]]
         graph = refs.rewrite_graph(entry["graph"], _substitute(lookup, flows, entry["key"]))
         _save(flow, graph, user=user)
-        _create_triggers(flow, entry, lookup, flows)
+        _create_triggers(flow, entry, lookup, flows, kept)
 
     logger.info(
         "Imported %s flow(s) into workspace %s as drafts, triggers disabled.",
@@ -761,11 +829,19 @@ def _save(flow: Flow, graph: Any, *, user: Any) -> None:
     save_draft(flow, graph, user=user)
 
 
-def _create_triggers(flow: Flow, entry: dict[str, Any], lookup: dict[Any, Resolution], flows: dict[str, Flow]) -> None:
-    """Triggers, rewritten and **disabled**."""
+def _create_triggers(
+    flow: Flow,
+    entry: dict[str, Any],
+    lookup: dict[Any, Resolution],
+    flows: dict[str, Flow],
+    kept: set[str],
+) -> None:
+    """Triggers, rewritten and **disabled** — and only the ones being kept."""
     from apps.flows.triggers.services import TriggerValidationError, create_trigger
 
     for index, trigger in enumerate(entry["triggers"]):
+        if f"{entry['key']}:trigger-{index}" not in kept:
+            continue
         config = refs.rewrite_trigger_config(
             trigger["type"], trigger["config"], _substitute(lookup, flows, entry["key"], f"trigger-{index}")
         )

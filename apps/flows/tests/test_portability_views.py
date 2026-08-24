@@ -138,6 +138,21 @@ def _tiny() -> dict[str, Any]:
     }
 
 
+def _two_triggers() -> dict[str, Any]:
+    """``_tiny()`` with two unbound keyword triggers.
+
+    Unbound on purpose: a bound trigger would raise a channel requirement, and
+    this fixture exists for the tests that are about triggers rather than about
+    the mapping step.
+    """
+    document = _tiny()
+    document["flows"][0]["triggers"] = [
+        {"type": "keyword", "platform": None, "config": {"keywords": [{"text": "first", "mode": "exact"}]}},
+        {"type": "keyword", "platform": None, "config": {"keywords": [{"text": "second", "mode": "exact"}]}},
+    ]
+    return document
+
+
 class TestReviewAndConfirm:
     def test_the_review_page_lists_the_outbound_calls(self, tenancy: Any, client_for: Any) -> None:
         document = portability.export_document(seed(tenancy).flow)
@@ -198,6 +213,54 @@ class TestReviewAndConfirm:
 
         record.refresh_from_db()
         assert record.mapping == {}
+
+    def test_a_trigger_can_be_skipped(self, tenancy: Any, client_for: Any) -> None:
+        """The issue's "skip/keep triggers". Kept by default; skipped on request.
+
+        Skipping is not the same as importing one disabled — every imported
+        trigger is disabled anyway, so "skip" means the row is never created.
+
+        Built on ``_two_triggers()`` rather than the full fixture flow: this is
+        about the keep/skip answer, and a document that also raises a media
+        requirement would make the confirm refuse for an unrelated reason.
+        """
+        from apps.flows.models import Trigger
+
+        client = client_for(tenancy.owner)
+        _upload(client, tenancy, _two_triggers())
+        record = _record_for(tenancy)
+        choices = portability.trigger_choices(record.document)
+        assert [choice.keep for choice in choices] == [True, True]
+
+        client.post(
+            _url("import_review", tenancy, flow_import_id=record.pk),
+            {
+                f"trigger|{choices[0].key}|action": "skip",
+                f"trigger|{choices[1].key}|action": "keep",
+            },
+        )
+
+        record.refresh_from_db()
+        assert not portability.trigger_choices(record.document, record.mapping)[0].keep
+        before = Trigger.objects.for_workspace(tenancy.workspace).count()
+
+        assert client.post(_url("import_confirm", tenancy, flow_import_id=record.pk)).status_code == 204
+
+        landed = Trigger.objects.for_workspace(tenancy.workspace).filter(type="keyword")
+        assert Trigger.objects.for_workspace(tenancy.workspace).count() - before == 1
+        assert [trigger.config_json["keywords"][0]["text"] for trigger in landed] == ["second"]
+
+    def test_triggers_are_kept_by_default(self, tenancy: Any, client_for: Any) -> None:
+        from apps.flows.models import Trigger
+
+        client = client_for(tenancy.owner)
+        _upload(client, tenancy, _two_triggers())
+        record = _record_for(tenancy)
+        before = Trigger.objects.for_workspace(tenancy.workspace).count()
+
+        client.post(_url("import_confirm", tenancy, flow_import_id=record.pk))
+
+        assert Trigger.objects.for_workspace(tenancy.workspace).count() - before == 2
 
     def test_confirm_creates_the_flows_and_marks_the_import(self, tenancy: Any, client_for: Any) -> None:
         client = client_for(tenancy.owner)

@@ -168,7 +168,10 @@ serialised bytes.
    **every trigger config** through
    `apps.flows.triggers.validation.validate_config`.
 5. **Requirements**, re-derived by walking the flows themselves.
-6. **Mapping**, then a **dry run**.
+6. **Mapping**, then a **dry run**. The mapping step also lets you **skip** any
+   trigger the template brings. Every imported trigger arrives disabled either
+   way, so skipping is the difference between "off and ready to enable" and "not
+   imported at all".
 7. **Creation**, in one transaction, on an explicit confirm.
 
 Nothing before step 7 creates a flow, a tag, a field, a sequence or a trigger.

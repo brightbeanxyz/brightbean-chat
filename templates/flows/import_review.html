@@ -99,6 +99,34 @@ from visiting a stranger's address.
         </section>
         {% endfor %}
 
+        {% if plan.triggers %}
+        <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-1);">
+            <h2 class="text-sm font-semibold" style="color: var(--text-primary);">Triggers</h2>
+            <p class="text-xs mt-0.5 mb-3" style="color: var(--text-tertiary);">
+                What starts each flow. Every one arrives <strong>switched off</strong> whichever you keep —
+                the choice is between "off and ready to enable" and "not imported at all".
+            </p>
+            <div class="space-y-3">
+                {% for choice in plan.triggers %}
+                <div class="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-2"
+                     style="border-color: var(--border);">
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium" style="color: var(--text-primary);">{{ choice.label }}</p>
+                        <p class="text-xs" style="color: var(--text-tertiary);">
+                            {{ choice.flow_name }}{% if choice.platform %} · {{ choice.platform }}{% endif %}
+                        </p>
+                    </div>
+                    <select name="trigger|{{ choice.key }}|action" class="form-input-styled" style="width: 9rem;"
+                            aria-label="Keep or skip the {{ choice.label }} trigger on {{ choice.flow_name }}">
+                        <option value="keep" {% if choice.keep %}selected{% endif %}>Keep</option>
+                        <option value="skip" {% if not choice.keep %}selected{% endif %}>Skip</option>
+                    </select>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
         <div class="flex flex-wrap items-center gap-2">
             <button type="submit" class="btn-outline btn-inline">Save answers</button>
             {% comment %}
