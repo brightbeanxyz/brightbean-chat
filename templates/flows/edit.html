@@ -46,6 +46,17 @@ guaranteed flash of an unstyled canvas.
         {% endcomment %}
         <button type="button" class="btn-outline btn-inline" x-data
                 @click="$dispatch('toggle-triggers')">Triggers</button>
+        {% comment %}
+          Export from the builder as well as from the list (issue #27). Plain
+          links outside the mount div: the response is a file download, and the
+          React island reverses no URLs of its own — everything it needs arrives
+          as a data attribute, so an action it does not take belongs here.
+        {% endcomment %}
+        {% if can_edit %}
+        <a href="{{ export_url }}" class="btn-outline btn-inline">Export</a>
+        <a href="{{ export_bundle_url }}" class="btn-outline btn-inline"
+           title="This flow and every flow it hands over to, as one file">Bundle</a>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

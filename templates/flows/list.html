@@ -22,16 +22,24 @@ swap in styles.css meaningful.
         </p>
     </div>
     {% if can_edit %}
-    <form class="flex items-center gap-2"
-          hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}"
-          hx-swap="none"
-          x-data
-          @htmx:after-request="$el.reset()">
-        {% csrf_token %}
-        <input type="text" name="name" maxlength="200" required placeholder="New flow name"
-               class="form-input-styled" style="width: 14rem;" aria-label="New flow name">
-        <button type="submit" class="btn-brand btn-inline">Create</button>
-    </form>
+    <div class="flex flex-wrap items-center gap-2">
+        {% comment %}
+          A page rather than a modal: the import is three steps and the middle
+          one can be long (issue #27).
+        {% endcomment %}
+        <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
+           class="btn-outline btn-inline">Import</a>
+        <form class="flex items-center gap-2"
+              hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}"
+              hx-swap="none"
+              x-data
+              @htmx:after-request="$el.reset()">
+            {% csrf_token %}
+            <input type="text" name="name" maxlength="200" required placeholder="New flow name"
+                   class="form-input-styled" style="width: 14rem;" aria-label="New flow name">
+            <button type="submit" class="btn-brand btn-inline">Create</button>
+        </form>
+    </div>
     {% endif %}
 </div>
 {% endblock %}

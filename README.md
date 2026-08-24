@@ -120,6 +120,7 @@ the frontend build.
 | [`docs/self-hosting.md`](docs/self-hosting.md) | Deploying and operating it: first boot, TLS, backups, upgrades, hardening |
 | [`docs/channels/`](docs/channels/) | Per-platform setup — [Telegram](docs/channels/telegram.md), [Instagram](docs/channels/instagram.md), [Messenger](docs/channels/messenger.md), [WhatsApp](docs/channels/whatsapp.md), [SMS](docs/channels/sms.md), [email](docs/channels/email.md), [media](docs/channels/media.md) |
 | [`docs/api/v1.md`](docs/api/v1.md) | The public REST API and outbound webhooks |
+| [`docs/flow-templates.md`](docs/flow-templates.md) | The flow export/import format, and how to contribute a template |
 | [`docs/SPEC.md`](docs/SPEC.md) | The engineering specification — authoritative |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
 | [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
