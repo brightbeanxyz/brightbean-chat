@@ -17,6 +17,7 @@ Tailwind 4 and PostgreSQL, with no Redis and no message broker.
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
 | [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Tenant scoping, the IDOR suite, URL and RBAC conventions |
+| [`tests/acceptance/README.md`](tests/acceptance/README.md) | Whether v1 is accepted: SPEC §21 criterion by criterion, and the runbooks for the ones CI cannot reach |
 
 ## Quickstart (Docker)
 
