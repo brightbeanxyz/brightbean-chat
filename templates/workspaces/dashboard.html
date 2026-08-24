@@ -1,30 +1,115 @@
 {% extends "base.html" %}
+{% comment %}
+The workspace landing page.
+
+The KPI cards are issue #26's, and they are the first thing on the page because
+they are the reason somebody opens it. Each one links to the section that can
+explain it — a number with no way to ask "which ones?" is a number nobody
+trusts.
+
+`kpis` is None in a deployment with no analytics app, and the cards are simply
+absent then rather than rendering as zeros.
+{% endcomment %}
+
 {% block title %}{{ request.workspace.name }} · BrightBean Chat{% endblock %}
 
-{% block page_header %}<h1>{{ request.workspace.name }}</h1>{% endblock %}
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ request.workspace.name }}</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            Signed in as {{ request.user.display_name }} —
+            {{ request.workspace_membership.get_workspace_role_display }} in this workspace.
+        </p>
+    </div>
+    {% if kpis and can_view_analytics %}
+    <a class="btn-outline btn-inline" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}">Analytics</a>
+    {% endif %}
+</div>
+{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    Signed in as {{ request.user.display_name }} —
-    {{ request.workspace_membership.get_workspace_role_display }} in this workspace.
-  </p>
-  <p>
-    The dashboard fills in from Layer 2 onwards. Tenancy, roles, authentication
-    and the credential store are in place.
-  </p>
+{% if kpis %}
+<div class="an-cards">
+    <a class="an-card" href="{% url 'contacts:list' workspace_id=request.workspace.id %}">
+        <div class="an-card-figure">{{ kpis.contacts_total }}</div>
+        <div class="an-card-label">Contacts</div>
+        <div class="an-card-note">{{ kpis.contacts_new }} new in the last 7 days</div>
+    </a>
+    <a class="an-card" href="{% url 'inbox:list' workspace_id=request.workspace.id %}">
+        <div class="an-card-figure">{{ kpis.messages_in }}</div>
+        <div class="an-card-label">Messages in</div>
+        <div class="an-card-note">Last 7 days</div>
+    </a>
+    {% comment %}
+      The one card whose destination is not open to every role: `view_analytics`
+      is held by all four today, but the link is gated on the key rather than on
+      that happening to be true (apps/members/roles.py).
+    {% endcomment %}
+    {% if can_view_analytics %}
+    <a class="an-card" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}?days=7">
+        <div class="an-card-figure">{{ kpis.messages_out }}</div>
+        <div class="an-card-label">Messages out</div>
+        <div class="an-card-note">Last 7 days</div>
+    </a>
+    {% else %}
+    <div class="an-card">
+        <div class="an-card-figure">{{ kpis.messages_out }}</div>
+        <div class="an-card-label">Messages out</div>
+        <div class="an-card-note">Last 7 days</div>
+    </div>
+    {% endif %}
+    <a class="an-card" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
+        <div class="an-card-figure">{{ kpis.active_flows }}</div>
+        <div class="an-card-label">Active flows</div>
+        <div class="an-card-note">Published and running</div>
+    </a>
+</div>
 
-  <h2>Switch workspace</h2>
-  <ul>
-    {% for membership in switchable_memberships %}
-      <li>
-        <form method="post" action="{% url 'workspaces:switch' workspace_id=membership.workspace_id %}">
-          {% csrf_token %}
-          <button type="submit">
-            {{ membership.workspace.icon }} {{ membership.workspace.name }}
-            ({{ membership.get_workspace_role_display }})
-          </button>
-        </form>
-      </li>
-    {% endfor %}
-  </ul>
+{% if can_send_broadcasts %}
+<div class="an-panel">
+    <div class="an-panel-head">
+        <span class="an-panel-title">Recent broadcasts</span>
+        <a class="an-hint" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">All broadcasts</a>
+    </div>
+    {% if kpis.recent_broadcasts %}
+    <table class="an-table">
+        <tbody>
+            {% for broadcast in kpis.recent_broadcasts %}
+            <tr>
+                <td>
+                    <a href="{% url 'broadcasts:detail' workspace_id=request.workspace.id broadcast_id=broadcast.id %}">{{ broadcast.name }}</a>
+                </td>
+                <td class="an-muted">{{ broadcast.channel_connection.display_name }}</td>
+                <td><span class="status-pill status-pill-{{ broadcast.status }}">{{ broadcast.get_status_display }}</span></td>
+                <td class="an-num an-muted">{{ broadcast.created_at|date:"j M Y" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="an-hint">Nothing sent yet.</p>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}
+
+<div class="an-panel">
+    <div class="an-panel-head">
+        <span class="an-panel-title">Switch workspace</span>
+    </div>
+    <ul>
+        {% for membership in switchable_memberships %}
+        <li>
+            <form method="post" action="{% url 'workspaces:switch' workspace_id=membership.workspace_id %}">
+                {% csrf_token %}
+                <button type="submit" class="btn-outline btn-inline">
+                    {{ membership.workspace.icon }} {{ membership.workspace.name }}
+                    ({{ membership.get_workspace_role_display }})
+                </button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
 {% endblock %}

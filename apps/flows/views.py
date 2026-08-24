@@ -13,6 +13,7 @@ one renderer for the table instead of one for the page and one for each action.
 
 from typing import Any
 
+from django.apps import apps as django_apps
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import render
@@ -116,6 +117,19 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         "status": request.GET.get("status", ""),
         "folder": request.GET.get("folder", ""),
         "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
+        # Issue #26's per-flow stats page. Gated on its own key rather than on
+        # edit_flows: reading numbers and changing a graph are different rights,
+        # and every role holds this one today.
+        #
+        # ANDed with the app being installed, because the template reverses
+        # `analytics:flow_detail` behind this flag and config/urls.py only mounts
+        # that route when apps.analytics is there — a permission check alone
+        # would be a NoReverseMatch on the flow list of a deployment that drops
+        # the app. "May this person see analytics" is false when there are none.
+        "can_view_analytics": (
+            request.workspace_membership.effective_permissions.get("view_analytics", False)
+            and django_apps.is_installed("apps.analytics")
+        ),
         "unfiled_label": UNFILED_LABEL,
     }
 
@@ -157,6 +171,11 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             "api_publish_url": reverse("flows:api_publish", kwargs=keys),
             "api_stats_url": reverse("flows:api_stats", kwargs=keys),
             "api_schema_url": reverse("flows:api_schema", kwargs={"workspace_id": workspace_id}),
+            # #27's export, offered from the builder as well as from the list.
+            # Reversed here like the URLs above rather than assembled in the
+            # bundle, which would break under FORCE_SCRIPT_NAME.
+            "export_url": reverse("flows:export", kwargs=keys),
+            "export_bundle_url": reverse("flows:export_bundle", kwargs=keys),
             # #16's picker, for the send_message media block. Reversed here like
             # its four siblings rather than assembled from location.pathname in
             # the bundle, which would break under FORCE_SCRIPT_NAME.

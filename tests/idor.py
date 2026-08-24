@@ -62,6 +62,12 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "segment_id": lambda t: _victim_segment(t).pk,
     "identity_id": lambda t: _victim_identity(t).pk,
     "import_id": lambda t: _victim_contact_import(t).pk,
+    # Issue #27's flow templates. Deliberately **not** spelled ``import_id``:
+    # that kwarg is already the contacts CSV import's, and reusing it would send
+    # a ContactImport pk at a flows route, which 404s because the row is the
+    # wrong type rather than because of tenancy — the sweep passing for exactly
+    # the reason this file keeps warning about.
+    "flow_import_id": lambda t: _victim_flow_import(t).pk,
     "connection_id": lambda t: _victim_connection(t).pk,
     # Issue #19's WhatsApp template manager. Workspace-scoped like the rest of
     # the channels app, so the sweep's ordinary rules apply.
@@ -155,9 +161,37 @@ _API_V1_WAIVER = (
     "deleted, these waivers must be too."
 )
 
+#: Why the two tracking routes cannot be swept, and what stands in for the sweep.
+#: Shared by both, because the reasoning is identical.
+#:
+#: Note these carry only a ``token`` kwarg, so ``iter_tenant_routes`` would skip
+#: them on its own — they are named here anyway. A route that escapes the sweep
+#: because of how its URL happens to be shaped is exactly the kind this file
+#: exists to stop being invisible, and "public by design" is a position somebody
+#: decided rather than a fact about a kwarg list.
+_TRACKING_WAIVER = (
+    "Public by design (SECURITY-BASELINE §4, issue #26). The signed token IS the "
+    "credential and the caller is a browser following a button in a message or a "
+    "mail client fetching an image — neither has a session, so 'does this belong "
+    "to another workspace' is not a question these routes can ask and 404 is not "
+    "an answer they can give without breaking every link already sent. What "
+    "stands in for the sweep is that they are indistinguishable in the other "
+    "direction: every rejection — tampered signature, a token minted for a "
+    "different purpose, an unknown version, a malformed blob, a flow deleted "
+    "since the message went out — is the same bare 404 with no body detail, "
+    "constant-time underneath; and the redirect's destination is read from the "
+    "verified payload, never from the query string, so no id in a request can "
+    "point it anywhere. Both halves are asserted by "
+    "apps/analytics/tests/test_tracking_routes.py::TestTokenIndistinguishability "
+    "and ::TestNoOpenRedirect; if either class is deleted, these waivers must be "
+    "too."
+)
+
 #: Routes exempt from the sweep, each with the reason. A waiver is a reviewed
 #: line in this dict; there is no silent skip.
 WAIVED_ROUTES: dict[str, str] = {
+    "click_redirect": _TRACKING_WAIVER,
+    "open_pixel": _TRACKING_WAIVER,
     "webhook_sms": _WEBHOOK_WAIVER,
     "webhook_email": _WEBHOOK_WAIVER,
     "api_v1:contacts_detail": _API_V1_WAIVER,
@@ -420,6 +454,38 @@ def _victim_trigger(tenancy: Tenancy) -> Any:
         )
         trigger.save()
     return trigger
+
+
+def _victim_flow_import(tenancy: Tenancy) -> Any:
+    """An unconfirmed flow-template import owned by the victim (issue #27).
+
+    Built by exporting ``_victim_flow`` and parsing it back, rather than by
+    hand-writing a document: the routes under test read ``document`` and render
+    a mapping form from it, so a fixture that was not a real export would make
+    the review route 404 on its own content instead of on tenancy.
+
+    Left ``pending``, which is the state the wizard is in for all three routes.
+    Tenancy is checked first either way — every one of them resolves the row
+    through ``get_scoped_object_or_404`` before it looks at ``status`` — so this
+    is about the fixture being the shape the routes are written for, not about
+    what makes the sweep pass.
+    """
+    from apps.flows import portability
+    from apps.flows.models import FlowImport
+
+    record = FlowImport.objects.for_workspace(tenancy.workspace).first()
+    if record is not None:
+        return record
+    document = portability.export_document(_victim_flow(tenancy))
+    record = FlowImport(
+        workspace=tenancy.workspace,
+        document=document,
+        mapping=portability.default_mapping(tenancy.workspace, document, user=tenancy.owner),
+        original_filename="victim.flow.json",
+        created_by=tenancy.owner,
+    )
+    record.save()
+    return record
 
 
 def _victim_sequence(tenancy: Tenancy) -> Any:

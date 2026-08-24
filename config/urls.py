@@ -1,7 +1,8 @@
+from django.apps import apps as django_apps
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import URLPattern, include, path
+from django.urls import URLPattern, URLResolver, include, path
 
 from apps.accounts import views as account_views
 from apps.common import views
@@ -32,6 +33,32 @@ _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = []
 _GLOBAL_STUBS: list[tuple[str, str, str, str, str]] = [
     ("accounts/preferences/", "settings_preferences", "Preferences", "#31 follow-up", _SETTINGS_LAYOUT),
 ]
+
+
+def _if_installed(app: str, *mounts: tuple[str, str]) -> list[URLResolver]:
+    """``path(route, include(module))`` per mount, or nothing when ``app`` is absent.
+
+    ``include()`` imports the module it names *at URLConf build time*, and an app
+    module that declares models raises ``RuntimeError`` when its app is not in
+    ``INSTALLED_APPS``. So an unconditional include turns "this deployment does
+    not run that app" into "this deployment does not boot" — which would undo
+    the late-resolving seams (``apps/flows/analytics.py``,
+    ``apps/messaging/analytics.py``) that exist precisely so an absent app costs
+    a feature rather than the process.
+
+    **The mounts are (route, module) pairs rather than built ``path()`` objects**,
+    and that is the whole reason this takes strings. Python evaluates arguments
+    before the call, so passing ``path("", include("apps.x.urls"))`` would run the
+    import *on the way in* and raise before the guard was ever consulted — a
+    guard that reads correctly and does nothing. Building them in here is what
+    defers the import to the branch that wants it.
+
+    A helper rather than an ``if`` around the list so every mount point of one
+    app reads the same and none can be guarded while its sibling is not.
+    """
+    if not django_apps.is_installed(app):
+        return []
+    return [path(route, include(module)) for route, module in mounts]
 
 
 def _stub(route: str, name: str, section: str, issue: str, layout: str) -> URLPattern:
@@ -83,6 +110,16 @@ urlpatterns = [
     # recipient of an email has no account here, and SPEC §6.7 puts this link in
     # every message the product sends.
     path("", include("apps.channels.urls_public")),
+    # Click tracking and the open pixel (#26), completing the /u/, /m/, /c/, /o/
+    # family apps/common/signing.py documents. Unauthenticated for the same
+    # reason: the caller is a browser following a button or a mail client
+    # fetching an image, and the signed token is the whole credential.
+    #
+    # Guarded: this module imports the analytics models, so an unconditional
+    # include would refuse to boot a deployment that drops the app. Links
+    # already in the wild 404 there, which is the honest answer from a
+    # deployment that no longer counts anything.
+    *_if_installed("apps.analytics", ("", "apps.analytics.urls_public")),
     # Per-user, so no workspace prefix: the bell shows every workspace at once
     # (issue #7).
     path("notifications/", include("apps.notifications.urls")),
@@ -108,6 +145,12 @@ urlpatterns = [
     # permission the placeholder used — so the nav entry's target moves from a
     # stub view to a real one and nothing else about the route changes.
     path("w/<uuid:workspace_id>/broadcasts/", include("apps.broadcasts.urls")),
+    # The analytics pages (issue #26). A deep prefix like the ones above it, and
+    # separate from the /c/ and /o/ routes at the site root: those are public
+    # token routes with no workspace in the URL at all. Guarded for the reason
+    # the public half is; the nav row degrades to "#" on its own, because
+    # apps.common.context_processors reverses through reverse_cached.
+    *_if_installed("apps.analytics", ("w/<uuid:workspace_id>/analytics/", "apps.analytics.urls")),
     # apps.contacts owns two disjoint stretches of the workspace URL space —
     # contacts/ and the two settings pages — so it mounts once at the root of
     # the prefix and spells the sub-paths itself (issue #3). It goes last of the

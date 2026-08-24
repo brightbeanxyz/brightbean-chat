@@ -1637,6 +1637,10 @@ span.flatpickr-weekday {
   white-space: nowrap;
 }
 .fb-pill-quick { border-style: dashed; }
+/* The click-through rate inside a stats chip (issue #26). Dimmer than the
+   counts beside it: three numbers and a percentage in one pill needs the
+   derived figure to read as a footnote rather than as a fourth count. */
+.fb-pill-rate { color: var(--text-tertiary); }
 
 .fb-handle-label {
   padding: 0.0625rem 0.3125rem;
@@ -2789,3 +2793,126 @@ span.flatpickr-weekday {
   0%   { margin-left: -40%; }
   100% { margin-left: 100%; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Analytics (issue #26)
+   ═══════════════════════════════════════════════════════════════
+
+   SPEC §18's pages: the workspace dashboard's KPI cards, the flow stats page's
+   headline figures, its trend chart and its per-node table.
+
+   Component classes rather than utilities at the call site, per the cascade rule
+   in docs/ROADMAP.md's conventions: everything in this file is unlayered and
+   beats every `@layer utilities` rule whatever the specificity, so a modifier
+   here is the only override that actually applies.
+
+   The tile shape deliberately matches `.bc-tile` — a counter is a counter, and a
+   reader moving from a broadcast's progress to a flow's totals should not have
+   to re-learn what a number looks like. It is a separate class rather than a
+   reuse because the broadcast one lives inside `.bc-panel` and carries that
+   context's spacing. */
+
+.an-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+.an-card {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  padding: 0.875rem 1rem;
+  /* Half of these cards are anchors and half are not, and a reader should not
+     be able to tell which by looking: the whole tile is the target, so the
+     underline and the link colour would both be noise. */
+  text-decoration: none;
+  color: inherit;
+}
+a.an-card:hover { border-color: var(--border-hover); }
+.an-card-figure {
+  font-size: 1.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  line-height: 1.15;
+}
+.an-card-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.an-card-note {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+.an-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  padding: 1rem;
+  margin-top: 1rem;
+}
+.an-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.an-panel-title { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
+.an-hint { font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.5; }
+
+/* The 7/30/90 picker. A run of links rather than a select: three options that
+   change one number in the query string do not need a form. */
+.an-range {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.an-range-option {
+  padding: 0.25rem 0.625rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--surface-0);
+}
+.an-range-option + .an-range-option { border-left: 1px solid var(--border); }
+.an-range-option:hover { background: var(--surface-1); }
+.an-range-current { background: var(--brand-50); color: var(--primary); font-weight: 600; }
+
+/* Chart.js draws into this; the height is here rather than on the element
+   because a canvas with no CSS height grows without bound on a re-render. */
+.an-chart {
+  position: relative;
+  height: 15rem;
+}
+
+.an-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.an-table th {
+  text-align: left;
+  font-size: 0.6875rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 0.375rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.an-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+.an-table td.an-num { text-align: right; font-variant-numeric: tabular-nums; }
+.an-table th.an-num { text-align: right; }
+.an-muted { color: var(--text-tertiary); }
+
+/* SPEC §5's flow statuses. The other three families of status pill are already
+   defined above for connections, WhatsApp templates and broadcasts; `active`
+   and `draft` are shared with them, and only `archived` was missing. */
+.status-pill-archived { background: var(--neutral-100); color: var(--text-tertiary); }

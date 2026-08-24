@@ -217,6 +217,16 @@ MAIN_NAV: list[NavGroup] = [
                 url_names=frozenset({"broadcasts:list", "broadcasts:detail", "broadcasts:compose"}),
                 workspace_scoped=True,
             ),
+            # Issue #26. The flow stats page is the same section to a reader as
+            # the overview it is reached from, so the row stays lit on both.
+            NavItem(
+                key="analytics",
+                label="Analytics",
+                icon="analytics",
+                url_name="analytics:overview",
+                url_names=frozenset({"analytics:overview", "analytics:flow_detail"}),
+                workspace_scoped=True,
+            ),
             # Issue #16. The detail page is the same section to a reader, so it
             # lights the same row — that is what url_names is for.
             NavItem(
@@ -311,6 +321,16 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Inbox rules",
                 icon="flows",
                 url_name="inbox:rule_settings",
+                workspace_scoped=True,
+            ),
+            # Issue #26. Workspace configuration rather than an analytics page:
+            # it answers to manage_workspace_settings, and a reader looking for a
+            # switch looks in settings.
+            NavItem(
+                key="ws_email_tracking",
+                label="Email tracking",
+                icon="analytics",
+                url_name="analytics:tracking_settings",
                 workspace_scoped=True,
             ),
             NavItem(

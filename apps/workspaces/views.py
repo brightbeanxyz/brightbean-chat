@@ -6,6 +6,9 @@ resolution contract: by the time a view body runs, ``request.workspace`` and
 has already answered 404.
 """
 
+from typing import Any
+
+from django.apps import apps
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
@@ -23,7 +26,14 @@ from apps.workspaces.models import Workspace
 @login_required
 @require_GET
 def dashboard(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    """The workspace landing page. Every role can see it."""
+    """The workspace landing page. Every role can see it.
+
+    The KPI cards are issue #26's, and they are fetched through
+    :func:`apps.analytics.selectors.dashboard_kpis` — a late import, because
+    ``apps.analytics`` sits far above this app and a deployment without it must
+    still have a landing page. No cards is a degraded dashboard; an ImportError
+    is no dashboard at all.
+    """
     # select_related and the archived filter belong here, not in the template:
     # iterating memberships and touching .workspace costs one query each, on the
     # most-visited page in the app.
@@ -32,7 +42,39 @@ def dashboard(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         .select_related("workspace")
         .order_by("workspace__name")
     )
-    return render(request, "workspaces/dashboard.html", {"switchable_memberships": switchable})
+    permissions = request.workspace_membership.effective_permissions
+    return render(
+        request,
+        "workspaces/dashboard.html",
+        {
+            "switchable_memberships": switchable,
+            "kpis": _kpis(request),
+            # Each card links to the section that can explain its number, and a
+            # link a viewer would be refused at is worse than no link — so the
+            # cards that need a permission carry it rather than guessing from
+            # the role.
+            "can_view_analytics": permissions.get("view_analytics", False),
+            "can_send_broadcasts": permissions.get("send_broadcasts", False),
+        },
+    )
+
+
+def _kpis(request: WorkspaceRequest) -> dict[str, Any] | None:
+    """The dashboard's numbers, or ``None`` when they should not be shown.
+
+    ``None`` for two reasons: no analytics app, or a member without
+    ``view_analytics``. Every workspace role holds that key today
+    (``apps.members.roles``), so the second is not currently reachable — it is
+    written anyway, because a permission that is only enforced where it happens
+    to matter is a permission nobody can safely narrow later.
+    """
+    if not apps.is_installed("apps.analytics"):
+        return None
+    if not request.workspace_membership.effective_permissions.get("view_analytics", False):
+        return None
+    from apps.analytics.selectors import dashboard_kpis
+
+    return dashboard_kpis(request.workspace)
 
 
 @login_required

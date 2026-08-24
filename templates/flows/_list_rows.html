@@ -44,11 +44,31 @@ refresh can never disagree about what a row looks like.
             <div class="flex items-center gap-2">
                 <a href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}"
                    class="btn-outline btn-inline">{% if can_edit %}Edit{% else %}View{% endif %}</a>
+                {% comment %}
+                  Issue #26. The analytics overview lists only flows that have
+                  been running, so this is the way into a quiet flow's page —
+                  and "how did this one do" is a question asked from the list.
+                {% endcomment %}
+                {% if can_view_analytics %}
+                <a href="{% url 'analytics:flow_detail' workspace_id=request.workspace.id flow_id=flow.id %}"
+                   class="btn-outline btn-inline">Stats</a>
+                {% endif %}
                 {% if can_edit %}
                 <button type="button" class="btn-outline btn-inline" @click="renaming = !renaming">Rename</button>
                 <button type="button" class="btn-outline btn-inline"
                         hx-post="{% url 'flows:duplicate' workspace_id=request.workspace.id flow_id=flow.id %}"
                         hx-swap="none">Duplicate</button>
+                {% comment %}
+                  Plain links, not htmx: the response is a file download, and
+                  htmx would swap the JSON into the page instead. "Bundle"
+                  follows this flow's start_flow and sequence-step references
+                  and puts the whole set in one file (issue #27).
+                {% endcomment %}
+                <a href="{% url 'flows:export' workspace_id=request.workspace.id flow_id=flow.id %}"
+                   class="btn-outline btn-inline">Export</a>
+                <a href="{% url 'flows:export_bundle' workspace_id=request.workspace.id flow_id=flow.id %}"
+                   class="btn-outline btn-inline"
+                   title="This flow and every flow it hands over to, as one file">Export bundle</a>
                 {% if flow.status == "archived" %}
                 <button type="button" class="btn-outline btn-inline"
                         hx-post="{% url 'flows:restore' workspace_id=request.workspace.id flow_id=flow.id %}"
