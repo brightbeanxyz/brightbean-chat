@@ -415,6 +415,20 @@ CRITERIA: tuple[Criterion, ...] = (
         ),
     ),
     Criterion(
+        id="p1-first-reply-p95",
+        phase=1,
+        clause=_PHASE_1_LATENCY,
+        verification=Verification.MANUAL,
+        targets=("tests/acceptance/README.md#the-2-vcpu-reference-run",),
+        note=(
+            "The p95 figure itself, which CI does not produce and should not pretend to. The clause says "
+            "'on a 2 vCPU box'; CI runs four xdist workers on a shared runner, and a p95 over the handful "
+            "of samples a unit test can afford is the maximum by another name. So CI asserts the floor and "
+            "the median against the ceiling — which catches a regression — and the distribution the spec "
+            "actually names comes from a reference run whose numbers live in the README."
+        ),
+    ),
+    Criterion(
         id="p1-no-duplicate-sends",
         phase=1,
         clause="zero duplicate sends across 1k forced worker retries",
@@ -483,10 +497,25 @@ CRITERIA: tuple[Criterion, ...] = (
         verification=Verification.CI,
         targets=("apps/broadcasts/tests/test_acceptance.py::TestTenThousandContactBroadcast",),
         note=(
-            "Runs at 600 contacts, not 10k, and says why in its own docstring: 600 is one full chunk "
-            "plus a partial, which is what exercises the chunking arithmetic, while a third chunk would "
-            "add about ninety seconds to every CI run for no new assertion. The 10k figure is the "
-            "reference run in this directory's README."
+            "The *mechanics* of the clause — token buckets respected, out-of-window identities skipped, "
+            "counts reconciling, cancellation clean — at 600 contacts: one full 500-row chunk plus a "
+            "partial, which is what exercises the chunking arithmetic. It does not verify the scale. A "
+            "regression that capped fanout near a thousand, or stopped scheduling successors after the "
+            "second chunk, would leave this green, which is why the row below exists."
+        ),
+    ),
+    Criterion(
+        id="p2-broadcast-ten-thousand",
+        phase=2,
+        clause=("10k-contact broadcast respects token buckets and skips out-of-window identities with correct counts"),
+        verification=Verification.MANUAL,
+        targets=("tests/acceptance/README.md#the-10k-contact-broadcast-run",),
+        note=(
+            "The scale the clause names. A third chunk adds about ninety seconds to every CI run and 10k "
+            "would add far more, for assertions the 600-contact run already makes — so the size itself is "
+            "verified by a documented run rather than on every pull request. Splitting it from the row "
+            "above is the point: one table saying '10k, verified in CI' when the test builds 600 is the "
+            "kind of claim this suite exists to stop."
         ),
     ),
     Criterion(

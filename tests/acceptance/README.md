@@ -45,26 +45,32 @@ honest.
 | | Criterion | Verified by |
 |---|---|---|
 | ✅ | Webhook ack p95 < 500 ms | `p1-ack-budget` — `apps/flows/tests/test_routing_inline.py::TestAckLatency` |
-| ✅ | First automated reply p95 < 2 s | `p1-first-reply` — [`test_first_reply_latency.py`](test_first_reply_latency.py), and `p1-first-reply-budget` — [`test_first_reply.py`](test_first_reply.py). See [the reference run](#the-2-vcpu-reference-run) for the number the spec actually names. |
+| ✅ | First automated reply < 2 s, in CI | `p1-first-reply` — [`test_first_reply_latency.py`](test_first_reply_latency.py), and `p1-first-reply-budget` — [`test_first_reply.py`](test_first_reply.py) |
+| 📋 | …and the **p95** the clause actually names | `p1-first-reply-p95` — [manual](#the-2-vcpu-reference-run). CI asserts the floor and the median; a p95 needs a 2 vCPU box and more samples than a unit test should take. |
 | ✅ | Zero duplicate sends across 1k forced worker retries | `p1-no-duplicate-sends` — `apps/messaging/tests/test_services.py::TestIdempotency` |
 | ✅ | 50 parallel webhooks never interleave steps | `p1-no-interleaving` — `apps/flows/tests/test_locking.py::TestOneStepPerContact` |
 | ✅ | IG private-reply constraints | `p1-ig-private-reply` — three homes; see `criteria.py` |
 | ✅ | Loop flow halts at 30 blocks with admin notification | `p1-loop-cap` — `apps/flows/tests/test_loop_cap.py::TestLoopCap` |
 
-**Phase 1 is accepted in CI.**
+**Phase 1 is accepted in CI, except the p95 figure itself**, which needs the
+reference run below. CI proves the reply path meets the budget and stays inside
+the request; it does not produce the statistic the spec names, and the table
+says so rather than letting a green tick imply it.
 
 ## Phase 2
 
 | | Criterion | Verified by |
 |---|---|---|
-| ✅ | 10k-contact broadcast: token buckets, out-of-window skips, correct counts | `p2-broadcast-scale` — `apps/broadcasts/tests/test_acceptance.py`, which runs 600 contacts and says why |
+| ✅ | Broadcast mechanics: token buckets, out-of-window skips, correct counts, clean cancellation | `p2-broadcast-scale` — `apps/broadcasts/tests/test_acceptance.py`, at 600 contacts (one full chunk plus a partial) |
+| 📋 | …at the **10k** scale the clause names | `p2-broadcast-ten-thousand` — [manual](#the-10k-contact-broadcast-run). A regression capping fanout near a thousand would not fail the CI row. |
 | 📋 | WhatsApp template submit → approved → send **against a real WABA** | `p2-whatsapp-template-waba` — [manual](#whatsapp-template-round-trip-against-a-real-waba) |
 | ✅ | STOP suppresses within one inbound event | `p2-sms-stop` — `apps/channels/tests/test_sms_compliance.py::TestStop` |
 | ✅ | Unsubscribe link suppresses email within one click | `p2-email-unsubscribe` — [`test_unsubscribe_round_trip.py`](test_unsubscribe_round_trip.py) |
 
-**Phase 2 is accepted in CI except the WABA round trip**, which no amount of test
-infrastructure can automate: it needs Meta credentials and a real template
-review. The runbook below is its verification.
+**Phase 2 is accepted in CI except two figures**: the WABA round trip, which no
+test infrastructure can automate because it needs Meta credentials and a real
+template review, and the 10k broadcast scale, which is a documented run rather
+than ninety-plus seconds on every pull request. Both have runbooks below.
 
 ## Phase 3
 
@@ -95,7 +101,7 @@ leave one unguarded.
 
 ---
 
-## Why the latency tests assert on a minimum
+## Why the latency tests assert on a floor and a median
 
 This repo has been bitten three times by a test asserting on a clock-derived
 value — PRs #46, #49 and #62 — and the lessons compound: pin the clock at its
@@ -105,22 +111,30 @@ gets ignored, which is worse than not having one.
 
 SPEC §21 asks for a **p95 on a 2 vCPU box**. That is a production SLO, and a p95
 over a handful of samples on a shared CI runner is mostly a measurement of the
-runner. So the budget is verified in three layers rather than one:
+runner. So the budget is verified in layers rather than by one number:
 
 * **The invariant, always.** [`test_first_reply.py`](test_first_reply.py) asserts
-  the inline routing budget and the adapter's HTTP timeouts fit inside the
-  spec's ceiling. No clock is involved, and it is the assertion that catches the
-  change which makes the criterion unmeetable — raising `INLINE_BUDGET_SECONDS`
-  past two seconds — on any machine, however loaded.
+  the inline routing budget fits inside the spec's ceiling, that the read timeout
+  is the one SPEC §7.1 names, and that a connection which overruns stays flagged
+  longer than the budget that flagged it. No clock is involved, and this is what
+  catches the change that makes the criterion unmeetable — raising
+  `INLINE_BUDGET_SECONDS` past two seconds — on any machine, however loaded.
+  Note what it does *not* claim: the HTTP timeouts do not bound the call's total
+  wall clock, and [the gap below](#known-gap-the-http-timeouts-compose) says so.
 * **The structure, always.** The latency test also asserts every delivery was
   answered *inside the request*. A reply handed to the worker is precisely what
   makes a first reply slow, and `InlineDecision` makes that visible without a
   stopwatch.
-* **The wall clock, on the minimum.** `min(timings)` is the closest observable to
-  what the code path costs; the mean and the maximum measure whatever else the
-  runner was doing. The failure message reports p50, p95 and max so a human
-  reading a red build sees the shape, but only the minimum is asserted, against
-  the spec's own unmodified ceiling.
+* **The wall clock, on two statistics.** `min(timings)` is the floor — the
+  closest observable to what the code path costs — and catches a regression that
+  slows every reply. `median(timings)` catches the one a minimum cannot see: a
+  run like `[0.1, 3, 3, 3, 3]` has a fast minimum and is plainly broken. Both are
+  asserted against the spec's own unmodified ceiling.
+* **`p95` and `max` are reported, not asserted**, and that is arithmetic rather
+  than squeamishness. At these sample counts the nearest-rank p95 *is* the
+  maximum, and the maximum is the single statistic that measures the runner
+  instead of the code. `TestTheStatisticsCatchWhatTheyClaimTo` pins all of this,
+  so the discrimination is a test rather than a claim in a README.
 
 **There is no CI multiplier here, and none anywhere in this repo.** If the margin
 ever proves too tight on a loaded runner, the lever is `SAMPLES`, not the
@@ -151,10 +165,47 @@ machine. Docker Desktop's VM boundary is a meaningful part of the absolute
 numbers; CI's Postgres is a service container on tmpfs sharing the runner's
 kernel, but CI also runs four xdist workers against it.
 
-#### The 2 vCPU reference run
+**No p95 has been recorded yet.** The table above is CI-scale sampling on a
+laptop, not the statistic §21 asks for; `p1-first-reply-p95` stays 📋 until
+somebody runs the procedure below and fills a number in.
 
-The number §21 actually names needs a 2 vCPU box, which no CI runner here is.
-To produce it:
+---
+
+## Known gap: the HTTP timeouts compose
+
+`request_json` builds `httpx.Timeout(READ_TIMEOUT, connect=CONNECT_TIMEOUT)`, and
+httpx applies those to **separate phases** — there is no total deadline. A
+platform that stalls the handshake and then stalls the read can hold a single
+inline call for `CONNECT_TIMEOUT + READ_TIMEOUT` = 4 s, which is more than §21's
+2 s ceiling for the whole reply.
+
+This is survivable, and it is why the criterion is a p95 rather than a maximum:
+the first overrun flags the connection, and every later event on it enqueues
+before doing any I/O. So the *tail* is bounded by the breaker, not by the
+timeout.
+
+It is recorded here rather than fixed because a total deadline is a change to
+the outbound path's error policy, which belongs to whoever owns that policy, not
+to a test suite. `test_first_reply.py` asserts what is true today — the read
+timeout matches SPEC §7.1's number, the inline path is bounded far below the
+background one, and the breaker outlives the budget — and deliberately does not
+pin the 4 s composition in either direction, so adding a total deadline later
+will not turn this suite red.
+
+---
+
+## Manual runbooks
+
+Four criteria cannot be verified by a per-PR test, and saying so plainly is more
+useful than a test that pretends otherwise.
+
+### The 2 vCPU reference run
+
+**Why it is manual.** The clause says "on a 2 vCPU box", and no CI runner here is
+one — the pytest job runs four xdist workers on a shared runner. A p95 also needs
+more samples than a unit test should spend.
+
+**Steps.**
 
 1. Deploy a build to a 2 vCPU instance following [`docs/`](../../docs) — a real
    deployment, not a laptop, because the criterion is about a deployment.
@@ -163,16 +214,38 @@ To produce it:
 3. Record the p95 of the interval between the delivery and the outbound call,
    and put it in the table above with the date and the instance type.
 
-Run it when the reply path changes shape — a new stage in the pipeline, a
+**What counts as a failure.** A p95 at or above 2 s, or a run where a meaningful
+share of events were handed to the queue rather than answered inline — the
+second makes the first look better than it is.
+
+Run it when the reply path changes shape: a new stage in the pipeline, a
 different locking strategy, a change to the inline budget. It is not a
 per-release chore.
 
----
+### The 10k-contact broadcast run
 
-## Manual runbooks
+**Why it is manual.** `apps/broadcasts/tests/test_acceptance.py` runs 600
+contacts — one full 500-row chunk plus a partial, which is what exercises the
+chunking arithmetic. A third chunk adds about ninety seconds to every CI run, and
+10k adds far more, for assertions the 600-contact run already makes. But 600 does
+not prove the *scale*: a regression capping fanout near a thousand, or failing to
+schedule successors past the second chunk, would leave the CI row green.
 
-Two criteria cannot be verified by any test, and saying so plainly is more
-useful than a test that pretends otherwise.
+**Steps.**
+
+1. Seed a workspace with 10,000 contacts carrying a mix of in-window and
+   out-of-window identities, and a known count of each.
+2. Send a broadcast to all of them and let the fanout run to completion.
+3. Reconcile: messages actually sent plus skipped equals the audience, the
+   skipped count matches the out-of-window count exactly, and the send rate over
+   the run stays within the connection's token bucket.
+4. Repeat once, cancelling mid-fanout, and confirm nothing is scheduled or sent
+   after the cancellation and no message is left `queued` with nothing to move it.
+5. Record the audience size, the counts and the elapsed time here.
+
+**What counts as a failure.** A total that does not reconcile, a skipped count
+that disagrees with the eligibility filter, a send rate above the bucket, or a
+message stuck in `queued` after cancellation.
 
 ### WhatsApp template round-trip against a real WABA
 

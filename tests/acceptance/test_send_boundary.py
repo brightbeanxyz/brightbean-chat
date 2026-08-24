@@ -47,19 +47,37 @@ def python_sources() -> list[Path]:
     return [path for path in APPS.rglob("*.py") if "migrations" not in path.parts and "tests" not in path.parts]
 
 
+def _is_signal_dispatch(node: ast.Call) -> bool:
+    """``EVENT_CATALOG[event].send(sender=..., ...)`` — contract 7's fan-out.
+
+    Recognised by the subscripted receiver *and* the ``sender`` keyword Django
+    requires, so a call merely indexed out of a container is not waved through.
+    """
+    receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
+    return isinstance(receiver, ast.Subscript) and any(kw.arg == "sender" for kw in node.keywords)
+
+
+def _is_django_message_send(node: ast.Call) -> bool:
+    """``EmailMessage.send()`` — Django's own mail API, which takes no arguments."""
+    return not node.args and not node.keywords
+
+
 def adapter_send_calls(tree: ast.AST) -> list[int]:
-    """Line numbers of anything shaped like ``adapter.send(connection, identity, outbound)``.
+    """Line numbers of every call that asks something to ``send`` a message.
 
-    Matched on the shape rather than on the receiver's name, because the name is
-    the easiest thing to change: an attribute call to ``send`` on a plain local,
-    carrying positional arguments and no keywords.
+    **Deny by default.** An earlier version of this matched only
+    ``<name>.send(<positional>)`` with no keywords, which let three ordinary
+    ways of writing the same call slip past — ``self.adapter.send(...)``,
+    ``adapter_for(platform).send(...)``, and the keyword form
+    ``adapter.send(connection=..., identity=..., outbound=...)``. Because the one
+    authorised call still matched, adding any of those elsewhere left the
+    assertion below green while opening exactly the bypass it exists to close.
+    A gate that only recognises the shape somebody already wrote is not a gate.
 
-    That deliberately excludes the two other things in this codebase that are
-    spelled ``.send()`` and are not sends to a platform — Django signal dispatch,
-    which is ``EVENT_CATALOG[event].send(...)`` on a subscript with keyword
-    arguments, and Django's ``EmailMessage.send()``, which takes none. The
-    self-test below pins both exclusions, so a change to this heuristic that
-    started swallowing real calls fails here rather than silently.
+    So every attribute call named ``send`` counts, and the only way out is one of
+    the two narrow exclusions above — both of which are pinned by their own
+    self-tests, so a change here that starts swallowing real calls fails loudly
+    rather than silently.
     """
     return [
         node.lineno
@@ -67,9 +85,8 @@ def adapter_send_calls(tree: ast.AST) -> list[int]:
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "send"
-        and isinstance(node.func.value, ast.Name)
-        and node.args
-        and not node.keywords
+        and not _is_signal_dispatch(node)
+        and not _is_django_message_send(node)
     ]
 
 
@@ -120,9 +137,29 @@ class TestTheScanActuallyFires:
         tree = ast.parse("def go(door, c, i, o):\n    return door.send(c, i, o)\n")
         assert adapter_send_calls(tree) == [2]
 
+    def test_it_catches_the_keyword_form(self) -> None:
+        """The three arguments spelled as keywords are the same call."""
+        tree = ast.parse("def go(adapter, c, i, o):\n    adapter.send(connection=c, identity=i, outbound=o)\n")
+        assert adapter_send_calls(tree) == [2]
+
+    def test_it_catches_a_send_on_an_attribute(self) -> None:
+        """``self.adapter.send(...)`` is the shape a class would reach for."""
+        tree = ast.parse("class A:\n    def go(self, c, i, o):\n        self.adapter.send(c, i, o)\n")
+        assert adapter_send_calls(tree) == [3]
+
+    def test_it_catches_a_send_straight_off_the_registry(self) -> None:
+        """``adapter_for(platform).send(...)`` skips the local entirely."""
+        tree = ast.parse("def go(p, c, i, o):\n    adapter_for(p).send(c, i, o)\n")
+        assert adapter_send_calls(tree) == [2]
+
     def test_it_ignores_django_signal_dispatch(self) -> None:
         tree = ast.parse("def go(catalog, event, s):\n    catalog[event].send(sender=s, workspace_id=1)\n")
         assert adapter_send_calls(tree) == []
+
+    def test_a_subscripted_receiver_alone_is_not_enough_to_be_waved_through(self) -> None:
+        """Otherwise ``adapters[platform].send(c, i, o)`` would be the bypass."""
+        tree = ast.parse("def go(adapters, p, c, i, o):\n    adapters[p].send(c, i, o)\n")
+        assert adapter_send_calls(tree) == [2]
 
     def test_it_ignores_an_email_message_being_sent(self) -> None:
         tree = ast.parse("def go(message):\n    return message.send()\n")
