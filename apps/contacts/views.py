@@ -74,7 +74,7 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Q, QuerySet
-from django.http import Http404, HttpResponse, StreamingHttpResponse
+from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import render
 from django.urls import reverse
 from django.utils import timezone
@@ -83,7 +83,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
-from apps.contacts import activity, export, filters, imports, services
+from apps.contacts import activity, erasure, export, filters, imports, services, subject_export
 from apps.contacts.builder import builder_config
 from apps.contacts.conditions import ConditionError
 from apps.contacts.errors import ContactsError
@@ -102,6 +102,8 @@ from apps.contacts.models import (
     CustomField,
     CustomFieldType,
     CustomFieldValue,
+    ErasureSource,
+    ErasureStatus,
     ImportDedupe,
     ImportStatus,
     Segment,
@@ -145,6 +147,10 @@ def _permissions(request: WorkspaceRequest) -> dict[str, Any]:
     return {
         "can_edit_contacts": _can(request, "edit_contact_fields"),
         "can_manage_crm": _can(request, "manage_crm"),
+        # Admin-only, and separate from ``can_manage_crm`` because the two gate
+        # opposite halves of the same idea: one hides a person, the other
+        # removes them (SPEC §19). See apps/members/roles.py.
+        "can_erase_contacts": _can(request, "erase_contacts"),
     }
 
 
@@ -275,6 +281,8 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
             # while the bulk enrolment control must offer only the ones
             # `campaigns.services.subscribe` would accept.
             "enrollable_sequences": filters.sequence_options(request.workspace, enrollable=True),
+            # See contact_detail: the label and the check read one constant.
+            "erase_confirmation": erasure.CONFIRMATION,
         },
     )
 
@@ -324,6 +332,21 @@ def _contact_or_404(request: WorkspaceRequest, contact_id: Any) -> Contact:
     if contact.status != ContactStatus.ACTIVE:
         raise Http404("No such contact.")
     return contact
+
+
+def _erasable_or_404(request: WorkspaceRequest, contact_id: Any) -> Contact:
+    """Fetch a contact for erasure or export, **tombstone included**.
+
+    The one place :func:`_contact_or_404`'s rule is wrong. It refuses a
+    soft-deleted contact so nobody keeps editing somebody an operator believes
+    they removed — but a subject access request usually arrives *after* the
+    Delete button was pressed, and a request to be erased almost always does. A
+    helper that 404'd a tombstone would mean the two operations that exist to
+    finish a deletion were the only two that could not reach a deleted contact.
+
+    Cross-tenant access still answers 404, through the same scoped lookup.
+    """
+    return get_scoped_object_or_404(Contact, request.workspace, pk=contact_id)
 
 
 def _field_values(contact: Contact) -> list[dict[str, Any]]:
@@ -442,6 +465,9 @@ def contact_detail(request: WorkspaceRequest, workspace_id: str, contact_id: str
                 }
                 for name in services.EDITABLE_FIELDS
             ],
+            # The word the danger zone asks an operator to type, from the module
+            # that checks it — so the label and the check cannot drift apart.
+            "erase_confirmation": erasure.CONFIRMATION,
             "now": timezone.now(),
         },
     )
@@ -1535,3 +1561,131 @@ def tag_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 def field_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """Just the table — see :func:`tag_rows`."""
     return render(request, "contacts/_field_rows.html", _field_context(request))
+
+
+# ---------------------------------------------------------------------------
+# GDPR: subject export and erasure (SPEC §19, issue #29)
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("manage_crm")
+@require_GET
+def contact_subject_export(request: WorkspaceRequest, workspace_id: str, contact_id: str) -> HttpResponse:
+    """Everything held about one contact, as a JSON file.
+
+    ``manage_crm``, matching the CSV export of the whole workspace rather than
+    the list's read gate, and for the reason that view gives: reading a person's
+    record on screen and walking away with their full message history in one
+    file are not the same act.
+
+    Reaches a tombstone on purpose — a subject access request usually arrives
+    after somebody pressed Delete.
+    """
+    contact = _erasable_or_404(request, contact_id)
+    response = JsonResponse(subject_export.build(contact), json_dumps_params={"indent": 2, "ensure_ascii": False})
+    response["Content-Disposition"] = f'attachment; filename="{subject_export.filename(contact)}"'
+    # A dossier on one person. Nothing about it should sit in a shared cache.
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@login_required
+@require_permission("erase_contacts")
+@require_POST
+def contact_erase(request: WorkspaceRequest, workspace_id: str, contact_id: str) -> HttpResponse:
+    """Erase one contact for good.
+
+    Two confirmations, and the server checks both. ``hx-confirm`` on the form is
+    a ``window.confirm``, which ``curl`` walks straight past, so it is a speed
+    bump rather than a control:
+
+    * ``confirm`` must be the word the danger zone asks for. A fixed sentinel
+      rather than the contact's name — ``display_name`` can be empty or a
+      ``Contact 0193a…`` fallback, and asking an operator to type a real
+      person's name puts it in a request body for no gain.
+    * ``contact_id`` must be the contact in the URL. This is the one that
+      matters. The CRM swaps panes with htmx, and a stale pane posting to the
+      URL that is current is exactly how the wrong person gets erased.
+    """
+    contact = _erasable_or_404(request, contact_id)
+    refusal = _confirmation_refusal(request, contact)
+    if refusal is not None:
+        return refusal
+
+    label = contact.display_name
+    try:
+        record = erasure.begin(contact, source=ErasureSource.UI, requested_by=request.user)
+    except ContactsError as exc:
+        return _failed(exc, "Could not erase this contact")
+
+    queued = record.status != ErasureStatus.DONE
+    return toast_response(
+        tone="success",
+        title="Contact erased" if not queued else "Erasure started",
+        body=(
+            f"{label} and everything held about them are gone."
+            if not queued
+            else f"{label} is hidden everywhere already; the rest is being removed in the background."
+        ),
+        events={"contactsChanged": True},
+    )
+
+
+@login_required
+@require_permission("erase_contacts")
+@require_POST
+def bulk_erase(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """Erase the selection. Always queued, whatever its size.
+
+    Five hundred teardowns is never a web request, so this does not consult
+    :func:`apps.contacts.erasure.should_queue` at all — it forces the worker
+    path for every row and reports what it accepted rather than what it
+    finished.
+
+    ``_selected`` re-scopes the posted ids to this workspace, so another
+    tenant's simply are not there: a miss, not a refusal, the same answer every
+    other id in this app gets.
+    """
+    if (request.POST.get("confirm") or "").strip() != erasure.CONFIRMATION:
+        return toast_response(
+            tone="error",
+            title="Erasure not confirmed",
+            body=f"Type {erasure.CONFIRMATION} to confirm. Nothing was changed.",
+        )
+
+    contacts = list(_selected(request))
+    if not contacts:
+        return toast_response(tone="info", title="Nothing selected")
+
+    started = 0
+    for contact in contacts:
+        try:
+            erasure.begin(contact, source=ErasureSource.BULK, requested_by=request.user, force_queue=True)
+        except ContactsError:
+            # Already running for this contact. Not a failure of the request —
+            # the requested state is on its way — so it is simply not counted.
+            continue
+        started += 1
+
+    return _bulk_result(
+        f"Erasing {started} contact{'' if started == 1 else 's'}",
+        "They are hidden everywhere already. Their messages, identities and consent records are being removed.",
+    )
+
+
+def _confirmation_refusal(request: WorkspaceRequest, contact: Contact) -> HttpResponse | None:
+    """``None`` when both confirmations are right, a toast when either is not."""
+    if (request.POST.get("confirm") or "").strip() != erasure.CONFIRMATION:
+        return toast_response(
+            tone="error",
+            title="Erasure not confirmed",
+            body=f"Type {erasure.CONFIRMATION} to confirm. Nothing was changed.",
+        )
+    if (request.POST.get("contact_id") or "") != str(contact.pk):
+        return toast_response(
+            tone="error",
+            title="That form was for a different contact",
+            body="Reload the page and try again. Nothing was changed.",
+        )
+    return None

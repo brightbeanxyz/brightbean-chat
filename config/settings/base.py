@@ -653,6 +653,21 @@ CONTACT_IMPORT_PREVIEW_ROWS = env.int("CONTACT_IMPORT_PREVIEW_ROWS", default=20)
 # the file while leaving the run's counters and row errors readable.
 CONTACT_IMPORT_FILE_RETENTION_DAYS = env.int("CONTACT_IMPORT_FILE_RETENTION_DAYS", default=30)
 
+# GDPR erasure and subject export (SPEC §19, issue #29).
+#
+# Above the message ceiling, an erasure is handed to the worker instead of being
+# done in the request: the destructive half runs in one transaction holding the
+# contact's advisory lock, and a web request is the wrong place to hold either
+# for as long as fifty thousand rows takes. The default is deliberately low —
+# the queued path is not a degraded one, it is just asynchronous, and the only
+# thing an operator loses by taking it is an immediate row count in the toast.
+CONTACT_ERASURE_SYNC_MAX_MESSAGES = env.int("CONTACT_ERASURE_SYNC_MAX_MESSAGES", default=1000)
+# The export's safety ceiling. Not a page size: a subject access request wants
+# the whole history, so this exists only so one enormous thread cannot build an
+# unbounded document in memory. When it bites, the document says so rather than
+# appearing complete.
+CONTACT_EXPORT_MAX_MESSAGES = env.int("CONTACT_EXPORT_MAX_MESSAGES", default=5_000)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # ---------------------------------------------------------------------------

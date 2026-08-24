@@ -52,6 +52,7 @@ __all__ = [
     "UnknownActionTypeError",
     "cancel_pending",
     "get_handler",
+    "purge_for_contact",
     "register_handler",
     "registered_types",
     "schedule",
@@ -211,6 +212,45 @@ def cancel_pending(workspace: Any, **filters: Any) -> int:
         .filter(status=ActionStatus.PENDING, **filters)
         .update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
     )
+
+
+def purge_for_contact(workspace: Any, contact_id: Any, *, exclude_action_id: Any = None) -> int:
+    """Delete every row naming ``contact_id``. Returns how many went.
+
+    The erasure-side counterpart to :func:`cancel_pending`, and a *delete* where
+    that one is an update, because the two answer different questions.
+    Cancelling disarms the work; issue #29's GDPR erasure has to remove the row
+    itself. ``ScheduledAction.contact_id`` is a plain ``UUIDField`` and not a
+    foreign key (see the column's comment), so nothing cascades it — and both
+    ``payload`` and ``last_error`` can quote a message body, a rendered
+    template or an address. A cancelled row is a row that still holds the text.
+
+    **``running`` rows are left alone**, and the count excludes them. A worker
+    that already claimed a row finishes by writing to it, and deleting it
+    underneath would turn its ``update_fields`` save into "did not affect any
+    rows" — a loud failure in an unrelated handler, for a row that is about to
+    be irrelevant anyway. In practice the caller holds
+    :func:`~apps.queueing.locks.contact_lock`, which is the same lock
+    ``process_action`` takes before dispatching, so a live ``running`` row for
+    this contact should not exist; the erasure records the count rather than
+    assuming it is zero.
+
+    ``exclude_action_id`` spares one row by primary key, and it is load-bearing
+    on the queued path: the erasure's own action names the contact it is
+    erasing, and a routine that deleted it would remove the row the worker is
+    holding open.
+    """
+    rows = (
+        ScheduledAction.objects.for_workspace(workspace)
+        .filter(
+            contact_id=coerce_contact_id(contact_id),
+        )
+        .exclude(status=ActionStatus.RUNNING)
+    )
+    if exclude_action_id is not None:
+        rows = rows.exclude(pk=exclude_action_id)
+    removed, _ = rows.delete()
+    return int(removed)
 
 
 def _schedule(

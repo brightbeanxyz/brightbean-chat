@@ -1,0 +1,723 @@
+"""GDPR erasure: that it removes what it claims, and nothing else (issue #29).
+
+Two assertions carry this module, and they are opposites.
+
+*Removed what it claims* is easy to write badly — a list of `assert not
+X.objects.filter(...).exists()` grows only when somebody remembers to grow it,
+and the model it forgets is the one that leaks. So the sweep here walks the
+**model graph** instead: every reference to ``Contact`` anywhere in the project,
+classified, with a test that fails when a new one appears unclassified. That is
+the mechanism ``apps/messaging/tests/test_write_sites.py`` and
+``tests/idor.py``'s ``WAIVED_ROUTES`` already use, and it is what turns "we
+thought of everything" into a build failure when we did not.
+
+*And nothing else* needs a control group. Every fixture below exists twice — a
+victim and a bystander in the same workspace, plus a whole second tenancy — and
+a nonce string is threaded through every free-text field so a single query can
+ask "does this text survive anywhere in the database".
+"""
+
+import uuid
+from typing import Any
+
+import pytest
+from django.apps import apps as django_apps
+from django.utils import timezone
+
+from apps.broadcasts.models import Broadcast, BroadcastRecipient, BroadcastStatus, RecipientStatus
+from apps.campaigns.models import Sequence, SequenceEnrollment
+from apps.channels.models import EmailSuppression, SuppressionReason
+from apps.common.platforms import Platform
+from apps.contacts import erasure
+from apps.contacts.models import Contact, ContactErasure, ContactTag, CustomFieldValue, ErasureSource, ErasureStatus
+from apps.contacts.services import add_tag, create_contact, create_custom_field, get_or_create_tag, set_field_value
+from apps.flows.models import ExecutionStatus, FlowExecution, HandledComment
+from apps.flows.tests.support import graph, node, published_flow
+from apps.messaging.models import (
+    ContactChannelIdentity,
+    Conversation,
+    Message,
+    MessageDirection,
+    MessageSource,
+    MessageStatus,
+    OptInSource,
+)
+from apps.messaging.tests.conftest import make_connection
+from apps.notifications.models import Notification
+from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
+from tests.support import Tenancy
+
+pytestmark = pytest.mark.django_db
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+def seed(workspace: Any, *, nonce: str, label: str, user: Any = None) -> dict[str, Any]:
+    """One of everything that can name a contact.
+
+    Two distinct strings, and the distinction is what makes
+    :class:`TestNoPiiSurvivesAnywhere` mean anything.
+
+    ``nonce`` goes **only** into text that belongs to the contact — their name,
+    their address, a custom field value, a message body, a collected variable.
+    The sweep then asks the database whether a string only this person ever had
+    is still anywhere in it, which is a far better question than a hand-written
+    list of columns that goes stale the moment somebody adds one.
+
+    ``label`` names the *workspace's* objects — the tag, the custom field, the
+    flow, the sequence, the broadcast, the connection. Those must survive an
+    erasure (a tag is vocabulary, not personal data), so putting the nonce in
+    them would make the sweep fail for the right reason about the wrong rows.
+    It exists only to keep two seeded contacts from colliding on the
+    unique-name-per-workspace constraints.
+    """
+    contact = create_contact(
+        workspace,
+        first_name=f"Ada{nonce}",
+        last_name=f"Lovelace{nonce}",
+        email=f"{nonce}@example.test",
+        phone="+15550001111",
+        source="manual",
+    )
+    tag, _ = get_or_create_tag(workspace, f"tag-{label}")
+    add_tag(contact, tag)
+    field = create_custom_field(workspace, name=f"Field {label}", field_type="text")
+    set_field_value(contact, field, f"value-{nonce}")
+
+    connection = make_connection(workspace, suffix=label)
+    identity = ContactChannelIdentity.objects.create(
+        contact=contact,
+        channel_connection=connection,
+        platform=Platform.TELEGRAM.value,
+        platform_user_id=f"tg-{nonce}",
+        opt_in=True,
+        opt_in_at=timezone.now(),
+        opt_in_source=OptInSource.MESSAGE_IN,
+    )
+    conversation = Conversation.objects.create(contact=contact, channel_connection=connection)
+    inbound = Message(
+        conversation=conversation,
+        direction=MessageDirection.IN,
+        body={"blocks": [{"type": "text", "text": f"inbound {nonce}"}]},
+        status=MessageStatus.DELIVERED,
+    )
+    inbound.save()
+    outbound = Message(
+        conversation=conversation,
+        direction=MessageDirection.OUT,
+        source=MessageSource.AUTOMATION,
+        body={"blocks": [{"type": "text", "text": f"outbound {nonce}"}]},
+        status=MessageStatus.SENT,
+    )
+    outbound.save()
+
+    noop = {"actions": [{"verb": "remove_tag", "tag": "not-a-tag-here"}]}
+    flow = published_flow(workspace, graph([node("a", "action", noop)]), name=f"Flow {label}")
+    execution = FlowExecution.objects.create(
+        contact=contact,
+        flow=flow,
+        flow_version=flow.versions.first(),
+        status=ExecutionStatus.WAITING_REPLY,
+        variables={"answer": f"typed-{nonce}"},
+    )
+    comment = HandledComment.objects.create(
+        workspace=workspace,
+        channel_connection=connection,
+        comment_id=f"c-{label}",
+        post_id=f"p-{label}",
+        commenter_ref=f"ref-{nonce}",
+        contact=contact,
+        commented_at=timezone.now(),
+    )
+
+    sequence = Sequence.objects.create(workspace=workspace, name=f"Seq {label}")
+    enrollment = SequenceEnrollment.objects.create(contact=contact, sequence=sequence)
+
+    broadcast = Broadcast.objects.create(
+        workspace=workspace,
+        channel_connection=connection,
+        name=f"Broadcast {label}",
+        status=BroadcastStatus.SENT,
+        stats={"queued": 1, "sent": 1, "failed": 0, "skipped": 0},
+    )
+    recipient = BroadcastRecipient.objects.create(
+        workspace=workspace,
+        broadcast=broadcast,
+        contact=contact,
+        identity=identity,
+        message=outbound,
+        status=RecipientStatus.SENT,
+    )
+
+    action = ScheduledAction.objects.create(
+        workspace=workspace,
+        contact_id=contact.pk,
+        run_at=timezone.now(),
+        type=ActionType.SEND_RETRY,
+        payload={"note": f"payload {nonce}"},
+        status=ActionStatus.PENDING,
+    )
+    notification = Notification.objects.create(
+        user=user,
+        event_type="flow.loop_cap",
+        title=f"Reminder: Ada{nonce}",
+        body=f"The run for Ada{nonce} stopped",
+        payload={"workspace_id": str(workspace.pk), "contact_id": str(contact.pk)},
+    )
+
+    EmailSuppression.objects.create(
+        workspace=workspace,
+        address=f"{nonce}@example.test",
+        reason=SuppressionReason.HARD_BOUNCE.value,
+    )
+
+    return {
+        "contact": contact,
+        "tag": tag,
+        "field": field,
+        "connection": connection,
+        "identity": identity,
+        "conversation": conversation,
+        "inbound": inbound,
+        "outbound": outbound,
+        "flow": flow,
+        "execution": execution,
+        "comment": comment,
+        "sequence": sequence,
+        "enrollment": enrollment,
+        "broadcast": broadcast,
+        "recipient": recipient,
+        "action": action,
+        "notification": notification,
+    }
+
+
+@pytest.fixture
+def victim(tenancy: Tenancy) -> dict[str, Any]:
+    return seed(tenancy.workspace, nonce="zqxvictim", label="v", user=tenancy.owner)
+
+
+@pytest.fixture
+def bystander(tenancy: Tenancy) -> dict[str, Any]:
+    """A second contact in the *same* workspace. The control group."""
+    return seed(tenancy.workspace, nonce="zqxbystand", label="b", user=tenancy.owner)
+
+
+def erase(seeded: dict[str, Any], **kwargs: Any) -> ContactErasure:
+    return erasure.begin(seeded["contact"], source=ErasureSource.UI, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# It removes what it claims
+# ---------------------------------------------------------------------------
+
+
+class TestItRemovesWhatItClaims:
+    def test_the_contact_row_is_gone(self, victim: dict[str, Any]) -> None:
+        erase(victim)
+
+        assert not Contact.objects.unscoped().filter(pk=victim["contact"].pk).exists()
+
+    def test_identities_conversations_and_message_bodies_go(self, victim: dict[str, Any]) -> None:
+        erase(victim)
+
+        assert not ContactChannelIdentity.objects.unscoped().filter(pk=victim["identity"].pk).exists()
+        assert not Conversation.objects.unscoped().filter(pk=victim["conversation"].pk).exists()
+        assert not Message.objects.unscoped().filter(pk__in=[victim["inbound"].pk, victim["outbound"].pk]).exists()
+
+    def test_consent_records_go_with_the_identity(self, victim: dict[str, Any]) -> None:
+        """SPEC §11.8's ``opt_in_at`` / ``opt_in_source`` / ``opted_out_at``.
+
+        They are columns on the identity rather than a table of their own, so
+        this is the same delete — asserted separately because "the export must
+        include consent" and "the erasure must remove it" are the two halves a
+        regulator asks about, and only one of them is about the identity row.
+        """
+        erase(victim)
+
+        assert ContactChannelIdentity.objects.unscoped().filter(opt_in_source=OptInSource.MESSAGE_IN).count() == 0
+
+    def test_tag_links_and_field_values_go(self, victim: dict[str, Any]) -> None:
+        erase(victim)
+
+        assert not ContactTag.objects.unscoped().filter(contact_id=victim["contact"].pk).exists()
+        assert not CustomFieldValue.objects.unscoped().filter(contact_id=victim["contact"].pk).exists()
+
+    def test_the_m2m_guard_does_not_fire_on_the_cascade(self, victim: dict[str, Any]) -> None:
+        """``Contact.tags`` raises ``RuntimeError`` on direct mutation.
+
+        A cascade emits ``pre_delete`` on the through model rather than
+        ``pre_clear`` on the relation, so it does not trip — but the erasure
+        would be one ``contact.tags.clear()`` away from a 500, and a reviewer
+        will ask. This is the answer.
+        """
+        erase(victim)  # would raise if the receiver fired
+
+        assert not ContactTag.objects.unscoped().filter(contact_id=victim["contact"].pk).exists()
+
+    def test_executions_go_with_their_collected_variables(self, victim: dict[str, Any]) -> None:
+        erase(victim)
+
+        assert not FlowExecution.objects.unscoped().filter(pk=victim["execution"].pk).exists()
+
+    def test_enrollments_go(self, victim: dict[str, Any]) -> None:
+        erase(victim)
+
+        assert not SequenceEnrollment.objects.unscoped().filter(pk=victim["enrollment"].pk).exists()
+
+    def test_handled_comments_are_deleted_not_merely_unlinked(self, victim: dict[str, Any]) -> None:
+        """The ``SET_NULL`` trap.
+
+        A cascade would leave this row behind with ``commenter_ref`` intact —
+        the commenter's platform user id, which is exactly the identifier the
+        rest of the erasure removes.
+        """
+        erase(victim)
+
+        assert not HandledComment.objects.unscoped().filter(pk=victim["comment"].pk).exists()
+
+    def test_queue_rows_naming_the_contact_are_deleted_not_just_cancelled(self, victim: dict[str, Any]) -> None:
+        """``payload`` can quote a rendered message, and nothing cascades it."""
+        erase(victim)
+
+        assert not ScheduledAction.objects.unscoped().filter(contact_id=victim["contact"].pk).exists()
+
+    def test_notifications_naming_the_contact_are_deleted(self, victim: dict[str, Any]) -> None:
+        """The display name is baked into ``title`` and ``body`` at write time."""
+        erase(victim)
+
+        assert not Notification.objects.filter(pk=victim["notification"].pk).exists()
+
+    def test_the_audit_record_counts_what_went(self, victim: dict[str, Any]) -> None:
+        record = erase(victim)
+
+        assert record.status == ErasureStatus.DONE
+        assert record.counts["messaging.Message"] == 2
+        assert record.counts["contacts.Contact"] == 1
+        assert record.counts["flows.HandledComment"] == 1
+
+
+# ---------------------------------------------------------------------------
+# And nothing else
+# ---------------------------------------------------------------------------
+
+
+class TestAndNothingElse:
+    def test_a_second_contact_in_the_same_workspace_is_untouched(
+        self, victim: dict[str, Any], bystander: dict[str, Any]
+    ) -> None:
+        erase(victim)
+
+        bystander["contact"].refresh_from_db()
+        assert ContactChannelIdentity.objects.unscoped().filter(pk=bystander["identity"].pk).exists()
+        assert Message.objects.unscoped().filter(conversation=bystander["conversation"]).count() == 2
+        assert FlowExecution.objects.unscoped().filter(pk=bystander["execution"].pk).exists()
+        assert ScheduledAction.objects.unscoped().filter(pk=bystander["action"].pk).exists()
+        assert HandledComment.objects.unscoped().filter(pk=bystander["comment"].pk).exists()
+        assert Notification.objects.filter(pk=bystander["notification"].pk).exists()
+
+    def test_another_tenancy_is_untouched(self, tenancy: Tenancy, other_tenancy: Tenancy) -> None:
+        mine = seed(tenancy.workspace, nonce="zqxmine", label="m", user=tenancy.owner)
+        theirs = seed(other_tenancy.workspace, nonce="zqxtheirs", label="t", user=other_tenancy.owner)
+
+        erase(mine)
+
+        assert Contact.objects.unscoped().filter(pk=theirs["contact"].pk).exists()
+        assert Message.objects.unscoped().filter(conversation=theirs["conversation"]).count() == 2
+
+    def test_workspace_level_rows_survive(self, victim: dict[str, Any], tenancy: Tenancy) -> None:
+        """A tag is workspace vocabulary. Erasing the last contact who carried
+        one must not delete the tag itself — that would be a schema change
+        performed by a privacy request."""
+        erase(victim)
+
+        victim["tag"].refresh_from_db()
+        victim["field"].refresh_from_db()
+        victim["connection"].refresh_from_db()
+        victim["flow"].refresh_from_db()
+        victim["sequence"].refresh_from_db()
+
+    def test_the_email_suppression_survives(self, victim: dict[str, Any]) -> None:
+        """Deliberate, and pinned in two places.
+
+        ``apps/channels/models.py`` argues it and
+        ``apps/channels/tests/test_email_suppression.py`` already asserts it
+        from the other side: the list is keyed on the mailbox because a bounce
+        is a fact about a mailbox, and deleting it would let a re-import mail
+        somebody who complained.
+        """
+        erase(victim)
+
+        assert EmailSuppression.objects.unscoped().filter(address="zqxvictim@example.test").exists()
+
+
+# ---------------------------------------------------------------------------
+# The DB-level sweep
+# ---------------------------------------------------------------------------
+
+
+def contact_references() -> dict[str, str]:
+    """Every reference to ``Contact`` in the project. ``{label.field: kind}``.
+
+    Foreign keys by introspection, plus the one column that names a contact
+    without being one — ``queueing.ScheduledAction.contact_id`` is a plain
+    ``UUIDField`` by design, which is exactly why it needs naming here.
+    """
+    found: dict[str, str] = {}
+    for model in django_apps.get_models():
+        for field in model._meta.get_fields():
+            if getattr(field, "many_to_many", False) or not getattr(field, "related_model", None):
+                continue
+            if field.related_model is not Contact or not field.concrete:
+                continue
+            found[f"{model._meta.label}.{field.name}"] = field.remote_field.on_delete.__name__
+    found["queueing.ScheduledAction.contact_id"] = "none"
+    return found
+
+
+#: Every way a row can name a contact, and what erasure does about it.
+#:
+#: The point of the dict is the test below it: a model that grows a reference to
+#: ``Contact`` and is not listed here turns the suite red, so somebody has to
+#: decide what erasure should do about it rather than discovering later that the
+#: answer was "nothing". Same mechanism as ``WRITE_SITES`` and ``WAIVED_ROUTES``.
+CLASSIFIED: dict[str, str] = {
+    # Cascades from Contact.delete(). Nothing to write here, and deliberately
+    # nothing written: re-spelling a cascade in Python is a second description
+    # of a rule the database already enforces.
+    "contacts.ContactTag.contact": "cascade",
+    "contacts.CustomFieldValue.contact": "cascade",
+    "messaging.ContactChannelIdentity.contact": "cascade",
+    "messaging.Conversation.contact": "cascade",
+    "flows.FlowExecution.contact": "cascade",
+    "flows.DefaultReplyState.contact": "cascade",
+    "campaigns.SequenceEnrollment.contact": "cascade",
+    "campaigns.RuleTriggerFire.contact": "cascade",
+    # SET_NULL, and the row keeps a platform user id. Deleted by hand in
+    # apps/flows/erasure.py.
+    "flows.HandledComment.contact": "erased_by_hand",
+    # No foreign key at all; payload and last_error can quote a message.
+    # Deleted by hand in apps/queueing/registry.py::purge_for_contact.
+    "queueing.ScheduledAction.contact_id": "erased_by_hand",
+    # SET_NULL on purpose: an anonymised counter that has to outlive the person
+    # (SPEC §19), settled first so the figures still reconcile.
+    "broadcasts.BroadcastRecipient.contact": "anonymized",
+}
+
+
+class TestEveryContactReferenceHasBeenClassified:
+    def test_the_model_graph_matches_the_table(self) -> None:
+        assert set(contact_references()) == set(CLASSIFIED), (
+            "A model gained or lost a reference to Contact. Add it to CLASSIFIED with the kind of "
+            "treatment erasure gives it, and make sure that treatment exists."
+        )
+
+    def test_every_kind_is_one_the_erasure_implements(self) -> None:
+        assert set(CLASSIFIED.values()) <= {"cascade", "erased_by_hand", "anonymized"}
+
+    def test_the_cascading_ones_really_cascade(self) -> None:
+        """A ``cascade`` classification that is really ``SET_NULL`` would leave
+        rows behind and this table would say otherwise."""
+        graph_kinds = contact_references()
+        for label, kind in CLASSIFIED.items():
+            if kind == "cascade":
+                assert graph_kinds[label] == "CASCADE", label
+
+
+class TestNoPiiSurvivesAnywhere:
+    """The acceptance criterion's DB-level sweep."""
+
+    #: Text that survives, with the reason. Every entry is a decision somebody
+    #: made on the record, not an omission.
+    RETAINED = {
+        "channels.EmailSuppression": (
+            "The mailbox bounced or reported us as spam. Keyed on the address with no contact FK, "
+            "so a re-import cannot undo it (apps/channels/models.py)."
+        ),
+    }
+
+    def test_the_nonce_is_gone_from_every_text_and_json_column(
+        self, victim: dict[str, Any], bystander: dict[str, Any]
+    ) -> None:
+        erase(victim)
+
+        survivors = sorted(_models_containing("zqxvictim"))
+
+        assert survivors == sorted(self.RETAINED)
+
+    def test_the_bystanders_nonce_is_everywhere_it_was(self, victim: dict[str, Any], bystander: dict[str, Any]) -> None:
+        """The control. Without it the sweep above passes on an empty database."""
+        erase(victim)
+
+        survivors = _models_containing("zqxbystand")
+
+        assert "contacts.Contact" in survivors
+        assert "messaging.Message" in survivors
+        assert "flows.HandledComment" in survivors
+
+    def test_the_sweep_would_catch_a_survivor(self, victim: dict[str, Any], tenancy: Tenancy) -> None:
+        """A test that can only pass is not a test.
+
+        Plant the nonce somewhere erasure does not reach and prove the sweep
+        reports it.
+        """
+        erase(victim)
+        Notification.objects.create(
+            user=tenancy.owner, event_type="x", title="zqxvictim left behind", body="", payload={}
+        )
+
+        assert "notifications.Notification" in _models_containing("zqxvictim")
+
+
+def _models_containing(needle: str) -> set[str]:
+    """Every model with ``needle`` in any text or JSON column.
+
+    Deliberately introspective rather than a hand-written list of columns: the
+    list is what goes stale, and a column added next year is exactly the one
+    that would hold something nobody swept.
+    """
+    from django.db.models import CharField, EmailField, JSONField, Q, TextField, URLField
+
+    hits: set[str] = set()
+    for model in django_apps.get_models():
+        predicates = Q()
+        matched = False
+        for field in model._meta.get_fields():
+            if not getattr(field, "concrete", False):
+                continue
+            searchable = isinstance(field, JSONField) or (
+                # ``choices`` excludes enum columns: a status of "deleted" is
+                # not text anybody typed, and matching on one would make the
+                # sweep report a model for a value it was always going to hold.
+                isinstance(field, CharField | TextField | EmailField | URLField) and not field.choices
+            )
+            if not searchable:
+                continue
+            predicates |= Q(**{f"{field.name}__icontains": needle})
+            matched = True
+        if not matched:
+            continue
+        manager = getattr(model, "all_objects", model._default_manager)
+        if manager.filter(predicates).exists():
+            hits.add(model._meta.label)
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# In-flight work
+# ---------------------------------------------------------------------------
+
+
+class TestInFlightWork:
+    """The issue's third GDPR bullet: live executions expired first, pending
+    actions cancelled, broadcast fanout rows skipped gracefully."""
+
+    def test_a_live_execution_is_expired_before_the_rows_go(self, victim: dict[str, Any]) -> None:
+        """Expired, not merely deleted by the cascade.
+
+        The order is what matters: ``stand_down`` runs while the contact is
+        still something the engine will accept, so the queue rows that would
+        have resumed the run are cancelled too. A cascade alone would delete the
+        execution and leave those armed.
+        """
+        erase(victim)
+
+        assert not FlowExecution.objects.unscoped().filter(pk=victim["execution"].pk).exists()
+        assert not ScheduledAction.objects.unscoped().filter(contact_id=victim["contact"].pk).exists()
+
+    def test_a_pending_broadcast_recipient_is_skipped_not_deleted(self, victim: dict[str, Any]) -> None:
+        """ "Skipped gracefully", and the row survives to say so."""
+        sending = Broadcast.objects.create(
+            workspace=victim["contact"].workspace,
+            channel_connection=victim["connection"],
+            name="In flight",
+            status=BroadcastStatus.SENDING,
+        )
+        pending = BroadcastRecipient.objects.create(
+            workspace=victim["contact"].workspace,
+            broadcast=sending,
+            contact=victim["contact"],
+            status=RecipientStatus.PENDING,
+        )
+
+        erase(victim)
+
+        pending.refresh_from_db()
+        assert pending.status == RecipientStatus.SKIPPED
+        assert pending.reason == "contact_deleted"
+        assert pending.contact_id is None
+
+    def test_a_sending_broadcast_settles_once_its_last_recipient_is_erased(self, victim: dict[str, Any]) -> None:
+        """Otherwise it sits at ``sending`` until the hourly sweep notices — and
+        its frozen ``stats`` is not written until it settles."""
+        sending = Broadcast.objects.create(
+            workspace=victim["contact"].workspace,
+            channel_connection=victim["connection"],
+            name="Last one out",
+            status=BroadcastStatus.SENDING,
+        )
+        BroadcastRecipient.objects.create(
+            workspace=victim["contact"].workspace,
+            broadcast=sending,
+            contact=victim["contact"],
+            status=RecipientStatus.PENDING,
+        )
+
+        erase(victim)
+
+        sending.refresh_from_db()
+        assert sending.status == BroadcastStatus.SENT
+
+    def test_a_finished_broadcasts_counters_still_reconcile(self, victim: dict[str, Any]) -> None:
+        """SPEC §19's "keep anonymized counters", and the acceptance criterion.
+
+        The recipient row is the *only* counter in the product that names a
+        contact. ``services.counters`` recomputes a settled broadcast's figures
+        from these rows live while the list page reads the frozen ``stats`` json
+        — so a cascade would make one page disagree with the other about a
+        broadcast that was sent last month.
+        """
+        from apps.broadcasts import services as broadcast_services
+
+        before = broadcast_services.counters(victim["broadcast"])
+
+        erase(victim)
+
+        after = broadcast_services.counters(victim["broadcast"])
+        assert after.queued == before.queued == 1
+        assert after.sent == before.sent
+        victim["broadcast"].refresh_from_db()
+        assert victim["broadcast"].stats == {"queued": 1, "sent": 1, "failed": 0, "skipped": 0}
+
+    def test_the_recipient_row_keeps_no_personal_data(self, victim: dict[str, Any]) -> None:
+        """What survives is a counter, not a person."""
+        erase(victim)
+
+        victim["recipient"].refresh_from_db()
+        assert victim["recipient"].contact_id is None
+        assert victim["recipient"].identity_id is None
+        assert victim["recipient"].message_id is None
+        assert victim["recipient"].status == RecipientStatus.SENT
+
+
+# ---------------------------------------------------------------------------
+# The audit record
+# ---------------------------------------------------------------------------
+
+
+class TestTheAuditRecord:
+    def test_it_names_who_and_when(self, victim: dict[str, Any], tenancy: Tenancy) -> None:
+        record = erasure.begin(victim["contact"], source=ErasureSource.UI, requested_by=tenancy.owner)
+
+        assert record.requested_by_id == tenancy.owner.pk
+        assert record.requested_by_label == tenancy.owner.email
+        assert record.source == ErasureSource.UI
+        assert record.completed_at is not None
+
+    def test_it_survives_the_contact_it_records(self, victim: dict[str, Any]) -> None:
+        # Captured first: ``Model.delete()`` clears ``pk`` on the in-memory
+        # instance, so reading it afterwards compares against None.
+        erased = victim["contact"].pk
+
+        record = erase(victim)
+
+        record.refresh_from_db()
+        assert record.contact_id == erased
+
+    def test_it_holds_no_identifying_text(self, victim: dict[str, Any], tenancy: Tenancy) -> None:
+        """The sharpest trap in the feature.
+
+        An audit row that names the erased person makes the audit log the one
+        place the erasure did not reach — and makes "no PII survives in any
+        model" unprovable in principle. The contact id is pseudonymous: after
+        the delete it resolves to nothing.
+        """
+        record = erase(victim)
+
+        blob = " ".join(
+            [record.requested_by_label, record.source, record.error, str(record.counts), str(record.contact_id)]
+        )
+        assert "zqxvictim" not in blob
+
+    def test_a_second_live_erasure_is_refused_rather_than_racing(self, victim: dict[str, Any]) -> None:
+        """A double-clicked button, and the partial unique constraint behind it."""
+        erasure.begin(victim["contact"], source=ErasureSource.UI, force_queue=True)
+
+        with pytest.raises(erasure.ErasureRefusedError):
+            erasure.begin(victim["contact"], source=ErasureSource.UI, force_queue=True)
+
+    def test_it_is_not_registered_in_the_admin(self) -> None:
+        """``apps/contacts/admin.py`` registers ``Segment`` alone, and this row
+        carries a contact id — the admin is not where that belongs."""
+        from django.contrib import admin
+
+        assert ContactErasure not in admin.site._registry
+
+
+# ---------------------------------------------------------------------------
+# The queued path
+# ---------------------------------------------------------------------------
+
+
+class TestTheQueuedPath:
+    def test_a_forced_queue_tombstones_immediately_and_defers_the_rest(self, victim: dict[str, Any]) -> None:
+        """ "Delete → export 404s" has to hold from the moment the request is
+        accepted, not from the moment a worker gets to it."""
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+
+        victim["contact"].refresh_from_db()
+        assert record.status == ErasureStatus.PENDING
+        assert victim["contact"].status == "deleted"
+        assert Message.objects.unscoped().filter(conversation=victim["conversation"]).count() == 2
+        assert ScheduledAction.objects.unscoped().filter(type=erasure.ACTION_TYPE).count() == 1
+
+    def test_the_handler_finishes_it(self, victim: dict[str, Any]) -> None:
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
+
+        erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+
+        record.refresh_from_db()
+        assert record.status == ErasureStatus.DONE
+        assert not Contact.objects.unscoped().filter(pk=victim["contact"].pk).exists()
+
+    def test_the_erasures_own_queue_row_survives_the_purge(self, victim: dict[str, Any]) -> None:
+        """The action names the contact it is erasing. A purge that took it
+        would delete the row the worker is holding open."""
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
+
+        erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+
+        assert ScheduledAction.objects.unscoped().filter(pk=action.pk).exists()
+
+    def test_running_it_twice_is_a_no_op(self, victim: dict[str, Any]) -> None:
+        """SPEC §15 retries. A second pass must not raise its way onto the
+        backoff ladder for work that is already done."""
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
+        erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+
+        erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+
+        record.refresh_from_db()
+        assert record.status == ErasureStatus.DONE
+
+    def test_a_vanished_record_is_logged_rather_than_retried(self, victim: dict[str, Any]) -> None:
+        action = ScheduledAction.objects.create(
+            workspace=victim["contact"].workspace,
+            contact_id=victim["contact"].pk,
+            run_at=timezone.now(),
+            type=erasure.ACTION_TYPE,
+        )
+
+        erasure.handle_contact_erasure({"erasure_id": str(uuid.uuid4())}, action)  # must not raise
+
+    def test_a_small_contact_runs_inline(self, victim: dict[str, Any]) -> None:
+        record = erase(victim)
+
+        assert record.status == ErasureStatus.DONE
+        assert not ScheduledAction.objects.unscoped().filter(type=erasure.ACTION_TYPE).exists()

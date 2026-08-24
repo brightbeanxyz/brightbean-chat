@@ -68,6 +68,9 @@ def handle_reminder(payload: dict[str, Any], action: ScheduledAction) -> None:
         conversation=reminder.conversation,
         context={
             "contact_name": reminder.conversation.contact.display_name,
+            # See apps/notifications/erasure.py: the name is baked into the
+            # stored copy, and this is the only handle #29's erasure has on it.
+            "contact_id": str(reminder.conversation.contact_id),
             "note": reminder.note,
         },
     )
@@ -180,7 +183,12 @@ def _fail(reply: Any, code: str, reason: str, *, message: Any = None) -> None:
             EVENT_SCHEDULED_REPLY_FAILED,
             recipient=reply.created_by,
             conversation=conversation,
-            context={"contact_name": conversation.contact.display_name, "reason": reason},
+            context={
+                "contact_name": conversation.contact.display_name,
+                # See apps/notifications/erasure.py.
+                "contact_id": str(conversation.contact_id),
+                "reason": reason,
+            },
         )
     except Exception:
         # Best-effort by design: this runs after the provider call, so raising

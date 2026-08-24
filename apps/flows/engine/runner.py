@@ -526,6 +526,12 @@ def _notify_failure(execution: FlowExecution, *, loop_cap: bool) -> None:
     context = {
         "flow_name": execution.flow.name,
         "contact_name": execution.contact.display_name,
+        # Not rendered anywhere: the key exists so issue #29's erasure can find
+        # this row. The copy above bakes a person's display name into
+        # ``Notification.title`` and ``.body``, and that model is per-user with
+        # no workspace or contact column — so without a queryable id in
+        # ``payload`` the name outlives the contact it names.
+        "contact_id": str(execution.contact_id),
         "node_label": execution.current_node_id or "the entry node",
         "error": execution.last_error,
     }

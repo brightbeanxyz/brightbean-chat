@@ -84,6 +84,21 @@ __all__ = [
 #: grants more than its endpoints need is a scope waiting for the endpoint that
 #: uses it.
 #:
+#: ``erase`` is the third scope, and it exists rather than being folded into
+#: ``write`` because of :func:`apps.api.services._validated_scopes`: a scope is
+#: grantable only by an issuer who holds every permission in it, so a scope
+#: carrying the admin-only ``erase_contacts`` key can only ever be granted by an
+#: admin. That is the property SPEC §19's irreversible erasure needs, and it
+#: comes free from machinery that already exists.
+#:
+#: Issue #29 specifies ``DELETE /api/v1/contacts/<id>`` as "scope write". This
+#: is a deliberate deviation, argued in that PR: putting ``erase_contacts`` in
+#: ``write`` would have granted irreversible erasure to every key **already
+#: issued**, at upgrade, with nothing on the keys page changing and no
+#: re-consent from the operator who minted it. SPEC §17 does not enumerate the
+#: scopes and does not list this endpoint, so a third coarse scope contradicts
+#: no contract — and "coarse" is still true at three.
+#:
 #: ``write`` is a superset of ``read`` rather than a sibling, so a key holding
 #: both is the same as a key holding ``write``.
 #:
@@ -106,6 +121,10 @@ SCOPE_PERMISSIONS: dict[str, frozenset[str]] = {
             "reply_in_inbox",
         }
     ),
+    # Additive, not a superset of ``write``: a key may hold both, and one that
+    # holds only this can erase and do nothing else — which is what a
+    # deletion-sync integration actually wants.
+    ApiScope.ERASE.value: frozenset({"erase_contacts"}),
 }
 
 

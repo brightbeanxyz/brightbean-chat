@@ -34,6 +34,13 @@ apps/contacts/activity.py before it can become a src.
     <div class="flex items-center gap-2 flex-shrink-0">
       <a class="media-pill" href="{% url 'contacts:list' workspace_id=request.workspace.id %}">Back to contacts</a>
       {% if can_manage_crm %}
+        {# SPEC §19's subject access response. A plain link, not htmx: the
+           answer is a file download, and hx-get would swap JSON into the DOM. #}
+        <a class="media-pill"
+           href="{% url 'contacts:subject_export' workspace_id=request.workspace.id contact_id=contact.id %}"
+           download>Export data</a>
+      {% endif %}
+      {% if can_manage_crm %}
         <form class="mb-0"
               hx-post="{% url 'contacts:delete' workspace_id=request.workspace.id contact_id=contact.id %}"
               hx-swap="none"
@@ -125,6 +132,39 @@ apps/contacts/activity.py before it can become a src.
 
     {# ── Activity ────────────────────────────────────────────────── #}
     {% include "contacts/_activity.html" %}
+
+    {# ── Danger zone (SPEC §19, issue #29) ───────────────────────── #}
+    {% comment %}
+      Admin only, and last on the page on purpose: erasure is the one action in
+      the CRM with no undo. Delete above hides a person; this removes them.
+
+      The typed confirmation is enforced in the view, not here. hx-confirm is a
+      window.confirm and proves nothing about a request that did not come from
+      this page — it is the speed bump, and the two hidden/typed values the form
+      posts are the control. See apps/contacts/views.py::contact_erase.
+    {% endcomment %}
+    {% if can_erase_contacts %}
+      <section class="crm-panel crm-danger-zone">
+        <h2>Erase permanently</h2>
+        <p class="muted text-sm">
+          Removes {{ contact.display_name }} outright — their profile, custom field values, tags, channel
+          identities, consent records, conversations and message bodies. Counters stay, anonymised. A
+          suppressed email address is kept, because that is a fact about a mailbox rather than about this
+          contact. <strong>This cannot be undone.</strong>
+        </p>
+        <form class="crm-danger-form mb-0"
+              hx-post="{% url 'contacts:erase' workspace_id=request.workspace.id contact_id=contact.id %}"
+              hx-swap="none"
+              hx-confirm="Erase {{ contact.display_name }} permanently? Their messages, identities and consent records are removed for good. This cannot be undone."
+              hx-on::after-request="if (event.detail.successful) window.location = '{% url 'contacts:list' workspace_id=request.workspace.id %}'">
+          <input type="hidden" name="contact_id" value="{{ contact.id }}">
+          <label class="text-sm" for="erase-confirm">Type <code>{{ erase_confirmation }}</code> to confirm</label>
+          <input type="text" id="erase-confirm" name="confirm" autocomplete="off" spellcheck="false"
+                 placeholder="{{ erase_confirmation }}" required>
+          <button type="submit" class="btn-outline btn-inline btn-danger-soft">Erase contact</button>
+        </form>
+      </section>
+    {% endif %}
   </div>
 
   <aside class="crm-detail-side">

@@ -37,6 +37,7 @@ urlpatterns = [
     path("contacts/export/", views.contact_export, name="export"),
     path("contacts/bulk/tag/", views.bulk_tag, name="bulk_tag"),
     path("contacts/bulk/delete/", views.bulk_delete, name="bulk_delete"),
+    path("contacts/bulk/erase/", views.bulk_erase, name="bulk_erase"),
     path("contacts/bulk/sequence/", views.bulk_sequence, name="bulk_sequence"),
     path("contacts/segments/create/", views.segment_create, name="segment_create"),
     path("contacts/segments/<uuid:segment_id>/save/", views.segment_update, name="segment_update"),
@@ -67,6 +68,10 @@ urlpatterns = [
     path("contacts/<uuid:contact_id>/start-flow/", views.contact_start_flow, name="start_flow"),
     path("contacts/<uuid:contact_id>/stop-automation/", views.contact_stop_automation, name="stop_automation"),
     path("contacts/<uuid:contact_id>/delete/", views.contact_delete, name="delete"),
+    # GDPR (SPEC §19, issue #29). Both reach a soft-deleted contact, which the
+    # rest of this subtree deliberately does not — see views._erasable_or_404.
+    path("contacts/<uuid:contact_id>/export.json", views.contact_subject_export, name="subject_export"),
+    path("contacts/<uuid:contact_id>/erase/", views.contact_erase, name="erase"),
     # --- workspace settings ----------------------------------------------
     path("settings/tags/", views.tag_list, name="tag_list"),
     path("settings/tags/rows/", views.tag_rows, name="tag_rows"),

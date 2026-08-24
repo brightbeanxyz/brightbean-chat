@@ -49,15 +49,31 @@ MAX_STORED_ERROR_CHARS = 2000
 class ApiScope(models.TextChoices):
     """SPEC §17's coarse scopes.
 
-    Deliberately two, not a mirror of ``PERMISSION_KEYS``. Fine-grained scopes
-    are named out of scope by issue #25, and a key that can be granted every
-    workspace permission is a key that can eventually mint another key.
+    Deliberately coarse, not a mirror of ``PERMISSION_KEYS``. Fine-grained
+    scopes are named out of scope by issue #25, and a key that can be granted
+    every workspace permission is a key that can eventually mint another key.
     ``apps.api.auth.SCOPE_PERMISSIONS`` is where these become an
     ``effective_permissions`` mapping.
+
+    ``erase`` is the third, added by issue #29 for SPEC §19's GDPR erasure, and
+    it is separate from ``write`` rather than folded into it for one reason:
+    ``apps.api.services._validated_scopes`` caps a requested scope against the
+    permissions the *issuer* holds, so a scope carrying the admin-only
+    ``erase_contacts`` key can only ever be granted by an admin — the property
+    an admin-tier capability needs, obtained from machinery that already exists.
+    Folding it into ``write`` would instead have handed irreversible erasure to
+    every key already issued, at upgrade, with nothing on the keys page
+    changing. A capability nobody asked for and nobody was told about is not a
+    scope; it is a surprise.
+
+    Adding a member here needs no migration: ``ApiKey.scopes`` is a plain
+    ``JSONField`` with no ``choices=``, and ``services.known_scopes()`` derives
+    the issuance form from this enum intersected with ``SCOPE_PERMISSIONS``.
     """
 
     READ = "read", "Read"
     WRITE = "write", "Write"
+    ERASE = "erase", "Erase"
 
 
 class DeliveryStatus(models.TextChoices):

@@ -76,6 +76,7 @@ PERMISSION_KEYS: list[str] = [
     "manage_workspace_settings",
     "manage_api_keys",
     "view_analytics",
+    "erase_contacts",
 ]
 
 # Admin-only keys. Editor is "admin minus these" — spelled as a subtraction so
@@ -86,6 +87,12 @@ _ADMIN_ONLY_KEYS = frozenset(
         "manage_members",
         "manage_workspace_settings",
         "manage_api_keys",
+        # GDPR erasure (SPEC §19, issue #29). Admin-only because it is the one
+        # destructive act in the product with no undo: ``manage_crm``'s delete
+        # sets ``status`` and every row survives, while this removes the person
+        # and their message history outright. Editor holds the reversible half
+        # and not this one.
+        "erase_contacts",
     }
 )
 
