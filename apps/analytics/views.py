@@ -126,7 +126,14 @@ def flow_detail(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> H
 
 
 def _rate(part: int, whole: int) -> float | None:
-    """A percentage, or ``None`` where there is no denominator to divide by."""
+    """A percentage, or ``None`` where there is no denominator to divide by.
+
+    Used for clicks-per-send, which is a **ratio and not a rate**: ``clicked``
+    counts clicks and ``sent`` counts messages, and SPEC §18 keeps no per-contact
+    history to deduplicate against, so one recipient pressing a link three times
+    is three. Values over 100% are correct and the templates label the column so
+    they read that way.
+    """
     return round(100 * part / whole, 1) if whole else None
 
 

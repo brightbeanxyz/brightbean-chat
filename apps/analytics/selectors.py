@@ -17,8 +17,8 @@ Two date conventions worth knowing:
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
 from datetime import date as date_type
-from datetime import timedelta
 from typing import Any
 
 from django.db.models import Count, Q, Sum
@@ -65,22 +65,48 @@ def empty_counters() -> dict[str, int]:
     return dict.fromkeys(COUNTER_FIELDS, 0)
 
 
-def resolve_range(days: Any, *, default: int | None = None) -> DateRange:
+def resolve_range(days: Any) -> DateRange:
     """Turn an untrusted ``?days=`` into a bounded range.
 
-    Anything unparseable falls back to ``default``, and ``default=None`` means
-    all time. Clamped at both ends: zero or negative is one day, and anything
-    past :data:`MAX_DAYS` is :data:`MAX_DAYS`.
+    Anything unparseable, zero or negative means **all time**; anything past
+    :data:`MAX_DAYS` is clamped to it. There is deliberately no ``default``
+    parameter: the pages pick their own default *before* calling this (see
+    ``apps.analytics.views._days``), so that the range they query and the range
+    their heading claims are the same number, and the stats API documents "no
+    parameter means all time" as its own contract.
     """
     try:
         value = int(days)
     except (TypeError, ValueError):
-        value = default if default is not None else 0
+        value = 0
     if value <= 0:
         return DateRange()
     value = min(value, MAX_DAYS)
     today = timezone.now().date()
     return DateRange(start=today - timedelta(days=value - 1), end=today)
+
+
+def _within(rows: Any, field: str, window: DateRange) -> Any:
+    """Bound ``rows`` to ``window`` on a **timestamp** column, index-sargable.
+
+    Not ``__date__gte``/``__date__lte``: that wraps the column in
+    ``(col AT TIME ZONE …)::date``, and a function over a column cannot be
+    answered from a btree index on it — so a workspace's whole message history
+    got scanned to render one page. Half-open on the upper end
+    (``< end + 1 day``) so the last day is included without a cast, which is the
+    same set of rows the date comparison selected: ``TIME_ZONE`` is UTC and
+    these buckets are UTC days (:class:`apps.analytics.models.NodeStatDaily`).
+    """
+    if window.start is not None:
+        rows = rows.filter(**{f"{field}__gte": _midnight(window.start)})
+    if window.end is not None:
+        rows = rows.filter(**{f"{field}__lt": _midnight(window.end + timedelta(days=1))})
+    return rows
+
+
+def _midnight(day: date_type) -> datetime:
+    """The instant a UTC day begins."""
+    return datetime.combine(day, time.min, tzinfo=UTC)
 
 
 def _rows(workspace: Any, window: DateRange) -> Any:
@@ -178,7 +204,7 @@ def workspace_flow_rows(workspace: Any, *, window: DateRange) -> list[dict[str, 
     return rows
 
 
-def connection_deliverability(workspace: Any, *, window: DateRange) -> list[dict[str, Any]]:
+def connection_deliverability(workspace: Any, *, window: DateRange, connection_id: Any = None) -> list[dict[str, Any]]:
     """Per-connection send outcomes — SPEC §13.2's "deliverability summary".
 
     Read from ``message`` rather than from ``node_stat_daily``, and deliberately:
@@ -191,10 +217,12 @@ def connection_deliverability(workspace: Any, *, window: DateRange) -> list[dict
     from apps.messaging.models import Message, MessageDirection, MessageStatus
 
     rows = Message.objects.for_workspace(workspace).filter(direction=MessageDirection.OUT, internal=False)
-    if window.start is not None:
-        rows = rows.filter(created_at__date__gte=window.start)
-    if window.end is not None:
-        rows = rows.filter(created_at__date__lte=window.end)
+    rows = _within(rows, "created_at", window)
+    if connection_id is not None:
+        # Filtered in the query rather than in the caller. The broadcast page
+        # wants one connection's row and used to aggregate every connection in
+        # the workspace to get it.
+        rows = rows.filter(channel_connection_id=connection_id)
 
     grouped = {
         row["channel_connection_id"]: row

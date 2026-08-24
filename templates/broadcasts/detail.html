@@ -69,11 +69,33 @@ answers the different question beside it — is the channel healthy enough to
 schedule the next one. It does not move while somebody watches, so it costs one
 query on page load and nothing thereafter.
 {% endcomment %}
+{% comment %}
+Clicks on the links inside the message (issue #26). Outside the polled fragment
+above, and deliberately: a click is a thing a recipient did rather than a state
+a recipient is in, so it takes no part in `queued = sent + failed + cancelled +
+skipped`, it does not move while somebody watches one send, and including it in
+_counters.html would have put a node_stat_daily aggregate on every three-second
+poll — including the ones that answer 304. It comes from the same counter the
+flow builder's overlay shows.
+{% endcomment %}
+<div class="bc-panel">
+    <div class="bc-panel-head">
+        <span class="bc-panel-title">Clicks</span>
+        <span class="bc-hint">Links pressed in this message. Refresh to update.</span>
+    </div>
+    <div class="bc-tiles">
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ clicked }}</div>
+            <div class="bc-tile-label">Clicked</div>
+        </div>
+    </div>
+</div>
+
 {% if deliverability %}
 <div class="bc-panel">
     <div class="bc-panel-head">
         <span class="bc-panel-title">{{ deliverability.connection.display_name }} deliverability</span>
-        <a class="bc-hint" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}">All channels</a>
+        <span class="bc-hint">Last 30 days, every message on this channel.</span>
     </div>
     <div class="bc-tiles">
         <div class="bc-tile">

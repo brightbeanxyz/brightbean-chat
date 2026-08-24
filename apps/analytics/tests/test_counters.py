@@ -144,11 +144,40 @@ class TestDeltas:
     def test_failure_counts_a_failure(self) -> None:
         assert deltas_for(MessageStatus.QUEUED, MessageStatus.FAILED) == {"failed": 1}
 
-    def test_a_late_delivery_receipt_after_a_failure_counts_the_arrival(self) -> None:
-        """SPEC §9.5's rule 3: a delivery receipt beats `failed`. It really did
-        arrive, so `sent` and `delivered` are both true of it — and `failed` was
-        already counted when it was written off."""
-        assert deltas_for(MessageStatus.FAILED, MessageStatus.DELIVERED) == {"sent": 1, "delivered": 1}
+    def test_a_late_delivery_receipt_after_a_failure_does_not_re_count_the_send(self) -> None:
+        """SPEC §9.5's rule 3: a delivery receipt beats `failed`.
+
+        The arrival is news; the send is not. A message can only reach `failed`
+        and *then* collect a delivery receipt if a provider accepted it, so its
+        `sent` was counted on the way in — scoring `failed` as rank 0 made this
+        step cross that rung a second time and reported one message as two sends.
+        """
+        assert deltas_for(MessageStatus.FAILED, MessageStatus.DELIVERED) == {"delivered": 1}
+
+    def test_a_whole_failure_and_recovery_counts_one_of_each(self) -> None:
+        """The sequence the double count came from, walked end to end."""
+        totals = {"sent": 0, "delivered": 0, "failed": 0}
+        for previous, current in (
+            (MessageStatus.QUEUED, MessageStatus.SENT),
+            (MessageStatus.SENT, MessageStatus.FAILED),
+            (MessageStatus.FAILED, MessageStatus.DELIVERED),
+            (MessageStatus.DELIVERED, MessageStatus.READ),
+        ):
+            for field, value in deltas_for(previous, current).items():
+                totals[field] += value
+
+        assert totals == {"sent": 1, "delivered": 1, "failed": 1}
+
+    def test_a_denial_that_never_reached_a_provider_counts_no_send(self) -> None:
+        """The other side of the same asymmetry. `failed` scores as `sent` only
+        for the status being *left*: promoting both sides would make an ordinary
+        compliance denial credit a send nobody made."""
+        assert deltas_for(MessageStatus.QUEUED, MessageStatus.FAILED) == {"failed": 1}
+
+    def test_a_message_off_the_ladder_moves_nothing(self) -> None:
+        """`deleted` is not a rung, and SPEC §6.3's redaction is terminal."""
+        assert deltas_for(MessageStatus.READ, MessageStatus.DELETED) == {}
+        assert deltas_for(MessageStatus.DELETED, MessageStatus.READ) == {}
 
 
 class TestRecordMessageStatus:

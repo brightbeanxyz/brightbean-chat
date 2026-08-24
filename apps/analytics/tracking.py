@@ -364,7 +364,17 @@ def _email_body(
     wrap: Any,
     idempotency_key: str,
 ) -> OutboundMessage:
-    """Rewrite anchors and append the pixel, for a workspace that asked for both."""
+    """Rewrite anchors and append the pixel, for a workspace that asked for both.
+
+    One query per email send, and deliberately not cached. The alternatives both
+    cost more than they save: the configured cache is Django's database backend
+    (SPEC §22 — no Redis), so a cache read is the same round trip this already
+    makes, and a per-process memo would leave a worker mailing pixels for
+    minutes after an admin switched them off, which is the one direction a
+    privacy toggle must not fail in. The lookup is a single row on a unique
+    index, on a path whose next step is an SMTP or provider round trip several
+    orders of magnitude slower.
+    """
     from apps.analytics.models import TrackingSettings
 
     row = TrackingSettings.objects.filter(workspace_id=workspace_id).values("wrap_email_links", "open_pixel").first()

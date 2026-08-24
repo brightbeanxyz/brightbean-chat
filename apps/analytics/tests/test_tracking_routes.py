@@ -171,6 +171,42 @@ class TestTokenIndistinguishability:
         assert len(bodies) == 1
 
 
+class TestOpenPixelOnARedactedMessage:
+    """SPEC §6.3 redacts a message and leaves it off the delivery ladder.
+
+    ``_next_status`` used to subscript ``DELIVERY_PROGRESS[current]`` directly,
+    which raises ``KeyError`` for ``deleted``. Inside ingest that was swallowed
+    by the batch's broad ``except``; here there is no such net, so a mail client
+    fetching the pixel for a redacted message turned an unauthenticated request
+    into a 500 instead of the GIF this route promises to always return.
+    """
+
+    def test_it_still_answers_a_gif(
+        self, client: Any, tenancy: Any, contact: Any, connection: Any, identity: Any, flow: Any
+    ) -> None:
+        execution = make_execution(flow, contact, connection)
+        key = message_idempotency_key(execution, ENTRY_NODE)
+        with registered(Platform.TELEGRAM):
+            services.send_outbound(
+                workspace=tenancy.workspace,
+                contact=contact,
+                connection=connection,
+                outbound=TEXT,
+                source="automation",
+                idempotency_key=key,
+            )
+        Message.objects.for_workspace(tenancy.workspace).filter(idempotency_key=key).update(
+            status=MessageStatus.DELETED
+        )
+
+        response = client.get(urlsplit(tracking.open_url(workspace_id=tenancy.workspace.pk, idempotency_key=key)).path)
+
+        assert response.status_code == 200
+        assert response["Content-Type"] == "image/gif"
+        # And the redaction stands: nothing walked it back onto the ladder.
+        assert Message.objects.for_workspace(tenancy.workspace).get(idempotency_key=key).status == MessageStatus.DELETED
+
+
 class TestOpenPixel:
     def test_it_answers_a_gif_and_marks_the_message_read(
         self, client: Any, tenancy: Any, contact: Any, connection: Any, identity: Any, flow: Any
@@ -263,18 +299,36 @@ class TestOpenPixel:
         assert message.updated_at == updated_at
 
 
-class TestClickThrottle:
-    def test_the_redirect_survives_a_throttled_counter(
-        self, client: Any, tenancy: Any, flow: Any, monkeypatch: Any
-    ) -> None:
-        """Counting is best-effort; redirecting is not. A link in a real message
-        must work even when the caller is spraying."""
-        from apps.analytics import views_public
+class TestNoAddressThrottle:
+    """Every click counts, however many share one apparent client address.
 
-        monkeypatch.setattr(views_public, "CLICK_COUNT_LIMIT", 2)
+    A per-address limit was tried and removed: ``get_client_ip`` ignores
+    ``X-Forwarded-For`` unless the peer is in ``TRUSTED_PROXIES``, so under SPEC
+    §20's own reference deployment every click reports the proxy's address and
+    one limit governed the whole deployment — silently dropping real clicks from
+    a campaign's numbers. See the module docstring in ``views_public``.
+    """
+
+    def test_many_clicks_from_one_address_all_count(self, client: Any, tenancy: Any, flow: Any) -> None:
         path = click_path(flow)
 
-        statuses = [client.get(path).status_code for _ in range(5)]
+        statuses = [client.get(path).status_code for _ in range(40)]
 
-        assert statuses == [302] * 5
-        assert clicks(tenancy.workspace, flow) == 2
+        assert statuses == [302] * 40
+        assert clicks(tenancy.workspace, flow) == 40
+
+    def test_a_click_on_a_deleted_flow_costs_a_live_one_nothing(self, client: Any, tenancy: Any, flow: Any) -> None:
+        """The removed throttle spent its budget before resolving the flow, so
+        links from a tidied-away flow could suppress counting for a live one."""
+        from apps.flows.fixtures import graph_for
+        from apps.flows.tests.support import published_flow
+
+        gone = published_flow(tenancy.workspace, graph_for("send_message"), name="Retired")
+        gone_path = click_path(gone)
+        gone.delete()
+
+        for _ in range(10):
+            assert client.get(gone_path).status_code == 302
+        client.get(click_path(flow))
+
+        assert clicks(tenancy.workspace, flow) == 1

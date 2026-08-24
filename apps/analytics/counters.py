@@ -104,11 +104,28 @@ def deltas_for(previous: str, current: str) -> dict[str, int]:
 
     ``DELIVERY_PROGRESS`` is :mod:`apps.messaging.models`' ladder — queued 0,
     sent 1, delivered 2, read 3 — and ``failed`` and ``deleted`` are deliberately
-    absent from it. Both read as rank 0 here, "never got anywhere", which is what
-    makes SPEC §9.5's late delivery receipt for a message that had already been
-    written off (``failed → delivered``) count the arrival it reports.
+    absent from it.
+
+    **``failed`` reads as the ``sent`` rung, not as rank 0.** SPEC §9.5's rule 3
+    lets a late delivery receipt beat a failure, so a message really does walk
+    ``sent → failed → delivered``; scoring the middle state at 0 made the third
+    step cross the ``sent`` rung a second time and counted one message as two
+    sends, which then understated every CTR computed against it. A message can
+    only reach ``failed`` *and then* collect a delivery receipt if a provider
+    accepted it in the first place — the failures that skip ``sent`` entirely are
+    compliance denials and adapter errors, which have no ``provider_message_id``
+    for a later receipt to name — so treating the recovery as "already sent" is
+    right for every sequence that can actually occur.
+
+    **A message that was off the ladder moves nothing**, whichever direction it
+    is going. ``deleted`` is the only such status (SPEC §6.3's redaction, which
+    is terminal), and ``apps.messaging.ingest._next_status`` already refuses to
+    move a message off it — but this function is a pure decision table and being
+    total is cheaper than depending on another module's invariant to stay true.
     """
-    before = DELIVERY_PROGRESS.get(previous, 0)
+    if previous != MessageStatus.FAILED and previous not in DELIVERY_PROGRESS:
+        return {}
+    before = _rank_left(previous)
     after = DELIVERY_PROGRESS.get(current, 0)
     deltas = {
         "sent": 1 if before < 1 <= after else 0,
@@ -118,6 +135,21 @@ def deltas_for(previous: str, current: str) -> dict[str, int]:
         "failed": 1 if current == MessageStatus.FAILED and previous != MessageStatus.FAILED else 0,
     }
     return {field: value for field, value in deltas.items() if value}
+
+
+def _rank_left(status: str) -> int:
+    """How far a message had already got, given the status it is moving *off*.
+
+    **Asymmetric on purpose, and the asymmetry is the whole fix.** ``failed``
+    scores as ``sent`` here because a message leaving ``failed`` for a delivery
+    receipt was demonstrably sent (see :func:`deltas_for`) — but the *arriving*
+    side reads the bare ladder, where ``failed`` is rank 0. Promoting both sides
+    would make ``queued → failed`` — an ordinary compliance denial that no
+    provider ever saw — credit a send it never made.
+    """
+    if status == MessageStatus.FAILED:
+        return DELIVERY_PROGRESS[MessageStatus.SENT]
+    return DELIVERY_PROGRESS.get(status, 0)
 
 
 def record_message_status(message: Any, *, previous: str, current: str) -> None:

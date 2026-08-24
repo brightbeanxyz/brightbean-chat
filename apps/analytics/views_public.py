@@ -34,12 +34,21 @@ been deleted since the message went out, and answering 404 to somebody who
 pressed a button in a real message because a row is gone would break the link to
 punish the reader for a workspace's housekeeping.
 
-The counter alone is rate-limited per client address, through
-``apps.common.ratelimit``. The token is the same for every recipient of one
-button — it names a flow, a node and a URL, and nothing about a person — so it is
-inherently replayable, and a bounded number of counts per address per minute is
-the difference between "somebody clicked twice" and "somebody sat on F5". The
-302 is never throttled.
+**There is deliberately no per-address throttle on the counter**, and the reason
+is worth stating because an earlier version of this module had one. Client
+addresses are not distinguishable here: ``apps.common.net.get_client_ip``
+ignores ``X-Forwarded-For`` unless the peer is in ``TRUSTED_PROXIES``, and SPEC
+§20's reference deployment puts Caddy in front of gunicorn — so with that
+unset, *every* click reports the proxy's address and one limit governs the whole
+deployment. A corporate NAT or a mail-scanner egress does the same thing to a
+correctly configured one. The result was legitimate clicks silently dropped from
+a campaign's numbers, which is worse than the inflation it was guarding against:
+a click counter is inherently replayable by anyone holding the link, SPEC §18
+asks for no defence against that, and neither ``/u/`` nor ``/m/`` — the other
+public token routes — throttles either.
+
+What the endpoint does instead is stay cheap: one indexed lookup and one upsert,
+both skipped entirely when the token names no live flow.
 
 --------------------------------------------------------------------------
 ``/o/`` bumps a status; it does not invent a counter
@@ -72,8 +81,6 @@ from django.http import Http404, HttpRequest, HttpResponse, HttpResponseRedirect
 from django.views.decorators.http import require_GET
 
 from apps.analytics import counters, tracking
-from apps.common.net import get_client_ip
-from apps.common.ratelimit import hit, window_key
 from apps.common.validators import is_renderable_url
 
 logger = logging.getLogger(__name__)
@@ -84,13 +91,6 @@ __all__ = ["click_redirect", "open_pixel"]
 #: has to be served with ``no-store`` and no redirect, and a 43-byte constant is
 #: cheaper than a staticfiles lookup on every open.
 _PIXEL_GIF = base64.b64decode(b"R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
-
-#: How many clicks one client address may add to a counter per window, and how
-#: long the window is. Generous enough that a person clicking a button in three
-#: different messages is never throttled, small enough that a script cannot move
-#: a workspace's numbers by an interesting amount.
-CLICK_COUNT_LIMIT = 30
-CLICK_COUNT_WINDOW_SECONDS = 60
 
 #: A token longer than this is refused before any signature work. Django's own
 #: URL length limits are generous and the signer would happily spend time on a
@@ -112,7 +112,7 @@ def click_redirect(request: HttpRequest, token: str) -> HttpResponse:
         # attack — and the answer is the same bare 404 either way.
         raise Http404
 
-    _count(request, target)
+    _count(target)
     return HttpResponseRedirect(_with_query(destination, request.META.get("QUERY_STRING", "")))
 
 
@@ -130,23 +130,14 @@ def open_pixel(request: HttpRequest, token: str) -> HttpResponse:
     return response
 
 
-def _count(request: HttpRequest, target: tracking.ClickTarget) -> None:
-    """Add one to the node's ``clicked`` counter, unless this caller is spraying.
+def _count(target: tracking.ClickTarget) -> None:
+    """Add one to the node's ``clicked`` counter.
 
     Resolves the flow to find its workspace rather than trusting a workspace id
     in the payload: the row is the authority on which tenant this counter belongs
     to, and a deleted flow means there is nothing to count — not a broken link.
     """
     from apps.flows.models import Flow
-
-    address = get_client_ip(request) or "unknown"
-    if hit(
-        window_key("analytics-click", address, window_seconds=CLICK_COUNT_WINDOW_SECONDS),
-        limit=CLICK_COUNT_LIMIT,
-        window_seconds=CLICK_COUNT_WINDOW_SECONDS,
-    ):
-        logger.info("Click counting throttled for one client address; the redirect still happened.")
-        return
 
     workspace_id = _flow_workspace(Flow, target.flow_id)
     if workspace_id is None:

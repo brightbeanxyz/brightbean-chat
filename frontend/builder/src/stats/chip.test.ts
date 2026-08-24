@@ -102,6 +102,13 @@ describe("chipValues", () => {
     expect([chip.sent, chip.delivered, chip.clicked]).toEqual([10, 8, 2]);
   });
 
+  it("carries failed through, so the card can call it out", () => {
+    // The chip briefly dropped `failed` when it gained `clicked`, which left a
+    // node whose every send is refused looking identical to a healthy one.
+    expect(chipValues(STATS, WITH_URL_BUTTON).failed).toBe(1);
+    expect(chipValues({ ...STATS, failed: 0 }, WITH_URL_BUTTON).failed).toBe(0);
+  });
+
   it("computes the click-through rate against sends", () => {
     expect(chipValues(STATS, WITH_URL_BUTTON).ctr).toBe(20);
   });
@@ -147,6 +154,17 @@ describe("chipValues", () => {
         { subject: "Hi", html_body: "<p>x</p>" },
       ).ctr,
     ).toBe(50);
+  });
+
+  it("can exceed 100%, because clicks are not deduplicated", () => {
+    // SPEC §18 keeps no per-contact history, so one recipient pressing a link
+    // three times is three. The label says "clicks per send" for this reason.
+    expect(
+      chipValues(
+        { sent: 5, delivered: 5, failed: 0, clicked: 12 },
+        WITH_URL_BUTTON,
+      ).ctr,
+    ).toBe(240);
   });
 
   it("never divides by nothing", () => {

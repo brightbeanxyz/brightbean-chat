@@ -17,8 +17,18 @@ import type { NodeStats } from "../schema/types";
 export interface ChipValues {
   sent: number;
   delivered: number;
+  /** Surfaced separately by the card, and only when non-zero. */
+  failed: number;
   clicked: number;
-  /** Percentage of sends that were clicked, or null when there is nothing to divide. */
+  /**
+   * Clicks per send, as a percentage, or null when there is nothing to divide.
+   *
+   * **Can exceed 100%, and that is not a bug.** `clicked` counts clicks and
+   * `sent` counts messages; SPEC §18 keeps no per-contact history, so one
+   * recipient pressing a link three times is three. It is labelled "clicks per
+   * send" rather than a click-through *rate* for exactly that reason — a rate
+   * reading 240% looks broken, a ratio does not.
+   */
   ctr: number | null;
 }
 
@@ -74,9 +84,10 @@ export function chipValues(stats: NodeStats, config: unknown): ChipValues {
   return {
     sent: stats.sent,
     delivered: stats.delivered,
+    failed: stats.failed,
     clicked: stats.clicked,
-    // One decimal, and never a rate with no denominator: "0.0%" of nothing sent
-    // reads as a failure rather than as an absence.
+    // One decimal, and never a ratio with no denominator: "0.0%" of nothing
+    // sent reads as a failure rather than as an absence.
     ctr:
       trackable && stats.sent > 0
         ? Math.round((1000 * stats.clicked) / stats.sent) / 10

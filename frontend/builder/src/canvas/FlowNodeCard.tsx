@@ -7,8 +7,12 @@
  * one entry in `position`, so one card re-renders and the other ninety-nine,
  * plus the inspector, do not.
  */
-import { Handle, Position as HandlePosition, useUpdateNodeInternals } from "@xyflow/react";
-import { memo, useEffect } from "react";
+import {
+  Handle,
+  Position as HandlePosition,
+  useUpdateNodeInternals,
+} from "@xyflow/react";
+import { memo, useEffect, useMemo } from "react";
 
 import { groupOf, nodeSpec } from "../schema/artifact";
 import { handleLabel, sourceHandles } from "../schema/handles";
@@ -20,14 +24,24 @@ import { NodePreview } from "./previews";
 
 const HANDLE_COPY: Record<string, string> = { default: "Next" };
 
-function FlowNodeCardInner({ id, data, selected }: { id: string; data: CardData; selected?: boolean }) {
+function FlowNodeCardInner({
+  id,
+  data,
+  selected,
+}: {
+  id: string;
+  data: CardData;
+  selected?: boolean;
+}) {
   const nodeId = data.nodeId;
   const type = useBuilder((state) => state.nodeType[nodeId]);
   const config = useBuilder((state) => state.config[nodeId]);
   const picklists = useBuilder((state) => state.picklists);
   const issues = useBuilder((state) => state.validation.byNode[nodeId]);
   const isEntry = useBuilder((state) => selectEntryIds(state).has(nodeId));
-  const stats = useBuilder((state) => (state.statsVisible ? state.stats : null));
+  const stats = useBuilder((state) =>
+    state.statsVisible ? state.stats : null,
+  );
 
   const spec = type === undefined ? undefined : nodeSpec(type);
   const handles = spec ? sourceHandles(spec, config) : [];
@@ -42,15 +56,29 @@ function FlowNodeCardInner({ id, data, selected }: { id: string; data: CardData;
     updateNodeInternals(id);
   }, [id, handleKey, updateNodeInternals]);
 
+  const nodeStats = stats?.nodes[nodeId];
+  // sent · delivered · clicked, with clicks-per-send where there is a link to
+  // divide by, and failures called out separately (issue #26).
+  //
+  // Memoized because `hasUrlButton` walks the whole config tree: this card
+  // re-renders on every keystroke in the inspector and on every stats poll, and
+  // the answer changes only when a button is added or removed.
+  //
+  // Above the early return, with every other hook. A `useMemo` after it would
+  // be skipped on the renders where the type has not resolved yet, and React
+  // counts hooks by position — the node would throw the moment its type
+  // arrived.
+  const chip = useMemo(
+    () => (nodeStats ? chipValues(nodeStats, config) : null),
+    [nodeStats, config],
+  );
+
   if (type === undefined) {
     return null;
   }
 
   const group = spec ? groupOf(spec) : "other";
   const isNote = Boolean(spec?.annotation);
-  const nodeStats = stats?.nodes[nodeId];
-  // sent · delivered · clicked, with the CTR where there is one (issue #26).
-  const chip = nodeStats ? chipValues(nodeStats, config) : null;
 
   return (
     <div
@@ -72,7 +100,9 @@ function FlowNodeCardInner({ id, data, selected }: { id: string; data: CardData;
 
       <div className="fb-node-header">
         <span className="truncate">{spec?.label ?? type}</span>
-        {isEntry && !isNote ? <span className="fb-entry-flag ml-auto">START</span> : null}
+        {isEntry && !isNote ? (
+          <span className="fb-entry-flag ml-auto">START</span>
+        ) : null}
       </div>
 
       <div className="fb-node-body">
@@ -88,10 +118,31 @@ function FlowNodeCardInner({ id, data, selected }: { id: string; data: CardData;
             </span>
           ) : null}
           {chip ? (
-            <span className="fb-pill" title="Sent · delivered · clicked">
-              {chip.sent} · {chip.delivered} · {chip.clicked}
-              {chip.ctr === null ? null : <span className="fb-pill-rate"> {chip.ctr}%</span>}
-            </span>
+            <>
+              {/* Failures first and only when there are any. The chip used to
+                  read sent · delivered · failed; dropping `failed` for `clicked`
+                  left a node whose every send is refused looking identical to a
+                  healthy one, and nothing else on the canvas carries that
+                  signal. A quiet card when all is well, a visible count when it
+                  is not. */}
+              {chip.failed > 0 ? (
+                <span
+                  className="fb-badge fb-badge-error"
+                  title="Sends that failed"
+                >
+                  {chip.failed} failed
+                </span>
+              ) : null}
+              <span className="fb-pill" title="Sent · delivered · clicked">
+                {chip.sent} · {chip.delivered} · {chip.clicked}
+                {chip.ctr === null ? null : (
+                  <span className="fb-pill-rate" title="Clicks per send">
+                    {" "}
+                    {chip.ctr}%
+                  </span>
+                )}
+              </span>
+            </>
           ) : stats && !stats.available && !isNote ? (
             <span className="fb-pill">—</span>
           ) : null}

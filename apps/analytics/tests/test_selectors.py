@@ -21,9 +21,11 @@ class TestResolveRange:
     def test_no_value_means_all_time(self) -> None:
         assert selectors.resolve_range(None).unbounded
 
-    def test_a_default_applies_only_when_the_value_is_unusable(self) -> None:
-        assert selectors.resolve_range("nonsense", default=30).start is not None
-        assert selectors.resolve_range("7", default=30).start == timezone.now().date() - timedelta(days=6)
+    def test_an_unusable_value_means_all_time(self) -> None:
+        """There is no ``default`` parameter: a page picks its own default before
+        calling this, so the range it queries is the range its heading claims."""
+        assert selectors.resolve_range("nonsense").unbounded
+        assert selectors.resolve_range("7").start == timezone.now().date() - timedelta(days=6)
 
     def test_it_is_clamped_at_both_ends(self) -> None:
         """A ``?days=`` from a URL bar is untrusted, and an unbounded one is an
@@ -157,6 +159,66 @@ class TestDeliverability:
         rows = selectors.connection_deliverability(other_tenancy.workspace, window=selectors.resolve_range(None))
 
         assert rows == []
+
+    def test_it_can_be_scoped_to_one_connection(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, flow: Any
+    ) -> None:
+        """The broadcast page wants one row and used to aggregate every
+        connection in the workspace to find it."""
+        from apps.analytics.tests.conftest import make_connection
+
+        other = make_connection(tenancy.workspace, suffix="second")
+        execution = make_execution(flow, contact, connection)
+        with registered(Platform.TELEGRAM):
+            services.send_outbound(
+                workspace=tenancy.workspace,
+                contact=contact,
+                connection=connection,
+                outbound=TEXT,
+                source="automation",
+                idempotency_key=message_idempotency_key(execution, ENTRY_NODE),
+            )
+
+        scoped = selectors.connection_deliverability(
+            tenancy.workspace, window=selectors.resolve_range(None), connection_id=connection.pk
+        )
+        empty = selectors.connection_deliverability(
+            tenancy.workspace, window=selectors.resolve_range(None), connection_id=other.pk
+        )
+
+        assert [row["connection"].pk for row in scoped] == [connection.pk]
+        assert empty == []
+
+    def test_the_windows_edges_are_inclusive_of_today(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, flow: Any
+    ) -> None:
+        """A ``__date`` cast wraps the column and no index can serve it. The
+        rows selected have to be the same either way, including today's."""
+        execution = make_execution(flow, contact, connection)
+        with registered(Platform.TELEGRAM):
+            services.send_outbound(
+                workspace=tenancy.workspace,
+                contact=contact,
+                connection=connection,
+                outbound=TEXT,
+                source="automation",
+                idempotency_key=message_idempotency_key(execution, ENTRY_NODE),
+            )
+
+        today = selectors.connection_deliverability(tenancy.workspace, window=selectors.resolve_range("1"))
+        yesterday_only = selectors.connection_deliverability(
+            tenancy.workspace,
+            window=selectors.DateRange(
+                start=timezone.now().date() - timedelta(days=1),
+                end=timezone.now().date() - timedelta(days=1),
+            ),
+        )
+
+        # The half-open upper bound is `< end + 1 day`, so today's message is in
+        # a range ending today and out of one ending yesterday. An off-by-one
+        # here would silently drop the most recent day from every page.
+        assert today and today[0]["total"] == 1
+        assert yesterday_only == []
 
 
 class TestDashboardKpis:

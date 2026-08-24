@@ -407,6 +407,12 @@ def audience_preview(request: WorkspaceRequest, workspace_id: str, broadcast_id:
 # ---------------------------------------------------------------------------
 
 
+#: How far back the channel-health panel looks. "Is this channel delivering
+#: *now*" is the question it answers, and an all-time rate hides a domain that
+#: started failing last week behind a year of good sends.
+DELIVERABILITY_DAYS = 30
+
+
 def _clicked(broadcast: Broadcast) -> int:
     """How many clicks the broadcast's links have taken (issue #26).
 
@@ -430,7 +436,6 @@ def _counters_context(broadcast: Broadcast) -> dict[str, Any]:
     return {
         "broadcast": broadcast,
         "counters": current,
-        "clicked": _clicked(broadcast),
         # While fanout is still expanding the audience, ``queued`` is the number
         # of recipients written *so far* rather than the total — so a percentage
         # against it walks backwards every time a chunk of five hundred lands.
@@ -448,7 +453,16 @@ def broadcast_detail(request: WorkspaceRequest, workspace_id: str, broadcast_id:
     return render(
         request,
         "broadcasts/detail.html",
-        {**_counters_context(broadcast), "deliverability": _deliverability(request, broadcast)},
+        {
+            **_counters_context(broadcast),
+            # Both of these are page-load only. They are not SPEC §13.2 live
+            # counters — a click is not a recipient's state, and a channel's
+            # health does not move while somebody watches one send — so putting
+            # them in _counters_context() would have put an extra aggregate on
+            # every three-second poll, including the ones that answer 304.
+            "clicked": _clicked(broadcast),
+            "deliverability": _deliverability(request, broadcast),
+        },
     )
 
 
@@ -462,14 +476,24 @@ def _deliverability(request: WorkspaceRequest, broadcast: Broadcast) -> dict[str
     wants to see before scheduling the next one.
 
     Computed in the page view only, never in the three-second polled fragment: it
-    is a workspace-wide aggregate and it does not move while somebody watches.
+    does not move while somebody watches.
+
+    Scoped to this connection and to :data:`DELIVERABILITY_DAYS`, both in the
+    query. Aggregating every connection over all time and then picking one row
+    out in Python — which is what this did first — made a page that a few 10k
+    broadcasts can reach scan the workspace's entire message history to render
+    four numbers.
     """
     if not apps.is_installed("apps.analytics"):
         return None
     from apps.analytics.selectors import connection_deliverability, resolve_range
 
-    rows = connection_deliverability(request.workspace, window=resolve_range(None))
-    return next((row for row in rows if row["connection"].pk == broadcast.channel_connection_id), None)
+    rows = connection_deliverability(
+        request.workspace,
+        window=resolve_range(DELIVERABILITY_DAYS),
+        connection_id=broadcast.channel_connection_id,
+    )
+    return rows[0] if rows else None
 
 
 @login_required
@@ -498,9 +522,6 @@ def counters(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) ->
         current.failed,
         current.skipped,
         current.cancelled,
-        # Clicks move without any recipient row changing, so the tag has to carry
-        # them too or the fragment would 304 while the tile it renders is stale.
-        context["clicked"],
     )
 
     def build() -> HttpResponse:

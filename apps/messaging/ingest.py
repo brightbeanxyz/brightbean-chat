@@ -895,15 +895,29 @@ def _next_status(current: str, incoming: str, error: str) -> tuple[str | None, s
     3. **A delivery receipt beats ``failed``.** Arriving is stronger evidence
        than a send-time error, and PR 2's retry path must not re-send something
        that actually landed.
+    4. **A message that has stepped off the ladder never rejoins it.**
+       ``deleted`` is not a rung (:data:`DELIVERY_PROGRESS` omits it on
+       purpose), so a receipt for a redacted message moves nothing.
+
+    Rule 4 is a lookup, not a policy, and it used to be neither: ``current`` was
+    subscripted directly, so a receipt arriving for a ``deleted`` message raised
+    ``KeyError`` from a function whose whole job is to be a pure, total decision
+    table. Inside ``persist_events`` that was swallowed by the batch's broad
+    ``except``; :func:`apply_receipt`'s other caller — issue #26's ``/o/`` open
+    pixel — has no such net, so the same row turned an unauthenticated request
+    into a 500. Answering "it does not move" is what the deletion path already
+    documents as the intent.
     """
     if incoming == MessageStatus.FAILED:
         if DELIVERY_PROGRESS.get(current, 99) > DELIVERY_PROGRESS[MessageStatus.SENT]:
-            return None, ""  # rule 2
+            return None, ""  # rule 2 — and rule 4, via the default
         return (None, "") if current == MessageStatus.FAILED else (incoming, error or "provider_failed")
 
     if current == MessageStatus.FAILED:
         return incoming, ""  # rule 3 — and the failure code goes with it
 
+    if current not in DELIVERY_PROGRESS:
+        return None, ""  # rule 4
     if DELIVERY_PROGRESS[incoming] <= DELIVERY_PROGRESS[current]:
         return None, ""  # rule 1
     return incoming, ""
