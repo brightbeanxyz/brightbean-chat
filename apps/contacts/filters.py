@@ -57,6 +57,7 @@ __all__ = [
     "parse_filter_document",
     "resolve_query",
     "search",
+    "sequence_options",
 ]
 
 #: The orderings the list offers. The request supplies a **key into this dict**,
@@ -224,3 +225,37 @@ def contacts_for(workspace: Any, query: ContactQuery) -> tuple[QuerySet[Contact]
     # Every failure above returns early, so reaching here means there is nothing
     # to report — the empty string is the answer, not a variable's last value.
     return search(rows, query.search_term).order_by(*SORTS[query.sort]), ""
+
+
+def sequence_options(workspace: Any, *, enrollable: bool = False) -> list[dict[str, str]]:
+    """This workspace's sequences, for a picker.
+
+    ``enrollable`` narrows it to the ones that would actually accept a
+    subscriber — the ``active`` ones, which is what
+    ``apps.campaigns.services.subscribe`` enforces. The two callers want
+    genuinely different sets and getting them the same way round is a bug in
+    each direction:
+
+    * the **enrolment** controls (the CRM's bulk action, the contact pane) must
+      not offer a sequence every attempt would refuse;
+    * the **condition** key picker must offer every sequence, because "not
+      subscribed to the old onboarding" is a perfectly good segment rule about a
+      campaign that was archived last year.
+
+    Resolved through Django's app registry rather than by importing
+    ``apps.campaigns``: this app is L2-A and campaigns is L6-A, and a lower layer
+    importing a higher one is the coupling ``apps/flows/compat.py`` exists to
+    avoid on the same question. The registry is the neutral seam, and a
+    deployment without the app installed simply gets no options — which is
+    exactly the state the filter bar shipped in until #22.
+    """
+    from django.apps import apps as django_apps
+
+    try:
+        model = django_apps.get_model("campaigns", "Sequence")
+    except LookupError:
+        return []
+    rows = model.objects.for_workspace(workspace)
+    if enrollable:
+        rows = rows.filter(status="active")
+    return [{"value": str(row["id"]), "label": row["name"]} for row in rows.order_by("name").values("id", "name")]

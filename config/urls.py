@@ -23,10 +23,10 @@ _WS_SETTINGS_LAYOUT = "workspace_settings"
 # apps.members.roles.PERMISSION_KEYS. A placeholder under /w/<uuid>/ is a real
 # endpoint: SECURITY-BASELINE §1 requires it to 404 for a member of another
 # workspace, and tests/idor.py walks it automatically.
-_WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = [
-    ("sequences/", "sequences", "Sequences", "#22 (L6-A)", _APP_LAYOUT, "edit_flows"),
-    ("broadcasts/", "broadcasts", "Broadcasts", "#23 (L6-B)", _APP_LAYOUT, "send_broadcasts"),
-]
+# Empty since Layer 6: #22 took the sequences placeholder and #23 the broadcasts
+# one, each replacing it with a real include below. The machinery stays — the
+# next stubbed destination adds a row here and nothing else.
+_WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = []
 
 # Not workspace-scoped, so login is the whole gate.
 _GLOBAL_STUBS: list[tuple[str, str, str, str, str]] = [
@@ -99,6 +99,15 @@ urlpatterns = [
     # _WORKSPACE_STUBS above. A deep prefix, so it joins this group rather than
     # the workspace-root includes below.
     path("w/<uuid:workspace_id>/inbox/", include("apps.inbox.urls")),
+    # Sequences (issue #22): the placeholder is gone from _WORKSPACE_STUBS and
+    # the nav row now reverses `campaigns:list`. The app label is `campaigns`
+    # because apps/flows/picklists.py resolves it by that name; see
+    # apps/campaigns/apps.py.
+    path("w/<uuid:workspace_id>/sequences/", include("apps.campaigns.urls")),
+    # Broadcasts (issue #23), the same swap, at the same path and under the same
+    # permission the placeholder used — so the nav entry's target moves from a
+    # stub view to a real one and nothing else about the route changes.
+    path("w/<uuid:workspace_id>/broadcasts/", include("apps.broadcasts.urls")),
     # apps.contacts owns two disjoint stretches of the workspace URL space —
     # contacts/ and the two settings pages — so it mounts once at the root of
     # the prefix and spells the sub-paths itself (issue #3). It goes last of the

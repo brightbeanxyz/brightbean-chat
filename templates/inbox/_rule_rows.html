@@ -1,0 +1,71 @@
+{% comment %}
+The rules list. Drag to reorder, with up/down buttons doing the same thing for
+anybody not using a pointer — both post to inbox:rule_reorder, so the two
+affordances cannot disagree about what happened.
+
+The drag handler lives in rule_settings.html's {% templatetag openblock %} block alpine_components {% templatetag closeblock %},
+because this partial is re-fetched on every change and a script inside it would
+be re-evaluated each time.
+
+Every string here comes from RuleSummary, which is assembled server-side from
+this workspace's own label, member and platform names — the stored condition
+json never reaches the page. An id that no longer resolves prints "(deleted)"
+rather than vanishing: a rule quietly describing itself as doing less than it
+does is how somebody ends up debugging automation that is not in front of them.
+{% endcomment %}
+<div id="inbox-rule-rows"
+     hx-get="{% url 'inbox:rule_rows' workspace_id=request.workspace.id %}"
+     hx-trigger="inboxRulesChanged from:body"
+     hx-swap="outerHTML">
+  {% if rules %}
+    <form id="inbox-rule-order"
+          hx-post="{% url 'inbox:rule_reorder' workspace_id=request.workspace.id %}"
+          hx-trigger="rule-order-changed">
+      <ol class="ib-rule-list" data-rule-list>
+        {% for rule in rules %}
+          <li class="ib-rule" data-rule-id="{{ rule.id }}">
+            <input type="hidden" name="rule" value="{{ rule.id }}" />
+            <span class="ib-rule-handle" data-rule-handle aria-hidden="true">⋮⋮</span>
+            <div class="ib-rule-body">
+              <strong>{{ rule.name }}</strong>
+              {% if not rule.enabled %}<span class="muted">— disabled</span>{% endif %}
+              <ul class="ib-rule-clauses">
+                {% for clause in rule.conditions %}<li>{{ clause }}</li>{% endfor %}
+                {% if not rule.conditions %}<li class="muted">No conditions</li>{% endif %}
+              </ul>
+              <ul class="ib-rule-actions">
+                {% for action in rule.actions %}<li>{{ action }}</li>{% endfor %}
+                {% if not rule.actions %}<li class="muted">No actions</li>{% endif %}
+              </ul>
+            </div>
+            <div class="ib-rule-controls">
+              {% comment %}
+                The keyboard path. `formaction` is deliberately not used — these
+                submit the same form to the same endpoint, and the JS below
+                reorders the hidden inputs before submitting, so a browser with
+                no JS still posts the current order unchanged rather than a
+                mangled one.
+              {% endcomment %}
+              <button type="button" data-rule-move="up" aria-label="Move {{ rule.name }} earlier">↑</button>
+              <button type="button" data-rule-move="down" aria-label="Move {{ rule.name }} later">↓</button>
+              <button type="button"
+                      hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}?rule={{ rule.id }}"
+                      hx-target="#inbox-rule-editor">Edit</button>
+              <button type="button"
+                      hx-post="{% url 'inbox:rule_toggle' workspace_id=request.workspace.id rule_id=rule.id %}">
+                {% if rule.enabled %}Disable{% else %}Enable{% endif %}
+              </button>
+              <button type="button"
+                      hx-post="{% url 'inbox:rule_delete' workspace_id=request.workspace.id rule_id=rule.id %}"
+                      hx-confirm="Delete “{{ rule.name }}”? Conversations it has already labelled keep their labels.">
+                Delete
+              </button>
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    </form>
+  {% else %}
+    <p class="muted">No rules yet. A rule reads an inbound message and files, assigns or closes the conversation.</p>
+  {% endif %}
+</div>

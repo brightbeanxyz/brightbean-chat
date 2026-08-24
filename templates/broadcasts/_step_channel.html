@@ -1,0 +1,36 @@
+{% load common_extras %}
+{% comment %}
+Step 1 — the channel (SPEC §13.1).
+
+`connections` is apps/broadcasts/composer.py::broadcastable_connections, which
+filters on PlatformPolicy.broadcast_allowed. Instagram is absent from this list
+as *data*; there is no platform name in this template and there must not be one.
+{% endcomment %}
+<form class="bc-panel"
+      hx-post="{% url 'broadcasts:save_channel' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+      hx-target="#broadcast-wizard"
+      hx-swap="innerHTML">
+    {% csrf_token %}
+    <div class="bc-panel-head">
+        <span class="bc-panel-title">Which channel?</span>
+        <span class="bc-hint">Only channels whose platform permits broadcasts are listed.</span>
+    </div>
+
+    {% for connection in connections %}
+    <label class="bc-block flex items-center gap-3">
+        <input type="radio" name="connection_id" value="{{ connection.id }}"
+               {% if connection.id == broadcast.channel_connection_id %}checked{% endif %} required>
+        <span class="pi-chip {{ connection.platform|platform_class }}"></span>
+        <span>
+            <span style="color: var(--text-primary);">{{ connection.display_name }}</span>
+            <span class="bc-hint block">{{ connection.get_platform_display }}</span>
+        </span>
+    </label>
+    {% empty %}
+    <p class="bc-hint">No channel in this workspace accepts broadcasts.</p>
+    {% endfor %}
+
+    <div class="bc-actions">
+        <button type="submit" class="btn-brand btn-inline" {% if not connections %}disabled{% endif %}>Continue</button>
+    </div>
+</form>

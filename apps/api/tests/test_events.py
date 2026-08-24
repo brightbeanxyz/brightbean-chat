@@ -2,9 +2,13 @@
 
 The property that matters here is the one the issue asks for in as many words:
 *"the subscription is data-driven so no code change is needed when it appears"*.
-``broadcast.finished`` has no emitter until L6-B, so the test for it is about
-discovery rather than delivery — a catalog assembled by walking the installed
-apps picks up a new emitter the day it lands, and a hard-coded list does not.
+``broadcast.finished`` was the worked example: it was offered to subscribers with
+nothing behind it until L6-B, and the claim was that a catalog assembled by
+walking the installed apps would pick up its emitter the day it landed. Issue #23
+landed it, in ``apps/broadcasts/events.py``, with **no edit to this app** — so
+the test below now asserts the arrival rather than the absence, and
+``test_an_app_added_later_needs_no_change_here`` keeps the mechanism itself
+pinned with a stub for the next emitter that shows up.
 """
 
 import pytest
@@ -63,10 +67,17 @@ class TestDiscovery:
 
         assert "broadcast.finished" in discover_catalog()
 
-    def test_broadcast_finished_is_offered_even_though_nothing_emits_it(self):
-        """SPEC §5 fixes the subscribable set; offering it is not a promise it fires."""
+    def test_broadcast_finished_arrived_with_no_edit_to_this_app(self):
+        """L6-B's emitter, discovered rather than registered.
+
+        This assertion used to read ``not in discover_catalog()`` — the event was
+        offered to subscribers with nothing behind it. Issue #23 shipped
+        ``apps/broadcasts/events.py`` with an ``EVENT_CATALOG``, and the only
+        reason it is deliverable now is that discovery walks the installed apps.
+        Nothing in ``apps/api/`` changed, which is the promise this file makes.
+        """
         assert "broadcast.finished" in SUBSCRIBABLE_EVENTS
-        assert "broadcast.finished" not in discover_catalog()
+        assert "broadcast.finished" in discover_catalog()
 
     def test_connecting_twice_does_not_double_deliveries(self):
         """``dispatch_uid`` makes ``ready()`` idempotent.

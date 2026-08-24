@@ -1,15 +1,59 @@
+{% load common_extras %}
 {% comment %}
-A rule trigger's event. The condition filters SPEC §10 also allows are stored and
-validated already, but nothing fires a rule trigger until L6-A binds them to the
-internal event catalogue (ROADMAP contract 7) — so the form offers the event and
-says so rather than pretending the trigger is live.
+SPEC §10's rule trigger: an internal event, an optional id filter for the thing
+the event is about, and an optional §11.4 condition on the contact.
+
+The two filters are not the same question and the panel says so. `tag_id` is
+"the tag that was just added"; the condition bar below is "and the contact looks
+like this afterwards". A condition document cannot express the first — the
+closest it gets is "somebody who now has VIP", which fires when any tag at all
+is added to a VIP — so the id filter is its own control.
+
+The condition bar is `contacts/_filter_bar.html` unchanged, rendered from the
+same `filter_config` payload the CRM's list page uses. Its Alpine factory is
+defined by the hosting page (flows/edit.html includes the script), because an
+htmx-swapped fragment cannot define an x-data factory for itself.
 {% endcomment %}
-<label class="block text-xs font-medium mb-1" for="trigger-event" style="color: var(--text-primary);">Event</label>
-<select id="trigger-event" name="event" class="form-input-styled">
-    {% for value, label in rule_events %}
-    <option value="{{ value }}" {% if config.event == value %}selected{% endif %}>{{ label }}</option>
-    {% endfor %}
-</select>
-<p class="text-xs mt-1" style="color: var(--text-tertiary);">
-    Rule triggers are saved now and start firing when sequences ship.
-</p>
+<div x-data="{ event: '{{ config.event|default:"tag_added"|escapejs }}' }">
+    <label class="block text-xs font-medium mb-1" for="trigger-event" style="color: var(--text-primary);">Event</label>
+    <select id="trigger-event" name="event" class="form-input-styled" x-model="event">
+        {% for value, label in rule_events %}
+        <option value="{{ value }}" {% if config.event == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+
+    <div class="mt-3" x-show="event === 'tag_added' || event === 'tag_removed'" x-cloak>
+        <label class="block text-xs font-medium mb-1" for="trigger-tag" style="color: var(--text-primary);">Tag</label>
+        <select id="trigger-tag" name="tag_id" class="form-input-styled">
+            <option value="">Any tag</option>
+            {% for tag in filter_config.tags %}
+            <option value="{{ tag.value }}" {% if config.tag_id == tag.value %}selected{% endif %}>{{ tag.label }}</option>
+            {% endfor %}
+        </select>
+        <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+            Fires for the tag that changed. Adding a tag a contact already has changes nothing and fires nothing.
+        </p>
+    </div>
+
+    <div class="mt-3" x-show="event === 'field_changed'" x-cloak>
+        <label class="block text-xs font-medium mb-1" for="trigger-field" style="color: var(--text-primary);">Field</label>
+        <select id="trigger-field" name="field_id" class="form-input-styled">
+            <option value="">Any field</option>
+            {% for field in filter_config.fields %}
+            <option value="{{ field.value }}" {% if config.field_id == field.value %}selected{% endif %}>{{ field.label }}</option>
+            {% endfor %}
+        </select>
+        <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+            Use the conditions below to match the field's new value.
+        </p>
+    </div>
+
+    <h4 class="text-xs font-medium mt-3 mb-1" style="color: var(--text-primary);">Only when the contact matches</h4>
+    <div x-data="contactFilters({{ filter_config|json_attr }})">
+        {% include "contacts/_filter_bar.html" with filter_embedded=True %}
+    </div>
+    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+        Checked after the change, so a rule can ask what the contact looks like now.
+        Leave empty to fire for everyone. Each contact can start this flow at most once a minute.
+    </p>
+</div>

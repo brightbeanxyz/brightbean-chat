@@ -82,10 +82,10 @@ from django.utils.http import urlencode
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
-from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
-from apps.contacts import activity, conditions, export, imports, services
-from apps.contacts.conditions import CONDITION_SCHEMA, ConditionError
+from apps.contacts import activity, export, filters, imports, services
+from apps.contacts.builder import builder_config
+from apps.contacts.conditions import ConditionError
 from apps.contacts.errors import ContactsError
 from apps.contacts.filters import (
     DEFAULT_SORT,
@@ -248,58 +248,12 @@ def _querystring(query: ContactQuery, *, page: int = 0) -> str:
 
 
 def _filter_config(workspace: Any, query: ContactQuery) -> dict[str, Any]:
-    """Everything the filter builder needs to render §11.4, in one payload.
-
-    ``CONDITION_SCHEMA["x-brightbean"]`` already carries the operator tables, the
-    valueless-operator set, the operator labels, the system fields, the relative
-    units, which sources this deployment cannot evaluate, and the limits — that
-    extension block exists precisely so a consumer does not have to keep a second
-    copy. So the builder reads it, and an operator added to
-    :mod:`apps.contacts.conditions` shows up in this UI with no edit here.
-
-    Only two things are added, because neither can live in a static schema: each
-    source's label, evaluability and owning issue from the registry, and this
-    workspace's own tags, fields and segments.
-
-    One dict rather than six template variables, because it is one ``x-data``
-    argument — and assembling it in the template would put the payload's shape
-    somewhere Python cannot see it.
-    """
-    registry = conditions.sources()
-    return {
-        "sources": [
-            {
-                "name": name,
-                "label": registry[name].label,
-                "keyKind": registry[name].key_kind,
-                "evaluable": registry[name].is_evaluable,
-                # Carried so a greyed-out row can say *why* it is unavailable —
-                # "arrives with issue #22" beats a control that does nothing.
-                "owner": registry[name].owner,
-            }
-            for name in conditions.SOURCE_NAMES
-        ],
-        "vocabulary": CONDITION_SCHEMA["x-brightbean"],
-        "platforms": [{"value": value, "label": label} for value, label in Platform.choices],
-        "tags": [
-            {"value": str(row.pk), "label": row.name} for row in Tag.objects.for_workspace(workspace).order_by("name")
-        ],
-        "fields": [
-            {"value": str(row.pk), "label": row.name, "type": row.type}
-            for row in CustomField.objects.for_workspace(workspace).order_by("name")
-        ],
-        "segments": [
-            {"value": str(row.pk), "label": row.name}
-            for row in Segment.objects.for_workspace(workspace).order_by("name")
-        ],
-        # The document the builder hydrates from. Taken from the parsed query
-        # rather than re-read from the URL, so a segment loaded off disk
-        # round-trips exactly as stored instead of through a re-serialisation
-        # that could normalise it — which is the acceptance criterion this page
-        # is judged on.
-        "document": query.document,
-        "segmentId": str(query.segment.pk) if query.segment is not None else "",
-    }
+    """The contact list's builder payload. See :func:`builder_config`."""
+    return builder_config(
+        workspace,
+        document=query.document,
+        segment_id=str(query.segment.pk) if query.segment is not None else "",
+    )
 
 
 @login_required
@@ -313,7 +267,15 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     return render(
         request,
         "contacts/list.html",
-        {**context, "filter_config": _filter_config(request.workspace, context["query"])},
+        {
+            **context,
+            "filter_config": _filter_config(request.workspace, context["query"]),
+            # Separate from `filter_config["sequences"]` on purpose: that list
+            # feeds the §11.4 condition picker and has to offer every sequence,
+            # while the bulk enrolment control must offer only the ones
+            # `campaigns.services.subscribe` would accept.
+            "enrollable_sequences": filters.sequence_options(request.workspace, enrollable=True),
+        },
     )
 
 
@@ -443,6 +405,12 @@ def _activity_context(request: WorkspaceRequest, contact: Contact) -> dict[str, 
         "recent_messages": activity.recent_messages(contact),
         "execution": activity.live_execution(contact),
         "startable_flows": activity.startable_flows(request.workspace),
+        # Issue #22's enrolment control. The pane refreshes on its own, so the
+        # picker is built here rather than only in contact_detail — otherwise
+        # starting a flow would redraw the pane with an empty sequence list.
+        # `enrollable`, because `subscribe` takes active sequences only and a
+        # picker offering a draft is a control whose every use is a refusal.
+        "sequences": filters.sequence_options(request.workspace, enrollable=True),
         **_permissions(request),
     }
 
@@ -903,18 +871,69 @@ def bulk_delete(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 @require_permission("manage_crm")
 @require_POST
 def bulk_sequence(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    """Subscribe or unsubscribe the selection — **not yet implemented** (L6-A).
+    """Subscribe or unsubscribe the selection (issue #22, L6-A).
 
-    The endpoint exists and answers politely rather than 404ing, which is what
-    "no-op tolerant until L6-A" asks for: the control is rendered disabled, so
-    only a hand-made POST arrives here, and when issue #22 lands it fills this
-    body in and enables the button. Answering 404 today would mean the route,
-    the template control and the tests all arriving in that PR instead.
+    One endpoint for both directions and for both callers. The contact detail
+    page posts a single ``ids`` value to it rather than growing a third route
+    beside this one: the two do the same thing to a different number of rows,
+    and a second endpoint would be a second permission check to keep in step.
+
+    Row by row through ``campaigns.services`` rather than a bulk insert, for the
+    reason ``bulk_tag`` gives about tags: ``sequence.subscribed`` is what rule
+    triggers and outbound webhooks subscribe to, and an enrollment written
+    behind the services layer is a change the rest of the product never learns
+    about. At the 500-row cap that is a bounded cost paid knowingly.
+
+    ``manage_crm`` rather than ``edit_flows``: this is a bulk write to contacts
+    reached from the CRM, and the permission a route gates on is the one that
+    matches what it changes about the tenant's data. The sequence pages
+    themselves gate on ``edit_flows``.
     """
-    return toast_response(
-        tone="info",
-        title="Sequences are not available yet",
-        body="Subscribing contacts to a sequence arrives with issue #22 (L6-A).",
+    from apps.campaigns import services as campaign_services
+    from apps.campaigns.errors import CampaignsError
+    from apps.campaigns.models import Sequence
+
+    sequence = get_scoped_object_or_404(Sequence, request.workspace, pk=request.POST.get("sequence_id", ""))
+    removing = request.POST.get("mode") == "unsubscribe"
+    contacts = list(_selected(request))
+    if not contacts:
+        return toast_response(tone="info", title="Nothing selected")
+
+    # A refusal for one contact does not abandon the rest, and does not discard
+    # the ones already done. Each `subscribe` commits its own transaction, so
+    # returning early on the first error left a batch that reported failure and
+    # had in fact restarted half the selection — with no refresh event to show
+    # it. The realistic error here is a lost race on a single contact, which is
+    # a reason to skip that contact and say so, not to abandon 499 others.
+    touched = 0
+    refusals: list[str] = []
+    for contact in contacts:
+        try:
+            if removing:
+                touched += int(campaign_services.unsubscribe(sequence, contact) is not None)
+            else:
+                campaign_services.subscribe(sequence, contact, source="manual")
+                touched += 1
+        except CampaignsError as exc:
+            refusals.append(str(exc))
+
+    if not touched and refusals:
+        # Nothing happened at all, so there is no partial state to report and
+        # the reason is the whole story.
+        return toast_response(tone="error", title="Could not update the sequence", body=refusals[0])
+
+    verb = "unsubscribed from" if removing else "subscribed to"
+    detail = (
+        "Unsubscribing stops future steps; anything already running finishes."
+        if removing
+        else "Everyone starts again at step 1."
+    )
+    if refusals:
+        detail = f"{len(refusals)} skipped: {refusals[0]}"
+    return _bulk_result(
+        f"{touched} contact{'' if touched == 1 else 's'} {verb} {sequence.name}",
+        detail,
+        events={"contactsChanged": True, "sequenceSubscribersChanged": True, "sequenceStepsChanged": True},
     )
 
 

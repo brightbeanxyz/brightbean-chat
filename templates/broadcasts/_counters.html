@@ -1,0 +1,94 @@
+{% comment %}
+The live figures (SPEC §13.2). Polled every three seconds; the view answers 304
+when none of these numbers moved, so an idle broadcast page costs a request line.
+
+Every number is computed in apps/broadcasts/services.py::counters from the
+recipient rows, which is what makes `queued = sent + failed + cancelled +
+skipped` reconcile by construction rather than by a running total somebody has to
+keep correct. `delivered` and `read` are joined off the message row that
+apps/messaging/ingest.py advances when a delivery receipt arrives — this app has
+no receipt path of its own.
+{% endcomment %}
+<div class="bc-panel">
+    <div class="bc-panel-head">
+        <span class="bc-panel-title">
+            Progress
+            {# Polled, so it follows the broadcast through scheduled → sending → sent. #}
+            <span class="status-pill status-pill-{{ broadcast.status }}">{{ broadcast.get_status_display }}</span>
+        </span>
+        {% if broadcast.is_live %}
+        <form hx-post="{% url 'broadcasts:cancel' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+              hx-swap="none"
+              hx-confirm="Cancel this broadcast? Messages already sent cannot be recalled.">
+            {% csrf_token %}
+            <button type="submit" class="btn-outline btn-inline btn-danger-soft">Cancel broadcast</button>
+        </form>
+        {% endif %}
+    </div>
+
+    {% comment %}
+      While fanout is still expanding the audience, `queued` counts the
+      recipients written so far rather than the total — so a percentage against
+      it retreats every time a chunk of five hundred lands. The bar carries no
+      value until the denominator is real, and says what it is doing instead.
+    {% endcomment %}
+    {% if expanding %}
+    <div class="bc-bar" role="progressbar" aria-label="Broadcast progress" aria-valuetext="Working out who this reaches">
+        <div class="bc-bar-fill bc-bar-indeterminate"></div>
+    </div>
+    <p class="bc-hint mt-1">Working out who this reaches…</p>
+    {% else %}
+    <div class="bc-bar" role="progressbar"
+         aria-valuenow="{{ counters.percent }}" aria-valuemin="0" aria-valuemax="100"
+         aria-label="Broadcast progress">
+        <div class="bc-bar-fill" style="width: {{ counters.percent }}%"></div>
+    </div>
+    {% endif %}
+
+    <div class="bc-tiles mt-3">
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ counters.queued }}</div>
+            <div class="bc-tile-label">Queued</div>
+        </div>
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ counters.sent }}</div>
+            <div class="bc-tile-label">Sent</div>
+        </div>
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ counters.delivered }}</div>
+            <div class="bc-tile-label">Delivered</div>
+        </div>
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ counters.failed }}</div>
+            <div class="bc-tile-label">Failed</div>
+        </div>
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ counters.skipped }}</div>
+            <div class="bc-tile-label">Skipped</div>
+        </div>
+        {% if counters.cancelled %}
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ counters.cancelled }}</div>
+            <div class="bc-tile-label">Cancelled</div>
+        </div>
+        {% endif %}
+        {% if counters.pending %}
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ counters.pending }}</div>
+            <div class="bc-tile-label">Waiting</div>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if reasons %}
+    <div class="mt-3">
+        <p class="bc-tile-label">Why people were skipped</p>
+        {% for reason in reasons %}
+        <div class="bc-reason">
+            <span>{{ reason.label }}</span>
+            <span class="bc-reason-count">{{ reason.count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>

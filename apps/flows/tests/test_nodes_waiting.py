@@ -5,7 +5,7 @@ each node does when the runner reaches it — what it renders, what it sends, wh
 it schedules, and which handle it takes when something goes wrong.
 """
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -69,6 +69,18 @@ def _sent(facade) -> object:
     calls = facade.named("send_outbound")
     assert calls, "nothing was sent"
     return calls[-1]["outbound"]
+
+
+def _resume_action(workspace) -> ScheduledAction:
+    """The RESUME_EXECUTION row a parked execution just wrote."""
+    return ScheduledAction.objects.for_workspace(workspace).get(type=ActionType.RESUME_EXECUTION)
+
+
+#: A Saturday, 20:00 UTC — 08:00 the Sunday in Auckland. Both window suites below
+#: pin to it, and it is chosen so that in either of those two clocks a Monday
+#: window has not opened yet and a 09:00 window has already closed: every window
+#: search that uses it therefore actually runs.
+SATURDAY_NIGHT = datetime(2026, 8, 22, 20, 0, tzinfo=UTC)
 
 
 @pytest.mark.django_db
@@ -357,7 +369,7 @@ class TestSmartDelay:
         )
 
         assert execution.status == ExecutionStatus.WAITING_DELAY
-        action = ScheduledAction.objects.for_workspace(tenancy.workspace).get(type=ActionType.RESUME_EXECUTION)
+        action = _resume_action(tenancy.workspace)
         assert before + timedelta(hours=2) <= action.run_at <= timezone.now() + timedelta(hours=2)
 
     def test_the_scheduled_action_resumes_the_flow(self, tenancy):
@@ -366,7 +378,7 @@ class TestSmartDelay:
         contact, execution = self._delay(
             tenancy.workspace, {"mode": "duration", "duration": {"value": 1, "unit": "minutes"}}
         )
-        action = ScheduledAction.objects.for_workspace(tenancy.workspace).get(type=ActionType.RESUME_EXECUTION)
+        action = _resume_action(tenancy.workspace)
 
         get_handler(ActionType.RESUME_EXECUTION)(action.payload, action)
 
@@ -380,8 +392,7 @@ class TestSmartDelay:
             tenancy.workspace, {"mode": "date", "date": {"datetime": moment.isoformat()}}
         )
 
-        action = ScheduledAction.objects.for_workspace(tenancy.workspace).get(type=ActionType.RESUME_EXECUTION)
-        assert action.run_at == moment
+        assert _resume_action(tenancy.workspace).run_at == moment
 
     def test_a_date_field_on_the_contact_is_read_by_name(self, tenancy):
         contact = contact_for(tenancy.workspace)
@@ -420,64 +431,35 @@ class TestSmartDelay:
         assert "has no mode" in execution.last_error
 
 
-#: A Sunday, midday in Auckland — and the Saturday before it in the workspace's
-#: UTC. Fixed rather than derived from today: the tests below name the exact
-#: moment a window opens, and that is only knowable if the moment it starts from
-#: is knowable too.
-SUNDAY_IN_AUCKLAND = "2026-03-01T12:00:00+13:00"
-
-#: The Monday after it, midday — inside a 09:00-17:00 Monday window in Auckland,
-#: and 23:00 on *Sunday* in UTC. That gap is what makes the two clocks tell
-#: different stories about the same instant, which is the whole point of
-#: ``use_contact_timezone``.
-MONDAY_IN_AUCKLAND = "2026-03-02T12:00:00+13:00"
-
-
 @pytest.mark.django_db
 class TestContinueWindow:
-    """SPEC §11.5's sending window: forward only, into the next allowed slot.
+    """SPEC §11.5's sending window: forward only, into the next allowed slot."""
 
-    Two helpers, and which one a test reaches for is itself the lesson.
-
-    :meth:`_run_at` counts a minute forward from *now*, so the instant the
-    window is applied to is wherever the wall clock happens to be. That is the
-    right shape for asking whether the window moved the run **at all**.
-
-    :meth:`_run_at_from` starts from a fixed instant instead, and every
-    assertion that names the moment the run landed on has to use it. A
-    wall-clock start makes "did it defer to 09:00?" a question only while the
-    test itself runs outside the window: for the several hours a day it runs
-    inside one there is nothing to defer, the node correctly returns now, and
-    the assertion fails. ``test_the_contact_timezone_is_used_when_asked_for``
-    was written that way and failed for a band of every day.
-    """
-
-    def _run_at(self, workspace, window, *, contact=None, minutes=1):
-        document = graph(
-            [
-                node(
-                    "d",
-                    "smart_delay",
-                    {"mode": "duration", "duration": {"value": minutes, "unit": "minutes"}, "continue_window": window},
-                )
-            ]
+    def _run_at(self, workspace, window, *, contact=None):
+        return self._scheduled(
+            workspace,
+            {"mode": "duration", "duration": {"value": 1, "unit": "minutes"}, "continue_window": window},
+            contact=contact,
         )
-        _run(workspace, document, contact=contact)
-        return ScheduledAction.objects.for_workspace(workspace).get(type=ActionType.RESUME_EXECUTION).run_at
 
-    def _run_at_from(self, workspace, instant, window, *, contact=None):
-        """The same window, applied to a fixed instant rather than to ``now``.
+    def _run_at_from(self, workspace, window, instant, *, contact=None):
+        """The same node, waiting until a *fixed* instant rather than a minute from now.
 
-        SPEC §11.5's other mode: ``date {fixed datetime}``. It reaches exactly
-        the same ``_into_window`` through the same ``_clock``, so nothing about
-        the window is left untested — only the clock the instant came from
-        changes, and that is the flakiness.
+        "Which moment does the window open at" only has one answer if the moment
+        the delay lands on is pinned. ``_into_window`` is forward-only — a delay
+        that finishes inside the window fires then and there, untouched — and a
+        duration delay finishes wherever the wall clock happens to be, so an
+        assertion about the opening time is really an assertion about the time
+        of day the suite runs at. It fails for the part of every Monday that is
+        inside a Monday window somewhere. SPEC §11.5's date mode names the
+        instant instead, which takes the wall clock out of it entirely.
         """
-        document = graph(
-            [node("d", "smart_delay", {"mode": "date", "date": {"datetime": instant}, "continue_window": window})]
-        )
-        _run(workspace, document, contact=contact)
-        return ScheduledAction.objects.for_workspace(workspace).get(type=ActionType.RESUME_EXECUTION).run_at
+        config = {"mode": "date", "date": {"datetime": instant.isoformat()}, "continue_window": window}
+        return self._scheduled(workspace, config, contact=contact)
+
+    def _scheduled(self, workspace, config, *, contact=None):
+        _run(workspace, graph([node("d", "smart_delay", config)]), contact=contact)
+        return _resume_action(workspace).run_at
 
     def test_a_moment_inside_the_window_is_untouched(self, tenancy):
         window = {"enabled": True, "days": list(WEEKDAYS), "from": "00:00", "to": "23:59"}
@@ -485,98 +467,96 @@ class TestContinueWindow:
         assert run_at <= timezone.now() + timedelta(minutes=2)
 
     def test_a_moment_outside_the_hours_waits_for_them(self, tenancy):
-        """A window that has already closed today opens again tomorrow.
-
-        From a fixed Monday 10:00 UTC, an hour past a window that shut at 09:01.
-        Started from ``now`` the premise would only hold while the suite itself
-        ran outside 09:00-09:01.
-        """
+        """A window that has already closed today opens again tomorrow."""
         window = {"enabled": True, "from": "09:00", "to": "09:01"}
 
-        run_at = self._run_at_from(tenancy.workspace, "2026-03-02T10:00:00+00:00", window)
+        run_at = self._run_at_from(tenancy.workspace, window, SATURDAY_NIGHT)
 
         local = run_at.astimezone(ZoneInfo(tenancy.workspace.effective_timezone))
-        assert local.date() == date(2026, 3, 3)
-        assert (local.hour, local.minute) == (9, 0)
+        assert local.hour == 9 and local.minute == 0
 
     def test_a_duration_delay_is_forwarded_by_the_window_too(self, tenancy, monkeypatch):
-        """The tests around this one pin the window boundary precisely using
-        smart_delay's date mode; this confirms mode:duration — arguably the
-        more common real configuration, and the one continue_window was
-        written for — reaches the identical `_into_window` through
-        `_from_duration`, not only through the fixed-instant path.
+        """The fixed-instant tests around this one pin the window boundary
+        precisely using smart_delay's date mode; this confirms mode:duration
+        — arguably the more common real configuration, and the one
+        continue_window was written for — reaches the identical
+        ``_into_window`` through ``_from_duration``, not only through the
+        fixed-instant path.
 
-        The clock is frozen for the same reason ``test_send_retry.py``'s
-        collapsing tests freeze theirs: mode:duration computes ``run_at`` from
+        The clock is frozen to ``SATURDAY_NIGHT`` for the same reason the
+        fixed-instant tests pin to it: mode:duration computes ``run_at`` from
         ``timezone.now()``, so a window narrow enough to force a move would
-        otherwise be flaky for the same band-of-the-day reason the rewrite
-        above exists to avoid — the fix for that flakiness cannot be "make
-        the duration-mode assertion coarse enough to always pass", or the
-        thing it means to test stops being tested.
+        otherwise be flaky for the same band-of-the-day reason those tests
+        exist to avoid.
         """
-        frozen = datetime(2026, 3, 2, 10, 0, tzinfo=UTC)  # Monday, 10:00 UTC
-        monkeypatch.setattr(timezone, "now", lambda: frozen)
+        monkeypatch.setattr(timezone, "now", lambda: SATURDAY_NIGHT)
         window = {"enabled": True, "from": "09:00", "to": "09:01"}
 
-        run_at = self._run_at(tenancy.workspace, window, minutes=1)
+        run_at = self._run_at(tenancy.workspace, window)
 
         local = run_at.astimezone(ZoneInfo(tenancy.workspace.effective_timezone))
-        assert local.date() == date(2026, 3, 3)
-        assert (local.hour, local.minute) == (9, 0)
+        assert local.hour == 9 and local.minute == 0
 
     def test_a_disallowed_day_is_skipped(self, tenancy):
-        """From a Sunday, so the skip actually happens. Started from ``now`` this
-        asserted nothing at all on Mondays — the run was already on an allowed
-        day and ``weekday() == 0`` held without the window doing anything."""
+        """A Saturday delay with only Mondays allowed waits for Monday morning."""
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
 
-        run_at = self._run_at_from(tenancy.workspace, "2026-03-01T12:00:00+00:00", window)
+        run_at = self._run_at_from(tenancy.workspace, window, SATURDAY_NIGHT)
 
         local = run_at.astimezone(ZoneInfo(tenancy.workspace.effective_timezone))
-        assert local.date() == date(2026, 3, 2)  # a Monday
-        assert (local.hour, local.minute) == (9, 0)
+        assert local.weekday() == 0
+        assert local.hour == 9
 
     def test_the_contact_timezone_is_used_when_asked_for(self, tenancy):
-        """The boundary is found in Auckland, not in the workspace's UTC.
-
-        Sunday midday in Auckland is Saturday 23:00 UTC, and the two clocks
-        disagree about when the next Monday 09:00 falls: Auckland says
-        2026-03-02 09:00 NZDT, UTC says an instant that is 22:00 on the Monday
-        in Auckland. Only one of those is 09:00 local to the contact.
-        """
+        """The window is measured in the contact's clock, not the workspace's."""
         contact = contact_for(tenancy.workspace, timezone="Pacific/Auckland")
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00", "use_contact_timezone": True}
 
-        run_at = self._run_at_from(tenancy.workspace, SUNDAY_IN_AUCKLAND, window, contact=contact)
+        run_at = self._run_at_from(tenancy.workspace, window, SATURDAY_NIGHT, contact=contact)
 
         local = run_at.astimezone(ZoneInfo("Pacific/Auckland"))
-        assert local.date() == date(2026, 3, 2)  # a Monday
-        assert (local.hour, local.minute) == (9, 0)
+        assert local.weekday() == 0
+        assert local.hour == 9
+        # Monday 09:00 in Auckland is 21:00 the Sunday before in UTC. Asserting
+        # the instant outright rather than re-reading it in the workspace's zone
+        # keeps the test off what that zone happens to be: measuring the window
+        # there would have given Monday 09:00 *its* time, half a day later.
+        assert run_at == datetime(2026, 8, 23, 21, 0, tzinfo=UTC)
 
     def test_an_instant_already_inside_the_contacts_window_is_untouched(self, tenancy):
         """The other half, and the sharper of the two.
 
-        Monday midday in Auckland is inside the window; the same instant is
-        *Sunday* 23:00 in the workspace's UTC, which is not an allowed day at
-        all. Reading the window in the wrong clock would push this a day out, so
-        "unchanged" is only the right answer for the contact's own timezone.
+        Monday morning in Auckland is inside the window; the same instant is
+        *Sunday* evening in UTC, which is not an allowed day at all. Reading
+        the window in the wrong clock would push this forward to the next
+        Monday, so "unchanged" is only the right answer for the contact's own
+        timezone.
         """
         contact = contact_for(tenancy.workspace, timezone="Pacific/Auckland")
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00", "use_contact_timezone": True}
+        # Monday 10:00 NZST — inside the window — and Sunday 22:00 UTC.
+        monday_in_auckland = datetime(2026, 8, 24, 10, 0, tzinfo=ZoneInfo("Pacific/Auckland"))
 
-        run_at = self._run_at_from(tenancy.workspace, MONDAY_IN_AUCKLAND, window, contact=contact)
+        run_at = self._run_at_from(tenancy.workspace, window, monday_in_auckland, contact=contact)
 
-        assert run_at == datetime.fromisoformat(MONDAY_IN_AUCKLAND)
+        assert run_at == monday_in_auckland
 
     def test_an_unparseable_contact_timezone_falls_back(self, tenancy, caplog):
         """Contact timezones come from platform profiles — attacker-controlled."""
+        # A workspace clock that is neither UTC nor the settings default, so the
+        # fallback has somewhere of its own to land: "delayed rather than failed"
+        # is only half the promise, and the other half is *which* clock it used.
+        tenancy.workspace.timezone = "Pacific/Auckland"
+        tenancy.workspace.save(update_fields=["timezone"])
         contact = contact_for(tenancy.workspace, timezone="Mars/Olympus_Mons")
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00", "use_contact_timezone": True}
 
         with caplog.at_level("WARNING"):
-            run_at = self._run_at(tenancy.workspace, window, contact=contact)
+            run_at = self._run_at_from(tenancy.workspace, window, SATURDAY_NIGHT, contact=contact)
 
-        assert run_at is not None
+        local = run_at.astimezone(ZoneInfo("Pacific/Auckland"))
+        assert local.weekday() == 0
+        assert local.hour == 9
         assert "is not a timezone" in caplog.text
 
     def test_an_inverted_window_is_ignored_rather_than_obeyed(self, tenancy, caplog):
@@ -664,18 +644,16 @@ class TestWindowArithmetic:
     """The window search on its own, where the clock can be pinned exactly."""
 
     def test_it_moves_forward_to_the_next_allowed_weekday(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
-        # A Saturday, 20:00 UTC.
-        saturday = datetime(2026, 8, 22, 20, 0, tzinfo=UTC)
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
 
-        moved = _into_window(saturday, window, UTC)
+        moved = _into_window(SATURDAY_NIGHT, window, UTC)
 
         assert moved == datetime(2026, 8, 24, 9, 0, tzinfo=UTC)
 
     def test_a_moment_before_todays_window_waits_for_it(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
         monday_dawn = datetime(2026, 8, 24, 6, 0, tzinfo=UTC)
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
@@ -683,7 +661,7 @@ class TestWindowArithmetic:
         assert _into_window(monday_dawn, window, UTC) == datetime(2026, 8, 24, 9, 0, tzinfo=UTC)
 
     def test_a_moment_inside_the_window_is_returned_unchanged(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
         monday_noon = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
@@ -691,14 +669,12 @@ class TestWindowArithmetic:
         assert _into_window(monday_noon, window, UTC) == monday_noon
 
     def test_the_window_is_read_in_the_given_clock(self):
-        from apps.flows.engine.nodes.smart_delay import _into_window
+        from apps.common.windows import into_window as _into_window
 
         auckland = ZoneInfo("Pacific/Auckland")
-        # 20:00 UTC Saturday is 08:00 Sunday in Auckland.
-        saturday = datetime(2026, 8, 22, 20, 0, tzinfo=UTC)
         window = {"enabled": True, "days": ["sun"], "from": "09:00", "to": "17:00"}
 
-        moved = _into_window(saturday, window, auckland)
+        moved = _into_window(SATURDAY_NIGHT, window, auckland)
 
         assert moved.astimezone(auckland).hour == 9
         assert moved.astimezone(auckland).weekday() == 6

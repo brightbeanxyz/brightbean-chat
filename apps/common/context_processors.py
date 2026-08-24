@@ -196,9 +196,26 @@ MAIN_NAV: list[NavGroup] = [
                 url_names=frozenset({"flows:list", "flows:edit"}),
                 workspace_scoped=True,
             ),
-            NavItem(key="sequences", label="Sequences", icon="sequences", url_name="sequences", workspace_scoped=True),
+            # Issue #22. The editor and the subscriber panel are the same
+            # section to a reader, so the detail page lights the same row.
             NavItem(
-                key="broadcasts", label="Broadcasts", icon="broadcasts", url_name="broadcasts", workspace_scoped=True
+                key="sequences",
+                label="Sequences",
+                icon="sequences",
+                url_name="campaigns:list",
+                url_names=frozenset({"campaigns:list", "campaigns:detail"}),
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="broadcasts",
+                label="Broadcasts",
+                icon="broadcasts",
+                url_name="broadcasts:list",
+                # The composer and a broadcast's detail page are the same section
+                # to a reader, so the row stays lit while either is open
+                # (issue #23) — the same shape the inbox and contacts rows use.
+                url_names=frozenset({"broadcasts:list", "broadcasts:detail", "broadcasts:compose"}),
+                workspace_scoped=True,
             ),
             # Issue #16. The detail page is the same section to a reader, so it
             # lights the same row — that is what url_names is for.
@@ -276,6 +293,24 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Platform credentials",
                 icon="key",
                 url_name="credentials:list",
+                workspace_scoped=True,
+            ),
+            # Issue #24. Two rows rather than one "Inbox" page: they answer to
+            # different permissions — a label is inbox furniture an Agent files
+            # with, a rule is workspace-wide automation — and a single page
+            # would have to hide half of itself.
+            NavItem(
+                key="ws_labels",
+                label="Labels",
+                icon="tag",
+                url_name="inbox:label_settings",
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="ws_inbox_rules",
+                label="Inbox rules",
+                icon="flows",
+                url_name="inbox:rule_settings",
                 workspace_scoped=True,
             ),
             NavItem(

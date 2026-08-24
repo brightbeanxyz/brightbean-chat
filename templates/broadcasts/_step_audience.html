@@ -1,0 +1,69 @@
+{% load common_extras %}
+{% comment %}
+Step 2 — the audience (SPEC §13.1).
+
+The rule builder is templates/contacts/_filter_bar.html, included unchanged, and
+its Alpine component is the CRM's (defined once in compose.html's
+alpine_components block, so it exists before Alpine initialises anything this
+partial swaps in). That is the point of contract 8: a broadcast audience and a
+saved segment are the same document evaluated by the same engine, so a second
+builder here would be a second list of sources and operators that could disagree
+with the one the segment page uses.
+
+`can_manage_crm` is deliberately absent from this context, which is what keeps
+the filter bar's save/update/delete-segment controls out of the composer —
+managing segments is the CRM's job, not a side effect of drafting a broadcast.
+
+Two forms, one Alpine scope, because forms cannot nest and these do different
+things: the top one GETs a preview on every edit, the bottom one POSTs the
+document that gets stored. Both read the same `serialised`, so the count an
+operator agrees to is computed from the rules they are looking at.
+{% endcomment %}
+<div x-data="{ segment: '{{ filter_config.segmentId|escapejs }}' }">
+<div x-data="contactFilters({{ filter_config|json_attr }})">
+
+  <form class="bc-panel"
+        hx-get="{% url 'broadcasts:audience_preview' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+        hx-target="#broadcast-audience-preview"
+        hx-swap="innerHTML"
+        hx-trigger="submit, change delay:400ms, input changed delay:600ms"
+        @submit.prevent>
+    <div class="bc-panel-head">
+      <span class="bc-panel-title">Who receives this?</span>
+      <span class="bc-hint">The count updates as you edit. Nobody is messaged until the last step.</span>
+    </div>
+
+    <div class="bc-row mb-3">
+      <label for="audience-segment" class="bc-hint">Saved segment</label>
+      <select id="audience-segment" name="segment" class="bb-filter-select" x-model="segment">
+        <option value="">Build the rules below</option>
+        {% for option in filter_config.segments %}
+        <option value="{{ option.value }}">{{ option.label }}</option>
+        {% endfor %}
+      </select>
+      <span class="bc-hint">A segment is copied, not linked — editing it later will not change this broadcast.</span>
+    </div>
+
+    <div x-show="!segment">
+      {% include "contacts/_filter_bar.html" %}
+    </div>
+  </form>
+
+  <div id="broadcast-audience-preview"
+       hx-get="{% url 'broadcasts:audience_preview' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    {% include "broadcasts/_audience_preview.html" %}
+  </div>
+
+  <form class="bc-actions"
+        hx-post="{% url 'broadcasts:save_audience' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+        hx-target="#broadcast-wizard"
+        hx-swap="innerHTML">
+    {% csrf_token %}
+    <input type="hidden" name="filter" :value="serialised">
+    <input type="hidden" name="segment" :value="segment">
+    <button type="submit" class="btn-brand btn-inline">Continue</button>
+  </form>
+</div>
+</div>

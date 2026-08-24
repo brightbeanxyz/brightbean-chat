@@ -1,0 +1,233 @@
+{% load common_extras %}
+{% comment %}
+Step 3 — the message (SPEC §13.1, ROADMAP line 43).
+
+A plain HTMX/Alpine form that writes a single-node graph_json. No React embed:
+the canvas belongs to the flow builder and a broadcast is one message. What IS
+reused is the config panels' data shapes — apps/flows/schema/nodes.py's
+message_block, message_button and quick_reply fragments — so the same validator,
+the same sanitiser and the same engine node serve both.
+
+**Not one platform name appears below.** Every affordance is a question put to
+`composer`, which apps/broadcasts/composer.py assembles out of the capability
+table, the policy table, the template registry and the segment counter:
+
+  composer.blocks                which block kinds this platform renders
+  composer.allows_buttons        max_buttons > 0
+  composer.tag_choices           policy.outside_window being a NeedsTag
+  composer.tag_allowed_use_text  Meta's own copy, displayed verbatim (SPEC §6.4)
+  composer.templates             approved_templates_for + variable_schema
+  composer.cost_hint             the workspace's own per-category estimates
+  composer.counts_segments       whether the SMS segment preview applies
+
+An `if` comparing a platform name here would be the first crack in contract 4's
+promise that a Layer-5 platform costs one module and one registry line, and
+test_composer.py scans these templates for exactly that comparison. Which is why
+the prose above does not spell one out — the scan is a plain substring search on
+purpose, the way templates/contacts/_filter_bar_script.html keeps a literal
+script tag out of its own comment for its extractor.
+{% endcomment %}
+<div x-data="broadcastComposer({{ composer|json_attr }}, {{ config|json_attr }}, '{{ broadcast.message_tag|escapejs }}', '{{ broadcast.whatsapp_template_id|default:''|escapejs }}', {{ broadcast.template_variables|json_attr }})">
+
+  <form hx-post="{% url 'broadcasts:save_content' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+        hx-target="#broadcast-wizard"
+        hx-swap="innerHTML">
+    {% csrf_token %}
+    <input type="hidden" name="mode" :value="mode">
+    <input type="hidden" name="config" :value="serialisedConfig">
+    <input type="hidden" name="variables" :value="serialisedVariables">
+    <input type="hidden" name="template_id" :value="templateId">
+    <input type="hidden" name="message_tag" :value="tag">
+
+    {% if composer.templates %}
+    <div class="bc-panel">
+      <div class="bc-panel-head">
+        <span class="bc-panel-title">What kind of message?</span>
+      </div>
+      <div class="bc-row">
+        <label><input type="radio" value="message" x-model="mode"> Compose a message</label>
+        <label><input type="radio" value="template" x-model="mode"> Use an approved template</label>
+      </div>
+      <p class="bc-hint mt-1">
+        Outside the {{ composer.window_hours }}-hour messaging window this channel accepts approved templates only.
+      </p>
+    </div>
+    {% endif %}
+
+    {# ── Composed message ─────────────────────────────────────── #}
+    <div class="bc-panel" x-show="mode === 'message'">
+      <div class="bc-panel-head">
+        <span class="bc-panel-title">Message</span>
+        {% if composer.counts_segments %}
+        {% comment %}
+          SPEC §6.6's segment-count preview, served by L5-D's own endpoint —
+          which its docstring names this composer as a caller of. It counts
+          through apps/channels/segments.py and multiplies by the workspace's
+          `per_segment_cost`, so neither the arithmetic nor the price exists
+          twice. Whether to offer it at all is the capability table's
+          `counts_segments`, not a platform name.
+        {% endcomment %}
+        <span id="broadcast-segments"
+              hx-post="{% url 'channels:sms_segment_preview' workspace_id=request.workspace.id %}"
+              hx-trigger="segments-changed from:body delay:400ms"
+              hx-target="this"
+              hx-swap="innerHTML"
+              hx-vals="js:{text: window.broadcastMessageText ? window.broadcastMessageText() : ''}"></span>
+        {% endif %}
+      </div>
+
+      <template x-for="(block, index) in blocks" :key="index">
+        <div class="bc-block">
+          <div class="bc-block-head">
+            <span class="bc-block-kind" x-text="block.type"></span>
+            <button type="button" class="bc-remove" @click="blocks.splice(index, 1)"
+                    :aria-label="`Remove block ${index + 1}`">&times;</button>
+          </div>
+
+          <template x-if="block.type === 'text'">
+            <textarea class="form-input-styled" rows="3"
+                      :maxlength="config.max_text_len"
+                      x-model="block.text"
+                      @input.debounce.300ms="announceText()"
+                      placeholder="What do you want to say?"></textarea>
+          </template>
+
+          {% comment %}
+            One field for both, because that is how an author thinks about it —
+            they have "the picture", and it is either in the library or it is a
+            link. Which of the schema's two keys it becomes is decided in
+            packBlock by the same rule apps/flows/engine/nodes/send_message.py
+            uses: a value that parses as a UUID is a library id, anything else is
+            a URL. Binding everything to media_id, as this did, made a pasted
+            link a library lookup that could only fail — and _media_url raises on
+            an unresolvable id, which drops the whole message rather than the
+            picture.
+          {% endcomment %}
+          <template x-if="block.type !== 'text' && block.type !== 'card'">
+            <div class="bc-row">
+              <label class="sr-only" :for="`block-media-${index}`">Media library id or URL</label>
+              <input :id="`block-media-${index}`" type="text" class="form-input-styled" style="width: 22rem;"
+                     x-model="block.media" placeholder="Media library id, or https://…">
+              <input type="text" class="form-input-styled" style="width: 16rem;"
+                     x-model="block.caption" placeholder="Caption (optional)">
+            </div>
+          </template>
+
+          <template x-if="block.type === 'card'">
+            <div>
+              <div class="bc-row">
+                <input type="text" class="form-input-styled" style="width: 18rem;" x-model="block.title" placeholder="Card title" maxlength="200">
+                <input type="text" class="form-input-styled" style="width: 18rem;" x-model="block.subtitle" placeholder="Subtitle" maxlength="400">
+              </div>
+              <div class="bc-row">
+                <input type="text" class="form-input-styled" style="width: 22rem;" x-model="block.image"
+                       placeholder="Image: media library id, or https://…">
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <div class="bc-actions">
+        <button type="button" class="btn-outline btn-inline" @click="addBlock('text')">Add text</button>
+        <template x-for="kind in config.blocks" :key="kind">
+          <button type="button" class="btn-outline btn-inline" @click="addBlock(kind)"
+                  x-text="`Add ${kind}`"></button>
+        </template>
+        <a class="btn-link" href="{% url 'media:library' workspace_id=request.workspace.id %}" target="_blank" rel="noopener">Open media library</a>
+      </div>
+    </div>
+
+    {# ── Buttons and quick replies ────────────────────────────── #}
+    {% comment %}
+      Buttons, and deliberately not quick replies. SPEC §13.1 writes a
+      broadcast's content as "send_message [+ buttons]" and issue #23 repeats it;
+      the config payload still carries `allows_quick_replies` and
+      `max_quick_replies` because they are the composer's honest reading of the
+      capability table, and a later issue that wants them has the numbers.
+    {% endcomment %}
+    <div class="bc-panel" x-show="mode === 'message' && config.allows_buttons">
+      <div class="bc-panel-head">
+        <span class="bc-panel-title">Buttons</span>
+        <span class="bc-hint">A reply button parks the contact in a waiting run until they answer.</span>
+      </div>
+
+      <template x-for="(button, index) in buttons" :key="index">
+        <div class="bc-row">
+          <input type="text" class="form-input-styled" style="width: 12rem;" x-model="button.label" placeholder="Label" maxlength="80">
+          <select class="bb-filter-select" x-model="button.action">
+            <option value="postback">Reply</option>
+            <option value="url" x-show="config.allows_url_buttons">Open a link</option>
+          </select>
+          <input type="url" class="form-input-styled" style="width: 18rem;" x-model="button.url"
+                 x-show="button.action === 'url'" placeholder="https://">
+          <button type="button" class="bc-remove" @click="buttons.splice(index, 1)"
+                  :aria-label="`Remove button ${index + 1}`">&times;</button>
+        </div>
+      </template>
+
+      <div class="bc-actions">
+        <button type="button" class="btn-outline btn-inline"
+                :disabled="buttons.length >= config.max_buttons"
+                @click="addButton()">Add button</button>
+        <span class="bc-hint" x-text="`${buttons.length} of ${config.max_buttons}`"></span>
+      </div>
+    </div>
+
+    {# ── Approved template ────────────────────────────────────── #}
+    <div class="bc-panel" x-show="mode === 'template'">
+      <div class="bc-panel-head">
+        <span class="bc-panel-title">Approved template</span>
+        <span class="bc-hint" x-show="costHint" x-text="costHint"></span>
+      </div>
+      <select class="bb-filter-select" x-model="templateId">
+        <option value="">Choose a template…</option>
+        <template x-for="template in config.templates" :key="template.id">
+          <option :value="template.id" x-text="`${template.name} · ${template.language} · ${template.category}`"></option>
+        </template>
+      </select>
+
+      <template x-if="selectedTemplate">
+        <div class="mt-3">
+          <p class="bc-hint" x-text="selectedTemplate.body"></p>
+          <template x-for="slot in selectedTemplate.slots" :key="slot">
+            <div class="bc-row">
+              <label class="bc-hint" :for="`slot-${slot}`" x-text="slot"></label>
+              <input :id="`slot-${slot}`" type="text" class="form-input-styled" style="width: 22rem;"
+                     maxlength="1024" :value="variables[slot] || ''"
+                     @input="variables[slot] = $event.target.value">
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    {# ── Message tag (SPEC §6.4) ──────────────────────────────── #}
+    {% if composer.tag_choices %}
+    <div class="bc-panel">
+      <div class="bc-panel-head">
+        <span class="bc-panel-title">Message tag</span>
+        <span class="bc-hint">Required for contacts outside the {{ composer.window_hours }}-hour window.</span>
+      </div>
+      <select class="bb-filter-select" x-model="tag">
+        <option value="">No tag — in-window contacts only</option>
+        {% for choice in composer.tag_choices %}
+        <option value="{{ choice }}">{{ choice }}</option>
+        {% endfor %}
+      </select>
+      {% comment %}
+        Meta's own allowed-use text, carried from the PlatformPolicy row and
+        displayed verbatim (SPEC §6.4). Paraphrasing a compliance obligation is
+        how a page gets disabled, so this is escaped ordinary text and never
+        edited here.
+      {% endcomment %}
+      <p class="bc-hint mt-2">{{ composer.tag_allowed_use_text }}</p>
+    </div>
+    {% endif %}
+
+    <div class="bc-actions">
+      <button type="submit" class="btn-brand btn-inline">Continue</button>
+    </div>
+  </form>
+</div>
+

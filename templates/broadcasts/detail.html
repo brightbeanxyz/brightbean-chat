@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% comment %}
+A broadcast's detail page (SPEC §13.2: "live counters from stats json").
+
+Everything that moves lives in _counters.html, polled every three seconds
+through apps/common/polling.py's conditional GET. The two htmx traps that module
+documents are handled in the script block at the bottom, and both are load
+bearing: htmx does not send If-None-Match on its own, and htmx 2's default
+responseHandling matches "304" with its [23].. rule, so without the prepended
+rule an unchanged poll would swap an empty body over the counters and blank
+them.
+{% endcomment %}
+
+{% block title %}{{ broadcast.name }} · Broadcasts · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ broadcast.name }}</h1>
+        {% comment %}
+          The status chip is deliberately NOT here. It changes while somebody is
+          looking at the page — scheduled → sending → sent — and this block is
+          outside the polled region, so a copy here would sit at whatever it was
+          when the page loaded while the counters beside it moved. It lives in
+          _counters.html instead, which is the fragment that refreshes.
+        {% endcomment %}
+        <p class="text-sm" style="color: var(--text-secondary);">
+            {{ broadcast.channel_connection.display_name }}
+        </p>
+    </div>
+    <div class="flex items-center gap-2">
+        <a class="btn-outline btn-inline" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">All broadcasts</a>
+        <form hx-post="{% url 'broadcasts:duplicate' workspace_id=request.workspace.id broadcast_id=broadcast.id %}" hx-swap="none">
+            {% csrf_token %}
+            <button type="submit" class="btn-outline btn-inline">Duplicate</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="broadcast-counters"
+     data-poll
+     hx-get="{% url 'broadcasts:counters' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+     hx-trigger="every 3s, broadcastChanged from:body"
+     hx-target="this"
+     hx-swap="innerHTML">
+    {% include "broadcasts/_counters.html" %}
+</div>
+
+<div class="bc-panel mt-4">
+    <div class="bc-panel-head">
+        <span class="bc-panel-title">Recipients</span>
+        <span class="bc-hint">Who was skipped, and why.</span>
+    </div>
+    <div id="broadcast-recipients"
+         hx-get="{% url 'broadcasts:recipients' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+         hx-trigger="load, broadcastChanged from:body"
+         hx-swap="innerHTML">
+    </div>
+</div>
+{% endblock %}
+
+{% block alpine_components %}
+<script nonce="{{ request.csp_nonce }}">
+  (function () {
+    // SPEC §14's 304s, client half — the same code templates/inbox/list.html
+    // carries, and for the same two reasons.
+    //
+    // Prepended, not appended: responseHandling is first-match-wins and the
+    // stock 2xx rule ({code: "[23]..", swap: true}) already matches "304", so a
+    // rule added after it would never be reached and every unchanged poll would
+    // swap an empty body over the counters.
+    htmx.config.responseHandling.unshift({ code: '304', swap: false });
+
+    // htmx does not send If-None-Match. Something has to remember the last tag
+    // per polled element and set the header; keyed on the element rather than
+    // the URL so a mutation's request never carries one — a 304 on a request
+    // whose whole purpose is to change something would be a bug.
+    var tags = new Map();
+    var polled = function (elt) { return elt && elt.hasAttribute && elt.hasAttribute('data-poll') && elt.id; };
+
+    document.body.addEventListener('htmx:configRequest', function (evt) {
+      var elt = evt.detail.elt;
+      if (!polled(elt)) return;
+      var tag = tags.get(elt.id);
+      if (tag) evt.detail.headers['If-None-Match'] = tag;
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function (evt) {
+      var elt = evt.detail.elt;
+      if (!polled(elt) || !evt.detail.xhr) return;
+      // A 304 carries no ETag of its own and the stored one is still current,
+      // so only a real response replaces it.
+      var tag = evt.detail.xhr.getResponseHeader('ETag');
+      if (tag) tags.set(elt.id, tag);
+    });
+  })();
+</script>
+{% endblock %}

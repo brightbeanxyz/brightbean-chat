@@ -79,6 +79,7 @@ function findConditionExtension(node: unknown): Record<string, any> | null {
 
 const TAG = "11111111-1111-1111-1111-111111111111";
 const FIELD = "22222222-2222-2222-2222-222222222222";
+const SEQUENCE = "33333333-3333-3333-3333-333333333333";
 
 const contactFilters = loadFactory();
 const vocab = vocabulary();
@@ -91,13 +92,14 @@ function build(document: Partial<Doc>) {
       { name: "custom_field", label: "Custom field", keyKind: "uuid", evaluable: true, owner: "" },
       { name: "system_field", label: "Contact field", keyKind: "system_field", evaluable: true, owner: "" },
       { name: "segment", label: "Segment", keyKind: "uuid", evaluable: true, owner: "" },
-      { name: "sequence", label: "Sequence", keyKind: "uuid", evaluable: false, owner: "issue #22, L6-A" },
+      { name: "sequence", label: "Sequence", keyKind: "uuid", evaluable: true, owner: "issue #22, L6-A" },
       { name: "window", label: "Messaging window", keyKind: "platform", evaluable: true, owner: "" },
     ],
     platforms: [{ value: "telegram", label: "Telegram" }],
     tags: [{ value: TAG, label: "VIP" }],
     fields: [{ value: FIELD, label: "Plan", type: "text" }],
     segments: [],
+    sequences: [{ value: SEQUENCE, label: "Onboarding" }],
     document,
     segmentId: "",
   });
@@ -229,9 +231,17 @@ describe("the vocabulary is the engine's, not a copy", () => {
     expect(vocab.opsByType.datetime).toContain(editor.rules[0].op);
   });
 
-  it("reports no operators for a source nothing implements yet", () => {
+  it("offers the workspace's sequences as the sequence source's keys", () => {
     const editor = build({});
 
-    expect(editor.keyOptions({ source: "sequence", key: "" })).toEqual([]);
+    expect(editor.keyOptions({ source: "sequence", key: "" })).toEqual([
+      { value: SEQUENCE, label: "Onboarding" },
+    ]);
+  });
+
+  it("reports no key options for a source with no picker", () => {
+    const editor = build({});
+
+    expect(editor.keyOptions({ source: "not_a_source", key: "" })).toEqual([]);
   });
 });

@@ -10,8 +10,10 @@ installed apps looking for an ``events`` module with an ``EVENT_CATALOG`` and
 connects one receiver to every signal it finds. That is not tidiness: SPEC §5
 lists ``broadcast.finished`` among the subscribable events and L6-B is what
 emits it. Discovery is what makes "the subscription is data-driven, so no code
-change is needed when it appears" true — the day ``apps/campaigns/events.py``
-lands with an ``EVENT_CATALOG``, its events start being delivered.
+change is needed when it appears" true — and it has now been paid out once:
+``apps/broadcasts/events.py`` (issue #23) landed with an ``EVENT_CATALOG`` and
+its event started being delivered with nothing in this module edited. The next
+one does the same.
 
 Every payload in the catalog carries ``event`` as well as being keyed by it,
 precisely so one receiver can bind to all of them and dispatch on the string.
@@ -42,18 +44,28 @@ LOG = logging.getLogger(__name__)
 
 _DISPATCH_UID = "apps.api.events.on_catalog_event"
 
-#: The events an operator may subscribe an endpoint to, fixed by SPEC §5's
-#: ``outbound_webhook.events`` column. This is the *offered* set, which is not
-#: the same as the *emitted* set: ``broadcast.finished`` has no emitter until
-#: L6-B, and subscribing to it today is a no-op rather than an error. Keeping
-#: the list here rather than deriving it from :func:`discover_catalog` means the
-#: settings UI offers a stable set of checkboxes that does not change shape
-#: depending on which apps happen to be installed.
+#: The events an operator may subscribe an endpoint to. This is the *offered*
+#: set, which is not the same as the *emitted* set: an event may be offered
+#: before anything emits it, in which case subscribing is a no-op rather than an
+#: error. ``broadcast.finished`` was that case until issue #23. Keeping the list
+#: here rather than deriving it from :func:`discover_catalog` means the settings
+#: UI offers a stable set of checkboxes that does not change shape depending on
+#: which apps happen to be installed.
+#:
+#: SPEC §5's ``outbound_webhook.events`` column names five of these seven. The two
+#: sequence events are L6-A's (issue #22) and were added here with it: the
+#: Layer-6 gate requires them to reach a subscriber, and contract 7 lists them
+#: in the catalog, but :func:`on_catalog_event` drops anything outside this
+#: tuple and ``apps.api.services._validated_events`` refuses to store a
+#: subscription to one — so discovery alone is not enough to deliver them. The
+#: SPEC list predates the catalog; this is the catalog's half of it.
 SUBSCRIBABLE_EVENTS: tuple[str, ...] = (
     "contact.created",
     "contact.tag_added",
     "message.received",
     "execution.completed",
+    "sequence.subscribed",
+    "sequence.unsubscribed",
     "broadcast.finished",
 )
 
@@ -66,8 +78,8 @@ SUBSCRIBABLE_EVENTS: tuple[str, ...] = (
 #: except the envelope", because the denylist form publishes whatever a future
 #: emitter happens to add — an outbound surface should widen deliberately, not
 #: by side effect. Anything ending in ``_id`` still passes, so an emitter that
-#: lands later (``broadcast.finished``'s ``broadcast_id``) needs no change here,
-#: which is the property SPEC §5 asks for.
+#: landed later (``broadcast.finished``'s ``broadcast_id``) needed no change
+#: here, which is the property SPEC §5 asks for.
 PUBLISHABLE_FIELDS: frozenset[str] = frozenset({"source", "platform", "preview", "cleared"})
 
 #: Human copy for the settings page, kept beside the names so a new event
@@ -77,6 +89,8 @@ EVENT_LABELS: dict[str, str] = {
     "contact.tag_added": "Tag added to a contact",
     "message.received": "Inbound message received",
     "execution.completed": "Flow execution completed",
+    "sequence.subscribed": "Contact subscribed to a sequence",
+    "sequence.unsubscribed": "Contact unsubscribed from a sequence",
     "broadcast.finished": "Broadcast finished",
 }
 

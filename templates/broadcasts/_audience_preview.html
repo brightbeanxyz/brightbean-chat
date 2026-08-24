@@ -1,0 +1,51 @@
+{% comment %}
+The live audience count (SPEC §13.1: "live audience-count + estimated-eligible
+preview via set-wise compliance").
+
+Every number here comes from apps/broadcasts/audience.py::preview, which is
+three aggregate queries over the same annotation the send will use — so what an
+operator reads here and what the fanout does cannot drift.
+
+The reasons are `apps.messaging.codes.describe` output, looked up server-side
+from the Denial code on each verdict. Contact names are attacker-controlled
+strings on the team-browser path (SECURITY-BASELINE §2) and are escaped by the
+template like any other value; nothing here is marked safe.
+{% endcomment %}
+{% if error %}
+<div class="alert-warning mt-3" role="alert">{{ error }}</div>
+{% elif preview %}
+<div class="bc-preview mt-3" aria-live="polite">
+  <div class="flex flex-wrap items-baseline gap-6">
+    <div>
+      <div class="bc-preview-figure">{{ preview.eligible }}</div>
+      <div class="bc-tile-label">will receive it</div>
+    </div>
+    <div>
+      <div class="bc-preview-figure">{{ preview.total }}</div>
+      <div class="bc-tile-label">match the filter</div>
+    </div>
+    <div>
+      <div class="bc-preview-figure">{{ preview.skipped_total }}</div>
+      <div class="bc-tile-label">will be skipped</div>
+    </div>
+  </div>
+
+  {% if preview.total == 0 %}
+  <p class="bc-hint mt-2">Nobody matches these rules yet.</p>
+  {% endif %}
+
+  {% for reason in reasons %}
+  <div class="bc-reason">
+    <span>
+      {{ reason.label }}
+      {% if reason.names %}
+      <span class="bc-reason-names block">e.g. {% for name in reason.names %}{{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}</span>
+      {% endif %}
+    </span>
+    <span class="bc-reason-count">{{ reason.count }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="bc-hint mt-3">Add a rule to see who this reaches.</p>
+{% endif %}

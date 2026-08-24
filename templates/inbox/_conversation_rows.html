@@ -11,6 +11,7 @@ renders under Django's default autoescaping and none of it is marked safe.
   <p class="p-4 text-xs" style="color: var(--text-tertiary);">No conversations match these filters.</p>
 {% else %}
   {% for row in conversations %}
+    <div class="ib-row-wrap">
     {% comment %}
       A real link, not a button with hx-get, and both halves of that matter.
 
@@ -25,6 +26,19 @@ renders under Django's default autoescaping and none of it is marked safe.
       issues the same request from the document instead, so the poll can replace
       these rows underneath it without losing the navigation.
     {% endcomment %}
+    {% comment %}
+      The bulk-select checkbox, a sibling of the row rather than inside it: a
+      checkbox inside an <a> is a control the link swallows.
+
+      Its state lives in the `inboxSelection` component wrapping the list, which
+      is *outside* this partial — so the three-second poll can replace these rows
+      underneath a half-made selection and x-bind restores every tick. The same
+      arrangement contacts/list.html uses, for the same reason.
+    {% endcomment %}
+    <input type="checkbox" class="ib-row-select"
+           aria-label="Select {{ row.conversation.contact.display_name }}"
+           x-bind:checked="isSelected('{{ row.conversation.id }}')"
+           x-on:change="toggle('{{ row.conversation.id }}', $event.target.checked)">
     <a href="{% url 'inbox:thread' workspace_id=request.workspace.id conversation_id=row.conversation.id %}"
        data-conversation="{{ row.conversation.id }}"
        class="ib-row{% if row.unread %} is-unread{% endif %}{% if open_conversation_id == row.conversation.id|stringformat:'s' %} is-current{% endif %}"
@@ -43,7 +57,29 @@ renders under Django's default autoescaping and none of it is marked safe.
         {% if row.conversation.last_message_at %}<span>{{ row.conversation.last_message_at|timesince }} ago</span>{% endif %}
         {% if row.conversation.state == "done" %}<span class="ib-chip">Done</span>{% endif %}
         {% if row.conversation.assignee %}<span class="ib-chip">{{ row.conversation.assignee.display_name }}</span>{% endif %}
+        {% comment %}
+          A glyph, not a countdown. selectors.list_version hashes what this row
+          prints, and a due time here would re-derive from the clock and churn
+          every row in the inbox once a minute for every open tab — over markup
+          that shows a dot. The thread is where the countdown belongs.
+        {% endcomment %}
+        {% if row.has_pending %}<span class="ib-chip" title="Something is scheduled on this conversation">Scheduled</span>{% endif %}
       </span>
+      {% if row.labels %}
+        {% comment %}
+          `chip.color` is the value apps.inbox.rendering vetted, never the stored
+          column — see LabelChip. Capped at LIST_CHIPS with a "+n" remainder,
+          because the hostile-content suite bounds the whole rendered list at
+          20 kB and a hundred rows of unbounded chips is what trips it.
+        {% endcomment %}
+        <span class="ib-row-labels mt-0.5 flex items-center gap-1 flex-wrap">
+          {% for chip in row.labels %}
+            <span class="ib-label-chip" style="--chip-ink: {{ chip.color }};">{{ chip.name }}</span>
+          {% endfor %}
+          {% if row.extra_labels %}<span class="ib-chip">+{{ row.extra_labels }}</span>{% endif %}
+        </span>
+      {% endif %}
     </a>
+    </div>
   {% endfor %}
 {% endif %}

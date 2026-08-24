@@ -59,11 +59,22 @@ class TestRuntimeMatchesSchema:
         for verb in registered_verbs():
             assert verb in ACTION_VERBS, f"{verb} has a runtime and no schema"
 
-    def test_the_sequence_verbs_have_a_schema_and_no_runtime(self):
-        """L6-A's, deliberately left out (see the #9 trigger)."""
+    def test_the_sequence_verbs_have_a_schema_and_a_runtime(self):
+        """L6-A (#22) filled the two slots #9 left. The schemas did not move:
+        the runtime is a registration from ``apps/campaigns/verbs.py``, not an
+        edit to ``apps/flows/schema/nodes.py``."""
         for verb in ("subscribe_sequence", "unsubscribe_sequence"):
             assert verb in ACTION_VERBS
-            assert verb_handler(verb) is None
+            handler = verb_handler(verb)
+            assert handler is not None
+            assert handler.__module__ == "apps.campaigns.verbs"
+
+    def test_every_schema_verb_has_a_runtime(self):
+        """True as of #22, and worth pinning: a verb the builder offers and
+        nothing runs is a control that silently does nothing. A later issue that
+        ships a schema a layer ahead of its behaviour updates this test
+        deliberately, the way ``EXPECTED_WITHOUT_RUNTIME`` is updated above."""
+        assert {verb for verb in ACTION_VERBS if verb_handler(verb) is None} == set()
 
 
 class TestHandles:

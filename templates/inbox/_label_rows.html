@@ -1,0 +1,47 @@
+{% comment %}
+The refreshable half of the label manager, in the shape contacts/_tag_rows.html
+established: every mutation's toast_response carries an `inboxLabelsChanged`
+HX-Trigger and this container answers it by re-fetching itself, rather than
+pulling the whole shell down and picking one div out of it.
+
+`chip.color` is the vetted value from apps.inbox.rendering, never the stored
+column. style-src carries 'unsafe-inline' and Django's escape() does not cover
+`;`, `:` or `(`, so a hex that reached this attribute unchecked would be a CSS
+beacon inside the quotes. See LabelChip's docstring.
+{% endcomment %}
+<div id="inbox-label-rows"
+     hx-get="{% url 'inbox:label_rows' workspace_id=request.workspace.id %}"
+     hx-trigger="inboxLabelsChanged from:body"
+     hx-swap="outerHTML">
+  {% if labels %}
+    <table>
+      <thead><tr><th>Label</th><th>Colour</th><th>Conversations</th><th></th></tr></thead>
+      <tbody>
+        {% for row in labels %}
+          <tr>
+            <td colspan="2">
+              <form hx-post="{% url 'inbox:label_update' workspace_id=request.workspace.id label_id=row.label.id %}">
+                <span class="ib-label-chip" style="--chip-ink: {{ row.chip.color }};">{{ row.chip.name }}</span>
+                <label class="sr-only" for="label-name-{{ row.label.id }}">Name</label>
+                <input id="label-name-{{ row.label.id }}" type="text" name="name" value="{{ row.label.name }}"
+                       maxlength="60" required />
+                <label class="sr-only" for="label-color-{{ row.label.id }}">Colour</label>
+                <input id="label-color-{{ row.label.id }}" type="color" name="color" value="{{ row.chip.color }}" />
+                <button type="submit">Save</button>
+              </form>
+            </td>
+            <td>{{ row.used }}</td>
+            <td>
+              <form hx-post="{% url 'inbox:label_delete' workspace_id=request.workspace.id label_id=row.label.id %}"
+                    hx-confirm="Delete “{{ row.label.name }}”? It is removed from {{ row.used }} conversation{{ row.used|pluralize }}. Rules that add it keep running and will show it as deleted.">
+                <button type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No labels yet. Labels file a conversation; contact tags follow the person.</p>
+  {% endif %}
+</div>

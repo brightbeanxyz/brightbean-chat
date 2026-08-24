@@ -1,9 +1,16 @@
 """The doors into routing that are not a webhook.
 
-SPEC §10's ``api`` trigger is "fired via public API flow-start endpoint". #25
-(L5-F) owns that endpoint; this is the function it calls, shipped now so the door
-exists and is tested before its caller lands — and so #25 adds a route rather
-than a second copy of the lock discipline.
+Two callers today, and neither of them has a ``NormalizedEvent`` to route:
+
+* SPEC §10's ``api`` trigger — "fired via public API flow-start endpoint", which
+  #25 (L5-F) owns;
+* SPEC §10's ``rule`` trigger, which L6-A fires from the internal event catalog
+  (``apps/campaigns/rules.py``, ROADMAP contract 7).
+
+Both need the same discipline around the contact lock, and :func:`fire_trigger`
+is it. Neither matches anything here — by the time a caller arrives the trigger
+is already chosen — so what is left to get right is the lock, and the fallback
+when somebody else is holding it.
 """
 
 import logging
@@ -19,7 +26,7 @@ from apps.flows.triggers.services import api_trigger
 from apps.queueing.models import ActionType
 from apps.queueing.registry import schedule
 
-__all__ = ["ApiTriggerResult", "fire_api_trigger"]
+__all__ = ["ApiTriggerResult", "connection_for_contact", "fire_api_trigger", "fire_trigger"]
 
 logger = logging.getLogger(__name__)
 
@@ -38,33 +45,34 @@ class ApiTriggerResult:
         return self.execution is not None or self.scheduled is not None
 
 
-def fire_api_trigger(
+def fire_trigger(
     *,
-    flow: Any,
+    trigger: Trigger,
     contact: Any,
-    key: str = "",
     variables: dict[str, Any] | None = None,
     connection: Any = None,
 ) -> ApiTriggerResult:
-    """Start ``flow`` for ``contact`` through its ``api`` trigger.
+    """Start ``trigger``'s flow for ``contact``. The trigger is already matched.
 
-    Takes the **non-blocking** contact lock and enqueues on contention, for the
-    same reason the webhook path does: this is a request too, and a caller
-    waiting behind whatever the worker is doing to this contact is a held
+    Takes the **non-blocking** contact lock and enqueues on contention. Both
+    callers are inside somebody's request or somebody's transaction — an API
+    call for one, a signal receiver inside the emitting write for the other — and
+    waiting there behind whatever the worker is doing to this contact is a held
     connection rather than a slow one.
 
     ``START_FLOW`` rather than ``route_event`` on the fallback: there is no
-    ``NormalizedEvent`` and no stage chain to replay — the trigger is already
-    matched, so the only thing worth deferring is the start itself.
+    ``NormalizedEvent`` and no stage chain to replay, so the only thing worth
+    deferring is the start itself.
+
+    Every outcome is a result rather than an exception, including "the flow has
+    no published version": a trigger that cannot run is a configuration problem,
+    not a failure of the event that reached it.
     """
     from apps.queueing.locks import try_contact_lock
 
+    flow = trigger.flow
     if contact.workspace_id != flow.workspace_id:
-        return ApiTriggerResult(reason="cross_workspace")
-
-    trigger = api_trigger(flow, key=key)
-    if trigger is None:
-        return ApiTriggerResult(reason="no_api_trigger")
+        return ApiTriggerResult(trigger=trigger, reason="cross_workspace")
 
     target = connection if connection is not None else _connection_for(trigger, contact)
     payload = {"trigger_type": trigger.type, **(variables or {})}
@@ -95,24 +103,57 @@ def fire_api_trigger(
                 connection=target,
             )
         except FlowNotRunnableError as exc:
-            logger.warning("api trigger %s cannot start flow %s: %s", trigger.pk, flow.pk, exc)
+            logger.warning("trigger %s cannot start flow %s: %s", trigger.pk, flow.pk, exc)
             return ApiTriggerResult(trigger=trigger, reason="not_runnable")
 
     return ApiTriggerResult(trigger=trigger, execution=execution)
 
 
-def _connection_for(trigger: Trigger, contact: Any) -> Any | None:
-    """Which channel an API-started run happens on.
+def fire_api_trigger(
+    *,
+    flow: Any,
+    contact: Any,
+    key: str = "",
+    variables: dict[str, Any] | None = None,
+    connection: Any = None,
+) -> ApiTriggerResult:
+    """Start ``flow`` for ``contact`` through its ``api`` trigger.
 
-    ``apps/flows/engine/sending.py`` leaves this open on purpose — inventing one
-    there "would be the send path guessing at routing, which is L3-A's and
-    L4-A's to decide". This is that decision: the trigger's own binding if it has
-    one, otherwise the contact's most recently active identity that has not
-    opted out. ``None`` is a legitimate answer; the send pipeline reports it.
+    Resolves the trigger, then hands over to :func:`fire_trigger`; the lock
+    discipline is shared rather than restated, so the API door and the rule door
+    cannot drift apart.
+    """
+    if contact.workspace_id != flow.workspace_id:
+        return ApiTriggerResult(reason="cross_workspace")
+
+    trigger = api_trigger(flow, key=key)
+    if trigger is None:
+        return ApiTriggerResult(reason="no_api_trigger")
+
+    return fire_trigger(trigger=trigger, contact=contact, variables=variables, connection=connection)
+
+
+def _connection_for(trigger: Trigger, contact: Any) -> Any | None:
+    """Which channel a trigger-started run happens on.
+
+    The trigger's own binding if it has one, otherwise the contact's own most
+    recent reachable identity.
     """
     if trigger.channel_connection_id is not None:
         return trigger.channel_connection
+    return connection_for_contact(contact)
 
+
+def connection_for_contact(contact: Any) -> Any | None:
+    """The channel a run for ``contact`` should happen on when nothing names one.
+
+    ``apps/flows/engine/sending.py`` leaves this open on purpose — inventing one
+    there "would be the send path guessing at routing, which is L3-A's and
+    L4-A's to decide". This is that decision, and it is shared with L6-A's
+    sequence steps, which have no trigger to ask: the contact's most recently
+    active identity that has not opted out. ``None`` is a legitimate answer; the
+    send pipeline reports it.
+    """
     from apps.flows.compat import installed_model
 
     model = installed_model("messaging", "apps.messaging", "ContactChannelIdentity")

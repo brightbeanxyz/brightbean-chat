@@ -64,13 +64,16 @@ operator table the condition engine's docstring exists to prevent.
         if (rule.source === 'tag') return this.config.tags;
         if (rule.source === 'custom_field') return this.config.fields;
         if (rule.source === 'segment') return this.config.segments;
+        if (rule.source === 'sequence') return this.config.sequences;
         if (kind === 'platform') return this.config.platforms;
         if (kind === 'system_field') {
           return Object.keys(vocab.systemFields).map(function (name) {
             return { value: name, label: vocab.systemFields[name].label };
           });
         }
-        // A declared source with no picker yet (sequence, until issue #22).
+        // A declared source with no picker. None today: every source in
+        // CONDITION_SCHEMA has one, and this is the branch a seventh would
+        // land in until somebody gives it options.
         return [];
       },
       valueType: function (rule) {
