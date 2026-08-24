@@ -123,6 +123,7 @@ the frontend build.
 | [`docs/SPEC.md`](docs/SPEC.md) | The engineering specification — authoritative |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
 | [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
+| [`tests/acceptance/README.md`](tests/acceptance/README.md) | Whether v1 is accepted: SPEC §21 criterion by criterion, and the runbooks for the ones CI cannot reach |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Local development, the frontend build, tenant scoping, the IDOR suite, URL and RBAC conventions |
 | [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability |
 
