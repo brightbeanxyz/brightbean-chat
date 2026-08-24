@@ -1,0 +1,28 @@
+{% comment %}
+SPEC §5's four counters as headline cards. Included by the flow stats page and by
+the broadcast one, so the four words mean the same thing in both places.
+
+`clicked` carries the CTR beneath it wherever there were sends to divide by —
+"where buttons exist" in the issue's words, expressed as "where anything was
+counted" so a flow whose only link is inside an email body reads the same as one
+with a button.
+{% endcomment %}
+<div class="an-cards">
+    <div class="an-card">
+        <div class="an-card-figure">{{ totals.sent }}</div>
+        <div class="an-card-label">Sent</div>
+    </div>
+    <div class="an-card">
+        <div class="an-card-figure">{{ totals.delivered }}</div>
+        <div class="an-card-label">Delivered</div>
+    </div>
+    <div class="an-card">
+        <div class="an-card-figure">{{ totals.failed }}</div>
+        <div class="an-card-label">Failed</div>
+    </div>
+    <div class="an-card">
+        <div class="an-card-figure">{{ totals.clicked }}</div>
+        <div class="an-card-label">Clicked</div>
+        {% if click_rate is not None %}<div class="an-card-note">{{ click_rate }}% of sends</div>{% endif %}
+    </div>
+</div>

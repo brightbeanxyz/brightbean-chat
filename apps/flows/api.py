@@ -33,7 +33,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.common.shortcuts import get_scoped_object_or_404
-from apps.flows import services
+from apps.flows import analytics, services
 from apps.flows.models import Flow
 from apps.flows.picklists import picklists
 from apps.flows.schema import MAX_GRAPH_BYTES, empty_graph, json_schema, limits
@@ -224,24 +224,40 @@ def flow_publish(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
 
 
 @login_required
-@require_workspace_member
+@require_permission("view_analytics")
 @require_GET
 def flow_stats(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
-    """Per-node counters for the stats overlay — zeros until L7-A (issue #26).
+    """Per-node counters for the stats overlay (SPEC §5's ``node_stat_daily``).
 
-    The shape is the real one (``node_stat_daily`` in SPEC §5 counts sent,
-    delivered, failed and clicked), so L3-C can build the overlay against it now.
-    ``available`` is false while there is nothing behind it; L7-A flips it.
+    **The shape is unchanged from the stub L2-D shipped**, which is the point:
+    L3-C's overlay was written against it and issue #26 fills it rather than
+    rewriting it. ``available`` still means "there is something behind this" — it
+    now says whether ``apps.analytics`` is installed rather than whether L7-A has
+    merged, and the builder still renders that state distinctly rather than as a
+    row of zeros.
+
+    ``?days=N`` is additive and optional. Omitted — which is what the overlay
+    sends — the counters are all-time, because the chips beside a node are bare
+    cumulative numbers with no range control next to them. The flow stats page
+    asks for 7, 30 or 90 explicitly.
+
+    Gated on ``view_analytics`` rather than on bare workspace membership, per the
+    permission this issue owns. Every workspace role holds that key
+    (``apps.members.roles``), so no reader loses access; what changes is that the
+    gate now names the thing being read.
     """
     flow = _get_flow(request, flow_id)
-    return JsonResponse(
-        {
-            "flow": {"id": str(flow.pk)},
-            "available": False,
-            "nodes": {},
-            "totals": {"sent": 0, "delivered": 0, "failed": 0, "clicked": 0},
-        }
-    )
+    stats = analytics.stats(request.workspace, flow.pk, days=request.GET.get("days"))
+    if stats is None:
+        return JsonResponse(
+            {
+                "flow": {"id": str(flow.pk)},
+                "available": False,
+                "nodes": {},
+                "totals": {"sent": 0, "delivered": 0, "failed": 0, "clicked": 0},
+            }
+        )
+    return JsonResponse({"flow": {"id": str(flow.pk)}, "available": True, **stats})
 
 
 # ---------------------------------------------------------------------------

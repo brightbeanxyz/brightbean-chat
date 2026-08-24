@@ -116,6 +116,10 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         "status": request.GET.get("status", ""),
         "folder": request.GET.get("folder", ""),
         "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
+        # Issue #26's per-flow stats page. Gated on its own key rather than on
+        # edit_flows: reading numbers and changing a graph are different rights,
+        # and every role holds this one today.
+        "can_view_analytics": request.workspace_membership.effective_permissions.get("view_analytics", False),
         "unfiled_label": UNFILED_LABEL,
     }
 

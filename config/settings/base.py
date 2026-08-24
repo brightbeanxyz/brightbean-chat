@@ -161,6 +161,11 @@ LOCAL_APPS = [
     "apps.notifications",
     "apps.queueing",
     "apps.api",
+    # Counters and stats views (SPEC §2, issue #26). Last of the domain apps
+    # because it only ever reads the others: it registers nothing at boot and
+    # is itself reached through the late-resolving seams in
+    # apps/messaging/analytics.py and apps/flows/analytics.py.
+    "apps.analytics",
     "theme",
 ]
 

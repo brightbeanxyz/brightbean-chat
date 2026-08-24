@@ -83,6 +83,11 @@ urlpatterns = [
     # recipient of an email has no account here, and SPEC §6.7 puts this link in
     # every message the product sends.
     path("", include("apps.channels.urls_public")),
+    # Click tracking and the open pixel (#26), completing the /u/, /m/, /c/, /o/
+    # family apps/common/signing.py documents. Unauthenticated for the same
+    # reason: the caller is a browser following a button or a mail client
+    # fetching an image, and the signed token is the whole credential.
+    path("", include("apps.analytics.urls_public")),
     # Per-user, so no workspace prefix: the bell shows every workspace at once
     # (issue #7).
     path("notifications/", include("apps.notifications.urls")),
@@ -108,6 +113,10 @@ urlpatterns = [
     # permission the placeholder used — so the nav entry's target moves from a
     # stub view to a real one and nothing else about the route changes.
     path("w/<uuid:workspace_id>/broadcasts/", include("apps.broadcasts.urls")),
+    # The analytics pages (issue #26). A deep prefix like the ones above it, and
+    # separate from the /c/ and /o/ routes at the site root: those are public
+    # token routes with no workspace in the URL at all.
+    path("w/<uuid:workspace_id>/analytics/", include("apps.analytics.urls")),
     # apps.contacts owns two disjoint stretches of the workspace URL space —
     # contacts/ and the two settings pages — so it mounts once at the root of
     # the prefix and spells the sub-paths itself (issue #3). It goes last of the

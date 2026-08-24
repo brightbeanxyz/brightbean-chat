@@ -59,6 +59,43 @@ them.
          hx-swap="innerHTML">
     </div>
 </div>
+
+{% comment %}
+Issue #26's deliverability summary for the channel this broadcast went out on.
+
+Deliberately outside the polled region and about the *connection* rather than
+about this send: the counters above already answer "how did this go", and this
+answers the different question beside it — is the channel healthy enough to
+schedule the next one. It does not move while somebody watches, so it costs one
+query on page load and nothing thereafter.
+{% endcomment %}
+{% if deliverability %}
+<div class="bc-panel">
+    <div class="bc-panel-head">
+        <span class="bc-panel-title">{{ deliverability.connection.display_name }} deliverability</span>
+        <a class="bc-hint" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}">All channels</a>
+    </div>
+    <div class="bc-tiles">
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ deliverability.total }}</div>
+            <div class="bc-tile-label">Messages</div>
+        </div>
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ deliverability.sent }}</div>
+            <div class="bc-tile-label">Reached provider</div>
+        </div>
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ deliverability.failed }}</div>
+            <div class="bc-tile-label">Failed</div>
+        </div>
+        <div class="bc-tile">
+            {# Blank rather than 0%: a rate with no denominator is not a rate. #}
+            <div class="bc-tile-figure">{% if deliverability.delivery_rate is not None %}{{ deliverability.delivery_rate }}%{% else %}—{% endif %}</div>
+            <div class="bc-tile-label">Delivered</div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block alpine_components %}

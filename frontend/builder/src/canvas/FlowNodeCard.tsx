@@ -12,6 +12,7 @@ import { memo, useEffect } from "react";
 
 import { groupOf, nodeSpec } from "../schema/artifact";
 import { handleLabel, sourceHandles } from "../schema/handles";
+import { chipValues } from "../stats/chip";
 import { useBuilder } from "../store/context";
 import { selectEntryIds, type CardData } from "../store/selectors";
 import { worstSeverity } from "../validation/normalize";
@@ -48,6 +49,8 @@ function FlowNodeCardInner({ id, data, selected }: { id: string; data: CardData;
   const group = spec ? groupOf(spec) : "other";
   const isNote = Boolean(spec?.annotation);
   const nodeStats = stats?.nodes[nodeId];
+  // sent · delivered · clicked, with the CTR where there is one (issue #26).
+  const chip = nodeStats ? chipValues(nodeStats, config) : null;
 
   return (
     <div
@@ -76,7 +79,7 @@ function FlowNodeCardInner({ id, data, selected }: { id: string; data: CardData;
         <NodePreview type={type} config={config} picklists={picklists} />
       </div>
 
-      {severity || nodeStats ? (
+      {severity || chip ? (
         <div className="fb-node-footer">
           {severity ? (
             <span className={`fb-badge fb-badge-${severity}`}>
@@ -84,9 +87,10 @@ function FlowNodeCardInner({ id, data, selected }: { id: string; data: CardData;
               {(issues?.length ?? 0) === 1 ? "" : "s"}
             </span>
           ) : null}
-          {nodeStats ? (
-            <span className="fb-pill" title="Sent · delivered · failed">
-              {nodeStats.sent} · {nodeStats.delivered} · {nodeStats.failed}
+          {chip ? (
+            <span className="fb-pill" title="Sent · delivered · clicked">
+              {chip.sent} · {chip.delivered} · {chip.clicked}
+              {chip.ctr === null ? null : <span className="fb-pill-rate"> {chip.ctr}%</span>}
             </span>
           ) : stats && !stats.available && !isNote ? (
             <span className="fb-pill">—</span>

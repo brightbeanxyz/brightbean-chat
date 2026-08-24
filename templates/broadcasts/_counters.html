@@ -66,6 +66,17 @@ no receipt path of its own.
             <div class="bc-tile-figure">{{ counters.skipped }}</div>
             <div class="bc-tile-label">Skipped</div>
         </div>
+        {% comment %}
+          Clicks on the links inside the message (issue #26). Not one of
+          `services.counters`' recipient-derived figures and deliberately outside
+          the `queued = sent + failed + cancelled + skipped` identity: a click is
+          a thing a recipient did, not a state a recipient is in. It comes from
+          node_stat_daily, the same counter the flow builder's overlay shows.
+        {% endcomment %}
+        <div class="bc-tile">
+            <div class="bc-tile-figure">{{ clicked }}</div>
+            <div class="bc-tile-label">Clicked</div>
+        </div>
         {% if counters.cancelled %}
         <div class="bc-tile">
             <div class="bc-tile-figure">{{ counters.cancelled }}</div>

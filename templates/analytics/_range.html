@@ -1,0 +1,14 @@
+{% comment %}
+The 7/30/90 range picker (SPEC §18's "7/30/90-day trend").
+
+Plain links: the choice is one query parameter and a full page load is what a
+reader expects from a date range. `days` is already clamped to one of the three
+by the view, so the "current" test can compare directly.
+{% endcomment %}
+<span class="an-range" role="group" aria-label="Date range">
+    {% for choice in range_choices %}
+    <a class="an-range-option{% if choice == days %} an-range-current{% endif %}"
+       href="?days={{ choice }}"
+       {% if choice == days %}aria-current="true"{% endif %}>{{ choice }} days</a>
+    {% endfor %}
+</span>

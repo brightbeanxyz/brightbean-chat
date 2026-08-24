@@ -71,7 +71,7 @@ from apps.channels.events import OutboundMessage, TextBlock
 from apps.channels.providers import email_html
 from apps.common.addresses import normalize_email
 from apps.common.platforms import Platform
-from apps.flows import messaging
+from apps.flows import analytics, messaging
 from apps.flows.engine.context import NodeContext
 from apps.flows.engine.nodes.base import Node
 from apps.flows.engine.registry import register_node
@@ -165,6 +165,20 @@ class SendEmailNode(Node):
             node_id=ctx.node_id,
         )
 
+        # Click and open tracking (issue #26). The same call `sending.deliver`
+        # makes for every other node, repeated here for the reason this whole
+        # module exists: this node does not go through `deliver`. Both email
+        # rewrites are opt-in per workspace and a preview run is left untouched;
+        # see apps.analytics.tracking.
+        idempotency_key = messaging.message_idempotency_key(ctx.execution, ctx.node_id)
+        outbound = analytics.instrument(
+            outbound,
+            execution=ctx.execution,
+            node_id=ctx.node_id,
+            platform=Platform.EMAIL.value,
+            idempotency_key=idempotency_key,
+        )
+
         try:
             message = messaging.send_outbound(
                 workspace=ctx.workspace,
@@ -172,7 +186,7 @@ class SendEmailNode(Node):
                 connection=connection,
                 outbound=outbound,
                 source=SEND_SOURCE,
-                idempotency_key=messaging.message_idempotency_key(ctx.execution, ctx.node_id),
+                idempotency_key=idempotency_key,
             )
         except FacadeUnavailableError as exc:
             return Fail(f"send_email node {ctx.node_id}: {exc}")

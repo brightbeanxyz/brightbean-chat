@@ -56,7 +56,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from apps.channels.events import OutboundMessage, TextBlock
-from apps.flows import messaging
+from apps.flows import analytics, messaging
 from apps.flows.models import FlowExecution, StartedBy
 
 __all__ = [
@@ -164,6 +164,23 @@ def deliver(
         return SendOutcome(sent=False, error="no_connection")
 
     envelope = envelope_for(execution)
+    idempotency_key = messaging.message_idempotency_key(execution, node_id, attempt)
+    # Click tracking (issue #26). Wraps URL buttons — on every platform, and
+    # including the ones inside a card — before the body is persisted, so a retry
+    # rebuilt from the stored row carries the same links as the first attempt.
+    # Returns the message untouched for a preview run, which is what keeps a test
+    # send out of L7-A's counters.
+    outbound = analytics.instrument(
+        outbound,
+        execution=execution,
+        node_id=node_id,
+        # getattr rather than a direct attribute read: the guard above is on
+        # ``channel_connection_id`` — deliberately, so it costs no query — which
+        # leaves the related object typed as optional even though it cannot be
+        # None here.
+        platform=str(getattr(execution.channel_connection, "platform", "")),
+        idempotency_key=idempotency_key,
+    )
     message = messaging.send_outbound(
         workspace=execution.workspace,
         contact=execution.contact,
@@ -181,7 +198,7 @@ def deliver(
         # promise about *why* a message is being sent, and only the starter knows.
         outbound=replace(outbound, node_id=node_id, tag=envelope.tag or outbound.tag),
         source=envelope.source,
-        idempotency_key=messaging.message_idempotency_key(execution, node_id, attempt),
+        idempotency_key=idempotency_key,
     )
     status = str(getattr(message, "status", "") or "")
     error = str(getattr(message, "error", "") or "")

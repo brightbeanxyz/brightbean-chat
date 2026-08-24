@@ -43,6 +43,7 @@ and is the same code ``templates/inbox/list.html`` documents.
 import json
 from typing import Any
 
+from django.apps import apps
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
@@ -406,11 +407,30 @@ def audience_preview(request: WorkspaceRequest, workspace_id: str, broadcast_id:
 # ---------------------------------------------------------------------------
 
 
+def _clicked(broadcast: Broadcast) -> int:
+    """How many clicks the broadcast's links have taken (issue #26).
+
+    A broadcast's content is a private one-node mini-flow, so its clicks are that
+    node's row in ``node_stat_daily`` — the same counter the flow builder's
+    overlay reads, reached the same way. This app keeps no click count of its
+    own, exactly as it keeps no delivery-receipt path of its own.
+
+    A late import behind an installed check: ``apps.analytics`` sits above this
+    app, and a deployment without it should lose one tile rather than the page.
+    """
+    if broadcast.flow_id is None or not apps.is_installed("apps.analytics"):
+        return 0
+    from apps.analytics.selectors import node_clicks
+
+    return node_clicks(broadcast.workspace_id, broadcast.flow_id, services.CONTENT_NODE_ID)
+
+
 def _counters_context(broadcast: Broadcast) -> dict[str, Any]:
     current = services.counters(broadcast)
     return {
         "broadcast": broadcast,
         "counters": current,
+        "clicked": _clicked(broadcast),
         # While fanout is still expanding the audience, ``queued`` is the number
         # of recipients written *so far* rather than the total — so a percentage
         # against it walks backwards every time a chunk of five hundred lands.
@@ -425,7 +445,31 @@ def _counters_context(broadcast: Broadcast) -> dict[str, Any]:
 @require_GET
 def broadcast_detail(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) -> HttpResponse:
     broadcast = _broadcast(request, broadcast_id)
-    return render(request, "broadcasts/detail.html", _counters_context(broadcast))
+    return render(
+        request,
+        "broadcasts/detail.html",
+        {**_counters_context(broadcast), "deliverability": _deliverability(request, broadcast)},
+    )
+
+
+def _deliverability(request: WorkspaceRequest, broadcast: Broadcast) -> dict[str, Any] | None:
+    """How this broadcast's channel is delivering overall (issue #26).
+
+    Everything the connection has ever sent, not just this broadcast — the
+    counters above already answer "how did this send go", and the question this
+    answers is the different one beside it: is the channel healthy. A domain
+    whose delivery rate has been falling for a week is the thing an operator
+    wants to see before scheduling the next one.
+
+    Computed in the page view only, never in the three-second polled fragment: it
+    is a workspace-wide aggregate and it does not move while somebody watches.
+    """
+    if not apps.is_installed("apps.analytics"):
+        return None
+    from apps.analytics.selectors import connection_deliverability, resolve_range
+
+    rows = connection_deliverability(request.workspace, window=resolve_range(None))
+    return next((row for row in rows if row["connection"].pk == broadcast.channel_connection_id), None)
 
 
 @login_required
@@ -454,6 +498,9 @@ def counters(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) ->
         current.failed,
         current.skipped,
         current.cancelled,
+        # Clicks move without any recipient row changing, so the tag has to carry
+        # them too or the fragment would 304 while the tile it renders is stale.
+        context["clicked"],
     )
 
     def build() -> HttpResponse:

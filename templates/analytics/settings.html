@@ -1,0 +1,49 @@
+{% extends "layouts/workspace_settings.html" %}
+{% comment %}
+The two per-workspace email tracking toggles (issue #26).
+
+Both default to off, and the copy says what each one actually does rather than
+what it is called. A self-hoster turning these on is choosing to rewrite links in
+mail they send and to embed an image that reports when a message is displayed;
+that is a decision worth stating in full on the page where it is made.
+
+URL buttons are wrapped on every platform regardless, and there is deliberately
+no switch for it: a button is a link the flow author added on purpose, and its
+click count is the number the builder's overlay shows.
+{% endcomment %}
+{% block title %}Email tracking · BrightBean Chat{% endblock %}
+{% block page_header %}<h1>Email tracking</h1>{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    Click and open tracking for email. Both are off until you turn them on.
+    Neither affects the click counters on flow buttons, which are always
+    recorded — a button is a link somebody added on purpose.
+  </p>
+
+  <form method="post" action="{% url 'analytics:update_tracking_settings' workspace_id=request.workspace.id %}">
+    {% csrf_token %}
+
+    <label for="wrap-email-links">
+      <input id="wrap-email-links" type="checkbox" name="wrap_email_links" {% if wrap_email_links %}checked{% endif %} />
+      Rewrite links in email bodies
+    </label>
+    <p class="muted">
+      Every link in an email you send is replaced with one that records the click
+      and forwards to the original address. Recipients see the forwarding link in
+      their status bar rather than the destination.
+    </p>
+
+    <label for="open-pixel">
+      <input id="open-pixel" type="checkbox" name="open_pixel" {% if open_pixel %}checked{% endif %} />
+      Add an open-tracking pixel
+    </label>
+    <p class="muted">
+      A one-pixel image is added to each email and marks the message as read when
+      it loads. Many mail clients block or pre-fetch images, so this is an
+      indication rather than a count.
+    </p>
+
+    <button type="submit">Save</button>
+  </form>
+{% endblock %}

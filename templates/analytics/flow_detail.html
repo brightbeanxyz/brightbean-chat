@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% load static %}
+{% comment %}
+One flow's stats page (SPEC §18: "Flow detail page renders totals and per-node
+overlay in the builder" — the overlay is the builder's; this is the page).
+
+Three things, in the order a reader wants them: what happened in total, how it
+moved over the range, and which node did it. The builder shows the same counters
+as chips on the canvas; a table is what you read, a chip is what you glance at.
+
+The chart data crosses into JavaScript through `json_script` rather than through
+an interpolated script body. The page's CSP is nonce-based (SECURITY-BASELINE
+§8) and Chart.js is served from 'self' (`scripts/vendor-js.mjs` vendored it for
+this issue), so nothing here reaches a CDN.
+{% endcomment %}
+
+{% block title %}{{ flow.name }} · Analytics · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ flow.name }}</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            Counters for the last {{ days }} days.
+            <span class="status-pill status-pill-{{ flow.status }}">{{ flow.get_status_display }}</span>
+        </p>
+    </div>
+    <div class="flex items-center gap-2">
+        {% include "analytics/_range.html" %}
+        <a class="btn-outline btn-inline" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}?days={{ days }}">All analytics</a>
+        <a class="btn-outline btn-inline" href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}">Open in builder</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+{% include "analytics/_counter_cards.html" %}
+
+<div class="an-panel">
+    <div class="an-panel-head">
+        <span class="an-panel-title">Trend</span>
+        <span class="an-hint">One point per UTC day. Preview runs are not counted.</span>
+    </div>
+    <div class="an-chart"><canvas id="flow-trend" role="img" aria-label="Daily sends, deliveries, failures and clicks"></canvas></div>
+</div>
+
+<div class="an-panel">
+    <div class="an-panel-head">
+        <span class="an-panel-title">Nodes</span>
+        <span class="an-hint">A node deleted from the graph keeps its numbers — the sends still happened.</span>
+    </div>
+    {% if node_rows %}
+    <div style="overflow-x: auto;">
+        <table class="an-table">
+            <thead>
+                <tr>
+                    <th scope="col">Node</th>
+                    <th scope="col" class="an-num">Sent</th>
+                    <th scope="col" class="an-num">Delivered</th>
+                    <th scope="col" class="an-num">Failed</th>
+                    <th scope="col" class="an-num">Clicked</th>
+                    <th scope="col" class="an-num">CTR</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in node_rows %}
+                <tr>
+                    <td>
+                        <code>{{ row.node_id }}</code>
+                        {% if row.type %}<span class="an-muted">{{ row.type }}</span>{% endif %}
+                    </td>
+                    <td class="an-num">{{ row.sent }}</td>
+                    <td class="an-num">{{ row.delivered }}</td>
+                    <td class="an-num">{{ row.failed }}</td>
+                    <td class="an-num">{{ row.clicked }}</td>
+                    <td class="an-num">{% if row.ctr is not None %}{{ row.ctr }}%{% else %}<span class="an-muted">—</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="an-hint">This flow has not sent anything in this range.</p>
+    {% endif %}
+</div>
+
+{{ chart|json_script:"flow-trend-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/vendor/chart.umd.min.js' %}"></script>
+<script nonce="{{ request.csp_nonce }}">
+  (function () {
+    var payload = JSON.parse(document.getElementById("flow-trend-data").textContent);
+    var canvas = document.getElementById("flow-trend");
+    if (!canvas || typeof Chart === "undefined") { return; }
+    // Read the theme's own tokens rather than hard-coding hexes: the palette is
+    // defined once in theme/static_src/src/styles.css and a chart that ignored
+    // it would be the one element on the page that does not follow the theme.
+    var style = getComputedStyle(document.documentElement);
+    var token = function (name, fallback) { return (style.getPropertyValue(name) || fallback).trim(); };
+    var lines = [
+      { key: "sent", label: "Sent", color: token("--primary", "#F97316") },
+      { key: "delivered", label: "Delivered", color: token("--success-700", "#15803D") },
+      { key: "failed", label: "Failed", color: token("--error-700", "#B91C1C") },
+      { key: "clicked", label: "Clicked", color: token("--text-secondary", "#57534E") }
+    ];
+    new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: payload.labels,
+        datasets: lines.map(function (line) {
+          return {
+            label: line.label,
+            data: payload.series[line.key],
+            borderColor: line.color,
+            backgroundColor: line.color,
+            tension: 0.25,
+            pointRadius: 0,
+            pointHitRadius: 12,
+            borderWidth: 2
+          };
+        })
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          // Counts are whole numbers; a y-axis offering 0.5 of a send is noise.
+          y: { beginAtZero: true, ticks: { precision: 0 } }
+        }
+      }
+    });
+  })();
+</script>
+{% endblock %}

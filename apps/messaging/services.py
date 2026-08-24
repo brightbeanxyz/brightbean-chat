@@ -73,7 +73,7 @@ from apps.channels.events import OutboundMessage, SendResult, SendStatus
 from apps.channels.providers.exceptions import APIError, RateLimitError
 from apps.channels.registry import adapter_for
 from apps.contacts.models import ContactStatus
-from apps.messaging import buckets
+from apps.messaging import analytics, buckets
 from apps.messaging.codes import Denial, Failure
 from apps.messaging.compliance import Allowed, can_send
 
@@ -599,6 +599,10 @@ def withdraw_send(message: Message, *, reason: str) -> Message:
     _cancel_retry(message)
     message.status = MessageStatus.FAILED
     message.error = error
+    # A withdrawal is a send that never happened, and SPEC §5 has one word for
+    # that outcome. The compare-and-set above is what makes it countable exactly
+    # once (issue #26).
+    analytics.record_status(message, previous=MessageStatus.QUEUED, current=MessageStatus.FAILED)
     return message
 
 
@@ -844,6 +848,9 @@ def _finalize_if_queued(message: Message, *, status: str, error: str = "") -> Me
         return None
     message.status = status
     message.error = error[:200]
+    # Only on the win. A compare-and-set that lost its race changed nothing, and
+    # the winner has already counted whatever it wrote (issue #26).
+    analytics.record_status(message, previous=MessageStatus.QUEUED, current=status)
     return message
 
 
@@ -937,6 +944,7 @@ def _finalize(
     happened either way, so the status is what matters and the id is what is
     dropped, loudly.
     """
+    previous = message.status
     message.status = status
     message.error = error[:200]
     fields = ["status", "error", "updated_at"]
@@ -953,6 +961,9 @@ def _finalize(
         )
         message.provider_message_id = ""
         message.save(update_fields=["status", "error", "provider_message_id", "updated_at"])
+    # After the write, not before: a counter for a status that failed to store
+    # would be a number with nothing behind it (issue #26).
+    analytics.record_status(message, previous=previous, current=status)
     return message
 
 

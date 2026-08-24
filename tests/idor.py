@@ -154,9 +154,37 @@ _API_V1_WAIVER = (
     "deleted, these waivers must be too."
 )
 
+#: Why the two tracking routes cannot be swept, and what stands in for the sweep.
+#: Shared by both, because the reasoning is identical.
+#:
+#: Note these carry only a ``token`` kwarg, so ``iter_tenant_routes`` would skip
+#: them on its own — they are named here anyway. A route that escapes the sweep
+#: because of how its URL happens to be shaped is exactly the kind this file
+#: exists to stop being invisible, and "public by design" is a position somebody
+#: decided rather than a fact about a kwarg list.
+_TRACKING_WAIVER = (
+    "Public by design (SECURITY-BASELINE §4, issue #26). The signed token IS the "
+    "credential and the caller is a browser following a button in a message or a "
+    "mail client fetching an image — neither has a session, so 'does this belong "
+    "to another workspace' is not a question these routes can ask and 404 is not "
+    "an answer they can give without breaking every link already sent. What "
+    "stands in for the sweep is that they are indistinguishable in the other "
+    "direction: every rejection — tampered signature, a token minted for a "
+    "different purpose, an unknown version, a malformed blob, a flow deleted "
+    "since the message went out — is the same bare 404 with no body detail, "
+    "constant-time underneath; and the redirect's destination is read from the "
+    "verified payload, never from the query string, so no id in a request can "
+    "point it anywhere. Both halves are asserted by "
+    "apps/analytics/tests/test_tracking_routes.py::TestTokenIndistinguishability "
+    "and ::TestNoOpenRedirect; if either class is deleted, these waivers must be "
+    "too."
+)
+
 #: Routes exempt from the sweep, each with the reason. A waiver is a reviewed
 #: line in this dict; there is no silent skip.
 WAIVED_ROUTES: dict[str, str] = {
+    "click_redirect": _TRACKING_WAIVER,
+    "open_pixel": _TRACKING_WAIVER,
     "webhook_sms": _WEBHOOK_WAIVER,
     "webhook_email": _WEBHOOK_WAIVER,
     "api_v1:contacts_detail": _API_V1_WAIVER,
