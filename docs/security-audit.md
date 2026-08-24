@@ -92,7 +92,7 @@ without a linked passing test": an unmapped item cannot be given a legal status.
 | §8.1 | CSP with per-request nonces on every page, builder island included | `apps/common/tests/test_csp.py::TestContentSecurityPolicy`, `apps/inbox/tests/test_hostile_content.py::TestContentSecurityPolicy` | COVERED |
 | §8.2 | Session/CSRF cookie flags; CSRF on all session-authenticated endpoints | `apps/accounts/tests/test_auth_hardening.py::TestSessionSettingsAreNotRedeclared` | COVERED |
 | §8.3 | Auth endpoints rate-limited; responses enumeration-safe | `apps/accounts/tests/test_auth_hardening.py::TestAuthRateLimiting`, `apps/accounts/tests/test_auth_hardening.py::TestEnumerationSafety`, `apps/common/tests/test_ratelimit.py::TestConcurrentAttemptsAreNotLost` | COVERED |
-| §8.4 | Production refuses to boot without secrets; `DEBUG` off; security headers set and verified | `apps/common/tests/test_checks.py::TestProductionSecrets`, `apps/common/tests/test_settings_boot.py` | COVERED — the baseline previously attributed the headers to a Caddy config that does not exist in this repository. They are set by the application in `config/settings/production.py`; the wording is corrected. Duplicating them at the proxy belongs with issue #28. |
+| §8.4 | Production refuses to boot without secrets; `DEBUG` off; security headers set and verified | `apps/common/tests/test_checks.py::TestProductionSecrets`, `apps/common/tests/test_settings_boot.py` | COVERED — set in two places: `config/settings/production.py` on the application's own responses and `deploy/Caddyfile` at the edge, with `scripts/smoke.sh` verifying them against a running deployment. When this audit was first written #28 had not merged and there was no proxy config at all, so the baseline's "set at the proxy (Caddy)" named an enforcement point that did not exist; #28 landed it, and the wording now describes both. |
 
 ## §9 File uploads (media library)
 
@@ -165,7 +165,7 @@ to do.
 | 4 | The tenant-model sweep could not fail. It built the list of scoped models and asserted only that the test model was in it | §1.1 | Rewritten to sweep every first-party model against a reasoned `NOT_TENANT_DATA` table |
 | 5 | The Meta `EAA…` scrubber regex was compiled twice, once per issue that added it | §5.2 | Folded into one, keeping both rationales |
 | 6 | No `makemigrations --check` in CI, despite a migration docstring claiming since Layer 4 that it runs there | §10.1 | Added to the `test` job |
-| 7 | Baseline §8 attributed the security headers to a Caddy config that does not exist here; they are set by the application | §8.4 | Wording corrected |
+| 7 | Baseline §8 named a Caddy config as the sole enforcement point for the security headers when no such config existed — the application was setting them alone | §8.4 | Wording corrected. #28 has since landed `deploy/Caddyfile`, so the line now describes both enforcement points and `scripts/smoke.sh` verifying them |
 | 8 | Baseline §4 did not name the two deliberate divergences, so the checklist read as unmet against code that was right | §4.1 | Both recorded, with the argument each makes |
 | 9 | SPEC §19's "raw-body HMAC" has an SES/SNS exception nobody had written down | SPEC §19.2 | Recorded above |
 | 10 | `templates/contacts/_activity.html` reversed `{% url 'inbox' %}`, but the app is namespaced — a 500 on the contact detail page for any contact with messages | — | One-line fix. Not a security finding; found by the first test to render that page with messages present |

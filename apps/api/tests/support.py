@@ -68,3 +68,27 @@ def refusing(exc: Exception) -> Callable[[httpx.Request], httpx.Response]:
         raise exc
 
     return _handler
+
+
+def drain_webhook_deliveries(workspace: Any) -> None:
+    """Run the queued outbound-webhook rows the way the worker would.
+
+    Filtered to the delivery action type on purpose. Draining the whole queue
+    would also run whatever else the scenario scheduled, and this exists to move
+    deliveries rather than to be a worker — ``apps/broadcasts/tests/test_fanout.py``
+    explains the same choice at more length for its own drain.
+
+    Lives here rather than in a test module because two suites need it: the
+    phase-3 API scenario and ``tests/acceptance/test_integration_chain.py``. Two
+    copies of a helper that marks rows DONE and calls a handler drift the moment
+    the handler's signature moves, and only one of them gets updated.
+    """
+    from apps.api.delivery import ACTION_TYPE, handle_webhook_delivery
+    from apps.queueing.models import ActionStatus, ScheduledAction
+
+    for action in list(
+        ScheduledAction.objects.for_workspace(workspace).filter(type=ACTION_TYPE, status=ActionStatus.PENDING)
+    ):
+        action.status = ActionStatus.DONE
+        action.save(update_fields=["status"])
+        handle_webhook_delivery(action.payload, action)

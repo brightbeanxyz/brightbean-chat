@@ -303,7 +303,7 @@ jobs:
         # share a source: .nvmrc is a dotfile only setup-node reads, the
         # Dockerfile and compose carry literal image tags (kept literal so
         # Dependabot's docker ecosystem can see and bump them), engines is a
-        # semver range npm enforces, and the README is prose. Dependabot bumps
+        # semver range npm enforces, and CONTRIBUTING is prose. Dependabot bumps
         # exactly one of those at a time, so without this step a PR moving the
         # base image alone would go green while CI still tested the old major.
         #
@@ -314,20 +314,25 @@ jobs:
           dockerfile="$(sed -n 's/^FROM node:\([0-9][0-9]*\)-slim.*/\1/p' Dockerfile | head -1)"
           compose="$(sed -n 's/^[[:space:]]*image:[[:space:]]*node:\([0-9][0-9]*\)-slim.*/\1/p' docker-compose.override.yml | head -1)"
           engines="$(node -p "((require('./package.json').engines||{}).node||'').match(/[0-9]+/)?.[0] || ''")"
-          readme="$(sed -n 's/.*Node \([0-9][0-9]*\)+ and.*/\1/p' README.md | head -1)"
+          # The prose pin lives in CONTRIBUTING.md's "Local development"
+          # section. It was in the README until issue #28 rebuilt that around
+          # deploying rather than developing and moved the setup detail here;
+          # this check followed the sentence rather than being weakened to
+          # accept its absence.
+          contributing="$(sed -n 's/.*Node \([0-9][0-9]*\)+ and.*/\1/p' CONTRIBUTING.md | head -1)"
 
           # An empty capture means the pattern stopped matching — a silently
           # skipped comparison would be worse than no check at all.
-          for pair in "nvmrc:${nvmrc}" "Dockerfile:${dockerfile}" "compose:${compose}" "engines:${engines}" "README:${readme}"; do
+          for pair in "nvmrc:${nvmrc}" "Dockerfile:${dockerfile}" "compose:${compose}" "engines:${engines}" "CONTRIBUTING:${contributing}"; do
             if [ -z "${pair##*:}" ]; then
               echo "::error::Could not read the Node version out of ${pair%%:*} — this check's pattern needs updating."
               exit 1
             fi
           done
 
-          echo ".nvmrc=${nvmrc} Dockerfile=${dockerfile} compose=${compose} engines=${engines} README=${readme}"
+          echo ".nvmrc=${nvmrc} Dockerfile=${dockerfile} compose=${compose} engines=${engines} CONTRIBUTING=${contributing}"
           if [ "${nvmrc}" != "${dockerfile}" ] || [ "${nvmrc}" != "${compose}" ] \
-             || [ "${nvmrc}" != "${engines}" ] || [ "${nvmrc}" != "${readme}" ]; then
+             || [ "${nvmrc}" != "${engines}" ] || [ "${nvmrc}" != "${contributing}" ]; then
             echo "::error::Node version pins disagree. All five must name the same major; .nvmrc is the one CI runs on."
             exit 1
           fi
@@ -507,13 +512,152 @@ jobs:
           scripts/wait-for-http.sh http://localhost:8000/healthz 503 30 /tmp/healthz-down.json
           cat /tmp/healthz-down.json
 
-      - name: Tear down
+      - name: Tear down (development stack)
         if: always()
         env:
           IMAGE_TAG: ci
         run: |
           docker compose -f docker-compose.yml logs --no-color --tail=100 || true
           docker compose -f docker-compose.yml down -v || true
+
+      # -------------------------------------------------------------------
+      # The production stack (issue #28). Runs after the development one has
+      # been torn down, so the two cannot contend for a port, and under its own
+      # compose project name so `down -v` cannot reach the other's volumes.
+      # -------------------------------------------------------------------
+
+      - name: The production stack refuses to start without its secrets
+        # SECURITY-BASELINE §8 and the whole shape of docker-compose.prod.yml:
+        # nothing secret has a default. This asserts the failure is a refusal
+        # that names the variable, not a stack that comes up with a value
+        # nobody chose. It runs before anything is configured, so the runner's
+        # empty environment is the test fixture.
+        run: |
+          if docker compose -f docker-compose.prod.yml config >/dev/null 2>/tmp/prod-config.err; then
+            echo "::error::docker-compose.prod.yml configured itself with no secrets set"
+            exit 1
+          fi
+          cat /tmp/prod-config.err
+          grep -q "required variable" /tmp/prod-config.err
+          grep -q "deploy/env.prod.example" /tmp/prod-config.err
+          echo "The stack refused to start and said what was missing."
+
+      - name: docker compose -f docker-compose.prod.yml serves HTTPS
+        # APP_DOMAIN=localhost makes Caddy issue from its internal CA rather
+        # than calling Let's Encrypt, so this needs no DNS, no public address
+        # and no ACME round trip — the rest of the stack is identical to what a
+        # self-hoster runs. IMAGE_TAG points at the image built above.
+        env:
+          IMAGE_TAG: ci
+        run: |
+          # Filled in the way the guide tells a self-hoster to fill it in:
+          # start from the shipped template and replace the empty required
+          # values. Starting from the template rather than writing six lines is
+          # the point — it proves deploy/env.prod.example is usable as shipped.
+          # token_urlsafe emits only [A-Za-z0-9_-], so none of these values can
+          # contain the sed delimiter.
+          cp deploy/env.prod.example .env
+          gen() { python3 -c "import secrets; print(secrets.token_urlsafe($1))"; }
+          fill() { sed -i "s|^$1=$|$1=$2|" .env; grep -q "^$1=." .env; }
+
+          fill APP_DOMAIN localhost
+          fill ACME_EMAIL ci@example.com
+          fill SECRET_KEY "$(gen 50)"
+          fill ENCRYPTION_KEY_SALT "$(gen 50)"
+          fill POSTGRES_PASSWORD "$(gen 24)"
+          # Commented out in the template, because the stack runs a real worker.
+          echo "TICK_TOKEN=$(gen 32)" >> .env
+
+          docker compose -p bbchat-prod -f docker-compose.prod.yml up -d --wait --wait-timeout 240
+
+      - name: Only the proxy is published to the host
+        # The acceptance criterion — "postgres unreachable from outside the
+        # compose network" — asserted against the RUNNING stack rather than
+        # against the file, and widened to every service while we are here.
+        #
+        # Not `docker compose port`: that exits 0 and prints "invalid IP:0" when
+        # there is no mapping at all, so the obvious spelling of this check
+        # passes and fails in exactly the wrong directions. `ps --format json`
+        # reports what was actually published.
+        #
+        # Probing 127.0.0.1:5432 from outside would also be ambiguous here —
+        # GitHub's runner image ships its own PostgreSQL. scripts/smoke.sh
+        # --db-host is that check, for an operator running it against their own
+        # host.
+        run: |
+          docker compose -p bbchat-prod -f docker-compose.prod.yml ps --format json > /tmp/prod-ps.json
+          python3 - <<'EOF'
+          import json, sys
+
+          raw = open("/tmp/prod-ps.json").read().strip()
+          try:
+              containers = json.loads(raw)
+              if isinstance(containers, dict):
+                  containers = [containers]
+          except json.JSONDecodeError:
+              containers = [json.loads(line) for line in raw.splitlines() if line.strip()]
+
+          published = {
+              container["Service"]: [
+                  p for p in (container.get("Publishers") or []) if p.get("PublishedPort")
+              ]
+              for container in containers
+          }
+          for service, ports in sorted(published.items()):
+              print(f"{service}: {ports or 'not published'}")
+
+          leaked = sorted(s for s, ports in published.items() if ports and s != "caddy")
+          if leaked:
+              sys.exit(f"::error::these services published a host port: {leaked}")
+          if not published.get("caddy"):
+              sys.exit("::error::caddy published nothing, so the stack serves no traffic")
+          print("Only caddy is reachable from the host.")
+          EOF
+
+      - name: The worker drains the queue
+        # The two-process model, proved. The worker schedules and immediately
+        # runs the housekeeping bootstrap on start, so a functioning worker
+        # always logs a completed action — and a stack where only the web
+        # process works looks entirely healthy without one.
+        #
+        # The logs go to a file rather than into `grep -q`. `grep -q` exits on
+        # the first match and closes the pipe, so once the worker's log outgrows
+        # the 64 KB pipe buffer the producer dies of SIGPIPE — harmless under
+        # this step's default shell, which has no `pipefail`, and a spurious
+        # 60-second failure the moment anything turns it on.
+        run: |
+          for attempt in $(seq 1 30); do
+            docker compose -p bbchat-prod -f docker-compose.prod.yml logs worker --no-color \
+              > /tmp/worker.log 2>&1 || true
+            if grep -q "Queue action done" /tmp/worker.log; then
+              echo "The worker claimed and completed an action."
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -p bbchat-prod -f docker-compose.prod.yml logs worker --no-color --tail=50
+          echo "::error::the worker never completed a queued action"
+          exit 1
+
+      - name: Smoke the production stack
+        # scripts/smoke.sh is the same script docs/self-hosting.md tells a
+        # self-hoster to run. --insecure because the certificate comes from
+        # Caddy's internal CA; everything it checks is otherwise exactly what a
+        # real deployment is checked for.
+        run: |
+          scripts/smoke.sh https://localhost \
+            --insecure \
+            --tick-token "$(grep '^TICK_TOKEN=' .env | cut -d= -f2-)" \
+            --project bbchat-prod
+
+      - name: Tear down (production stack)
+        if: always()
+        env:
+          IMAGE_TAG: ci
+        run: |
+          docker compose -p bbchat-prod -f docker-compose.prod.yml logs --no-color --tail=100 || true
+          docker compose -p bbchat-prod -f docker-compose.prod.yml down -v || true
+          rm -f .env
 
   secrets-scan:
     name: Secret scan (gitleaks)

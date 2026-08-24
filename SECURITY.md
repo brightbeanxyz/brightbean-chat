@@ -1,123 +1,141 @@
 # Security policy
 
-BrightBean Chat is self-hosted, and a self-hosted deployment is exposed to the
-internet from the day it accepts its first webhook. We would much rather hear
-about a problem from you than from somebody's incident review.
-
-## Supported versions
-
-There are no tagged releases yet. **`main` is the supported version**, and a fix
-lands there.
-
-That is a real answer rather than a placeholder: publishing a support matrix for
-versions that do not exist would be inventing a promise. Once releases begin,
-this section becomes the newest minor plus the previous one for 90 days, and
-this paragraph goes away.
+BrightBean Chat is self-hosted software that speaks to the public internet from
+day one: it exposes webhook endpoints and unauthenticated token routes, it
+handles message content written by strangers, and it stores encrypted platform
+credentials for every channel a workspace connects. We take reports about any of
+that seriously.
 
 ## Reporting a vulnerability
 
-**Please do not open a public issue for anything exploitable.** A public report
-on a self-hosted product is a disclosure to every operator's attacker at the
-same moment it reaches us, and most operators will not be reading GitHub that
-day.
+**Please do not open a public issue.**
 
-Use **GitHub's private vulnerability reporting** on this repository — the
-*Security* tab, then *Report a vulnerability*. It gives us a private fork to fix
-in and you a CVE path if the finding warrants one, and it works without either
-of us publishing an email address for spam to find.
+Use GitHub's private vulnerability reporting:
+[**Report a vulnerability**](https://github.com/brightbeanxyz/brightbean-chat/security/advisories/new).
+That opens a private advisory visible only to you and the maintainers, with a
+place to discuss a fix and to coordinate disclosure.
 
-If private reporting is disabled or you cannot reach it, open a public issue
-containing **only** the words "security report, requesting a private channel"
-and nothing about the finding, and a maintainer will open one.
+If that is not available to you, open a regular issue saying only that you have
+a security report and asking for a private channel — no details.
 
-What to include: [`docs/pentest-runbook.md`](docs/pentest-runbook.md) ends with
-a report template. The short version is the commit you tested, how to reproduce
-it, what you saw, what you expected, and who it affects — cross-tenant,
-cross-user, or only yourself.
+Helpful reports include:
 
-A **failing test is worth more than a screenshot** here, and we will usually ask
-for one. If you can write it, the fix ships faster and cannot regress.
+- what an attacker can do, and what they need in order to do it (a valid
+  account? another workspace's id? nothing at all?)
+- the affected version or commit
+- reproduction steps, ideally against a local `docker compose up`
+- any proof-of-concept request, payload or flow export
 
-## What to expect
+### What to expect
 
-| Stage | Target |
+| | |
 |---|---|
-| Acknowledgement | 3 business days |
-| Triage and a severity | 10 business days |
-| Fix — Critical | 14 days |
-| Fix — High | 30 days |
-| Fix — Medium | 90 days |
-| Fix — Low | The next convenient release |
+| Acknowledgement | within 3 working days |
+| Initial assessment | within 7 working days |
+| Fix or mitigation for a confirmed high-severity issue | as fast as we can, with a target of 30 days |
+| Credit | in the advisory, unless you prefer otherwise |
 
-These are targets for a small maintainer team, not a contractual SLA, and we
-would rather write them down and occasionally miss than leave you guessing.
+We will keep you updated while a fix is in progress, and we will tell you when
+it ships and under what advisory.
 
-Disclosure is coordinated: an advisory goes out with the fix, and we will not
-sit on a report indefinitely — 90 days is the backstop, sooner if the fix is
-ready. You get credit by default, under whatever name you give us; tell us if
-you would rather not.
+## Supported versions
+
+This project is pre-1.0. Only the current `main` branch is supported: fixes land
+there, and self-hosters upgrade by pulling and rebuilding
+([`docs/self-hosting.md`](docs/self-hosting.md) § Upgrades). There are no
+backports to older commits.
+
+## Scope
+
+**In scope** — anything in this repository, including:
+
+- cross-workspace or cross-organization data access (a workspace reading, writing
+  or learning of another's data)
+- authentication and session handling, including the invitation and
+  password-reset flows
+- webhook signature verification, replay handling, and the public token routes
+  (`/u/`, `/c/`, `/o/`, media delivery, `/internal/tick`)
+- server-side request forgery through the External Request node, outbound
+  webhooks or media fetching
+- injection of any kind, including template injection through message
+  placeholders and stored XSS through platform-supplied content or uploads
+- privilege escalation across the role and permission matrix
+- disclosure of stored credentials, in responses, logs, error reports or admin
+  pages
+- weaknesses in the reference deployment that would make a self-hoster following
+  [`docs/self-hosting.md`](docs/self-hosting.md) verbatim less safe than that
+  document claims
+
+**Out of scope**
+
+- findings that require an already-compromised host, database or `SECRET_KEY`
+- a self-hoster's own misconfiguration — an exposed database port, a wildcard
+  `ALLOWED_HOSTS`, a reused key — unless our defaults or documentation led there
+- vulnerabilities in a third-party platform's API rather than in our use of it
+- missing hardening headers on a deployment that has replaced the reference
+  proxy, where the application already sets them itself
+- automated scanner output with no demonstrated impact, and reports about
+  version strings, rate limits on unauthenticated read-only endpoints, or
+  self-XSS
+- social engineering, physical access, and denial of service by volume
 
 ## Safe harbour
 
 Good-faith research within this policy is authorised, and we will not pursue or
-report you for it. Conditions, all of which amount to "test your own instance":
+report you for it. The conditions all amount to "test your own instance":
 
-- Test a deployment **you own or are authorised to test**. Not somebody else's.
+- Test a deployment **you own or are authorised to test**. Not somebody else's,
+  and not `brightbean.xyz`.
 - Do not access, modify or retain another person's data. If you encounter it,
   stop and tell us what you did to get there.
-- No denial of service, no resource exhaustion, no spam through a deployment's
-  channel integrations.
+- No denial of service, no resource exhaustion, and no spam through a
+  deployment's channel integrations — the compliance engine is real, and a
+  broadcast fired at a seeded list actually sends.
 - No social engineering of maintainers, contributors or users, and no physical
   attacks.
-- Do not attack infrastructure we do not control — GitHub, PyPI, npm, or the
+- Do not attack infrastructure we do not control: GitHub, PyPI, npm, or the
   messaging platforms this integrates with.
 - Stop at proof. You do not need to pivot to demonstrate impact.
 
-## Threat model
+[`docs/pentest-runbook.md`](docs/pentest-runbook.md) is the practical companion:
+what to probe on your own instance, what a correct instance does in response,
+which routes are public by design, and a report template that gets a finding
+triaged faster.
 
-From [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md), which is the
-checklist every pull request is reviewed against:
+## Who can do what
 
-> A self-hosted deployment exposes webhook endpoints and public token routes to
-> the internet from day one; message content, usernames, comment bodies, and
-> media URLs arrive from **strangers** (attacker-controlled); users author
-> automations that make server-side HTTP requests; multiple workspaces share one
-> database; the encrypted platform credentials are the crown jewels.
+Most findings are about a boundary between two of these, so saying which one you
+crossed is the fastest way to have a report understood:
 
-Three trust levels, and most findings are about a boundary between two of them:
-
-| | Who | What they may do |
+| | Who | What they may legitimately do |
 |---|---|---|
 | **Untrusted** | Webhook callers, contacts, anyone holding a public token | Reach the webhook endpoints and the signed token routes. Nothing else. |
-| **Semi-trusted** | Workspace members, API keys | Bound by RBAC (`apps/members/roles.py`) and by scope (`apps/api/auth.py`), and by workspace. A member of one workspace is untrusted with respect to another. |
+| **Semi-trusted** | Workspace members, API keys | Bound by the role matrix (`apps/members/roles.py`) and by scope (`apps/api/auth.py`), and by workspace. A member of one workspace is untrusted with respect to another. |
 | **Trusted** | The operator | Controls the settings, the database and the encrypted credentials. |
 
-What the platform defends, and where it is proven, is enumerated in
-[`docs/security-audit.md`](docs/security-audit.md) — every baseline item mapped
-to the test that enforces it, including the ones currently only partly covered.
-Reading that first will save you time; the gaps are written down.
+## How this project defends itself
 
-## Out of scope
+[`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) is the per-PR security
+checklist every change is reviewed against: tenancy isolation, untrusted inbound
+content, the template-injection ban, public token routes, secrets handling, the
+SSRF guard, input limits, web platform hardening, file uploads and supply chain.
+[`docs/security-audit.md`](docs/security-audit.md) maps every one of those items
+to the test that enforces it, and records the ones only partly covered with the
+issue tracking each — worth reading before you spend time on an area, because
+the known gaps are written down.
+CI enforces the automatable parts — an IDOR fuzz suite over every registered
+route, `pip-audit` and `npm audit`, a secret scan, and security lint rules — and
+a security review runs over each layer's merged diff.
 
-Not because they do not matter, but because they are not ours to fix:
+If you are reporting something that the baseline already names, saying which
+item helps us confirm whether it is a gap in the rule or a gap in an
+implementation of it.
 
-- **Deployment configuration the operator owns** — TLS termination, reverse
-  proxy rules, firewalling, database exposure, backups, OS patching.
-- **A misconfigured instance.** `DEBUG=True` in production, a placeholder
-  `SECRET_KEY` or `ENCRYPTION_KEY_SALT`, an empty `ALLOWED_HOSTS`. Production
-  settings already refuse to boot on these (`apps/common/checks.py`); a report
-  that they are dangerous when deliberately overridden is not a vulnerability.
-- **`EXTERNAL_REQUEST_ALLOW_PRIVATE` switched on.** It exists so an on-prem
-  deployment can reach its own network, it relaxes the private-range rule alone,
-  and turning it on is a decision the operator makes.
-- **An operator or superuser doing what they can do.** The Django admin decrypts
-  stored credentials by design and is superuser-gated.
-- **Third-party platform vulnerabilities** — Meta, Twilio, Telegram, AWS.
-  Report those to them.
-- **Automated scanner output with no demonstrated impact**: a missing header on
-  an endpoint where it changes nothing, a "weak" cipher your own proxy chose, a
-  rate limit on an endpoint that already documents its limits.
-- **Findings against `brightbean.xyz` or any instance that is not yours.**
+## Deploying safely
 
-If you are not sure which side of a line something falls on, report it. We would
-rather read one that turns out to be out of scope than miss one that was not.
+The reference deployment is hardened by default and
+[`docs/self-hosting.md`](docs/self-hosting.md) carries an operator hardening
+checklist. The two things worth repeating here: the application refuses to boot
+in production without a real `SECRET_KEY` and `ENCRYPTION_KEY_SALT`, and a
+database dump contains your encrypted platform credentials — so back those two
+keys up somewhere other than the dump they decrypt.

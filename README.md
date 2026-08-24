@@ -1,192 +1,146 @@
+<div align="center">
+
 # BrightBean Chat
 
-Open-source, self-hostable chat-marketing automation — Django 5, HTMX, Alpine,
-Tailwind 4 and PostgreSQL, with no Redis and no message broker.
+**Open-source chat-marketing automation you host yourself.**
 
-> **Status: early.** The skeleton (issue #2), multi-tenancy, RBAC,
-> authentication and the platform-credential store (issue #31), and the UI shell
-> and design system (issue #32) have landed — you can sign up, invite a team and
-> switch workspaces, in the real interface. Every domain feature follows in the
-> issues tracked from [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Build flows once and run them across Telegram, Instagram, Messenger, WhatsApp,
+SMS and email — with a visual builder, a shared team inbox, broadcasts,
+sequences and a public API.
 
-## Documentation
+Django 5 · HTMX · Tailwind 4 · PostgreSQL. No Redis. No message broker. No SaaS
+in the middle.
 
-| Document | What it covers |
+[![CI](https://github.com/brightbeanxyz/brightbean-chat/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/brightbeanxyz/brightbean-chat/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+
+[Deploy it](#deploy-it) · [Run it locally](#run-it-locally) · [Documentation](#documentation) · [Contributing](CONTRIBUTING.md)
+
+</div>
+
+---
+
+> **Status: pre-1.0.** Every workstream through Layer 7 has landed or is landing:
+> tenancy and RBAC, the six channel adapters, the flow engine and builder,
+> contacts, the inbox, sequences, broadcasts, the media library and the public
+> API. What is still moving is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> Read [`SECURITY.md`](SECURITY.md) before pointing a real audience at it.
+
+## What it does
+
+| | |
 |---|---|
-| [`docs/SPEC.md`](docs/SPEC.md) | The engineering specification — authoritative |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
-| [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
-| [`docs/security-audit.md`](docs/security-audit.md) | Every baseline item mapped to the test that enforces it, and the gaps that are still open |
-| [`docs/pentest-runbook.md`](docs/pentest-runbook.md) | Probing your own instance: what to send, what a correct instance does |
-| [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability, and what is in scope |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Tenant scoping, the IDOR suite, URL and RBAC conventions |
+| **Channels** | Telegram, Instagram, Facebook Messenger, WhatsApp, SMS (bring your own Twilio) and email (SMTP / Resend / SES). One normalized event shape, one send pipeline. |
+| **Flow builder** | A React Flow canvas for `send_message`, `condition`, `smart_delay`, `randomizer`, `start_flow`, `external_request`, `data_collection`, `action` and more. Versioned graphs, one published version at a time. |
+| **Triggers** | Keywords, default replies, story mentions and replies, comment-to-DM, follows, ref URLs and QR codes, inbox rules, and the public API. |
+| **Compliance** | Per-platform messaging windows and policy rules enforced before every send, plus STOP/HELP handling for SMS and one-click unsubscribe for email. |
+| **Inbox** | A shared thread view with assignment, labels, reminders, scheduled replies, rules, and human takeover that pauses automation. |
+| **Contacts** | Custom fields, tags, segments, import and export, and identities linked across channels. |
+| **Broadcasts & sequences** | Eligibility filters, token-bucket pacing, live counters, and multi-step drip campaigns. |
+| **Public API** | A REST API with per-key rate limiting plus signed outbound webhooks, so Make, Zapier and n8n scenarios work without a plugin. |
+| **Multi-tenancy** | Organizations and workspaces with two membership tiers and a real permission matrix. Cross-tenant access answers 404, and a fuzz suite in CI proves it. |
+| **Secure by default** | Encrypted credentials at rest, an SSRF guard on every user-supplied URL, CSP with per-request nonces, and a deployment that refuses to boot on a placeholder secret. |
 
-## Quickstart (Docker)
+Deliberately **not** in v1: TikTok, website chat widgets, e-commerce catalogues,
+AI reply generation and billing ([`docs/SPEC.md`](docs/SPEC.md) §1.1).
+
+## Screens
+
+The flow builder, the inbox and the broadcast composer are the three worth
+looking at. Screenshots are not committed yet — run the app locally and see the
+real thing in about a minute:
 
 ```bash
 docker compose up
 ```
 
-That builds the image, waits for Postgres, runs migrations and serves the app
-on <http://localhost:8000>. No `.env` is required — every setting has a
-development default. `/healthz` reports the database round-trip.
+The design system's living style guide is at `/ui/` on any running instance.
 
-Sign up at `/accounts/signup/`; the first account gets its own organization and
-workspace and lands on `/w/<workspace-id>/`. In development, email goes to the
-console, so the verification message appears in `docker compose logs`.
+## Deploy it
 
-## Quickstart (local Python)
+Every option below is hardened out of the box: no default secrets, `DEBUG` off,
+`ALLOWED_HOSTS` never a wildcard, and a database that is not reachable from the
+internet. [`docs/self-hosting.md`](docs/self-hosting.md) is the full walkthrough
+— first boot, TLS, backups, upgrades and a hardening checklist.
 
-Requires Python 3.12, Node 24+ and a PostgreSQL 16 server.
-
-The Node floor is enforced, not advisory: `package.json` sets
-`engines.node`, `.npmrc` sets `engine-strict=true`, and `npm ci` therefore
-fails outright with `EBADENGINE` on an older runtime rather than installing
-and breaking later. `.nvmrc` pins the version CI runs, so `nvm use` (or any
-tool that reads it) gets you the right one. Stay on an LTS line — the range is
-open-ended upward so newer LTS releases work without a repo change, but only
-the pinned major is actually built and tested.
+### Docker Compose, on your own machine
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-make setup
-make server
+cp deploy/env.prod.example .env && make prod-secrets
 ```
 
-`make help` lists every target. The design system is at
-<http://localhost:8000/ui/>.
+Fill in the five required values, point your domain at the host, then:
 
-### Frontend
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
 
-Tailwind 4 through plain npm scripts — there is no `django-tailwind` and no
-`tailwind.config.js` (Tailwind 4 is CSS-first: the configuration is the
-`@source` directives at the top of the stylesheet). One npm project at the root
-covers everything, so `npm audit` reads one lockfile and Dependabot watches one
-directory.
+Postgres, a one-shot migration, gunicorn, the queue worker, and Caddy with
+automatic HTTPS. Check it with `make smoke URL=https://your-host`.
 
-| Path | What it is |
+### One click
+
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/brightbeanxyz/brightbean-chat)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/brightbeanxyz/brightbean-chat)
+
+Heroku provisions Postgres, generates the keys and runs both a web and a worker
+dyno ([`app.json`](app.json)). Render does the same from
+[`render.yaml`](render.yaml), with the crypto secrets in a shared environment
+group so the web service and the worker agree on them. Railway is a documented
+four-step setup rather than a button —
+[why, and the steps](docs/self-hosting.md#railway).
+
+**Both processes matter.** The web process answers webhooks and can run a first
+reply inline; the worker is what runs delays, retries, sequence steps and
+broadcast fanout. A deployment with only the web process looks healthy and
+silently never fires anything time-based. If you cannot run two processes,
+[tick mode](docs/self-hosting.md#running-without-a-worker-tick-mode) is the
+supported fallback.
+
+## Run it locally
+
+```bash
+docker compose up
+```
+
+That builds the image, waits for Postgres, runs migrations and serves the app on
+<http://localhost:8000>. No `.env` is required — every development setting has a
+working default. Sign up at `/accounts/signup/`; the first account gets its own
+organization and workspace. Email goes to the console, so the verification
+message appears in `docker compose logs`.
+
+Prefer to run it on your own Python? `make setup && make server` —
+[CONTRIBUTING.md](CONTRIBUTING.md#local-development) has the prerequisites and
+the frontend build.
+
+## Documentation
+
+| Document | What it covers |
 |---|---|
-| `theme/static_src/src/styles.css` | The design system. Three token layers in one `:root`; rebranding means editing the ~20 Layer-1 values at the top |
-| `theme/static/css/dist/styles.css` | The compiled stylesheet — a build artefact, gitignored |
-| `static/js/vendor/` | htmx, Alpine, flatpickr, Chart.js and Sortable, copied from `node_modules` and committed |
-| `frontend/builder/` | The flow builder: React 18 + @xyflow/react, the app's one React island (SPEC §16). Everything else is HTMX |
-| `apps/flows/static/flows/builder/` | The compiled island — a build artefact, gitignored |
-| `static/flows/flow-schema.json` | The node registry, generated by `make schema` and **committed**: the island imports it at build time, so a clone needs no Python to build the frontend |
+| [`docs/self-hosting.md`](docs/self-hosting.md) | Deploying and operating it: first boot, TLS, backups, upgrades, hardening |
+| [`docs/channels/`](docs/channels/) | Per-platform setup — [Telegram](docs/channels/telegram.md), [Instagram](docs/channels/instagram.md), [Messenger](docs/channels/messenger.md), [WhatsApp](docs/channels/whatsapp.md), [SMS](docs/channels/sms.md), [email](docs/channels/email.md), [media](docs/channels/media.md) |
+| [`docs/api/v1.md`](docs/api/v1.md) | The public REST API and outbound webhooks |
+| [`docs/SPEC.md`](docs/SPEC.md) | The engineering specification — authoritative |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
+| [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
+| [`docs/security-audit.md`](docs/security-audit.md) | Every baseline item mapped to the test that enforces it, and the gaps that are still open |
+| [`docs/pentest-runbook.md`](docs/pentest-runbook.md) | Probing your own instance: what to send, what a correct instance does |
+| [`tests/acceptance/README.md`](tests/acceptance/README.md) | Whether v1 is accepted: SPEC §21 criterion by criterion, and the runbooks for the ones CI cannot reach |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Local development, the frontend build, tenant scoping, the IDOR suite, URL and RBAC conventions |
+| [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability |
+
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). Before opening a PR:
 
 ```bash
-make frontend     # npm ci, regenerate the schema, build both bundles + vendored copies
-make css-watch    # rebuild the stylesheet on save, alongside `make server`
-make js-watch     # rebuild the flow builder on save, alongside `make server`
+make lint typecheck test
 ```
 
-`make setup` runs `make frontend` for you. The vendored JavaScript is committed,
-so a clone with no Node still serves working pages — the stylesheet and the flow
-builder are the two things that need building. Without them the app runs
-unstyled, and the builder page renders a notice saying to run `make frontend`
-rather than a broken canvas.
-
-The builder is generated from the schema artefact: node types, their config
-forms, their handles and the palette drawers all come from
-`static/flows/flow-schema.json`, so a node type registered in
-`apps/flows/schema/nodes.py` needs no frontend change to become placeable and
-configurable. `npm run test:js` covers that with a synthetic node type the
-bundle has never seen.
-
-Under `docker compose up` neither bundle is ever missing: the image compiles
-both in a Node stage, and the app mounts each as a named volume that Docker
-seeds from the image, so the first request is styled — and the builder works —
-even before the `tailwind` and `builder` watchers have finished `npm ci`.
-
-Those watchers are not optional conveniences. Each named volume shadows the
-bind-mount at its path, so a host-side `make css-watch` or `make js-watch`
-writes somewhere the container cannot see; only a service writing from inside
-reaches it. Use `make css-watch` / `make js-watch` when running the app with
-`make server`, and let the compose watchers do it under `docker compose up`. The watcher then rebuilds into that same volume as you edit,
-which also keeps its output off the host — it runs as root, and a bind-mounted
-write would leave root-owned files in your checkout. `docker compose down -v`
-resets the volume if a stale bundle ever outlives an image rebuild.
-
-To bump a vendored library, change the pin in `package.json`, run
-`npm install && npm run vendor`, and commit both the lockfile and the refreshed
-files in `static/js/vendor/` — CI re-runs the copy and fails on any difference.
-
-### Dependencies
-
-`requirements.in` and `requirements-dev.in` list direct dependencies and are
-the files you edit. `requirements.txt` and `requirements-dev.txt` are compiled
-from them and are what actually gets installed: they pin the whole transitive
-tree with hashes, so `pip install --require-hashes` verifies every artefact
-rather than just naming a version. After changing either input:
-
-```bash
-make lock
-```
-
-Commit the recompiled files with the change — CI fails if they are stale.
-
-## Development
-
-```bash
-make test        # pytest
-make lint        # ruff check + ruff format --check (includes the security rules)
-make typecheck   # mypy
-make audit       # pip-audit + npm audit, and a self-test of the audit gate
-```
-
-Every inline `<script>` and `<style>` carries `nonce="{{ request.csp_nonce }}"`,
-and there are no inline event handlers — the stylesheet's hover utility classes
-exist so there need not be. Nothing loads from a CDN; the CSP is `'self'`
-throughout. Tests enforce all three.
-
-CI runs all of the above plus a Docker build and a gitleaks scan. Install the
-pre-commit hooks to catch most of it before pushing:
-
-```bash
-pip install pre-commit && pre-commit install
-```
-
-## Background work
-
-Delays, retries, sequence steps, broadcast fanout and hourly housekeeping are
-rows in one Postgres table, claimed by a worker ([`docs/SPEC.md`](docs/SPEC.md)
-§15 — there is no Redis, and there never will be). Without one of the two options below, `runserver`
-alone serves pages and schedules nothing.
-
-```bash
-make worker
-```
-
-Run as many as you like: the claim statement uses `FOR UPDATE SKIP LOCKED`, so
-concurrent workers take disjoint batches. `Procfile` and `docker-compose.yml`
-both carry a worker process already.
-
-On a host with no always-on process, set `TICK_TOKEN` and point a cron service
-or uptime pinger at `https://your-host/internal/tick?token=…` once a minute
-instead. The route 404s while `TICK_TOKEN` is unset, so leaving it empty exposes
-nothing.
-
-## Configuration
-
-Copy [`.env.example`](.env.example) to `.env` and edit. Two variables are
-mandatory outside development — the settings module refuses to boot without
-them:
-
-| Variable | Purpose |
-|---|---|
-| `SECRET_KEY` | Django's signing key; also the input to field encryption |
-| `ENCRYPTION_KEY_SALT` | HKDF salt for the AES-256-GCM encrypted fields |
-
-Optional but worth knowing about: `GOOGLE_AUTH_CLIENT_ID` / `_SECRET` enable the
-Google sign-in button, `TRUSTED_PROXIES` tells the auth rate limiter which peers
-may set `X-Forwarded-For`, `TICK_TOKEN` enables the cron-driven queue drain
-described above, and `PLATFORM_<PLATFORM>_<KEY>` supplies the deployment-level
-fallback in the credential chain (workspace override → organization →
-environment).
-
-Generate each with `python -c "import secrets; print(secrets.token_urlsafe(50))"`.
-Losing `SECRET_KEY` or `ENCRYPTION_KEY_SALT` makes every stored credential
-undecryptable, so back them up with the database.
+CI runs those plus a dependency audit, a production Docker build with a
+smoke-tested HTTPS stack, and a secret scan.
 
 ## License
 
-[GNU Affero General Public License v3.0](LICENSE).
+[GNU Affero General Public License v3.0](LICENSE). Running a modified copy as a
+network service means offering its source to the people who use it.

@@ -21,15 +21,14 @@ import time
 
 import pytest
 
-from apps.api.delivery import ACTION_TYPE, SIGNATURE_HEADER, TIMESTAMP_HEADER, handle_webhook_delivery
+from apps.api.delivery import SIGNATURE_HEADER, TIMESTAMP_HEADER
 from apps.api.models import OutboundWebhook, WebhookDelivery
 from apps.api.tests.conftest import bearer, make_key
-from apps.api.tests.support import PUBLIC, RECEIVER, FakeInternet, serving
+from apps.api.tests.support import PUBLIC, RECEIVER, FakeInternet, drain_webhook_deliveries, serving
 from apps.common.outbound import reset_deployment_cache
 from apps.contacts.models import Contact
 from apps.flows.models import FlowExecution, Trigger, TriggerType
 from apps.flows.tests.support import graph, node, published_flow
-from apps.queueing.models import ActionStatus, ScheduledAction
 from tests.ssrf import guard_required
 
 NOOP_ACTION = {"actions": [{"verb": "remove_tag", "tag": "not-a-tag-here"}]}
@@ -51,16 +50,6 @@ def receiver_verifies(secret: str, request) -> bool:
     signed = timestamp.encode() + b"." + request.content
     expected = "v1=" + hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, presented)
-
-
-def drain(workspace):
-    """Run the queued webhook deliveries the way the worker would."""
-    for action in list(
-        ScheduledAction.objects.for_workspace(workspace).filter(type=ACTION_TYPE, status=ActionStatus.PENDING)
-    ):
-        action.status = ActionStatus.DONE
-        action.save(update_fields=["status"])
-        handle_webhook_delivery(action.payload, action)
 
 
 @pytest.mark.django_db
@@ -128,7 +117,7 @@ class TestPhaseThreeScenario:
 
         # --- Step 4: the scenario's receiver hears about all of it -------
         with guard_required() as guarded:
-            drain(tenancy.workspace)
+            drain_webhook_deliveries(tenancy.workspace)
 
         assert len(guarded) == 3, "one delivery per subscribed event, all through the guard"
         assert {request.url.host for request in internet.requests} == {PUBLIC}, "pinned to the checked address"

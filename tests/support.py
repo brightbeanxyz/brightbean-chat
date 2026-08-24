@@ -76,3 +76,35 @@ def create_tenancy(slug: str, *, workspace_name: str | None = None) -> Tenancy:
         members[role.value] = user
 
     return Tenancy(slug=slug, organization=organization, workspace=workspace, owner=owner, members=members)
+
+
+def email_identity(workspace: Any, connection: Any, address: str) -> Any:
+    """A contact with an opted-in email identity on ``connection``.
+
+    Lives here rather than beside either caller because both
+    ``apps/channels/tests/test_email_suppression.py`` and
+    ``tests/acceptance/test_unsubscribe_round_trip.py`` need exactly this, and a
+    second copy drifts the moment ``ContactChannelIdentity`` gains a field —
+    quietly building an identity the product no longer produces. Same rule
+    ``tests/ssrf.py`` states for its own consolidation.
+
+    Imports are function-local: this module is imported by suites running in
+    deployments that may not have messaging installed, and a top-level import
+    would make it a hard dependency of every one of them.
+    """
+    from django.utils import timezone
+
+    from apps.common.platforms import Platform
+    from apps.contacts.services import create_contact
+    from apps.messaging.models import ContactChannelIdentity
+
+    contact = create_contact(workspace, source="manual", email=address)
+    return ContactChannelIdentity.objects.create(
+        contact=contact,
+        channel_connection=connection,
+        platform=Platform.EMAIL.value,
+        platform_user_id=address,
+        opt_in=True,
+        opt_in_at=timezone.now(),
+        opt_in_source="data_collection",
+    )
