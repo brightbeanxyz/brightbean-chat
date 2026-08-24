@@ -17,6 +17,12 @@ is a free-text column populated from platform profiles, so an unparseable one
 falls back rather than failing — a bad timezone string should delay a message,
 not end a run.
 
+**The window arithmetic is not here.** ``continue_window`` and a sequence step's
+``send_window`` (SPEC §12, issue #22) are the same object computed the same way,
+so :mod:`apps.common.windows` owns it and both call in. ``WEEKDAYS`` is
+re-exported below because this module was its first home and tests import it
+from here.
+
 **A date-mode delay with nothing to compute from fails the run**, and that is
 deliberate. "Wait until the renewal date" with an empty renewal date has two
 possible readings, and the other one — treat it as *now* — sends the renewal
@@ -27,28 +33,20 @@ not.
 
 import logging
 from datetime import date, datetime, time, timedelta, tzinfo
-from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.utils import timezone
 
+from apps.common.windows import WEEKDAYS, clock_for, into_window
 from apps.flows.engine.context import NodeContext
 from apps.flows.engine.nodes.base import Node
 from apps.flows.engine.registry import register_node
 from apps.flows.engine.results import Fail, Schedule, StepResult
 
-__all__ = ["SmartDelayNode"]
+__all__ = ["WEEKDAYS", "SmartDelayNode"]
 
 logger = logging.getLogger(__name__)
 
 _UNITS = ("minutes", "hours", "days")
-
-#: SPEC §11.5's day names, in ``date.weekday()`` order.
-WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
-
-#: How far to look for the next allowed window. Eight days rather than seven so
-#: a search starting mid-day still finds the same weekday a week later.
-_WINDOW_SEARCH_DAYS = 8
 
 
 @register_node
@@ -73,7 +71,7 @@ class SmartDelayNode(Node):
         if run_at is None:
             return Fail(f"smart_delay node {ctx.node_id}: nothing to compute a delay from")
 
-        adjusted = _into_window(run_at, ctx.config.get("continue_window"), _clock(ctx))
+        adjusted = into_window(run_at, ctx.config.get("continue_window"), _clock(ctx))
         logger.debug("Execution %s: node %s sleeping until %s", ctx.execution.pk, ctx.node_id, adjusted)
         return Schedule(adjusted, resume_handle="default", config={"node_id": ctx.node_id})
 
@@ -160,84 +158,5 @@ def _parse_instant(raw: str, clock: tzinfo) -> datetime | None:
 def _clock(ctx: NodeContext) -> tzinfo:
     """The timezone this node's window is expressed in."""
     window = ctx.config.get("continue_window")
-    if isinstance(window, dict) and window.get("use_contact_timezone"):
-        contact_zone = _zone(getattr(ctx.contact, "timezone", ""))
-        if contact_zone is not None:
-            return contact_zone
-    workspace_zone = _zone(getattr(ctx.workspace, "effective_timezone", ""))
-    return workspace_zone or timezone.get_current_timezone()
-
-
-def _zone(name: Any) -> tzinfo | None:
-    if not isinstance(name, str) or not name.strip():
-        return None
-    try:
-        return ZoneInfo(name.strip())
-    except (ZoneInfoNotFoundError, ValueError):
-        # Contact timezones come from platform profiles, which are
-        # attacker-controlled (SECURITY-BASELINE §2). A bad one falls back.
-        logger.warning("smart_delay: %r is not a timezone; falling back.", name)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# The sending window
-# ---------------------------------------------------------------------------
-
-
-def _into_window(run_at: datetime, window: Any, clock: tzinfo) -> datetime:
-    """Move ``run_at`` forward to the next moment the window allows.
-
-    Forward only. A delay that finished outside the window has to wait for the
-    window to open; one that finished inside it fires then and there.
-    """
-    if not isinstance(window, dict) or not window.get("enabled"):
-        return run_at
-
-    start, end = _time(window.get("from")), _time(window.get("to"))
-    if start is None or end is None or start >= end:
-        # An empty or inverted window has no "next allowed moment" to find, and
-        # the builder lets an author save one (only `enabled` is required).
-        # Ignoring it delivers late-ish; honouring it would deliver never.
-        logger.warning("smart_delay: window %s–%s is not a usable range; ignoring it.", start, end)
-        return run_at
-
-    days = _days(window.get("days"))
-    local = run_at.astimezone(clock)
-    if _inside(local, days, start, end):
-        return run_at
-
-    for offset in range(_WINDOW_SEARCH_DAYS):
-        day = (local + timedelta(days=offset)).date()
-        if WEEKDAYS[day.weekday()] not in days:
-            continue
-        candidate = datetime.combine(day, start, tzinfo=clock)
-        if candidate >= local:
-            return candidate.astimezone(run_at.tzinfo)
-    return run_at  # pragma: no cover - unreachable while `days` is non-empty
-
-
-def _inside(local: datetime, days: frozenset[str], start: time, end: time) -> bool:
-    return WEEKDAYS[local.date().weekday()] in days and start <= local.time() <= end
-
-
-def _days(raw: Any) -> frozenset[str]:
-    """The allowed weekdays. An empty list means every day.
-
-    "Enabled, hours set, no days ticked" is two clicks away in the builder and
-    reads as "these hours, any day" — not as "never", which is what an empty set
-    would mean if taken literally.
-    """
-    if not isinstance(raw, list):
-        return frozenset(WEEKDAYS)
-    picked = frozenset(str(day).lower() for day in raw if str(day).lower() in WEEKDAYS)
-    return picked or frozenset(WEEKDAYS)
-
-
-def _time(raw: Any) -> time | None:
-    if not isinstance(raw, str):
-        return None
-    try:
-        return time.fromisoformat(raw)
-    except ValueError:
-        return None
+    use_contact = bool(isinstance(window, dict) and window.get("use_contact_timezone"))
+    return clock_for(ctx.contact, ctx.workspace, use_contact_timezone=use_contact)

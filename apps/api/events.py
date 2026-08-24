@@ -44,19 +44,28 @@ LOG = logging.getLogger(__name__)
 
 _DISPATCH_UID = "apps.api.events.on_catalog_event"
 
-#: The events an operator may subscribe an endpoint to, fixed by SPEC §5's
-#: ``outbound_webhook.events`` column. This is the *offered* set, which is not
-#: the same as the *emitted* set: an event may be offered before anything emits
-#: it, in which case subscribing is a no-op rather than an error, and
-#: ``broadcast.finished`` was that case until issue #23. Keeping
-#: the list here rather than deriving it from :func:`discover_catalog` means the
-#: settings UI offers a stable set of checkboxes that does not change shape
-#: depending on which apps happen to be installed.
+#: The events an operator may subscribe an endpoint to. This is the *offered*
+#: set, which is not the same as the *emitted* set: an event may be offered
+#: before anything emits it, in which case subscribing is a no-op rather than an
+#: error. ``broadcast.finished`` was that case until issue #23. Keeping the list
+#: here rather than deriving it from :func:`discover_catalog` means the settings
+#: UI offers a stable set of checkboxes that does not change shape depending on
+#: which apps happen to be installed.
+#:
+#: SPEC §5's ``outbound_webhook.events`` column names five of these six. The two
+#: sequence events are L6-A's (issue #22) and were added here with it: the
+#: Layer-6 gate requires them to reach a subscriber, and contract 7 lists them
+#: in the catalog, but :func:`on_catalog_event` drops anything outside this
+#: tuple and ``apps.api.services._validated_events`` refuses to store a
+#: subscription to one — so discovery alone is not enough to deliver them. The
+#: SPEC list predates the catalog; this is the catalog's half of it.
 SUBSCRIBABLE_EVENTS: tuple[str, ...] = (
     "contact.created",
     "contact.tag_added",
     "message.received",
     "execution.completed",
+    "sequence.subscribed",
+    "sequence.unsubscribed",
     "broadcast.finished",
 )
 
@@ -80,6 +89,8 @@ EVENT_LABELS: dict[str, str] = {
     "contact.tag_added": "Tag added to a contact",
     "message.received": "Inbound message received",
     "execution.completed": "Flow execution completed",
+    "sequence.subscribed": "Contact subscribed to a sequence",
+    "sequence.unsubscribed": "Contact unsubscribed from a sequence",
     "broadcast.finished": "Broadcast finished",
 }
 

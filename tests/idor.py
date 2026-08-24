@@ -83,6 +83,11 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     # still a workspace's, so the victim it needs is the victim's workspace's.
     "api_key_id": lambda t: _victim_api_key(t).pk,
     "webhook_id": lambda t: _victim_outbound_webhook(t).pk,
+    # Issue #22's sequences. All three are workspace-scoped rows reached through
+    # the campaigns app's routes, so the sweep's ordinary rules apply.
+    "sequence_id": lambda t: _victim_sequence(t).pk,
+    "step_id": lambda t: _victim_sequence_step(t).pk,
+    "enrollment_id": lambda t: _victim_enrollment(t).pk,
     # Issue #23's broadcasts. Workspace-scoped like the rest of the app, so the
     # sweep's ordinary rules apply.
     "broadcast_id": lambda t: _victim_broadcast(t).pk,
@@ -412,6 +417,57 @@ def _victim_trigger(tenancy: Tenancy) -> Any:
         )
         trigger.save()
     return trigger
+
+
+def _victim_sequence(tenancy: Tenancy) -> Any:
+    """A sequence owned by the victim, created on demand (issue #22)."""
+    from apps.campaigns.models import Sequence
+
+    sequence = Sequence.objects.for_workspace(tenancy.workspace).first()
+    if sequence is None:
+        sequence = Sequence.objects.create(workspace=tenancy.workspace, name=f"Victim onboarding {tenancy.slug}")
+    return sequence
+
+
+def _victim_sequence_step(tenancy: Tenancy) -> Any:
+    """A step of the victim's sequence, created on demand.
+
+    Built on ``_victim_sequence`` and ``_victim_flow`` so the step, the sequence
+    it belongs to and the flow it starts are all one workspace's — a step whose
+    flow was somebody else's would make the sweep pass for the wrong reason.
+    """
+    from apps.campaigns.models import SequenceStep
+
+    sequence = _victim_sequence(tenancy)
+    step = SequenceStep.objects.for_workspace(tenancy.workspace).filter(sequence=sequence).first()
+    if step is None:
+        step = SequenceStep.objects.create(
+            workspace=tenancy.workspace,
+            sequence=sequence,
+            position=1,
+            flow=_victim_flow(tenancy),
+            delay_value=1,
+            delay_unit="days",
+        )
+    return step
+
+
+def _victim_enrollment(tenancy: Tenancy) -> Any:
+    """The victim's contact, enrolled in the victim's sequence.
+
+    Through the model rather than ``campaigns.services.subscribe``: the sweep is
+    about tenancy, and going through the service would emit a
+    ``sequence.subscribed`` event and queue a step per route for a row nothing
+    reads.
+    """
+    from apps.campaigns.models import SequenceEnrollment
+
+    sequence = _victim_sequence(tenancy)
+    enrollment = SequenceEnrollment.objects.for_workspace(tenancy.workspace).filter(sequence=sequence).first()
+    if enrollment is None:
+        enrollment = SequenceEnrollment(sequence=sequence, contact=_victim_contact(tenancy))
+        enrollment.save()
+    return enrollment
 
 
 def _victim_invitation(tenancy: Tenancy) -> Any:

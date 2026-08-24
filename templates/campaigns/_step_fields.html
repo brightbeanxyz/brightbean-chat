@@ -1,0 +1,79 @@
+{% comment %}
+The fields a step form posts, shared by "add" and "edit" so the two cannot drift.
+
+`step` is unset on the add form, and every default below is written so that the
+unset case reads as a sensible new step rather than as a blank one.
+
+The window's weekday checkboxes post a repeated `window_days`, which is what
+`views._window_from` reads with getlist — the same shape the flow builder's
+smart-delay panel uses, because it is the same object (SPEC §11.5).
+{% endcomment %}
+<div class="flex flex-wrap items-end gap-2">
+    <div>
+        <label class="block text-xs font-medium mb-1" style="color: var(--text-primary);"
+               for="step-delay-value-{{ step.id|default:'new' }}">Wait</label>
+        <input type="number" min="0" id="step-delay-value-{{ step.id|default:'new' }}"
+               name="delay_value" value="{{ step.delay_value|default:1 }}" required
+               class="form-input-styled" style="width: 6rem;">
+    </div>
+    <div>
+        <label class="block text-xs font-medium mb-1" style="color: var(--text-primary);"
+               for="step-delay-unit-{{ step.id|default:'new' }}">Unit</label>
+        <select id="step-delay-unit-{{ step.id|default:'new' }}" name="delay_unit"
+                class="form-input-styled" style="width: 8rem;">
+            {% for value, label in delay_units %}
+            <option value="{{ value }}" {% if step and step.delay_unit == value %}selected{% elif not step and value == "days" %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="flex-1 min-w-0" style="min-width: 12rem;">
+        <label class="block text-xs font-medium mb-1" style="color: var(--text-primary);"
+               for="step-flow-{{ step.id|default:'new' }}">then start</label>
+        <select id="step-flow-{{ step.id|default:'new' }}" name="flow_id" required class="form-input-styled">
+            <option value="">Choose a flow…</option>
+            {% for flow in flow_options %}
+            <option value="{{ flow.id }}" {% if step and step.flow_id == flow.id %}selected{% endif %}>{{ flow.name }}</option>
+            {% endfor %}
+        </select>
+        <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+            Only active flows are listed — a step pointing at a draft could never run.
+            <a href="{% url 'flows:list' workspace_id=request.workspace.id %}" class="btn-text-hover-primary">New flow</a>
+        </p>
+    </div>
+</div>
+
+<fieldset class="mt-3">
+    <legend class="text-xs font-medium mb-1" style="color: var(--text-primary);">Send window</legend>
+    <label class="flex items-center gap-2 text-xs" style="color: var(--text-secondary);">
+        <input type="checkbox" name="window_enabled" {% if step and step.window.enabled %}checked{% endif %}>
+        Only start this step inside a window
+    </label>
+    <div class="flex flex-wrap items-center gap-2 mt-2">
+        <label class="text-xs" style="color: var(--text-secondary);">
+            From
+            <input type="time" name="window_from" value="{{ step.window.from|default:'09:00' }}"
+                   class="form-input-styled" style="width: 8rem;">
+        </label>
+        <label class="text-xs" style="color: var(--text-secondary);">
+            to
+            <input type="time" name="window_to" value="{{ step.window.to|default:'17:00' }}"
+                   class="form-input-styled" style="width: 8rem;">
+        </label>
+        <label class="flex items-center gap-2 text-xs" style="color: var(--text-secondary);">
+            <input type="checkbox" name="window_contact_tz" {% if step and step.window.use_contact_timezone %}checked{% endif %}>
+            in the contact's own timezone
+        </label>
+    </div>
+    <div class="flex flex-wrap items-center gap-3 mt-2">
+        {% for day in weekdays %}
+        <label class="flex items-center gap-1 text-xs" style="color: var(--text-secondary);">
+            <input type="checkbox" name="window_days" value="{{ day.0 }}"
+                   {% if step and day.0 in step.window.days %}checked{% endif %}>
+            {{ day.1 }}
+        </label>
+        {% endfor %}
+    </div>
+    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+        No days ticked means any day. A contact with no timezone of their own falls back to the workspace's.
+    </p>
+</fieldset>

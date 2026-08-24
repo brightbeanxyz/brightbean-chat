@@ -1,0 +1,75 @@
+{% load humanize %}{% comment %}
+The sequence table. Rendered both inside list.html and on its own for every HTMX
+refresh — one renderer, so a filtered view and a post-mutation refresh can never
+disagree about what a row looks like.
+{% endcomment %}
+{% if not sequences %}
+<div class="rounded-xl border p-8 text-center" style="border-color: var(--border); background: var(--surface-1);">
+    <p class="text-sm font-medium" style="color: var(--text-primary);">No sequences here yet</p>
+    <p class="text-sm mt-1" style="color: var(--text-secondary);">
+        {% if query or status %}
+            Nothing matches these filters.
+        {% else %}
+            Create one above, add a step, then subscribe contacts from a flow, a rule or the contact list.
+        {% endif %}
+    </p>
+</div>
+{% else %}
+<div class="rounded-xl border divide-y" style="border-color: var(--border); background: var(--surface-1);">
+    {% for sequence in sequences %}
+    <div class="p-3 sm:p-4 flex flex-wrap items-center gap-3" x-data="{ renaming: false }">
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+                <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+                   class="text-sm font-medium truncate btn-text-hover-primary" style="color: var(--text-primary);">{{ sequence.name }}</a>
+                {% if sequence.status == "active" %}
+                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                      style="background: rgba(var(--success-500-rgb), 0.12); color: var(--success-500);">Active</span>
+                {% elif sequence.status == "archived" %}
+                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                      style="background: var(--surface-2); color: var(--text-tertiary);">Archived</span>
+                {% else %}
+                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                      style="background: var(--primary-soft); color: var(--primary);">Draft</span>
+                {% endif %}
+            </div>
+            <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
+                {{ sequence.step_count }} step{{ sequence.step_count|pluralize }} ·
+                {{ sequence.subscriber_count }} subscriber{{ sequence.subscriber_count|pluralize }} ·
+                updated {{ sequence.updated_at|naturaltime }}
+            </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+               class="btn-outline btn-inline">{% if can_edit %}Edit{% else %}View{% endif %}</a>
+            {% if can_edit %}
+            <button type="button" class="btn-outline btn-inline" @click="renaming = !renaming">Rename</button>
+            <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                    hx-post="{% url 'campaigns:delete' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+                    hx-swap="none"
+                    hx-confirm="Delete “{{ sequence.name }}”? Everyone's progress through it goes with it.">Delete</button>
+            {% endif %}
+        </div>
+
+        {% comment %}
+          A sibling of the two columns rather than a child of the first: the row
+          is flex-wrap, so a full-width form drops onto its own line instead of
+          colliding with the action buttons.
+        {% endcomment %}
+        {% if can_edit %}
+        <form x-show="renaming" x-cloak class="w-full flex flex-wrap items-center gap-2"
+              hx-post="{% url 'campaigns:rename' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+              hx-swap="none"
+              @htmx:after-request="renaming = false">
+            {% csrf_token %}
+            <input type="text" name="name" value="{{ sequence.name }}" maxlength="200" required
+                   class="form-input-styled" style="width: 14rem;" aria-label="Sequence name">
+            <button type="submit" class="btn-brand btn-inline">Save</button>
+            <button type="button" class="btn-outline btn-inline" @click="renaming = false">Cancel</button>
+        </form>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

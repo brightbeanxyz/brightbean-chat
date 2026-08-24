@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% comment %}
+The sequence list. Everything below the toolbar is _list_rows.html, so the table
+has exactly one renderer: the filters fetch it, and every mutation answers with a
+`sequencesChanged` event that makes it re-fetch itself.
+
+Colours come from theme tokens rather than utility palettes, and no Tailwind
+utility here sets a property a design-system class already owns — ground rule 9
+in docs/agent-prompts/layer-2.md.
+{% endcomment %}
+
+{% block title %}Sequences · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Sequences</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            Drip campaigns. Each step waits its delay from the previous step's send, then starts a flow.
+        </p>
+    </div>
+    {% if can_edit %}
+    <form class="flex items-center gap-2"
+          hx-post="{% url 'campaigns:create' workspace_id=request.workspace.id %}"
+          hx-swap="none"
+          x-data
+          @htmx:after-request="$el.reset()">
+        {% csrf_token %}
+        <input type="text" name="name" maxlength="200" required placeholder="New sequence name"
+               class="form-input-styled" style="width: 14rem;" aria-label="New sequence name">
+        <button type="submit" class="btn-brand btn-inline">Create</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div>
+    <form id="sequence-filters"
+          class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3"
+          hx-get="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
+          hx-target="#sequence-rows"
+          hx-swap="innerHTML"
+          hx-trigger="input changed delay:300ms, change"
+          @submit.prevent>
+        <input type="search" name="q" value="{{ query }}" placeholder="Search sequences"
+               class="form-input-styled" style="width: 16rem;" aria-label="Search sequences">
+        <label for="sequence-status" class="sr-only">Status</label>
+        <select id="sequence-status" name="status" class="form-input-styled" style="width: 11rem;">
+            <option value="">All statuses</option>
+            {% for value, label in status_options %}
+            <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </form>
+
+    <div id="sequence-rows"
+         hx-get="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
+         hx-trigger="sequencesChanged from:body"
+         hx-target="this"
+         hx-swap="innerHTML"
+         hx-include="#sequence-filters">
+        {% include "campaigns/_list_rows.html" %}
+    </div>
+</div>
+{% endblock %}

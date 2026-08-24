@@ -196,7 +196,16 @@ MAIN_NAV: list[NavGroup] = [
                 url_names=frozenset({"flows:list", "flows:edit"}),
                 workspace_scoped=True,
             ),
-            NavItem(key="sequences", label="Sequences", icon="sequences", url_name="sequences", workspace_scoped=True),
+            # Issue #22. The editor and the subscriber panel are the same
+            # section to a reader, so the detail page lights the same row.
+            NavItem(
+                key="sequences",
+                label="Sequences",
+                icon="sequences",
+                url_name="campaigns:list",
+                url_names=frozenset({"campaigns:list", "campaigns:detail"}),
+                workspace_scoped=True,
+            ),
             NavItem(
                 key="broadcasts",
                 label="Broadcasts",

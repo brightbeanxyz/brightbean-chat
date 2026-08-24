@@ -229,13 +229,15 @@ class TestTheContactList:
         services.create_contact(tenancy.workspace, first_name="Someone")
         segment = Segment.objects.create(
             workspace=tenancy.workspace,
-            name="Unimplemented source",
-            # `sequence` is the remaining unimplemented slot (issue #22). This
-            # used to be `window`, which issue #8 filled — the assertion is
-            # about a source with no implementation, not about that source.
+            name="Deleted tag",
+            # A tag id nothing resolves. This used to name an unimplemented
+            # condition source — `window` until issue #8, then `sequence` until
+            # #22 — and every source is implemented now, so the durable version
+            # of "the engine refuses this filter" is a filter that outlived what
+            # it references, which is the first case the docstring names anyway.
             filter_json={
                 "match": "all",
-                "rules": [{"source": "sequence", "key": str(uuid4()), "op": "subscribed"}],
+                "rules": [{"source": "tag", "key": str(uuid4()), "op": "has"}],
             },
         )
 
@@ -335,13 +337,15 @@ class TestASegmentThatCannotBeEvaluatedFailsClosed:
         services.create_contact(tenancy.workspace, first_name="Zebediah")
         segment = Segment.objects.create(
             workspace=tenancy.workspace,
-            name="Unimplemented source",
-            # `sequence` is the remaining unimplemented slot (issue #22). This
-            # used to be `window`, which issue #8 filled — the assertion is
-            # about a source with no implementation, not about that source.
+            name="Deleted tag",
+            # A tag id nothing resolves. This used to name an unimplemented
+            # condition source — `window` until issue #8, then `sequence` until
+            # #22 — and every source is implemented now, so the durable version
+            # of "the engine refuses this filter" is a filter that outlived what
+            # it references, which is the first case the docstring names anyway.
             filter_json={
                 "match": "all",
-                "rules": [{"source": "sequence", "key": str(uuid4()), "op": "subscribed"}],
+                "rules": [{"source": "tag", "key": str(uuid4()), "op": "has"}],
             },
         )
 

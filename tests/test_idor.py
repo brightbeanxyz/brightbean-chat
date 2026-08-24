@@ -54,16 +54,21 @@ class TestCrossTenantIsolation:
 
         assert "notifications:mark_read" in names
 
-    def test_the_sweep_covers_the_shell_placeholders(self):
-        """Issue #32's sidebar destinations are real endpoints under
-        /w/<uuid>/, so baseline §1 binds them like any other: a member of
-        another workspace must get a 404. They are placeholders today, but the
-        route and its guard outlive the placeholder."""
+    def test_no_workspace_placeholder_is_left_unswept(self):
+        """Issue #32's stub machinery, now that nothing is using it.
+
+        Every sidebar destination that was a placeholder under /w/<uuid>/ has
+        been replaced by a real app — sequences by #22, broadcasts by #23 — so
+        ``config.urls._WORKSPACE_STUBS`` is empty. The assertion is on the
+        mechanism rather than on a list of names: a placeholder is a real
+        endpoint, baseline §1 binds it like any other, and the sweep has to keep
+        reaching one the day somebody adds the next.
+        """
+        from config.urls import _WORKSPACE_STUBS
+
         names = {route.name for route in iter_tenant_routes()}
 
-        assert {
-            "sequences",
-        } <= names
+        assert {stub[1] for stub in _WORKSPACE_STUBS} <= names
 
     def test_the_sweep_covers_the_broadcasts_app(self):
         """Issue #23 replaced the `broadcasts` placeholder with the real app.
@@ -91,6 +96,30 @@ class TestCrossTenantIsolation:
             "broadcasts:cancel",
             "broadcasts:duplicate",
             "broadcasts:delete",
+        } <= names
+
+    def test_the_sweep_covers_the_campaigns_app(self):
+        """Issue #22 replaced the `sequences` placeholder with the real app.
+        Every route below names a sequence, a step or an enrollment, so the
+        sweep has to reach all of them, mutations included."""
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {
+            "campaigns:list",
+            "campaigns:create",
+            "campaigns:detail",
+            "campaigns:rename",
+            "campaigns:status",
+            "campaigns:delete",
+            "campaigns:steps",
+            "campaigns:step_create",
+            "campaigns:step_update",
+            "campaigns:step_move",
+            "campaigns:step_delete",
+            "campaigns:subscribers",
+            "campaigns:subscriber_suggest",
+            "campaigns:subscriber_add",
+            "campaigns:subscriber_remove",
         } <= names
 
     def test_the_sweep_covers_the_inbox_app(self):

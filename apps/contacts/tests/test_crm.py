@@ -318,15 +318,21 @@ class TestSegments:
         assert config["vocabulary"] is CONDITION_SCHEMA["x-brightbean"]
         assert [source["name"] for source in config["sources"]] == list(SOURCE_NAMES)
 
-    def test_an_unimplemented_source_is_offered_but_marked(self, tenancy, client_for):
-        """`sequence` validates and can be saved but cannot be evaluated until
-        issue #22. The builder greys it out and names the owner rather than
-        hiding it, so the vocabulary the schema describes stays visible."""
+    def test_every_source_is_offered_with_its_owner_and_a_key_picker(self, tenancy, client_for):
+        """`sequence` was greyed out and named its owner until issue #22 filled
+        it. Both halves still matter: the registry supplies `evaluable` so a
+        future slot greys out the same way, and the payload supplies the key
+        options each source's picker needs."""
+        from apps.campaigns.models import Sequence
+
+        Sequence.objects.create(workspace=tenancy.workspace, name="Onboarding")
+
         config = client_for(tenancy.owner).get(url(tenancy, "contacts/")).context["filter_config"]
         sequence = next(source for source in config["sources"] if source["name"] == "sequence")
 
-        assert sequence["evaluable"] is False
+        assert sequence["evaluable"] is True
         assert "#22" in sequence["owner"]
+        assert [row["label"] for row in config["sequences"]] == ["Onboarding"]
 
     def test_saving_a_filter_that_will_not_validate_is_refused(self, tenancy, client_for):
         response = client_for(tenancy.owner).post(
@@ -443,11 +449,102 @@ class TestBulkActions:
         contact.refresh_from_db()
         assert contact.status == ContactStatus.DELETED
 
-    def test_the_sequence_endpoint_is_a_polite_no_op_until_l6a(self, tenancy, client_for):
-        response = client_for(tenancy.owner).post(url(tenancy, "contacts/bulk/sequence/"), {"ids": []})
+    def test_bulk_subscribe_enrolls_the_selection(self, tenancy, client_for, crm):
+        """Issue #22 filled the endpoint that shipped here as a polite no-op."""
+        from apps.campaigns.models import EnrollmentStatus, SequenceEnrollment
+
+        sequence = _sequence_with_a_step(tenancy.workspace)
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, "contacts/bulk/sequence/"),
+            {"ids": [str(crm["contact"].pk)], "sequence_id": str(sequence.pk), "mode": "subscribe"},
+        )
 
         assert response.status_code == 204
-        assert "#22" in triggers(response)["showToast"]["body"]
+        enrollment = SequenceEnrollment.objects.for_workspace(tenancy.workspace).get()
+        assert enrollment.contact_id == crm["contact"].pk
+        assert enrollment.status == EnrollmentStatus.ACTIVE
+
+    def test_bulk_unsubscribe_stops_the_selection(self, tenancy, client_for, crm):
+        from apps.campaigns import services as campaign_services
+        from apps.campaigns.models import EnrollmentStatus, SequenceEnrollment
+
+        sequence = _sequence_with_a_step(tenancy.workspace)
+        campaign_services.subscribe(sequence, crm["contact"])
+
+        client_for(tenancy.owner).post(
+            url(tenancy, "contacts/bulk/sequence/"),
+            {"ids": [str(crm["contact"].pk)], "sequence_id": str(sequence.pk), "mode": "unsubscribe"},
+        )
+
+        assert SequenceEnrollment.objects.for_workspace(tenancy.workspace).get().status == (
+            EnrollmentStatus.UNSUBSCRIBED
+        )
+
+    def test_a_draft_sequence_is_refused_and_offered_to_nobody(self, tenancy, client_for, crm):
+        """`subscribe` takes active sequences only, so the bulk picker must not
+        list a draft — and the endpoint refuses one posted by hand anyway."""
+        from apps.campaigns.models import Sequence, SequenceEnrollment
+
+        draft = Sequence.objects.create(workspace=tenancy.workspace, name="Half-built")
+
+        page = client_for(tenancy.owner).get(url(tenancy, "contacts/"))
+        assert page.context["enrollable_sequences"] == []
+        # The condition picker still offers it: "not subscribed to the old
+        # onboarding" is a good segment rule about an inactive campaign.
+        assert [row["label"] for row in page.context["filter_config"]["sequences"]] == ["Half-built"]
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, "contacts/bulk/sequence/"),
+            {"ids": [str(crm["contact"].pk)], "sequence_id": str(draft.pk), "mode": "subscribe"},
+        )
+
+        assert triggers(response)["showToast"]["tone"] == "error"
+        assert not SequenceEnrollment.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_refusal_for_one_contact_does_not_discard_the_others(self, tenancy, client_for, crm, monkeypatch):
+        """Each subscribe commits its own transaction, so returning early on the
+        first error reported failure for a batch that had already restarted half
+        the selection — and fired no refresh event to show it."""
+        from apps.campaigns import services as campaign_services
+        from apps.campaigns.errors import CampaignsError
+        from apps.campaigns.models import SequenceEnrollment
+
+        sequence = _sequence_with_a_step(tenancy.workspace)
+        good = crm["contact"]
+        bad = services.create_contact(tenancy.workspace, first_name="Racy")
+        real = campaign_services.subscribe
+
+        def refuse_one(seq, contact, **kwargs):
+            if contact.pk == bad.pk:
+                raise CampaignsError("That contact was subscribed by somebody else just now.")
+            return real(seq, contact, **kwargs)
+
+        monkeypatch.setattr(campaign_services, "subscribe", refuse_one)
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, "contacts/bulk/sequence/"),
+            {"ids": [str(good.pk), str(bad.pk)], "sequence_id": str(sequence.pk), "mode": "subscribe"},
+        )
+
+        assert triggers(response)["showToast"]["tone"] == "success"
+        assert "1 skipped" in triggers(response)["showToast"]["body"]
+        assert triggers(response)["sequenceSubscribersChanged"] is True
+        enrolled = SequenceEnrollment.objects.for_workspace(tenancy.workspace)
+        assert [row.contact_id for row in enrolled] == [good.pk]
+
+    def test_another_tenants_sequence_is_a_404(self, tenancy, other_tenancy, client_for, crm):
+        """The id arrives in the body, where tests/idor.py cannot reach it."""
+        from apps.campaigns.models import Sequence
+
+        theirs = Sequence.objects.create(workspace=other_tenancy.workspace, name="Theirs")
+
+        response = client_for(tenancy.owner).post(
+            url(tenancy, "contacts/bulk/sequence/"),
+            {"ids": [str(crm["contact"].pk)], "sequence_id": str(theirs.pk), "mode": "subscribe"},
+        )
+
+        assert response.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -1027,3 +1124,25 @@ class TestSegmentControls:
         )
 
         assert "contacts/segments/" not in body
+
+
+def _sequence_with_a_step(workspace, *, name="Onboarding"):
+    """A one-step **active** sequence.
+
+    Active because `subscribe` takes active sequences only; one step because a
+    sequence with none completes the moment somebody subscribes — correct (there
+    is nothing to wait for) and not what these tests are about.
+    """
+    from apps.campaigns.models import DelayUnit, Sequence, SequenceStatus, SequenceStep
+    from apps.flows.services import create_flow
+
+    sequence = Sequence.objects.create(workspace=workspace, name=name, status=SequenceStatus.ACTIVE)
+    SequenceStep.objects.create(
+        workspace=workspace,
+        sequence=sequence,
+        position=1,
+        flow=create_flow(workspace=workspace, name="Welcome"),
+        delay_value=1,
+        delay_unit=DelayUnit.DAYS,
+    )
+    return sequence

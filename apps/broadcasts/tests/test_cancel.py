@@ -247,14 +247,18 @@ def test_cancelling_stops_a_send_the_token_bucket_had_deferred(
     and without cancelling it too, a broadcast stopped at that moment would still
     deliver minutes later, when the retry fired.
     """
-    from datetime import timedelta
-
     from django.utils import timezone as tz
 
     from apps.messaging.buckets import rate_for
     from apps.messaging.models import MessageStatus, SendBucket
 
     settings.SEND_BUCKET_MAX_WAIT_SECONDS = 0
+    # A rate slow enough that the bucket cannot refill under the test — see the
+    # note in test_a_retry_already_running_is_not_recorded_as_cancelled. One send
+    # runs here, so the seeded-empty bucket would be enough on its own; the
+    # override makes the two tests fail for the same reason if the bucket ever
+    # stops deferring, rather than one of them quietly starting to send.
+    settings.DEFAULT_SEND_RATE_OVERRIDES = {connection.platform: 0.01}
     # Two recipients, one send run: the second keeps the broadcast at ``sending``,
     # which is the state a cancel is for. With only one, the deferred send would
     # settle it — a queued message is recorded as on its way — and there would be
@@ -269,7 +273,7 @@ def test_cancelling_stops_a_send_the_token_bucket_had_deferred(
             tokens=0.0,
             capacity=1.0,
             refill_rate=rate_for(connection.platform),
-            refilled_at=tz.now() + timedelta(hours=1),
+            refilled_at=tz.now(),
         )
         handlers.handle_broadcast_send(actions[0].payload, actions[0])
 
@@ -339,8 +343,6 @@ def test_a_retry_already_running_is_not_recorded_as_cancelled(
     cancelled would report a message on its way to somebody's phone as stopped,
     and take a count out of ``sent`` for a send that happened.
     """
-    from datetime import timedelta
-
     from django.utils import timezone as tz
 
     from apps.messaging.buckets import rate_for
@@ -348,6 +350,13 @@ def test_a_retry_already_running_is_not_recorded_as_cancelled(
     from apps.queueing.models import ActionType as QueueType
 
     settings.SEND_BUCKET_MAX_WAIT_SECONDS = 0
+    # A rate slow enough that the bucket cannot refill between the two sends.
+    # ``_spend`` rewrites ``refilled_at`` to the database clock on every acquire,
+    # so a bucket seeded empty only stays empty for the first one — at Telegram's
+    # 25/s a token accrues in forty milliseconds, and whether the second send
+    # deferred then depended on how fast the machine was. MIN_RATE is 0.01/s,
+    # which is one token every hundred seconds.
+    settings.DEFAULT_SEND_RATE_OVERRIDES = {connection.platform: 0.01}
     # Three recipients, two sends run: the third keeps the broadcast at
     # ``sending``, which is the state a cancel is for.
     make_contacts(3, connection=connection)
@@ -360,7 +369,7 @@ def test_a_retry_already_running_is_not_recorded_as_cancelled(
             tokens=0.0,
             capacity=1.0,
             refill_rate=rate_for(connection.platform),
-            refilled_at=tz.now() + timedelta(hours=1),
+            refilled_at=tz.now(),
         )
         for action in actions[:2]:
             handlers.handle_broadcast_send(action.payload, action)

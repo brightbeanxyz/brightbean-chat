@@ -155,6 +155,7 @@ LOCAL_APPS = [
     "apps.messaging",
     "apps.media_library",
     "apps.flows",
+    "apps.campaigns",
     "apps.broadcasts",
     "apps.inbox",
     "apps.notifications",
