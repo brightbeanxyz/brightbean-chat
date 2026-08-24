@@ -1,5 +1,12 @@
 """The templates this repository ships, checked against the real importer.
 
+Carries half of SPEC §21 phase 3's "flow export/import round-trips including
+triggers" — the per-template half the issue asks for. The general claim lives in
+``test_portability_roundtrip.py``; this module is that claim applied to each
+shipped template, plus the rest of the acceptance criterion: a workspace missing
+every requirement completes the mapping step, and publishing succeeds once the
+connections are mapped.
+
 ``flow-templates/`` is the seed of the shared library and the directory a
 community pull request adds to. A template that stops importing is therefore a
 red build rather than a download that fails for a stranger, and the check is the

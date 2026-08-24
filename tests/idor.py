@@ -433,9 +433,11 @@ def _victim_flow_import(tenancy: Tenancy) -> Any:
     a mapping form from it, so a fixture that was not a real export would make
     the review route 404 on its own content instead of on tenancy.
 
-    Left ``pending``. The confirm and discard routes both refuse an applied
-    import before they look at anything else, and a 405-or-404 sweep would then
-    be passing on the status rather than on the workspace.
+    Left ``pending``, which is the state the wizard is in for all three routes.
+    Tenancy is checked first either way — every one of them resolves the row
+    through ``get_scoped_object_or_404`` before it looks at ``status`` — so this
+    is about the fixture being the shape the routes are written for, not about
+    what makes the sweep pass.
     """
     from apps.flows import portability
     from apps.flows.models import FlowImport
