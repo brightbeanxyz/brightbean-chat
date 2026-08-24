@@ -86,13 +86,22 @@ services:
       # one and opened by the other, and uploaded media disappears on every
       # deploy. The S3_* values below are what 's3' needs.
       #
-      # They are `sync: false` on BOTH services and must be given the SAME
+      # STORAGE_BACKEND is `sync: false` rather than `value: local` for a
+      # reason that is easy to get wrong: Render re-applies a blueprint `value`
+      # on EVERY sync, overwriting whatever is in the dashboard, while it
+      # ignores `sync: false` entries after the first deploy. Pinned to `local`
+      # here, an operator's switch to `s3` would silently revert on the next
+      # deploy and queued contact imports would start failing again — which
+      # reads as an import bug, not as a config revert. Answer `s3` (or leave it
+      # blank, which means local) at deploy time.
+      #
+      # These are `sync: false` on BOTH services and must be given the SAME
       # answers — Render does not allow `sync: false` inside an env group, so
       # unlike the crypto secrets above these cannot be shared declaratively.
       # docs/self-hosting.md explains moving them into a dashboard env group
       # afterwards.
       - key: STORAGE_BACKEND
-        value: local
+        sync: false
       - key: S3_BUCKET_NAME
         sync: false
       - key: S3_ACCESS_KEY_ID
@@ -143,13 +152,22 @@ services:
       # one and opened by the other, and uploaded media disappears on every
       # deploy. The S3_* values below are what 's3' needs.
       #
-      # They are `sync: false` on BOTH services and must be given the SAME
+      # STORAGE_BACKEND is `sync: false` rather than `value: local` for a
+      # reason that is easy to get wrong: Render re-applies a blueprint `value`
+      # on EVERY sync, overwriting whatever is in the dashboard, while it
+      # ignores `sync: false` entries after the first deploy. Pinned to `local`
+      # here, an operator's switch to `s3` would silently revert on the next
+      # deploy and queued contact imports would start failing again — which
+      # reads as an import bug, not as a config revert. Answer `s3` (or leave it
+      # blank, which means local) at deploy time.
+      #
+      # These are `sync: false` on BOTH services and must be given the SAME
       # answers — Render does not allow `sync: false` inside an env group, so
       # unlike the crypto secrets above these cannot be shared declaratively.
       # docs/self-hosting.md explains moving them into a dashboard env group
       # afterwards.
       - key: STORAGE_BACKEND
-        value: local
+        sync: false
       - key: S3_BUCKET_NAME
         sync: false
       - key: S3_ACCESS_KEY_ID

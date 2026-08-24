@@ -246,6 +246,17 @@ Add `--insecure` when the certificate comes from Caddy's internal CA — that is
 what you get with `APP_DOMAIN=localhost`, which is how the stack is tested
 locally and in CI.
 
+Two things it will tell you rather than guess at: a base URL on a non-default
+TLS port (`CADDY_HTTPS_PORT`) means the plain-HTTP origin cannot be inferred, so
+pass `--http-url` to check the redirect; and a `--db-host` that does not resolve
+is reported as a failure rather than as a closed port, because a name that never
+resolved proves nothing about what is listening.
+
+`--verify-token` checks that a correct token is echoed, and deliberately does
+**not** try a wrong one: a mismatched `hub.verify_token` counts towards the
+webhook signature-failure ban, so a check that exercised it would eventually ban
+whoever keeps running it.
+
 `/healthz` is also what you point an uptime monitor at. It returns 503 when the
 database is unreachable, and it is exempt from the HTTPS redirect so in-network
 probes reaching the container directly are not answered with a 301.
@@ -343,11 +354,19 @@ S3_REGION_NAME=auto
 ```
 
 **Every process needs identical values.** On Heroku that is automatic — config
-vars belong to the app, not the dyno. On Render they are prompted per service,
-because Render does not allow `sync: false` inside an environment group; enter
-the same answers on both, or move them into a shared environment group from the
-dashboard afterwards. On Railway, use a shared variable rather than typing them
-into each service.
+vars belong to the app, not the dyno. On Render, `STORAGE_BACKEND` and the
+`S3_*` variables are prompted **per service** at deploy time; answer `s3` and
+the same credentials on both. They are prompts rather than fixed blueprint
+values on purpose: Render re-applies a blueprint `value:` on every sync, so a
+pinned `local` would silently overwrite your switch to `s3` on the next deploy
+and imports would start failing again. (Render does not allow `sync: false`
+inside an environment group, which is why these cannot be shared declaratively
+the way the crypto secrets are — move them into a shared environment group from
+the dashboard once you have deployed.) On Railway, use a shared variable rather
+than typing them into each service.
+
+Leave `S3_REGION_NAME` at `auto` unless your provider needs a real region —
+AWS does, R2 does not.
 
 Keep the bucket private. Delivery URLs are signed, and
 [`SECURITY-BASELINE.md`](SECURITY-BASELINE.md) §9 is why — a public bucket
@@ -416,11 +435,11 @@ You are prompted for `ALLOWED_HOSTS` and `APP_URL` at deploy time — use
 for the same reason it is on Heroku: without it every request is attributed to
 the router and the rate limiters stop telling callers apart.
 
-**Set `STORAGE_BACKEND=s3` and the `S3_*` variables on both services**, with the
-same answers on each — Render prompts per service because `sync: false` is not
-allowed inside an environment group, so this is the one thing the blueprint
-cannot keep in step for you. Move them into a shared environment group from the
-dashboard once you have deployed. See
+**Answer `s3` to the `STORAGE_BACKEND` prompt and supply the `S3_*` values on
+both services**, with the same answers on each — Render prompts per service
+because `sync: false` is not allowed inside an environment group, so this is the
+one thing the blueprint cannot keep in step for you. Move them into a shared
+environment group from the dashboard once you have deployed. See
 [Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate).
 
 ## Railway

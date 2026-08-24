@@ -21,6 +21,7 @@
 # Checks the four security headers SECURITY-BASELINE §8 requires at the proxy,
 # so it is equally valid against Caddy, a PaaS router or your own nginx —
 # whatever is actually in front is what answers.
+# HELP-END
 #
 # `|| true` on every curl, and an explicit 000 fallback, for the reason
 # scripts/wait-for-http.sh spells out at length: a plain assignment from a curl
@@ -37,12 +38,21 @@ verify_token=""
 db_host=""
 project=""
 compose_file="${REPO_ROOT}/docker-compose.prod.yml"
-curl_opts=(--silent --show-error)
+# --max-time and --connect-timeout are not optional here. curl has no overall
+# deadline of its own, and this script exists to be run against a deployment
+# that may be sick — a host whose workers are all blocked accepts the connection
+# and never answers, which without a deadline hangs the operator's diagnostic
+# tool forever and burns a CI job to its timeout with no output.
+curl_opts=(--silent --show-error --connect-timeout 10 --max-time 30)
 wait_curl_opts=""
 
 usage() {
-    # Lines 2-23 are the help text; what follows is an implementation note.
-    sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # Everything from line 2 to the HELP-END marker. A line range was wrong once
+    # already — it printed six lines of an implementation note at users — and
+    # would go wrong again the next time an option is documented, silently.
+    sed -n '2,/^# HELP-END$/p' "${BASH_SOURCE[0]}" \
+        | grep -v '^# HELP-END$' \
+        | sed 's/^# \{0,1\}//'
     exit "${1:-2}"
 }
 
@@ -64,11 +74,37 @@ done
 
 [ -n "${base_url}" ] || usage
 
-# The plain-HTTP origin, for the redirect check: same host, no scheme, and
-# without an explicit :443 which would not be listening for HTTP.
+# An explicit scheme, always. Without one curl silently resolves the base URL as
+# plain HTTP, and every TLS and header assertion below would then be made
+# against http:// while the output claimed to have checked the origin that was
+# typed — a green run that verified the wrong protocol.
+case "${base_url}" in
+    http://*|https://*) ;;
+    *)
+        echo "the base URL needs an explicit scheme, e.g. https://${base_url}" >&2
+        usage
+        ;;
+esac
+
+# The plain-HTTP origin, for the redirect check.
+#
+# Derivable only when the base URL uses the default TLS port: with
+# CADDY_HTTPS_PORT set (docker-compose.prod.yml offers it), swapping the scheme
+# and keeping the port would point at the TLS listener, and the redirect probe
+# would report a hard failure on a perfectly good deployment. When the port is
+# non-default there is nothing to infer from, so those two checks are skipped
+# with a message naming the flag that supplies the answer.
+http_origin_known=1
 if [ -z "${http_url}" ]; then
-    http_url="http://${base_url#*://}"
-    http_url="${http_url%:443}"
+    base_authority="${base_url#*://}"
+    base_authority="${base_authority%%/*}"
+    case "${base_authority}" in
+        *:443) http_url="http://${base_authority%:443}" ;;
+        # A bracketed IPv6 literal with no port, or a plain host with no port.
+        \[*\]|*[!0-9]) http_url="http://${base_authority}" ;;
+        *:*) http_origin_known=0 ;;
+        *) http_url="http://${base_authority}" ;;
+    esac
 fi
 
 failures=0
@@ -80,23 +116,40 @@ section() { printf '\n%s\n' "$1"; }
 
 # Status of a URL, without following redirects. 000 means the request never
 # completed — refused, reset, or a TLS failure.
+# status_of URL [OUT_FILE] [extra curl arguments...]
+#
+# Query parameters are passed as `-G --data-urlencode name=value` rather than
+# pasted into the URL: a TICK_TOKEN or a Meta verify token is operator-chosen
+# and may legitimately contain `&` or `#`, which pasted raw would be truncated
+# by the server's query parser. The script would then report the real token as
+# rejected, and the operator would rotate a working credential.
 status_of() {
-    local url="$1" out="${2:-/dev/null}"
+    local url="$1"
+    local out="/dev/null"
+    if [ $# -ge 2 ]; then
+        out="$2"
+        shift 2
+    else
+        shift 1
+    fi
     local code
-    code="$(curl "${curl_opts[@]}" -o "${out}" -w '%{http_code}' "${url}" 2>/dev/null || true)"
+    code="$(curl "${curl_opts[@]}" "$@" -o "${out}" -w '%{http_code}' "${url}" 2>/dev/null || true)"
     printf '%s' "${code:-000}"
 }
 
 expect_status() {
-    local url="$1" expected="$2" label="$3" out="${4:-/dev/null}"
+    local url="$1" expected="$2" label="$3"
+    shift 3
     local got
-    got="$(status_of "${url}" "${out}")"
+    got="$(status_of "${url}" /dev/null "$@")"
     if [ "${got}" = "${expected}" ]; then
         pass "${label} (${got})"
     else
         fail "${label}: expected ${expected}, got ${got}"
     fi
 }
+
+skip() { printf '  skip  %s\n' "$1"; }
 
 body_file="$(mktemp)"
 header_file="$(mktemp)"
@@ -125,12 +178,16 @@ fi
 section "TLS (SECURITY-BASELINE §8)"
 # ---------------------------------------------------------------------------
 
-http_root_status="$(status_of "${http_url}/")"
-case "${http_root_status}" in
-    301|302|307|308) pass "plain HTTP is redirected to HTTPS (${http_root_status})" ;;
-    000) fail "plain HTTP origin ${http_url}/ is not reachable, so the redirect could not be checked" ;;
-    *) fail "plain HTTP served ${http_root_status} instead of redirecting to HTTPS" ;;
-esac
+if [ "${http_origin_known}" -eq 0 ]; then
+    skip "the plain-HTTP origin cannot be derived from a non-default TLS port; pass --http-url to check the redirect"
+else
+    http_root_status="$(status_of "${http_url}/")"
+    case "${http_root_status}" in
+        301|302|307|308) pass "plain HTTP is redirected to HTTPS (${http_root_status})" ;;
+        000) fail "plain HTTP origin ${http_url}/ is not reachable, so the redirect could not be checked (pass --http-url if it is elsewhere)" ;;
+        *) fail "plain HTTP served ${http_root_status} instead of redirecting to HTTPS" ;;
+    esac
+fi
 
 # config/settings/production.py exempts /healthz from Django's SSL redirect so
 # in-network probes reaching the app directly are not answered with a 301. That
@@ -140,13 +197,17 @@ esac
 # HTTP straight to the app. Anything else — a 400, a 502, a 404 — means the probe
 # path is broken, which is exactly the failure that leaves a container marked
 # unhealthy with nothing in the logs to say why.
-http_healthz_status="$(status_of "${http_url}/healthz")"
-case "${http_healthz_status}" in
-    200) pass "/healthz answers 200 over plain HTTP (nothing redirecting in front)" ;;
-    301|302|307|308) pass "/healthz is redirected to HTTPS at the edge (${http_healthz_status})" ;;
-    000) pass "/healthz over plain HTTP is unreachable (TLS terminated elsewhere)" ;;
-    *) fail "/healthz over plain HTTP returned ${http_healthz_status}: expected 200 or a redirect" ;;
-esac
+if [ "${http_origin_known}" -eq 0 ]; then
+    skip "/healthz over plain HTTP not checked, for the same reason"
+else
+    http_healthz_status="$(status_of "${http_url}/healthz")"
+    case "${http_healthz_status}" in
+        200) pass "/healthz answers 200 over plain HTTP (nothing redirecting in front)" ;;
+        301|302|307|308) pass "/healthz is redirected to HTTPS at the edge (${http_healthz_status})" ;;
+        000) pass "/healthz over plain HTTP is unreachable (TLS terminated elsewhere)" ;;
+        *) fail "/healthz over plain HTTP returned ${http_healthz_status}: expected 200 or a redirect" ;;
+    esac
+fi
 
 # ---------------------------------------------------------------------------
 section "Security headers (SECURITY-BASELINE §8)"
@@ -160,31 +221,39 @@ final_url="${final_url:-${base_url}/}"
 curl "${curl_opts[@]}" -D "${header_file}" -o "${body_file}" "${final_url}" >/dev/null 2>&1 || true
 
 header_value() {
-    # Header names are case-insensitive; values may carry a trailing CR.
+    # Header names are case-insensitive (and lowercase over HTTP/2); values may
+    # carry a trailing CR. The whole line is parsed with sub(), so there is
+    # deliberately no FS — a field separator here would look load-bearing and
+    # never be read.
     awk -v want="$(printf '%s' "$1" | tr 'A-Z' 'a-z')" '
-        BEGIN { FS=": " }
-        { name = $1; sub(/:.*/, "", name); if (tolower(name) == want) { sub(/^[^:]*: */, ""); gsub(/\r/, ""); print } }
+        { name = $0; sub(/:.*/, "", name); if (tolower(name) == want) { sub(/^[^:]*: */, ""); gsub(/\r/, ""); print } }
     ' "${header_file}" | tail -n 1
 }
 
+# expect_header NAME PATTERN [WHAT]
+#
+# WHAT names the property being asserted, because two assertions on one header
+# otherwise print two identical `ok` lines and a reader cannot tell which is
+# which — or notice when one of them is dropped.
 expect_header() {
-    local name="$1" pattern="$2"
+    local name="$1" pattern="$2" what="${3:-}"
+    local label="${name}${what:+ (${what})}"
     local value
     value="$(header_value "${name}")"
     if [ -z "${value}" ]; then
-        fail "${name} is missing"
+        fail "${label} is missing"
     elif printf '%s' "${value}" | grep -qi -- "${pattern}"; then
-        pass "${name}: ${value}"
+        pass "${label}: ${value}"
     else
-        fail "${name} is '${value}', expected to match '${pattern}'"
+        fail "${label} is '${value}', expected to match '${pattern}'"
     fi
 }
 
-expect_header "Strict-Transport-Security" "max-age=[1-9][0-9]\{6,\}"
-expect_header "Strict-Transport-Security" "includeSubDomains"
+expect_header "Strict-Transport-Security" "max-age=[1-9][0-9]\{6,\}" "max-age of at least a million seconds"
+expect_header "Strict-Transport-Security" "includeSubDomains" "includeSubDomains"
 expect_header "X-Content-Type-Options" "nosniff"
 expect_header "X-Frame-Options" "DENY"
-expect_header "Referrer-Policy" "."
+expect_header "Referrer-Policy" "." "set to something"
 
 if grep -qi '^content-security-policy:' "${header_file}"; then
     pass "Content-Security-Policy is set (Django, with per-request nonces)"
@@ -203,10 +272,12 @@ section "Unauthenticated endpoints answer 404, not 403 (SECURITY-BASELINE §4)"
 # ---------------------------------------------------------------------------
 
 expect_status "${base_url}/internal/tick" "404" "/internal/tick with no token"
-expect_status "${base_url}/internal/tick?token=definitely-not-the-token" "404" "/internal/tick with a wrong token"
+expect_status "${base_url}/internal/tick" "404" "/internal/tick with a wrong token" \
+    -G --data-urlencode "token=definitely-not-the-token"
 
 if [ -n "${tick_token}" ]; then
-    tick_status="$(status_of "${base_url}/internal/tick?token=${tick_token}" "${body_file}")"
+    tick_status="$(status_of "${base_url}/internal/tick" "${body_file}" \
+        -G --data-urlencode "token=${tick_token}")"
     if [ "${tick_status}" = "200" ] && grep -q '"claimed"' "${body_file}"; then
         pass "/internal/tick drains the queue with the real token"
     else
@@ -217,36 +288,64 @@ fi
 # Meta's subscription check. A platform with no verify token configured must
 # answer 404 — an endpoint that cannot verify anything should not advertise that
 # it exists, and nothing can be subscribed to it by accident.
-challenge_url="${base_url}/webhooks/instagram/?hub.mode=subscribe&hub.challenge=1234567&hub.verify_token="
+#
+# DELIBERATELY NO WRONG-TOKEN ASSERTION when a verify token is supplied. A
+# mismatched hub.verify_token calls record_signature_failure (see
+# apps/channels/views_webhooks.py), and WEBHOOK_SIGNATURE_FAILURE_LIMIT failures
+# inside WEBHOOK_SIGNATURE_FAILURE_WINDOW_SECONDS ban that source for
+# WEBHOOK_SIGNATURE_BAN_SECONDS — fifteen minutes, by default, after ten runs in
+# five. An operator debugging a deployment runs this repeatedly, so the check
+# would ban the person running it and then report the deployment as broken. A
+# check must not trip the defence it is checking. The unconfigured case below
+# raises Http404 before any failure is recorded, so it is safe to repeat.
+challenge_args=(-G
+    --data-urlencode "hub.mode=subscribe"
+    --data-urlencode "hub.challenge=1234567")
 if [ -n "${verify_token}" ]; then
-    verify_status="$(status_of "${challenge_url}${verify_token}" "${body_file}")"
+    verify_status="$(status_of "${base_url}/webhooks/instagram/" "${body_file}" \
+        "${challenge_args[@]}" --data-urlencode "hub.verify_token=${verify_token}")"
     if [ "${verify_status}" = "200" ] && grep -q '^1234567$' "${body_file}"; then
         pass "the Instagram webhook echoes Meta's challenge for the right verify token"
     else
         fail "the Instagram webhook verification returned ${verify_status}: $(head -c 200 "${body_file}")"
     fi
-    expect_status "${challenge_url}wrong-token" "403" "webhook verification with a wrong token"
 else
-    expect_status "${challenge_url}anything" "404" \
-        "the Instagram webhook refuses verification while no verify token is configured"
+    expect_status "${base_url}/webhooks/instagram/" "404" \
+        "the Instagram webhook refuses verification while no verify token is configured" \
+        "${challenge_args[@]}" --data-urlencode "hub.verify_token=unconfigured-probe"
 fi
 
 # ---------------------------------------------------------------------------
 if [ -n "${db_host}" ]; then
 section "Postgres is not exposed (issue #28 acceptance)"
 
+    # 0 open, 1 refused/filtered, 2 no tool, 3 the name does not resolve.
+    #
+    # The last one matters: a mistyped --db-host fails to resolve, and both nc
+    # and a bare connect() report that the same way they report a refused
+    # connection. Counted as "unreachable" it turns the one assertion whose job
+    # is to catch an exposed database into a pass that never left the machine.
     probe_tcp() {
         local host="$1" port="$2"
-        if command -v nc >/dev/null 2>&1; then
-            nc -z -w 3 "${host}" "${port}" >/dev/null 2>&1
-        elif command -v python3 >/dev/null 2>&1; then
+        if command -v python3 >/dev/null 2>&1; then
             python3 - "${host}" "${port}" <<'PY'
-import socket, sys
+import socket
+import sys
+
+host, port = sys.argv[1], int(sys.argv[2])
 try:
-    socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=3).close()
+    socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+except socket.gaierror:
+    sys.exit(3)
+try:
+    socket.create_connection((host, port), timeout=5).close()
 except OSError:
     sys.exit(1)
 PY
+        elif command -v getent >/dev/null 2>&1 && ! getent hosts "${host}" >/dev/null 2>&1; then
+            return 3
+        elif command -v nc >/dev/null 2>&1; then
+            nc -z -w 5 "${host}" "${port}" >/dev/null 2>&1
         else
             return 2
         fi
@@ -259,7 +358,8 @@ PY
     case "${probe_result}" in
         0) fail "Postgres answered on ${db_host}:5432 — it must not be published" ;;
         1) pass "Postgres is unreachable on ${db_host}:5432" ;;
-        *) printf '  skip  no nc or python3 available to probe %s:5432\n' "${db_host}" ;;
+        3) fail "${db_host} does not resolve, so nothing was actually probed — check the hostname" ;;
+        *) skip "no python3 or nc available to probe ${db_host}:5432" ;;
     esac
 fi
 

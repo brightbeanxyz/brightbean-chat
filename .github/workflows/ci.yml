@@ -606,10 +606,17 @@ jobs:
         # runs the housekeeping bootstrap on start, so a functioning worker
         # always logs a completed action — and a stack where only the web
         # process works looks entirely healthy without one.
+        #
+        # The logs go to a file rather than into `grep -q`. `grep -q` exits on
+        # the first match and closes the pipe, so once the worker's log outgrows
+        # the 64 KB pipe buffer the producer dies of SIGPIPE — harmless under
+        # this step's default shell, which has no `pipefail`, and a spurious
+        # 60-second failure the moment anything turns it on.
         run: |
           for attempt in $(seq 1 30); do
-            if docker compose -p bbchat-prod -f docker-compose.prod.yml logs worker --no-color 2>&1 \
-                 | grep -q "Queue action done"; then
+            docker compose -p bbchat-prod -f docker-compose.prod.yml logs worker --no-color \
+              > /tmp/worker.log 2>&1 || true
+            if grep -q "Queue action done" /tmp/worker.log; then
               echo "The worker claimed and completed an action."
               exit 0
             fi

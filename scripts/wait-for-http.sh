@@ -49,7 +49,12 @@ status=000
 for attempt in $(seq 1 "${attempts}"); do
     # `|| true` keeps a network-level curl failure from tripping `set -e`; the
     # 000 fallback covers the case where curl writes nothing to stdout.
-    status="$(curl -s "${extra_curl_opts[@]+"${extra_curl_opts[@]}"}" \
+    # --max-time, or a host that accepts the connection and never answers
+    # stalls the loop on its first attempt instead of retrying through the
+    # transient this script exists to retry through. curl has no overall
+    # deadline of its own.
+    status="$(curl -s --connect-timeout 5 --max-time 10 \
+        "${extra_curl_opts[@]+"${extra_curl_opts[@]}"}" \
         -o "${body_file}" -w '%{http_code}' "${url}" || true)"
     status="${status:-000}"
 

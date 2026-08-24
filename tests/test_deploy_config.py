@@ -349,17 +349,41 @@ def test_the_template_names_every_required_variable(variable: str) -> None:
     assert variable in _template_assignments()
 
 
-def test_the_template_fills_nothing_in() -> None:
+def test_the_template_leaves_every_required_value_empty() -> None:
     """Empty, not a plausible-looking stand-in.
 
     `.env.example` ships `change-me-…` values, which `make setup` copies and
     `apps.common.placeholders` exists to reject. The production template avoids
-    the question: an unset variable fails with the settings module's own hint,
-    which names the variable and how to generate it.
+    the question for the values that matter: an unset variable fails with the
+    settings module's own hint, which names it and how to generate it.
+
+    Scoped to the required variables rather than to every assignment. The
+    earlier, wider form said "nothing in this file may have a value", which is
+    the right rule for a secret and the wrong one for a documented default — it
+    made adding `STORAGE_BACKEND=local` to the template fail the suite, and so
+    pushed exactly the settings an operator needs to find into comments.
     """
+    assignments = _template_assignments()
+    for name in REQUIRED_VARIABLES:
+        assert assignments[name] == "", f"{name} has a value in the production template"
+
+
+def test_the_template_ships_no_placeholder_secret() -> None:
+    """A real default is fine; a convincing stand-in for a secret is not."""
     for name, value in _template_assignments().items():
-        assert value == "", f"{name} has a value in the production template: {value!r}"
-        assert not is_placeholder_secret(value)
+        assert not is_placeholder_secret(value), f"{name} is a placeholder: {value!r}"
+
+
+@pytest.mark.parametrize("variable", ("STORAGE_BACKEND", "IMAGE_REPOSITORY", "APP_BIND_PORT"))
+def test_the_template_documents_every_knob_the_deploy_files_read(variable: str) -> None:
+    """Commented or not, the operator has to be able to find it.
+
+    Each of these changes what the stack does and is read by a file in this
+    directory, so a template that omits it is a setting discoverable only by
+    reading the compose source.
+    """
+    body = ENV_TEMPLATE.read_text(encoding="utf-8")
+    assert re.search(rf"^#?\s*{variable}=", body, re.MULTILINE), f"{variable} is undocumented"
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +554,31 @@ def test_render_trusts_its_router_for_client_addresses(render: dict[str, Any]) -
         for entry in value.split(","):
             assert ipaddress.ip_network(entry.strip(), strict=False).is_private, entry
     assert len(values) == 1, f"the services disagree about TRUSTED_PROXIES: {values}"
+
+
+def test_render_lets_the_storage_switch_survive_a_sync(render: dict[str, Any]) -> None:
+    """`value:` here would revert the operator's choice on the next deploy.
+
+    Render re-applies a blueprint `value` on every sync and ignores `sync: false`
+    entries after the first. Pinned to `local`, a switch to `s3` made in the
+    dashboard would silently come back as `local` — and queued contact imports
+    would start failing again in a way that reads as an import bug.
+    """
+    for service in render["services"]:
+        entry = next(var for var in service["envVars"] if var.get("key") == "STORAGE_BACKEND")
+        assert entry.get("sync") is False, f"{service['name']} pins STORAGE_BACKEND to {entry.get('value')!r}"
+        assert "value" not in entry
+
+
+def test_heroku_gives_the_s3_region_a_real_default(app_json: dict[str, Any]) -> None:
+    """An empty config var is not an absent one.
+
+    environ.Env returns its default only when the variable is unset, so a prompt
+    left blank would reach boto3 as region_name="" rather than as the documented
+    "auto". config/settings/base.py now coerces the blank back; this keeps the
+    blueprint from creating it in the first place.
+    """
+    assert app_json["env"]["S3_REGION_NAME"]["value"] == "auto"
 
 
 # ---------------------------------------------------------------------------

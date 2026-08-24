@@ -147,10 +147,17 @@ services:
         - "python"
         - "-c"
         - "import os, urllib.request as r; from urllib.parse import urlparse; h = urlparse(os.environ['APP_URL']).hostname; r.urlopen(r.Request('http://127.0.0.1:8000/healthz', headers={'Host': h}), timeout=4)"
+    # Deliberately generous. `caddy` waits on this service being HEALTHY, so a
+    # probe that times out does not merely mark a container yellow — it makes
+    # `docker compose up` fail with "dependency failed to start" and no proxy.
+    # The first request after boot pays for Django's lazy imports and the first
+    # database connection, and docs/self-hosting.md names 1 vCPU / 1 GB as a
+    # workable host, where that can take several seconds. start_period failures
+    # do not count against `retries`, so the grace costs nothing.
       interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
     restart: unless-stopped
 
   worker:

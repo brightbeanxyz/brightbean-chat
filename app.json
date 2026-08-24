@@ -90,8 +90,8 @@
       "required": false
     },
     "S3_REGION_NAME": {
-      "description": "Bucket region. 'auto' suits R2. Required when STORAGE_BACKEND is 's3'.",
-      "required": false
+      "description": "Bucket region. 'auto' suits Cloudflare R2; AWS wants a real region such as eu-central-1. Leave the default rather than blanking it \u2014 an empty value is not the same as an unset one.",
+      "value": "auto"
     },
     "TICK_TOKEN": {
       "description": "Shared secret for /internal/tick, an HTTP wrapper around one worker cycle. The worker dyno below is what normally drains the queue; this is the fallback for running without one (Heroku Scheduler, or an external pinger every minute). The route answers 404 while this is unset, so an unused one exposes nothing.",
