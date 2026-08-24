@@ -20,6 +20,7 @@ second door appears rather than trusting that nobody will add one.
 """
 
 import ast
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -178,7 +179,7 @@ def _identity(workspace: Any, *, opted_out: bool) -> tuple[Any, Any]:
         opt_in_at=None if opted_out else timezone.now(),
         opt_in_source="" if opted_out else OptInSource.MESSAGE_IN,
         opted_out_at=timezone.now() if opted_out else None,
-        window_expires_at=timezone.now() + timezone.timedelta(hours=12),
+        window_expires_at=timezone.now() + timedelta(hours=12),
     )
     return contact, connection
 

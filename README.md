@@ -16,6 +16,9 @@ Tailwind 4 and PostgreSQL, with no Redis and no message broker.
 | [`docs/SPEC.md`](docs/SPEC.md) | The engineering specification — authoritative |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
 | [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
+| [`docs/security-audit.md`](docs/security-audit.md) | Every baseline item mapped to the test that enforces it, and the gaps that are still open |
+| [`docs/pentest-runbook.md`](docs/pentest-runbook.md) | Probing your own instance: what to send, what a correct instance does |
+| [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability, and what is in scope |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Tenant scoping, the IDOR suite, URL and RBAC conventions |
 
 ## Quickstart (Docker)

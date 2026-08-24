@@ -74,7 +74,7 @@ class _Tripwire(Adapter):
     def send_typing(self, connection: Any, identity: Any) -> None:  # pragma: no cover - unused
         return None
 
-    def mark_seen(self, connection: Any, identity: Any, message_id: str) -> None:  # pragma: no cover
+    def mark_seen(self, connection: Any, identity: Any) -> None:  # pragma: no cover - unused
         return None
 
 
