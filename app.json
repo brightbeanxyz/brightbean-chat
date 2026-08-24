@@ -64,6 +64,35 @@
       "description": "The public origin, including https://. Used to build unsubscribe, click-tracking and media links, and the webhook URLs you paste into each platform's dashboard. For example https://my-chat.herokuapp.com",
       "required": true
     },
+    "TRUSTED_PROXIES": {
+      "description": "Which peers may speak for a client via X-Forwarded-For. Heroku's router is what connects to your dyno, so without this every request is attributed to the router and all of your users share one bucket for auth rate limiting, API throttling and the webhook signature ban \u2014 one caller could keep login and password reset throttled for everybody. These are the private ranges a platform router lives in; a client on the public internet can never present one of them.",
+      "value": "127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    },
+    "STORAGE_BACKEND": {
+      "description": "'local' or 's3'. USE 's3' HERE. Heroku's filesystem is per-dyno and ephemeral, so with 'local' the web dyno and the worker dyno cannot see each other's files: a queued CSV contact import is uploaded by one and opened by the other, and uploaded media disappears on every dyno restart. The S3_* values below are what 's3' needs; they work with AWS S3, Cloudflare R2, Backblaze B2 and MinIO alike.",
+      "value": "local",
+      "required": false
+    },
+    "S3_BUCKET_NAME": {
+      "description": "Bucket that holds uploaded media and contact-import files. Required when STORAGE_BACKEND is 's3'.",
+      "required": false
+    },
+    "S3_ACCESS_KEY_ID": {
+      "description": "Access key id for that bucket. Required when STORAGE_BACKEND is 's3'.",
+      "required": false
+    },
+    "S3_SECRET_ACCESS_KEY": {
+      "description": "Secret access key for that bucket. Required when STORAGE_BACKEND is 's3'.",
+      "required": false
+    },
+    "S3_ENDPOINT_URL": {
+      "description": "Endpoint URL. Leave blank for AWS S3; set it for R2, B2 or MinIO. Required when STORAGE_BACKEND is 's3'.",
+      "required": false
+    },
+    "S3_REGION_NAME": {
+      "description": "Bucket region. 'auto' suits R2. Required when STORAGE_BACKEND is 's3'.",
+      "required": false
+    },
     "TICK_TOKEN": {
       "description": "Shared secret for /internal/tick, an HTTP wrapper around one worker cycle. The worker dyno below is what normally drains the queue; this is the fallback for running without one (Heroku Scheduler, or an external pinger every minute). The route answers 404 while this is unset, so an unused one exposes nothing.",
       "generator": "secret",

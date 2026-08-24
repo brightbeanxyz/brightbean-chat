@@ -49,9 +49,15 @@ x-app-environment: &app-environment
 # service cannot quietly miss one.
 x-app-service: &app-service
   build: .
-  # A tag rather than a floating name: `IMAGE_TAG=v1.4.0 docker compose ... up -d`
-  # is the upgrade story in docs/self-hosting.md.
-  image: brightbean-chat:${IMAGE_TAG:-latest}
+  # The name given to the image this file BUILDS. It is not pullable as it
+  # stands: no workflow in this repository pushes an image anywhere, so
+  # `brightbean-chat:latest` resolves to a local build and nothing else. The
+  # upgrade path in docs/self-hosting.md is therefore git-pull-and-build.
+  #
+  # IMAGE_REPOSITORY exists for a fork that does publish one — set it to a
+  # qualified name like ghcr.io/you/brightbean-chat and `pull` starts working,
+  # with IMAGE_TAG selecting the release.
+  image: ${IMAGE_REPOSITORY:-brightbean-chat}:${IMAGE_TAG:-latest}
   environment: *app-environment
   env_file:
     - path: .env

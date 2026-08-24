@@ -14,6 +14,7 @@ actually starts, that the headers actually arrive, that the database is actually
 unreachable — belong to `scripts/smoke.sh` and the `build` job, not here.
 """
 
+import ipaddress
 import json
 import re
 from pathlib import Path
@@ -56,6 +57,28 @@ REQUIRED_VARIABLES = (
 #: The two values that decrypt a database dump. Both must be generated once and
 #: shared by every process, which is what the PaaS blueprints are checked for.
 CRYPTO_SECRETS = ("SECRET_KEY", "ENCRYPTION_KEY_SALT")
+
+#: Settings a split web/worker deployment is broken without, and which the
+#: compose stack gets for free — so only the PaaS blueprints are checked.
+#:
+#: ``TRUSTED_PROXIES``: apps.common.net.get_client_ip returns REMOTE_ADDR unless
+#: the peer is trusted, and on a PaaS the peer is always the platform router. Left
+#: unset, auth rate limiting, the API auth-failure throttle and the webhook
+#: signature ban all attribute every request to that one address.
+#:
+#: ``STORAGE_BACKEND`` + ``S3_*``: a CSV contact import is written by the web
+#: process (apps/contacts/views.py) and opened by the worker
+#: (apps/contacts/imports.py). Compose gives both the media_data volume; separate
+#: PaaS processes share no filesystem at all.
+SPLIT_PROCESS_SETTINGS = (
+    "TRUSTED_PROXIES",
+    "STORAGE_BACKEND",
+    "S3_BUCKET_NAME",
+    "S3_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_ENDPOINT_URL",
+    "S3_REGION_NAME",
+)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -238,6 +261,19 @@ def test_app_containers_hold_no_capabilities(compose: dict[str, Any], service: s
     assert compose["services"][service]["cap_drop"] == ["ALL"]
 
 
+def test_the_worker_shares_the_media_volume_with_the_app(compose: dict[str, Any]) -> None:
+    """This is what makes STORAGE_BACKEND=local correct on the compose stack.
+
+    A CSV contact import is written by the web process and opened by the worker.
+    Drop this mount and queued imports fail with a missing file, while every
+    other thing the worker does keeps working — so it reads as an import bug
+    rather than as a deployment one.
+    """
+    for service in ("app", "worker"):
+        mounts = compose["services"][service]["volumes"]
+        assert any(str(mount).endswith(":/app/media") for mount in mounts), service
+
+
 def test_the_external_tls_override_never_publishes_the_app_publicly() -> None:
     """Loopback only.
 
@@ -390,6 +426,25 @@ def test_the_node_buildpack_runs_before_the_python_one(app_json: dict[str, Any])
     assert urls.index("heroku/nodejs") < urls.index("heroku/python")
 
 
+@pytest.mark.parametrize("variable", SPLIT_PROCESS_SETTINGS)
+def test_heroku_configures_the_split_process_settings(app_json: dict[str, Any], variable: str) -> None:
+    """A web dyno and a worker dyno share a database and nothing else."""
+    assert variable in app_json["env"]
+
+
+def test_heroku_trusts_its_router_for_client_addresses(app_json: dict[str, Any]) -> None:
+    """Set, and set to private ranges only.
+
+    A public client can never present a private REMOTE_ADDR, so trusting those
+    peers cannot be abused from the internet — whereas a public range here would
+    let a caller forge X-Forwarded-For and evade the limiters entirely.
+    """
+    value = app_json["env"]["TRUSTED_PROXIES"]["value"]
+    assert value
+    for entry in value.split(","):
+        assert ipaddress.ip_network(entry.strip(), strict=False).is_private, entry
+
+
 # ---------------------------------------------------------------------------
 # render.yaml
 # ---------------------------------------------------------------------------
@@ -451,6 +506,30 @@ def test_the_render_database_is_not_open_to_the_internet(render: dict[str, Any])
     """
     for database in render["databases"]:
         assert database["ipAllowList"] == []
+
+
+@pytest.mark.parametrize("variable", SPLIT_PROCESS_SETTINGS)
+def test_render_configures_the_split_process_settings_on_both(render: dict[str, Any], variable: str) -> None:
+    """Both services, not just the web one.
+
+    The worker is the process that opens a contact-import file and the one whose
+    outbound deliveries are rate limited, so a setting present only on the web
+    service fixes the half of the problem that was easiest to see.
+    """
+    for service in render["services"]:
+        keys = [var.get("key") for var in service["envVars"] if "key" in var]
+        assert variable in keys, f"{service['name']} is missing {variable}"
+
+
+def test_render_trusts_its_router_for_client_addresses(render: dict[str, Any]) -> None:
+    """Private ranges only, and identical on both services."""
+    values = set()
+    for service in render["services"]:
+        value = next(var["value"] for var in service["envVars"] if var.get("key") == "TRUSTED_PROXIES")
+        values.add(value)
+        for entry in value.split(","):
+            assert ipaddress.ip_network(entry.strip(), strict=False).is_private, entry
+    assert len(values) == 1, f"the services disagree about TRUSTED_PROXIES: {values}"
 
 
 # ---------------------------------------------------------------------------

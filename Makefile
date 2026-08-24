@@ -126,8 +126,12 @@ docker-logs: ## Tail logs from all Docker services
 # walkthrough. These targets exist so the commands in that guide are one name
 # each rather than a flag-laden line to retype.
 
+# python3, not python: docs/self-hosting.md asks for Docker and a domain and
+# nothing else, and a host that meets exactly those prerequisites usually has
+# no `python` on PATH at all. This is the first command that guide runs, so it
+# failing with "command not found" is the worst possible first impression.
 prod-secrets: ## Generate the required secrets for a production .env
-	@python -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(50)); print('ENCRYPTION_KEY_SALT=' + secrets.token_urlsafe(50)); print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(24)); print('TICK_TOKEN=' + secrets.token_urlsafe(32))"
+	@python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(50)); print('ENCRYPTION_KEY_SALT=' + secrets.token_urlsafe(50)); print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(24)); print('TICK_TOKEN=' + secrets.token_urlsafe(32))"
 	@echo ""
 	@echo "Paste these into .env (start from deploy/env.prod.example)."
 	@echo "SECRET_KEY and ENCRYPTION_KEY_SALT decrypt your stored platform"

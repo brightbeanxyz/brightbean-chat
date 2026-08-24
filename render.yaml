@@ -71,6 +71,38 @@ services:
       # platform's dashboard.
       - key: APP_URL
         sync: false
+      # Which peers may speak for a client via X-Forwarded-For. Render's router
+      # is what connects to your service, so without this every request is
+      # attributed to the router and all of your users share one bucket for auth
+      # rate limiting, API throttling and the webhook signature ban — one caller
+      # could keep login and password reset throttled for everybody. These are
+      # the private ranges a platform router lives in; a client on the public
+      # internet can never present one of them.
+      - key: TRUSTED_PROXIES
+        value: 127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # USE 's3' HERE. A Render service filesystem is ephemeral and cannot be
+      # shared between services, so with 'local' the web service and the worker
+      # cannot see each other's files: a queued CSV contact import is uploaded by
+      # one and opened by the other, and uploaded media disappears on every
+      # deploy. The S3_* values below are what 's3' needs.
+      #
+      # They are `sync: false` on BOTH services and must be given the SAME
+      # answers — Render does not allow `sync: false` inside an env group, so
+      # unlike the crypto secrets above these cannot be shared declaratively.
+      # docs/self-hosting.md explains moving them into a dashboard env group
+      # afterwards.
+      - key: STORAGE_BACKEND
+        value: local
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_REGION_NAME
+        sync: false
 
   - type: worker
     name: brightbean-chat-worker
@@ -95,4 +127,36 @@ services:
       - key: ALLOWED_HOSTS
         sync: false
       - key: APP_URL
+        sync: false
+      # Which peers may speak for a client via X-Forwarded-For. Render's router
+      # is what connects to your service, so without this every request is
+      # attributed to the router and all of your users share one bucket for auth
+      # rate limiting, API throttling and the webhook signature ban — one caller
+      # could keep login and password reset throttled for everybody. These are
+      # the private ranges a platform router lives in; a client on the public
+      # internet can never present one of them.
+      - key: TRUSTED_PROXIES
+        value: 127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # USE 's3' HERE. A Render service filesystem is ephemeral and cannot be
+      # shared between services, so with 'local' the web service and the worker
+      # cannot see each other's files: a queued CSV contact import is uploaded by
+      # one and opened by the other, and uploaded media disappears on every
+      # deploy. The S3_* values below are what 's3' needs.
+      #
+      # They are `sync: false` on BOTH services and must be given the SAME
+      # answers — Render does not allow `sync: false` inside an env group, so
+      # unlike the crypto secrets above these cannot be shared declaratively.
+      # docs/self-hosting.md explains moving them into a dashboard env group
+      # afterwards.
+      - key: STORAGE_BACKEND
+        value: local
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_REGION_NAME
         sync: false

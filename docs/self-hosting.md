@@ -21,6 +21,7 @@ internet — and this guide will not ask you to relax any of that.
 - [Connecting your first channel](#connecting-your-first-channel)
 - [Verifying the deployment](#verifying-the-deployment)
 - [TLS termination](#tls-termination)
+- [Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate)
 - [Heroku](#heroku)
 - [Render](#render)
 - [Railway](#railway)
@@ -306,6 +307,54 @@ script — it checks whatever is actually in front.
 
 ---
 
+## Storage, when web and worker are separate
+
+The two processes share more than a database. A CSV contact import is
+**uploaded by the web process and opened by the worker**
+(`apps/contacts/views.py` writes the file, `apps/contacts/imports.py` reads it),
+and every media-library upload is served back later by whichever process gets
+the request.
+
+With `STORAGE_BACKEND=local` that only works if both processes see the same
+filesystem:
+
+| Target | Do they? | What to do |
+|---|---|---|
+| Docker Compose | **Yes.** `app` and `worker` both mount the `media_data` volume. | Nothing. `local` is fine. |
+| Heroku | **No.** Each dyno has its own ephemeral filesystem, wiped on every restart. | Set `STORAGE_BACKEND=s3` and the `S3_*` variables. |
+| Render | **No.** Service filesystems are ephemeral and cannot be shared between services. | Set `STORAGE_BACKEND=s3` and the `S3_*` variables. |
+| Railway | **No.** A volume attaches to one service. | Set `STORAGE_BACKEND=s3` and the `S3_*` variables. |
+
+Left on `local`, a PaaS deployment looks healthy and fails in two specific ways:
+a queued contact import errors because the worker cannot find the file the web
+process just wrote, and uploaded media 404s after the next restart. Neither
+shows up until someone tries it.
+
+The `S3_*` names are generic on purpose — AWS S3, Cloudflare R2, Backblaze B2
+and MinIO all work with the same five variables:
+
+```dotenv
+STORAGE_BACKEND=s3
+S3_BUCKET_NAME=brightbean-chat
+S3_ACCESS_KEY_ID=…
+S3_SECRET_ACCESS_KEY=…
+S3_ENDPOINT_URL=            # blank for AWS; set it for R2, B2 or MinIO
+S3_REGION_NAME=auto
+```
+
+**Every process needs identical values.** On Heroku that is automatic — config
+vars belong to the app, not the dyno. On Render they are prompted per service,
+because Render does not allow `sync: false` inside an environment group; enter
+the same answers on both, or move them into a shared environment group from the
+dashboard afterwards. On Railway, use a shared variable rather than typing them
+into each service.
+
+Keep the bucket private. Delivery URLs are signed, and
+[`SECURITY-BASELINE.md`](SECURITY-BASELINE.md) §9 is why — a public bucket
+hands out every uploaded file to anyone who guesses a key.
+
+---
+
 ## Heroku
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/brightbeanxyz/brightbean-chat)
@@ -322,6 +371,18 @@ You are prompted for two values, because neither can be guessed:
 
 Update both when you attach a custom domain, or Django will answer 400 to
 every request on it.
+
+`TRUSTED_PROXIES` is pre-filled with the private ranges Heroku's router lives
+in. Leave it: without it every request is attributed to the router rather than
+to the caller, and auth rate limiting, API throttling and the webhook signature
+ban all collapse into one shared bucket — one caller could keep login and
+password reset throttled for everybody.
+
+**Set `STORAGE_BACKEND=s3` and the `S3_*` variables**, or contact imports will
+fail and uploaded media will vanish on the next restart — see
+[Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate).
+The prompt defaults to `local` so the button completes without a bucket; it is
+not a working production setting on Heroku.
 
 **Use Basic dynos or larger, both of them.** Eco dynos sleep after 30 minutes of
 inactivity. A sleeping web dyno drops the webhook that would have woken it, and
@@ -351,6 +412,17 @@ connection.
 You are prompted for `ALLOWED_HOSTS` and `APP_URL` at deploy time — use
 `<your-service>.onrender.com` until you attach a domain.
 
+`TRUSTED_PROXIES` is set for you to the private ranges Render's router lives in,
+for the same reason it is on Heroku: without it every request is attributed to
+the router and the rate limiters stop telling callers apart.
+
+**Set `STORAGE_BACKEND=s3` and the `S3_*` variables on both services**, with the
+same answers on each — Render prompts per service because `sync: false` is not
+allowed inside an environment group, so this is the one thing the blueprint
+cannot keep in step for you. Move them into a shared environment group from the
+dashboard once you have deployed. See
+[Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate).
+
 ## Railway
 
 Railway's config-as-code applies to one service at a time, so this is a
@@ -372,6 +444,18 @@ publish a template from your project and link it here.)
    generating each one twice, for the same reason Render uses an env group.
    Also set `DJANGO_SETTINGS_MODULE=config.settings.production`,
    `DJANGO_ENV_FILE=/nonexistent`, `ALLOWED_HOSTS` and `APP_URL`.
+
+   Two more that Railway's config files cannot carry, and that a deployment is
+   quietly broken without:
+
+   - `TRUSTED_PROXIES=127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, so
+     requests are attributed to the caller rather than to Railway's router. Without
+     it auth rate limiting, API throttling and the webhook signature ban all share
+     one bucket across every user.
+   - `STORAGE_BACKEND=s3` and the `S3_*` variables, as shared variables so both
+     services agree. A Railway volume attaches to one service, so the worker
+     cannot read a contact-import file the web service wrote — see
+     [Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate).
 
 Generate a domain for the web service, then put that hostname in `ALLOWED_HOSTS`
 and its `https://` form in `APP_URL`.
@@ -456,7 +540,7 @@ deployment actually decides:
 | `EXTERNAL_REQUEST_ALLOW_PRIVATE` | Lets the External Request node reach private address ranges, for an on-prem deployment calling services on its own network. It relaxes *only* the private-range rule — loopback, cloud metadata, multicast and this deployment's own host stay denied ([`SECURITY-BASELINE.md`](SECURITY-BASELINE.md) §6). |
 | `DEFAULT_SEND_RATE_OVERRIDES` | JSON per-platform send rates, when your app's limits differ from the published defaults. An unknown platform or a non-positive value fails a startup check rather than being ignored. |
 | `EMAIL_HOST` and friends | SMTP for password reset and address verification. |
-| `STORAGE_BACKEND` / `S3_*` | `local` (a volume) or `s3` (S3, R2, MinIO). |
+| `STORAGE_BACKEND` / `S3_*` | `local` (a shared volume) or `s3` (S3, R2, B2, MinIO). `local` requires the web and worker processes to share a filesystem, which is true of the compose stack and of no PaaS — see [Storage](#storage-when-web-and-worker-are-separate). |
 | `SENTRY_DSN` | Optional error reporting; empty disables it. |
 
 ---
@@ -469,17 +553,27 @@ Two things need backing up, and **they must not live in the same place**.
 
 ```bash
 docker compose -f docker-compose.prod.yml exec -T postgres \
-  pg_dump -U brightbean -Fc brightbean_chat > backup-$(date +%F).dump
+  sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > backup-$(date +%F).dump
 ```
+
+The user and database names are read from the container's own environment
+rather than written out here, so this keeps working if you set `POSTGRES_USER`
+or `POSTGRES_DB` in `.env` — hardcoding the defaults would give you a backup of
+the wrong database, or no backup at all, and you would find out at restore time.
 
 Restore into a fresh stack:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d postgres
+docker compose -f docker-compose.prod.yml up -d --wait postgres
 docker compose -f docker-compose.prod.yml exec -T postgres \
-  pg_restore -U brightbean -d brightbean_chat --clean --if-exists < backup-2026-01-31.dump
+  sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < backup-2026-01-31.dump
 docker compose -f docker-compose.prod.yml up -d
 ```
+
+`--wait` is not optional on the first line. Without it `up -d` returns as soon
+as the container has *started*, and on a fresh volume Postgres is still
+initialising — so `pg_restore` runs against a server that is not accepting
+connections yet and fails for a reason that has nothing to do with your dump.
 
 ### The keys
 
@@ -518,8 +612,14 @@ docker compose -f docker-compose.prod.yml run --rm migrate
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-Or, running a published tag rather than building from source, set `IMAGE_TAG` in
-`.env` and:
+**There is no published image to pull.** This project builds its image from
+source and does not push one to a registry, so `IMAGE_TAG` names the image this
+file builds locally — `docker compose pull` has nothing to fetch. Building on
+the host is the supported upgrade, and it is what the commands above do.
+
+If you run a fork that *does* publish an image, point `IMAGE_REPOSITORY` at it
+in `.env` (`ghcr.io/you/brightbean-chat`, say) and `IMAGE_TAG` at the release;
+then `pull` works and you can skip the build:
 
 ```bash
 docker compose -f docker-compose.prod.yml pull
@@ -561,6 +661,9 @@ job and CI enforces the automatable ones. These are yours:
       pasted the same key into staging.
 - [ ] **Back up the keys separately from the dump**, and treat the dump itself as
       a credential store ([Backups](#backups)).
+- [ ] **`TRUSTED_PROXIES` names the thing in front and nothing else.** Empty
+      means the rate limiters cannot tell callers apart behind a proxy; too wide
+      means a caller can forge `X-Forwarded-For` and evade them entirely.
 - [ ] **Every webhook URL you register is `https://`.** Signatures protect
       integrity, not confidentiality; message bodies travel in the request.
 - [ ] **Keep the image current.** `git pull && docker compose … build` picks up
