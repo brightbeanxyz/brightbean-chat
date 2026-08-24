@@ -52,7 +52,7 @@ _DISPATCH_UID = "apps.api.events.on_catalog_event"
 #: UI offers a stable set of checkboxes that does not change shape depending on
 #: which apps happen to be installed.
 #:
-#: SPEC §5's ``outbound_webhook.events`` column names five of these six. The two
+#: SPEC §5's ``outbound_webhook.events`` column names five of these seven. The two
 #: sequence events are L6-A's (issue #22) and were added here with it: the
 #: Layer-6 gate requires them to reach a subscriber, and contract 7 lists them
 #: in the catalog, but :func:`on_catalog_event` drops anything outside this
