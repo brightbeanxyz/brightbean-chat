@@ -1,0 +1,47 @@
+# Terminate TLS somewhere other than Caddy.
+#
+#   docker compose -f docker-compose.prod.yml \
+#                  -f deploy/docker-compose.external-tls.yml up -d
+#
+# For a host that already runs nginx, Traefik, HAProxy or a cloud load balancer.
+# Caddy is excluded by a profile nothing enables, and the app is published on
+# loopback only — never on 0.0.0.0, which would put an app that believes it is
+# behind TLS directly on the internet over plain HTTP.
+#
+# APP_DOMAIN and ACME_EMAIL are still required: compose interpolates the whole
+# base file before it decides what to start, and APP_DOMAIN is what
+# ALLOWED_HOSTS and APP_URL are built from either way. ACME_EMAIL is unused in
+# this mode; set it to any valid address.
+#
+# YOUR PROXY NOW OWNS FOUR THINGS Caddy was doing (SECURITY-BASELINE §8):
+#
+#   1. `X-Forwarded-Proto: https` on every proxied request. Without it Django
+#      believes the request arrived over plain HTTP and answers the SSL redirect
+#      with a 301 to itself — an infinite loop through your proxy.
+#   2. The original `Host` header, unmodified. It must match APP_DOMAIN or
+#      Django answers 400 (ALLOWED_HOSTS), /healthz included.
+#   3. The four security headers: Strict-Transport-Security, X-Content-Type-Options,
+#      X-Frame-Options and Referrer-Policy. config/settings/production.py sets all
+#      four itself, so a proxy that merely passes responses through is already
+#      correct — but one that strips or rewrites headers must put them back.
+#      `scripts/smoke.sh` checks them against whatever is actually in front.
+#   4. Redirecting plain HTTP to HTTPS at the edge, before the request reaches
+#      the app at all.
+#
+# Set TRUSTED_PROXIES in .env to your proxy's address or CIDR, or the auth rate
+# limiter cannot tell callers apart. It defaults to Docker's bridge range, which
+# is correct only while Caddy is the thing in front.
+
+services:
+  app:
+    # Loopback only. The proxy runs on this host (or reaches it over a private
+    # network you have already secured); nothing else may.
+    ports:
+      - "127.0.0.1:${APP_BIND_PORT:-8000}:8000"
+
+  caddy:
+    # A profile nothing turns on, which is how a compose override removes a
+    # service: `profiles` is merged like any other field, and a service whose
+    # profile is not active is never created.
+    profiles:
+      - caddy-not-used

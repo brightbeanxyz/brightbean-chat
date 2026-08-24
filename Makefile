@@ -1,5 +1,6 @@
 .PHONY: help setup lock frontend schema css-watch js-watch server worker migrate migrations test test-cov lint format typecheck audit \
-        docker-up docker-down docker-build docker-logs
+        docker-up docker-down docker-build docker-logs \
+        prod-secrets prod-up prod-down prod-logs prod-migrate smoke
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -118,3 +119,36 @@ docker-build: ## Rebuild Docker images
 
 docker-logs: ## Tail logs from all Docker services
 	docker compose logs -f
+
+# Production (issue #28)
+#
+# The reference stack is docker-compose.prod.yml; docs/self-hosting.md is the
+# walkthrough. These targets exist so the commands in that guide are one name
+# each rather than a flag-laden line to retype.
+
+# python3, not python: docs/self-hosting.md asks for Docker and a domain and
+# nothing else, and a host that meets exactly those prerequisites usually has
+# no `python` on PATH at all. This is the first command that guide runs, so it
+# failing with "command not found" is the worst possible first impression.
+prod-secrets: ## Generate the required secrets for a production .env
+	@python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(50)); print('ENCRYPTION_KEY_SALT=' + secrets.token_urlsafe(50)); print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(24)); print('TICK_TOKEN=' + secrets.token_urlsafe(32))"
+	@echo ""
+	@echo "Paste these into .env (start from deploy/env.prod.example)."
+	@echo "SECRET_KEY and ENCRYPTION_KEY_SALT decrypt your stored platform"
+	@echo "credentials: back them up somewhere other than the database."
+
+prod-up: ## Start the production stack (reads .env — see deploy/env.prod.example)
+	docker compose -f docker-compose.prod.yml up -d
+
+prod-down: ## Stop the production stack (volumes are kept)
+	docker compose -f docker-compose.prod.yml down
+
+prod-logs: ## Tail logs from the production stack
+	docker compose -f docker-compose.prod.yml logs -f
+
+prod-migrate: ## Run migrations against the production stack (the upgrade step)
+	docker compose -f docker-compose.prod.yml run --rm migrate
+
+smoke: ## Check a deployment is healthy and hardened (make smoke URL=https://chat.example.com)
+	@test -n "$(URL)" || { echo "usage: make smoke URL=https://chat.example.com [ARGS='--insecure']"; exit 2; }
+	scripts/smoke.sh $(URL) $(ARGS)
