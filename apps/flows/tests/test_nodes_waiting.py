@@ -71,6 +71,21 @@ def _sent(facade) -> object:
     return calls[-1]["outbound"]
 
 
+def _click_target(url: str) -> str:
+    """The destination inside a ``/c/`` click-tracking URL (issue #26).
+
+    ``sending.deliver`` wraps every URL button before handing the message to the
+    facade, so a test asserting on a button's destination has to unwrap it. The
+    token is signed rather than encrypted, so reading it back needs no fixture —
+    and going through the real reader is what proves the round trip.
+    """
+    from urllib.parse import urlsplit
+
+    from apps.analytics.tracking import click_target_from_token
+
+    return click_target_from_token(urlsplit(url).path.split("/")[2]).url
+
+
 def _resume_action(workspace) -> ScheduledAction:
     """The RESUME_EXECUTION row a parked execution just wrote."""
     return ScheduledAction.objects.for_workspace(workspace).get(type=ActionType.RESUME_EXECUTION)
@@ -129,7 +144,11 @@ class TestSendMessage:
 
         outbound = _sent(facade)
         assert [button.label for button in outbound.buttons] == ["Docs for Ada", "Talk"]
-        assert outbound.buttons[0].url == "https://e.test/Ada"
+        # The URL is a click-tracking wrapper now (issue #26), and reading the
+        # destination back out of it is the stronger assertion: the renderer ran
+        # *before* the wrapper rather than instead of it, so the signed payload
+        # carries the substituted value.
+        assert _click_target(outbound.buttons[0].url) == "https://e.test/Ada"
         assert [reply.label for reply in outbound.quick_replies] == ["Later"]
         assert execution.status == ExecutionStatus.WAITING_REPLY
 
@@ -331,7 +350,7 @@ class TestSendMessage:
         card = _sent(facade).blocks[0].card
         assert card.title == "Hi Ada"
         assert card.subtitle == "Our plans"
-        assert card.buttons[0].url == "https://example.test/"
+        assert _click_target(card.buttons[0].url) == "https://example.test/"
 
     def test_a_gallery_renders_every_card(self, tenancy, facade):
         connection = connection_for(tenancy.workspace)

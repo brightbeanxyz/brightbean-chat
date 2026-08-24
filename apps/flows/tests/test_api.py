@@ -206,12 +206,72 @@ class TestPublishEndpoint:
 
 
 class TestStats:
-    def test_it_is_a_documented_zeros_stub(self, tenancy, client_for, flow):
+    """The shape L3-C's overlay was written against, now with L7-A behind it.
+
+    The counters themselves are apps/analytics' subject; what is asserted here is
+    the *contract* — the four keys, the ``available`` flag and the node map —
+    because that is what the React island reads and what issue #26 promised not
+    to change while filling.
+    """
+
+    def test_it_reports_zeros_and_available_for_a_flow_that_never_ran(self, tenancy, client_for, flow):
         payload = client_for(tenancy.owner).get(stats_url(tenancy, flow)).json()
 
-        assert payload["available"] is False
+        # `available` says the analytics app is installed, not that this flow has
+        # numbers. A flow with no history is an empty result, and the builder
+        # renders that differently from "there is nothing behind this endpoint".
+        assert payload["available"] is True
+        assert payload["flow"] == {"id": str(flow.pk)}
         assert payload["nodes"] == {}
         assert payload["totals"] == {"sent": 0, "delivered": 0, "failed": 0, "clicked": 0}
+
+    def test_it_reports_per_node_counters_and_totals(self, tenancy, client_for, flow):
+        from apps.analytics.counters import bump
+
+        bump(workspace_id=tenancy.workspace.pk, flow_id=flow.pk, node_id="n1", sent=3, delivered=2, clicked=1)
+        bump(workspace_id=tenancy.workspace.pk, flow_id=flow.pk, node_id="n2", sent=1, failed=1)
+
+        payload = client_for(tenancy.owner).get(stats_url(tenancy, flow)).json()
+
+        assert payload["available"] is True
+        assert payload["nodes"]["n1"] == {"sent": 3, "delivered": 2, "failed": 0, "clicked": 1}
+        assert payload["nodes"]["n2"] == {"sent": 1, "delivered": 0, "failed": 1, "clicked": 0}
+        assert payload["totals"] == {"sent": 4, "delivered": 2, "failed": 1, "clicked": 1}
+
+    def test_days_narrows_the_range_and_omitting_it_means_all_time(self, tenancy, client_for, flow):
+        import datetime
+
+        from django.utils import timezone
+
+        from apps.analytics.counters import bump
+
+        today = timezone.now().date()
+        bump(workspace_id=tenancy.workspace.pk, flow_id=flow.pk, node_id="n1", sent=1)
+        bump(
+            workspace_id=tenancy.workspace.pk,
+            flow_id=flow.pk,
+            node_id="n1",
+            day=today - datetime.timedelta(days=40),
+            sent=5,
+        )
+        client = client_for(tenancy.owner)
+
+        assert client.get(stats_url(tenancy, flow)).json()["totals"]["sent"] == 6
+        assert client.get(f"{stats_url(tenancy, flow)}?days=7").json()["totals"]["sent"] == 1
+        # Unparseable falls back to all time rather than to an error: the overlay
+        # sends no range at all, and a 400 on a stray query string would break it.
+        assert client.get(f"{stats_url(tenancy, flow)}?days=nonsense").json()["totals"]["sent"] == 6
+
+    def test_another_workspaces_counters_are_not_visible(self, tenancy, other_tenancy, client_for, flow):
+        from apps.analytics.counters import bump
+        from apps.flows.services import create_flow as make_flow
+
+        theirs = make_flow(workspace=other_tenancy.workspace, name="Rival onboarding")
+        bump(workspace_id=other_tenancy.workspace.pk, flow_id=theirs.pk, node_id="n1", sent=9)
+
+        payload = client_for(tenancy.owner).get(stats_url(tenancy, flow)).json()
+
+        assert payload["totals"]["sent"] == 0
 
 
 class TestSchemaEndpoint:

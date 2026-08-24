@@ -245,6 +245,9 @@ class TestNavStructure:
             "inbox",
             "sequences",
             "broadcasts",
+            # Issue #26. The L1-B brief predates it; SPEC §18's pages needed a
+            # home and the layer-7 table gives the app one.
+            "analytics",
             "media",
             "notifications",
         }

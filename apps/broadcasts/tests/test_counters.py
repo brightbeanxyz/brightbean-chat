@@ -93,6 +93,34 @@ class TestCounters:
         assert counts.failed == 1
         assert counts.queued == counts.sent + counts.failed + counts.cancelled + counts.skipped
 
+    def test_clicks_come_from_the_node_counter_and_not_from_this_app(
+        self, tenancy, client_for, make_contacts, make_broadcast, connection, adapter_for
+    ):
+        """Issue #26's tile. A broadcast's content is a private one-node
+        mini-flow, so its clicks are that node's row in ``node_stat_daily`` — the
+        same counter the flow builder's overlay reads. This app keeps no click
+        count of its own, exactly as it keeps no delivery-receipt path.
+        """
+        from apps.analytics.counters import record_click
+
+        make_contacts(2, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        with adapter_for(connection.platform):
+            _run(tenancy.workspace, broadcast)
+
+        url = _url("broadcasts:detail", tenancy, broadcast)
+        client = client_for(tenancy.owner)
+        assert client.get(url).context["clicked"] == 0
+
+        record_click(
+            workspace_id=tenancy.workspace.pk,
+            flow_id=broadcast.flow_id,
+            node_id=services.CONTENT_NODE_ID,
+        )
+
+        assert client.get(url).context["clicked"] == 1
+
     def test_stats_are_written_back_only_when_they_change(
         self, tenancy, make_contacts, make_broadcast, connection, adapter_for
     ):

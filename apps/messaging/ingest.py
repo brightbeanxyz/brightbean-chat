@@ -131,6 +131,7 @@ from django.utils import timezone
 from apps.channels import ingest as channels_ingest
 from apps.channels.events import EventType, NormalizedEvent
 from apps.channels.policy import policy_for
+from apps.messaging import analytics
 from apps.messaging.events import EVENT_MESSAGE_RECEIVED, emit
 from apps.messaging.identities import bounded_address, bounded_key, record_consent, resolve_identity
 from apps.messaging.models import (
@@ -151,6 +152,7 @@ __all__ = [
     "ROUTING_PROCESSOR",
     "apply_opt_in",
     "apply_opt_out",
+    "apply_receipt",
     "persist_events",
     "register_processors",
 ]
@@ -792,20 +794,41 @@ def _apply_delivery_status(connection: Any, event: NormalizedEvent) -> None:
         logger.debug("delivery_status for unknown provider message id on connection %s", connection.pk)
         return
 
-    new_status, error = _next_status(message.status, status, _clean(extra.get("error"), 200))
+    apply_receipt(message, status, _clean(extra.get("error"), 200))
+
+
+def apply_receipt(message: Message, incoming: str, error: str = "") -> bool:
+    """Advance ``message`` along the delivery ladder. Returns whether it moved.
+
+    Public because a receipt does not only arrive from a webhook: issue #26's
+    ``/o/`` open pixel is a mail client reporting a read, and it must reach the
+    same ladder rather than assigning ``message.status`` a second way. The rules
+    live in :func:`_next_status` and are enforced here for every caller — a late
+    "sent" cannot un-read a message, ``failed`` cannot be written over a message
+    that already arrived, and a delivery receipt beats an earlier failure.
+    """
+    new_status, resolved_error = _next_status(message.status, incoming, error)
     if new_status is None:
-        return
+        return False
 
     # Compare-and-set on the status we read. Two receipts for one message can
     # arrive in the same batch or on two web workers, and without the predicate
     # the later UPDATE would clobber the earlier one whatever the ladder says.
+    previous = message.status
     updated = (
-        Message.objects.for_workspace(connection.workspace_id)
-        .filter(pk=message.pk, status=message.status)
-        .update(status=new_status, error=error, updated_at=timezone.now())
+        Message.objects.for_workspace(message.workspace_id)
+        .filter(pk=message.pk, status=previous)
+        .update(status=new_status, error=resolved_error, updated_at=timezone.now())
     )
     if not updated:
         logger.debug("A concurrent receipt already advanced message %s", message.pk)
+        return False
+    message.status = new_status
+    message.error = resolved_error
+    # Only the winner counts, and it counts the rung it crossed rather than the
+    # rung it landed on — see apps.analytics.counters.deltas_for (issue #26).
+    analytics.record_status(message, previous=previous, current=new_status)
+    return True
 
 
 def _claims_private_reply(event: NormalizedEvent) -> bool:
@@ -872,15 +895,29 @@ def _next_status(current: str, incoming: str, error: str) -> tuple[str | None, s
     3. **A delivery receipt beats ``failed``.** Arriving is stronger evidence
        than a send-time error, and PR 2's retry path must not re-send something
        that actually landed.
+    4. **A message that has stepped off the ladder never rejoins it.**
+       ``deleted`` is not a rung (:data:`DELIVERY_PROGRESS` omits it on
+       purpose), so a receipt for a redacted message moves nothing.
+
+    Rule 4 is a lookup, not a policy, and it used to be neither: ``current`` was
+    subscripted directly, so a receipt arriving for a ``deleted`` message raised
+    ``KeyError`` from a function whose whole job is to be a pure, total decision
+    table. Inside ``persist_events`` that was swallowed by the batch's broad
+    ``except``; :func:`apply_receipt`'s other caller — issue #26's ``/o/`` open
+    pixel — has no such net, so the same row turned an unauthenticated request
+    into a 500. Answering "it does not move" is what the deletion path already
+    documents as the intent.
     """
     if incoming == MessageStatus.FAILED:
         if DELIVERY_PROGRESS.get(current, 99) > DELIVERY_PROGRESS[MessageStatus.SENT]:
-            return None, ""  # rule 2
+            return None, ""  # rule 2 — and rule 4, via the default
         return (None, "") if current == MessageStatus.FAILED else (incoming, error or "provider_failed")
 
     if current == MessageStatus.FAILED:
         return incoming, ""  # rule 3 — and the failure code goes with it
 
+    if current not in DELIVERY_PROGRESS:
+        return None, ""  # rule 4
     if DELIVERY_PROGRESS[incoming] <= DELIVERY_PROGRESS[current]:
         return None, ""  # rule 1
     return incoming, ""
