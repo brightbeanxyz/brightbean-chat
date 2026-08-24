@@ -2561,3 +2561,217 @@ span.flatpickr-weekday {
   border-color: var(--primary);
   color: var(--primary);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   LAYER 6 — BROADCASTS (issue #23)
+   The composer's step rail, the message builder's block rows, the
+   audience preview and the detail page's live counters.
+
+   Unlayered, like every component class above, and therefore beating
+   Tailwind's @layer utilities regardless of specificity or source
+   order. So each class below sets only the properties it owns.
+
+   Two to watch, for the reason the CRM section gives:
+
+     .bc-step sets `display: flex`, so `class="bc-step hidden"` renders
+       a visible step. Toggle a wrapper instead.
+     .bc-tile sets padding and border-radius; vary them with a modifier
+       here rather than a utility at the call site.
+
+   .bc-bar-fill is width-animated from an inline `style="width: N%"`,
+   which is the one place an inline style is right: the value is a
+   number computed per request and there is no utility for "37%".
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Composer step rail ─────────────────────────────────────── */
+
+.bc-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-bottom: 1rem;
+}
+.bc-step {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.bc-step:disabled { opacity: 0.55; cursor: not-allowed; }
+.bc-step-current {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+.bc-step-done { color: var(--text-primary); }
+.bc-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+.bc-step-current .bc-step-index { background: var(--primary); color: var(--text-inverse); }
+
+/* ── Panels shared by every step ────────────────────────────── */
+
+.bc-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  padding: 1rem;
+}
+.bc-panel + .bc-panel { margin-top: 0.75rem; }
+.bc-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.bc-panel-title { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
+.bc-hint { font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.5; }
+.bc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+/* ── Message builder ────────────────────────────────────────── */
+
+.bc-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: 0.625rem;
+}
+.bc-block + .bc-block { margin-top: 0.5rem; }
+.bc-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+}
+.bc-block-kind {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.bc-remove {
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.bc-remove:hover { color: var(--error-700); }
+.bc-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.bc-row + .bc-row { margin-top: 0.375rem; }
+
+/* ── Audience preview ───────────────────────────────────────── */
+
+.bc-preview {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  padding: 0.75rem;
+}
+.bc-preview-figure {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.bc-reason {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.3rem 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.bc-reason-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-primary); }
+.bc-reason-names { font-size: 0.6875rem; color: var(--text-ghost); }
+
+/* ── Live counters ──────────────────────────────────────────── */
+
+.bc-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.5rem;
+}
+.bc-tile {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: 0.625rem 0.75rem;
+}
+.bc-tile-figure {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.bc-tile-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.bc-bar {
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.bc-bar-fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width var(--dur-base) ease;
+}
+
+/* SPEC §13's five statuses. Named for the stored value so a template can
+   write `status-pill-{{ broadcast.status }}` and never branch. */
+.status-pill-draft     { background: var(--neutral-100); color: var(--text-secondary); }
+.status-pill-scheduled { background: var(--warning-50);  color: var(--warning-700); }
+.status-pill-sending   { background: var(--brand-50);    color: var(--primary); }
+.status-pill-sent      { background: var(--success-50);  color: var(--success-700); }
+.status-pill-cancelled { background: var(--error-50);    color: var(--error-700); }
+
+/* The bar with no value: fanout has not finished expanding the audience, so
+   there is no honest denominator yet. A sweep rather than a width, because the
+   one thing it must not do is imply a proportion it does not know. */
+.bc-bar-indeterminate {
+  width: 40%;
+  animation: bc-bar-sweep 1.4s ease-in-out infinite;
+}
+@keyframes bc-bar-sweep {
+  0%   { margin-left: -40%; }
+  100% { margin-left: 100%; }
+}

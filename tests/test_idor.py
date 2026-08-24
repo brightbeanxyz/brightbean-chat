@@ -54,15 +54,48 @@ class TestCrossTenantIsolation:
 
         assert "notifications:mark_read" in names
 
-    def test_the_sweep_covers_the_shell_placeholders(self):
-        """Issue #32's sidebar destinations are real endpoints under
-        /w/<uuid>/, so baseline §1 binds them like any other: a member of
-        another workspace must get a 404. They are placeholders today, but the
-        route and its guard outlive the placeholder."""
+    def test_no_workspace_placeholder_is_left_unswept(self):
+        """Issue #32's stub machinery, now that nothing is using it.
+
+        Every sidebar destination that was a placeholder under /w/<uuid>/ has
+        been replaced by a real app — sequences by #22, broadcasts by #23 — so
+        ``config.urls._WORKSPACE_STUBS`` is empty. The assertion is on the
+        mechanism rather than on a list of names: a placeholder is a real
+        endpoint, baseline §1 binds it like any other, and the sweep has to keep
+        reaching one the day somebody adds the next.
+        """
+        from config.urls import _WORKSPACE_STUBS
+
+        names = {route.name for route in iter_tenant_routes()}
+
+        assert {stub[1] for stub in _WORKSPACE_STUBS} <= names
+
+    def test_the_sweep_covers_the_broadcasts_app(self):
+        """Issue #23 replaced the `broadcasts` placeholder with the real app.
+
+        Every route below names a broadcast, and a broadcast names an audience —
+        so a cross-tenant read here would leak both the message and who it went
+        to. The composer's mutations are in the list too: they are the ones that
+        put work in the queue, and a placeholder never had them."""
         names = {route.name for route in iter_tenant_routes()}
 
         assert {
-            "broadcasts",
+            "broadcasts:list",
+            "broadcasts:rows",
+            "broadcasts:create",
+            "broadcasts:detail",
+            "broadcasts:counters",
+            "broadcasts:recipients",
+            "broadcasts:compose",
+            "broadcasts:wizard",
+            "broadcasts:save_channel",
+            "broadcasts:save_audience",
+            "broadcasts:audience_preview",
+            "broadcasts:save_content",
+            "broadcasts:save_schedule",
+            "broadcasts:cancel",
+            "broadcasts:duplicate",
+            "broadcasts:delete",
         } <= names
 
     def test_the_sweep_covers_the_campaigns_app(self):

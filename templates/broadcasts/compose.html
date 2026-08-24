@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% load static %}
+{% comment %}
+The composer page (SPEC §13.1). The page itself is a shell; everything inside
+`#broadcast-wizard` is _wizard.html, so a step's POST answers with the next
+step's markup and there is one renderer for a step whether it was reached by
+navigation or by saving.
+
+flatpickr's stylesheet and script are pulled in here rather than globally, the
+same way templates/contacts/list.html does it: the schedule step is the only
+page in the product that needs a date picker, and styles.css has themed
+flatpickr since L1-B in anticipation.
+{% endcomment %}
+
+{% block title %}{{ broadcast.name }} · Broadcasts · BrightBean Chat{% endblock %}
+
+{% block extra_head %}
+  <link rel="stylesheet" href="{% static 'js/vendor/flatpickr.min.css' %}">
+{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ broadcast.name }}</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            Draft broadcast. Nothing sends until you finish the last step.
+        </p>
+    </div>
+    <div class="flex items-center gap-2">
+        <a class="btn-outline btn-inline" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">All broadcasts</a>
+        <form hx-post="{% url 'broadcasts:delete' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+              hx-swap="none"
+              @htmx:after-request="if (event.detail.successful) window.location = '{% url 'broadcasts:list' workspace_id=request.workspace.id %}'"
+              x-data>
+            {% csrf_token %}
+            <button type="submit" class="btn-outline btn-inline">Delete</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="broadcast-wizard">
+    {% include "broadcasts/_wizard.html" %}
+</div>
+{% endblock %}
+
+{% block alpine_components %}
+{% comment %}
+The CRM filter builder's Alpine factory, defined here rather than inside the
+step that uses it. base.html renders this block before Alpine's own deferred
+script, which is the window in which a global x-data factory has to exist — and
+a definition that arrived *inside* an htmx swap would race Alpine's mutation
+observer for the element that calls it.
+{% endcomment %}
+{% include "contacts/_filter_bar_script.html" %}
+{% include "broadcasts/_compose_script.html" %}
+{% endblock %}
+
+{% block extra_js %}
+  <script src="{% static 'js/vendor/flatpickr.min.js' %}"></script>
+{% endblock %}

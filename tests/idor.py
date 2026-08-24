@@ -88,6 +88,9 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "sequence_id": lambda t: _victim_sequence(t).pk,
     "step_id": lambda t: _victim_sequence_step(t).pk,
     "enrollment_id": lambda t: _victim_enrollment(t).pk,
+    # Issue #23's broadcasts. Workspace-scoped like the rest of the app, so the
+    # sweep's ordinary rules apply.
+    "broadcast_id": lambda t: _victim_broadcast(t).pk,
     # Issue #24's inbox v2. `label_id` is registered rather than treated as
     # neutral for a reason worth stating: `inbox:bulk_label` carries no
     # conversation_id — it posts a *set* of them — so this kwarg is the only
@@ -217,6 +220,31 @@ def _victim_whatsapp_template(tenancy: Tenancy) -> Any:
         )
         template.save()
     return template
+
+
+def _victim_broadcast(tenancy: Tenancy) -> Any:
+    """A broadcast owned by the victim, created on demand (issue #23).
+
+    Built on ``_victim_connection`` so the broadcast and the channel it names
+    belong to the same workspace — a broadcast whose connection was somebody
+    else's would make the sweep pass for the wrong reason.
+
+    Left as a ``draft`` with no content. Every route taking a ``broadcast_id``
+    resolves it by workspace before it looks at anything else, so the status is
+    not what any of them 404s on; and a scheduled one would put queue rows in the
+    database on every sweep.
+    """
+    from apps.broadcasts.models import Broadcast
+
+    broadcast = Broadcast.objects.for_workspace(tenancy.workspace).first()
+    if broadcast is None:
+        broadcast = Broadcast(
+            workspace=tenancy.workspace,
+            name=f"Victim broadcast ({tenancy.slug})",
+            channel_connection=_victim_connection(tenancy),
+        )
+        broadcast.save()
+    return broadcast
 
 
 def _victim_flow(tenancy: Tenancy) -> Any:

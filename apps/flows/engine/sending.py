@@ -18,6 +18,37 @@ explicit that those come back as a ``Message`` with ``status="failed"`` and a
 machine-readable code. What *does* propagate is the facade being absent (a
 deployment problem, turned into a named ``Fail`` by the caller) and anything
 unexpected (rolled back and retried by the queue).
+
+--------------------------------------------------------------------------
+The envelope: what the run's *starter* contributes to the send
+--------------------------------------------------------------------------
+
+Two fields of an outbound message are decided by whoever started the run rather
+than by the flow author, and neither can be reconstructed from a node's config.
+
+``source``. SPEC §5 fixes the vocabulary at ``automation, agent, api, broadcast,
+sequence``, and ``started_by`` is the only thing that knows which of the last two
+a run is: a broadcast's one-shot flow start stamps ``broadcast:<id>``, a
+sequence step ``sequence:<id>``. Recording every one of them as ``automation``
+would put a broadcast's messages in the inbox under the wrong label and hide them
+from L7-A's counters, and it would bypass ``PlatformPolicy.broadcast_allowed``,
+which SPEC §8 gates on exactly this value.
+
+``tag``. SPEC §6.4 lets a Messenger send outside the 24-hour window carry a
+non-promotional message tag, and SPEC §13.1 makes choosing one the broadcast
+composer's job. The compliance engine already reads ``outbound.tag`` — its
+``_outside_window_code`` grants ``tag_supplied`` for a tag in the platform's own
+``PlatformPolicy.outside_window.tags`` — so the only piece missing was a way for
+the starter to supply one. It travels in :data:`ENVELOPE_TAG_VAR`, a reserved
+execution variable.
+
+**Why that is not a hole.** The envelope is read only for a run whose
+``started_by`` kind is ``broadcast``, so a variable a flow author collects — a
+``data_collection`` field, an External Request mapping — can never reach it. And
+the tag is still policy-validated downstream: ``HUMAN_AGENT`` is not in
+Messenger's tag tuple, and ``can_send`` grants the human-agent allowance only to
+``source="agent"`` (SPEC §22, hard-coded), so nothing here buys the seven-day
+escape.
 """
 
 import logging
@@ -26,9 +57,18 @@ from typing import Any
 
 from apps.channels.events import OutboundMessage, TextBlock
 from apps.flows import messaging
-from apps.flows.models import FlowExecution
+from apps.flows.models import FlowExecution, StartedBy
 
-__all__ = ["SEND_SOURCE", "SendOutcome", "deliver", "text_message"]
+__all__ = [
+    "ENVELOPE_TAG_VAR",
+    "SEND_SOURCE",
+    "STARTER_SOURCES",
+    "Envelope",
+    "SendOutcome",
+    "deliver",
+    "envelope_for",
+    "text_message",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +76,51 @@ logger = logging.getLogger(__name__)
 #: value carries the 30-minute automation pause and the human-agent tag window,
 #: neither of which an automation may claim.
 SEND_SOURCE = "automation"
+
+#: ``started_by`` kind -> the SPEC §5 ``message.source`` it implies. Only the two
+#: kinds that name a *campaign* are here: a trigger, the API, a manual start and
+#: a preview are all ordinary automation as far as compliance and the inbox are
+#: concerned, and SPEC §5's vocabulary has no word for any of them.
+STARTER_SOURCES: dict[str, str] = {
+    StartedBy.BROADCAST: "broadcast",
+    StartedBy.SEQUENCE: "sequence",
+}
+
+#: The execution variable a broadcast puts its compliance tag in (SPEC §6.4).
+#:
+#: A reserved name, marked by the leading dunder, and read **only** for a run
+#: started by a broadcast — see the module docstring for why that gate is the
+#: security property rather than the name.
+ENVELOPE_TAG_VAR = "__message_tag"
+
+#: Which starters may set a tag. Just the one: a broadcast is the only thing in
+#: the product that chooses a message tag, because it is the only thing with a
+#: composer that shows Meta's allowed-use text next to the choice.
+_TAG_STARTERS = frozenset({StartedBy.BROADCAST})
+
+
+@dataclass(frozen=True)
+class Envelope:
+    """The two send fields a run's starter decides. See the module docstring."""
+
+    source: str = SEND_SOURCE
+    tag: str | None = None
+
+
+def envelope_for(execution: FlowExecution) -> Envelope:
+    """What ``started_by`` says about how this run's messages should go out.
+
+    ``started_by`` is written by ``StartedBy.stamp`` as ``kind`` or ``kind:id``,
+    so the kind is everything up to the first colon and there is no second column
+    to keep in step.
+    """
+    kind = str(execution.started_by or "").partition(":")[0]
+    source = STARTER_SOURCES.get(kind, SEND_SOURCE)
+    if kind not in _TAG_STARTERS:
+        return Envelope(source=source)
+    variables = execution.variables if isinstance(execution.variables, dict) else {}
+    tag = variables.get(ENVELOPE_TAG_VAR)
+    return Envelope(source=source, tag=str(tag) if tag else None)
 
 
 @dataclass(frozen=True)
@@ -78,6 +163,7 @@ def deliver(
         logger.warning("Execution %s has no channel connection; node %s cannot send.", execution.pk, node_id)
         return SendOutcome(sent=False, error="no_connection")
 
+    envelope = envelope_for(execution)
     message = messaging.send_outbound(
         workspace=execution.workspace,
         contact=execution.contact,
@@ -87,8 +173,14 @@ def deliver(
         # it in Telegram's `callback_data` as `node_id:button_id`, and Meta's
         # postback payloads take the same shape (issue #12). Adapters that have
         # no use for it ignore it.
-        outbound=replace(outbound, node_id=node_id),
-        source=SEND_SOURCE,
+        #
+        # The envelope's tag is applied the same way and for the same reason: the
+        # node knows the content, the starter knows the compliance context, and
+        # this is the one place that has both. A node that set its own tag would
+        # still lose to it, which is the direction to be wrong in — a tag is a
+        # promise about *why* a message is being sent, and only the starter knows.
+        outbound=replace(outbound, node_id=node_id, tag=envelope.tag or outbound.tag),
+        source=envelope.source,
         idempotency_key=messaging.message_idempotency_key(execution, node_id, attempt),
     )
     status = str(getattr(message, "status", "") or "")
