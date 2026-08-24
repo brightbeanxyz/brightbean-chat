@@ -45,4 +45,15 @@ Makefile
 docker-compose*.yml
 LICENSE
 README.md
+SECURITY.md
 .DS_Store
+
+# Deployment configuration (issue #28). These describe how to RUN the image;
+# none of them belongs inside it. deploy/ in particular holds the Caddyfile,
+# which is bind-mounted into the caddy container from the host, and the
+# production env template.
+deploy/
+app.json
+render.yaml
+railway.json
+scripts/smoke.sh

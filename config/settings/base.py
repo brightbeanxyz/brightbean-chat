@@ -574,7 +574,13 @@ if not STORAGE_IS_LOCAL:
     AWS_SECRET_ACCESS_KEY = env("S3_SECRET_ACCESS_KEY", default="")
     AWS_STORAGE_BUCKET_NAME = env("S3_BUCKET_NAME", default="")
     AWS_S3_CUSTOM_DOMAIN = env("S3_CUSTOM_DOMAIN", default="")
-    AWS_S3_REGION_NAME = env("S3_REGION_NAME", default="auto")
+    # `or "auto"` because a *blank* value is not an absent one. environ.Env
+    # returns the default only when the variable is unset, and every one-click
+    # deploy target sets an empty config var for a prompt the operator left
+    # blank — so `S3_REGION_NAME=` would reach boto3 as region_name="" and
+    # build a malformed endpoint at first upload, instead of the documented
+    # default this line already names.
+    AWS_S3_REGION_NAME = env("S3_REGION_NAME", default="auto") or "auto"
     AWS_S3_FILE_OVERWRITE = False
     AWS_DEFAULT_ACL = "private"
     AWS_QUERYSTRING_AUTH = True

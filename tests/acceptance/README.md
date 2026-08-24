@@ -136,6 +136,25 @@ runner. So the budget is verified in layers rather than by one number:
   instead of the code. `TestTheStatisticsCatchWhatTheyClaimTo` pins all of this,
   so the discrimination is a test rather than a claim in a README.
 
+### What this still cannot survive
+
+A machine that cannot deliver a webhook inside the 1.5 s inline budget at all.
+Every delivery is then handed to the worker, none of them is a first reply, and
+there is nothing to take a statistic over — so the test fails, and it fails for
+the environment rather than for the code.
+
+Observed twice while writing this, on a laptop running four other test suites:
+single deliveries at 2.49 s and 6.12 s against a quiet-machine cost of
+0.05-0.13 s. That is two orders of magnitude, so the failure message says to
+check the load and re-run the file alone before believing the reading.
+
+This is the honest limit of a wall-clock assertion and it is not fixable by
+choosing a better statistic: when no sample is good, no statistic helps. What
+was fixed is everything upstream of it — the breaker is cleared per sample so
+one slow delivery no longer invalidates the rest, and the inline requirement is
+one sample rather than a majority so a run that meets SPEC §21's 2 s ceiling is
+not failed by the stricter 1.5 s budget that governs deferral.
+
 **There is no CI multiplier here, and none anywhere in this repo.** If the margin
 ever proves too tight on a loaded runner, the lever is `SAMPLES`, not the
 ceiling: taking more samples can only lower a minimum, so raising it strengthens
@@ -207,8 +226,9 @@ more samples than a unit test should spend.
 
 **Steps.**
 
-1. Deploy a build to a 2 vCPU instance following [`docs/`](../../docs) — a real
-   deployment, not a laptop, because the criterion is about a deployment.
+1. Deploy a build to a 2 vCPU instance following
+   [`docs/self-hosting.md`](../../docs/self-hosting.md) — a real deployment, not
+   a laptop, because the criterion is about a deployment.
 2. Point a load generator at the webhook endpoint with 100 concurrent inbound
    events, each matching a keyword trigger on a published single-send flow.
 3. Record the p95 of the interval between the delivery and the outbound call,
@@ -287,13 +307,17 @@ proves a handler is re-entrant — which the forced-retry tests already prove �
 and not that a half-written batch survives losing the process that was writing
 it. This one needs real processes, so it runs against a deployment.
 
-**Steps.**
+**Steps.** Against a deployment built from
+[`docs/self-hosting.md`](../../docs/self-hosting.md), whose `docker-compose.prod.yml`
+runs `app`, `worker`, `postgres` and `caddy` as separate services — which is what
+makes "kill the worker" something you can actually do.
 
 1. Start a broadcast to a few thousand contacts and let the fanout begin.
-2. `docker compose kill worker` (or the platform's equivalent) partway through.
+2. `docker compose -f docker-compose.prod.yml kill worker` (or the platform's
+   equivalent) partway through.
 3. Restart it. The broadcast must resume: no contact messaged twice, no contact
    skipped, and the counters reconciling against the audience.
-4. Repeat, killing Postgres instead. On restart, actions left claimed by the
+4. Repeat, killing `postgres` instead. On restart, actions left claimed by the
    dead worker must be swept back to pending by the zombie recovery job and then
    run, rather than sitting claimed forever.
 5. Record the audience size, the counts before and after, and the recovery time.
