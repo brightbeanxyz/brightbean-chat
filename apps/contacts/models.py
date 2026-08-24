@@ -650,6 +650,26 @@ class ContactErasure(WorkspaceScopedModel):
     class Meta:
         db_table = "contacts_contact_erasure"
         ordering = ["-created_at"]
+        constraints = [
+            # One erasure in flight per contact, as a database fact rather than
+            # a check in the service. ``begin()`` probes first so a
+            # double-clicked button gets a sentence instead of a 500, but a
+            # probe is a check-then-create and two concurrent requests both
+            # pass it — the same race ``apps/contacts/services.py`` handles for
+            # tag creation, and the reason that code has an ``IntegrityError``
+            # branch too.
+            #
+            # Partial, on the two live statuses only: a contact erased once has
+            # a ``done`` row for ever, and a second erasure of a *re-imported*
+            # contact reusing the same id must not be refused by the first
+            # one's receipt. Same shape as
+            # ``campaigns.SequenceEnrollment::enrollment_one_active_per_contact``.
+            models.UniqueConstraint(
+                fields=["workspace", "contact_id"],
+                condition=models.Q(status__in=("pending", "running")),
+                name="erasure_one_live_per_contact",
+            ),
+        ]
         indexes = [
             models.Index(fields=["workspace", "-created_at"], name="erasure_ws_created_idx"),
         ]

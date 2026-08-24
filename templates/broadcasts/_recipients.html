@@ -26,9 +26,21 @@ template value (SECURITY-BASELINE §2).
         {% for row in rows %}
         <tr style="border-top: 1px solid var(--border);">
             <td class="py-1">
-                <a class="btn-link" href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=row.contact_id %}">
-                    {{ row.contact.first_name }} {{ row.contact.last_name }}
-                </a>
+                {% comment %}
+                  A recipient can outlive its contact. Issue #29's GDPR erasure
+                  nulls this foreign key rather than cascading, because the row
+                  is an anonymised counter the broadcast's figures are recomputed
+                  from — see apps/broadcasts/models.py. Reversing the detail URL
+                  with a null id raises NoReverseMatch, so the erased case gets
+                  a label instead of a link.
+                {% endcomment %}
+                {% if row.contact_id %}
+                    <a class="btn-link" href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=row.contact_id %}">
+                        {{ row.contact.first_name }} {{ row.contact.last_name }}
+                    </a>
+                {% else %}
+                    <span class="muted">Erased contact</span>
+                {% endif %}
             </td>
             <td class="py-1 text-right" style="color: var(--text-secondary);">{{ row.reason_label }}</td>
         </tr>

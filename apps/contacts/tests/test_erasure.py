@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 from django.apps import apps as django_apps
+from django.db import IntegrityError
 from django.utils import timezone
 
 from apps.broadcasts.models import Broadcast, BroadcastRecipient, BroadcastStatus, RecipientStatus
@@ -859,44 +860,113 @@ class TestBulkErase:
         assert response.status_code == 403
 
 
-class TestAFailedRun:
-    """``FAILED`` and ``error`` exist, so something has to write them."""
+class TestAFailedRunDoesNotStrandTheContact:
+    """The worst state this feature has is an erasure that was requested, was
+    not performed, and cannot be asked for again — a tombstone with the personal
+    data still under it. Both paths have to come back from a failure.
+    """
 
-    def test_the_last_attempt_records_why_it_stopped(self, victim: dict[str, Any], monkeypatch: Any) -> None:
-        """An erasure that was requested, is not finished, and does not know it
-        failed is the one state an audit trail must not have."""
-        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
-        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
-        action.attempts = action.max_attempts
-
+    @staticmethod
+    def _explode(monkeypatch: Any, message: str = "the database went away") -> None:
         def boom(*args: Any, **kwargs: Any) -> None:
-            raise RuntimeError("the database went away")
+            raise RuntimeError(message)
 
         monkeypatch.setattr(erasure.activity, "tear_down", boom)
 
-        with pytest.raises(RuntimeError):
-            erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+    def test_an_inline_failure_is_recorded(self, victim: dict[str, Any], monkeypatch: Any) -> None:
+        """The inline path has no queue row behind it, so nothing comes back for
+        it later. It marks its own failure, outside the transaction that just
+        rolled back."""
+        self._explode(monkeypatch)
 
-        record.refresh_from_db()
+        with pytest.raises(RuntimeError):
+            erase(victim)
+
+        record = ContactErasure.objects.for_workspace(victim["contact"].workspace).get()
         assert record.status == ErasureStatus.FAILED
         assert "the database went away" in record.error
 
-    def test_an_earlier_attempt_leaves_it_for_the_retry(self, victim: dict[str, Any], monkeypatch: Any) -> None:
-        """SPEC §15's ladder still owns the retry; only the last attempt gives up."""
+    def test_an_inline_failure_can_be_retried(self, victim: dict[str, Any], monkeypatch: Any) -> None:
+        """The point of recording it. A refusal that outlives the run it was
+        protecting is a contact nobody can ever erase."""
+        self._explode(monkeypatch)
+        with pytest.raises(RuntimeError):
+            erase(victim)
+        monkeypatch.undo()
+
+        record = erase(victim)
+
+        assert record.status == ErasureStatus.DONE
+        assert not Contact.objects.unscoped().filter(pk=record.contact_id).exists()
+
+    def test_the_queued_handler_does_not_pretend_to_record_a_failure(
+        self, victim: dict[str, Any], monkeypatch: Any
+    ) -> None:
+        """``process_action`` runs the handler inside ``transaction.atomic()``,
+        so a status written there and then re-raised is rolled back with
+        everything else. It would look right in review and do nothing in
+        production, so the handler does not try — the worker records the failure
+        on the action instead."""
         record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
         action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
-        action.attempts = 1
-
-        def boom(*args: Any, **kwargs: Any) -> None:
-            raise RuntimeError("transient")
-
-        monkeypatch.setattr(erasure.activity, "tear_down", boom)
+        self._explode(monkeypatch)
 
         with pytest.raises(RuntimeError):
             erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
 
         record.refresh_from_db()
-        assert record.status != ErasureStatus.FAILED
+        assert record.status == ErasureStatus.PENDING
+
+    def test_a_stalled_queued_erasure_is_reclaimed_by_the_next_request(
+        self, victim: dict[str, Any], monkeypatch: Any
+    ) -> None:
+        """How the queued path recovers. Its action has given up, so the record
+        is no longer live and must stop blocking."""
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
+        action.status = ActionStatus.FAILED
+        action.save(update_fields=["status"])
+
+        second = erasure.begin(victim["contact"], source=ErasureSource.UI)
+
+        record.refresh_from_db()
+        assert record.status == ErasureStatus.FAILED
+        assert second.status == ErasureStatus.DONE
+
+    def test_a_genuinely_live_erasure_still_refuses(self, victim: dict[str, Any]) -> None:
+        """The reclaim must not become a way around the refusal: an action that
+        is still armed means the work really is in flight."""
+        erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+
+        with pytest.raises(erasure.ErasureRefusedError):
+            erasure.begin(victim["contact"], source=ErasureSource.UI)
+
+    def test_the_database_refuses_a_duplicate_even_without_the_probe(self, victim: dict[str, Any]) -> None:
+        """``erasure_one_live_per_contact``. The probe is a check-then-create, so
+        two concurrent requests can both pass it and the constraint is what
+        actually arbitrates."""
+        erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+
+        with pytest.raises(IntegrityError):
+            ContactErasure.objects.create(
+                workspace=victim["contact"].workspace,
+                contact_id=victim["contact"].pk,
+                source=ErasureSource.API,
+                status=ErasureStatus.PENDING,
+            )
+
+    def test_a_finished_erasure_does_not_block_a_later_one(self, victim: dict[str, Any]) -> None:
+        """The constraint is partial for this reason: a contact erased once
+        keeps a ``done`` receipt for ever, and a re-imported contact reusing the
+        id must not be refused by it."""
+        first = erase(victim)
+
+        ContactErasure.objects.create(
+            workspace=first.workspace,
+            contact_id=first.contact_id,
+            source=ErasureSource.UI,
+            status=ErasureStatus.PENDING,
+        )
 
     def test_the_recorded_error_is_scrubbed(self, victim: dict[str, Any], monkeypatch: Any) -> None:
         """A traceback quotes what it was working on, and this column is read in
@@ -905,27 +975,117 @@ class TestAFailedRun:
         The fixture is assembled from parts and made of a repeating pattern, for
         the two reasons this repo has met before: GitHub push protection matches
         a contiguous provider-shaped literal, and gitleaks' ``generic-api-key``
-        matches a high-entropy run near a credential keyword. Split and
-        patterned satisfies both while the value the scrubber sees at runtime
-        still has the shape its rule is written against.
+        matches a high-entropy run near a credential keyword.
         """
         credential = "sk" + "_live_" + "deadbeef" * 2
-        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
-        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
-        action.attempts = action.max_attempts
-
-        def boom(*args: Any, **kwargs: Any) -> None:
-            raise RuntimeError(f"provider refused: {credential}")
-
-        monkeypatch.setattr(erasure.activity, "tear_down", boom)
+        self._explode(monkeypatch, f"provider refused: {credential}")
 
         with pytest.raises(RuntimeError):
-            erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+            erase(victim)
 
-        record.refresh_from_db()
+        record = ContactErasure.objects.for_workspace(victim["contact"].workspace).get()
         assert credential not in record.error
         assert "[REDACTED]" in record.error
 
+
+class TestQueuedWebhookDeliveries:
+    """The queue row a contact id does not appear on."""
+
+    def test_a_pending_delivery_naming_the_contact_is_purged(self, victim: dict[str, Any]) -> None:
+        """``enqueue_delivery`` deliberately leaves ``contact_id`` null so a slow
+        receiver cannot stall everything else for that contact, and puts the id
+        in ``payload["data"]`` instead. Matching only the column would leave a
+        delivery that fires *after* the erasure, announcing an event naming a
+        contact this deployment has promised to have forgotten.
+        """
+        pending = ScheduledAction.objects.create(
+            workspace=victim["contact"].workspace,
+            contact_id=None,
+            run_at=timezone.now(),
+            type="webhook_delivery",
+            payload={
+                "webhook_id": str(uuid.uuid4()),
+                "event": "contact.tag_added",
+                "data": {"contact_id": str(victim["contact"].pk), "tag_id": str(victim["tag"].pk)},
+            },
+            status=ActionStatus.PENDING,
+        )
+
+        erase(victim)
+
+        assert not ScheduledAction.objects.unscoped().filter(pk=pending.pk).exists()
+
+    def test_another_contacts_delivery_is_left_alone(self, victim: dict[str, Any], bystander: dict[str, Any]) -> None:
+        theirs = ScheduledAction.objects.create(
+            workspace=victim["contact"].workspace,
+            contact_id=None,
+            run_at=timezone.now(),
+            type="webhook_delivery",
+            payload={"event": "contact.tag_added", "data": {"contact_id": str(bystander["contact"].pk)}},
+            status=ActionStatus.PENDING,
+        )
+
+        erase(victim)
+
+        assert ScheduledAction.objects.unscoped().filter(pk=theirs.pk).exists()
+
+    def test_a_delivery_with_no_contact_at_all_is_left_alone(self, victim: dict[str, Any]) -> None:
+        """``broadcast.finished`` names no contact and must survive."""
+        unrelated = ScheduledAction.objects.create(
+            workspace=victim["contact"].workspace,
+            contact_id=None,
+            run_at=timezone.now(),
+            type="webhook_delivery",
+            payload={"event": "broadcast.finished", "data": {"broadcast_id": str(victim["broadcast"].pk)}},
+            status=ActionStatus.PENDING,
+        )
+
+        erase(victim)
+
+        assert ScheduledAction.objects.unscoped().filter(pk=unrelated.pk).exists()
+
+
+class TestTheBroadcastRecipientsPage:
+    def test_it_renders_an_erased_recipient(self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]) -> None:
+        """The anonymised counter row has a null contact, and the page reverses
+        the contact-detail URL from it. A null id there is a NoReverseMatch,
+        which is a 500 on the default (skipped) recipient list."""
+        broadcast = victim["broadcast"]
+        erase(victim)
+
+        response = client_for(tenancy.owner).get(
+            f"/w/{tenancy.workspace.pk}/broadcasts/{broadcast.pk}/recipients/?status=sent"
+        )
+
+        assert response.status_code == 200
+        assert b"Erased contact" in response.content
+
+    def test_the_skipped_list_renders_after_a_mid_flight_erasure(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]
+    ) -> None:
+        """``skipped`` is the default tab, and erasing a pending recipient is
+        exactly what puts an anonymised row in it."""
+        sending = Broadcast.objects.create(
+            workspace=tenancy.workspace,
+            channel_connection=victim["connection"],
+            name="In flight",
+            status=BroadcastStatus.SENDING,
+        )
+        BroadcastRecipient.objects.create(
+            workspace=tenancy.workspace,
+            broadcast=sending,
+            contact=victim["contact"],
+            status=RecipientStatus.PENDING,
+        )
+        erase(victim)
+
+        response = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.pk}/broadcasts/{sending.pk}/recipients/")
+
+        assert response.status_code == 200
+        assert b"Erased contact" in response.content
+
+
+class TestBulkEraseTombstones:
     def test_it_cannot_reach_a_tombstone_the_way_the_detail_page_can(
         self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]
     ) -> None:

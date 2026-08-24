@@ -41,6 +41,7 @@ from datetime import datetime
 from typing import Any
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionStatus, ScheduledAction, coerce_contact_id
@@ -239,12 +240,22 @@ def purge_for_contact(workspace: Any, contact_id: Any, *, exclude_action_id: Any
     on the queued path: the erasure's own action names the contact it is
     erasing, and a routine that deleted it would remove the row the worker is
     holding open.
+
+    **The column is not the only place a contact id lives**, which is why the
+    predicate is a pair. ``apps.api.delivery.enqueue_delivery`` deliberately
+    leaves ``contact_id`` null — a contact-bearing row runs under that contact's
+    advisory lock, and holding it across a ten-second call to somebody else's
+    server would stall every message for that contact behind a slow receiver —
+    and puts the id in ``payload["data"]["contact_id"]`` instead. Matching only
+    the column would leave a queued outbound webhook that fires *after* the
+    erasure, announcing an event naming a contact this deployment has promised
+    to have forgotten. That is the one delivery a subject-access request would
+    ask about.
     """
+    identifier = coerce_contact_id(contact_id)
     rows = (
         ScheduledAction.objects.for_workspace(workspace)
-        .filter(
-            contact_id=coerce_contact_id(contact_id),
-        )
+        .filter(Q(contact_id=identifier) | Q(payload__data__contact_id=str(identifier)))
         .exclude(status=ActionStatus.RUNNING)
     )
     if exclude_action_id is not None:

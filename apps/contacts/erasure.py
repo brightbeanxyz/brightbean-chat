@@ -64,7 +64,7 @@ import logging
 from typing import Any
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.contacts import activity
@@ -72,6 +72,7 @@ from apps.contacts import services as contact_services
 from apps.contacts.errors import ContactsError
 from apps.contacts.models import Contact, ContactErasure, ErasureStatus
 from apps.queueing.locks import contact_lock
+from apps.queueing.models import ActionStatus, ScheduledAction
 from apps.queueing.registry import purge_for_contact, register_handler, schedule
 
 logger = logging.getLogger(__name__)
@@ -119,32 +120,36 @@ def begin(
     Returns the audit row. Its ``status`` says which path was taken: ``done``
     when the work happened inline, ``pending`` when it was handed to the queue.
 
-    Refuses a second live request for the same contact — the partial unique
-    constraint would do it anyway, but an ``IntegrityError`` is a 500 and a
-    double-clicked button deserves a sentence.
+    Refuses a second **live** request for the same contact, and the word is
+    load-bearing: a record left ``pending`` by a run that died is not live, and
+    treating it as though it were would make one failure permanent. See
+    :func:`_reclaim_stale`.
     """
-    live = ContactErasure.objects.for_workspace(contact.workspace_id).filter(
-        contact_id=contact.pk,
-        status__in=(ErasureStatus.PENDING, ErasureStatus.RUNNING),
-    )
-    if live.exists():
-        raise ErasureRefusedError("An erasure for this contact is already running.")
+    _reclaim_stale(contact)
 
     queued = force_queue or should_queue(contact)
 
-    with transaction.atomic():
-        record = ContactErasure.objects.create(
-            workspace=contact.workspace,
-            contact_id=contact.pk,
-            source=source,
-            requested_by=requested_by,
-            # Denormalised deliberately: the foreign key answers "nobody" once
-            # the account goes, which is when an audit trail is most often read.
-            requested_by_label=str(getattr(requested_by, "email", "") or "")[:254],
-            api_key_id=api_key_id,
-            status=ErasureStatus.PENDING,
-        )
+    try:
+        with transaction.atomic():
+            record = ContactErasure.objects.create(
+                workspace=contact.workspace,
+                contact_id=contact.pk,
+                source=source,
+                requested_by=requested_by,
+                # Denormalised deliberately: the foreign key answers "nobody"
+                # once the account goes, which is when an audit trail is most
+                # often read.
+                requested_by_label=str(getattr(requested_by, "email", "") or "")[:254],
+                api_key_id=api_key_id,
+                status=ErasureStatus.PENDING,
+            )
+    except IntegrityError as exc:
+        # ``erasure_one_live_per_contact``. The reclaim above is a
+        # check-then-create, so two concurrent requests can both pass it; the
+        # database arbitrates and the loser gets a sentence rather than a 500.
+        raise ErasureRefusedError("An erasure for this contact is already running.") from exc
 
+    with transaction.atomic():
         # Both before the tombstone, and in this order. ``stand_down`` expires
         # live executions and cancels the queue rows that would resume them,
         # which the engine will only do for a contact it still considers real;
@@ -158,7 +163,61 @@ def begin(
             _enqueue(record, contact)
             return record
 
-    return run(record, contact=contact)
+    try:
+        return run(record, contact=contact)
+    except Exception as exc:
+        # The inline path has no queue row behind it, so nothing will come back
+        # for this later. Recording the failure is what keeps the contact
+        # erasable: ``_reclaim_stale`` needs a record that is not ``pending``,
+        # and without this one the tombstone would sit there for ever with the
+        # personal data still under it and every retry refused.
+        #
+        # Safe to write here, and *only* here: this runs outside the
+        # transaction ``run()`` opened, so the rollback that just happened
+        # cannot take it with it. The queued path cannot do the same — see
+        # :func:`handle_contact_erasure`.
+        _fail(record, exc)
+        raise
+
+
+def _reclaim_stale(contact: Contact) -> None:
+    """Fail any erasure record for ``contact`` that is not going to finish.
+
+    An erasure record blocks the next attempt, which is right while work is in
+    flight and wrong the moment it is not. Three ways a record stops being live
+    without saying so:
+
+    * the inline path raised somewhere :func:`begin`'s handler did not cover;
+    * the queued path exhausted SPEC §15's ladder, and the worker marked the
+      *action* failed while the record stayed ``pending`` — the handler cannot
+      mark it itself, because it runs inside the worker's transaction and the
+      re-raise rolls the write back;
+    * the queue row was cancelled or pruned out from under it.
+
+    In all three the personal data is still there under a tombstone, which is
+    the worst state this feature has: erasure requested, not performed, and no
+    way to ask again. So a record whose action is gone or finished-unhappily is
+    marked ``failed`` and stops blocking.
+
+    A record whose action is still ``pending`` or ``running`` is left alone —
+    that one really is live.
+    """
+    live = ContactErasure.objects.for_workspace(contact.workspace_id).filter(
+        contact_id=contact.pk,
+        status__in=(ErasureStatus.PENDING, ErasureStatus.RUNNING),
+    )
+    for record in live:
+        armed = ScheduledAction.objects.for_workspace(record.workspace_id).filter(
+            type=ACTION_TYPE,
+            contact_id=record.contact_id,
+            status__in=(ActionStatus.PENDING, ActionStatus.RUNNING),
+        )
+        if armed.exists():
+            raise ErasureRefusedError("An erasure for this contact is already running.")
+        record.status = ErasureStatus.FAILED
+        record.error = record.error or "The run stopped without finishing; superseded by a later request."
+        record.save(update_fields=["status", "error", "updated_at"])
+        logger.warning("Superseded a stalled erasure %s for contact %s.", record.pk, record.contact_id)
 
 
 def run(record: ContactErasure, *, contact: Contact | None = None, action: Any = None) -> ContactErasure:
@@ -270,6 +329,16 @@ def handle_contact_erasure(payload: dict[str, Any], action: Any) -> None:
     reconstruct it — so it is logged and dropped rather than raised, the same
     division ``handle_contact_import`` draws between a row failure and a run
     failure. Anything else propagates onto SPEC §15's backoff ladder.
+
+    **This deliberately does not mark the record failed, because it cannot.**
+    ``apps.queueing.worker.process_action`` runs the handler inside
+    ``transaction.atomic()``, so a status written here and then followed by a
+    re-raise is rolled back with everything else — the write would look right in
+    review, run green in a test that called the handler directly, and do
+    nothing in production. The worker records the failure on the *action*, and
+    :func:`_reclaim_stale` reads that back the next time somebody asks to erase
+    this contact. The inline path has no such constraint and does mark its own
+    failure; see :func:`begin`.
     """
     erasure_id = str(payload.get("erasure_id") or "")
     record = (
@@ -279,14 +348,4 @@ def handle_contact_erasure(payload: dict[str, Any], action: Any) -> None:
         logger.warning("Erasure %s is gone; nothing to run.", payload.get("erasure_id"))
         return
 
-    try:
-        run(record, action=action)
-    except Exception as exc:
-        # Re-raised, so SPEC §15's ladder still owns the retry — but the last
-        # attempt records why it stopped. Without this the row would sit at
-        # ``running`` for ever with nothing saying what happened, which is the
-        # one state an audit trail must not have: an erasure that was requested,
-        # is not finished, and does not know it failed.
-        if action.attempts >= action.max_attempts:
-            _fail(record, exc)
-        raise
+    run(record, action=action)
