@@ -33,8 +33,8 @@ handler can swallow the exception; it cannot un-append the record.
 """
 
 from collections.abc import Iterator
-from contextlib import contextmanager
-from typing import Any
+from contextlib import ExitStack, contextmanager, suppress
+from typing import Any, ClassVar
 
 from apps.channels.events import SendResult, SendStatus
 from apps.channels.providers.base import Adapter
@@ -49,11 +49,21 @@ class AdapterReached(BaseException):
 
 
 class _Tripwire(Adapter):
-    """An adapter that cannot send, and says so loudly enough to escape."""
+    """An adapter that cannot send, and says so loudly enough to escape.
+
+    ``reached`` is assigned per use by :func:`adapter_tripwire` rather than
+    defaulting to a list here. A mutable class attribute would be shared with
+    :class:`_Permissive` through inheritance until the first assignment, so two
+    nested blocks — or a read after one exits — would see the other's entries.
+    The recorder is the fallback this harness leans on ("a future broad handler
+    can swallow the exception; it cannot un-append the record"), so it is the
+    one piece of state that must not be ambiguous.
+    """
 
     platform = ""
     webhook_content = "json"
-    reached: list[Any] = []
+    #: Set by ``adapter_tripwire``; declared, never defaulted. See the docstring.
+    reached: ClassVar[list[dict[str, Any]]]
 
     def resolve_connection(self, request: Any, raw_body: bytes) -> Any:  # pragma: no cover - unused
         return None
@@ -107,12 +117,22 @@ def adapter_tripwire(*, permissive: bool = False) -> Iterator[list[dict[str, Any
     adapter landed.
     """
     cls = _Permissive if permissive else _Tripwire
-    cls.reached = []
+    recorded: list[dict[str, Any]] = []
+    # Assigned on the exact class the swapped adapter will be instantiated as,
+    # and restored afterwards, so nothing leaks into the next block.
+    previous = cls.__dict__.get("reached")
+    cls.reached = recorded
     platforms = list(registered_platforms())
 
-    from contextlib import ExitStack
-
-    with ExitStack() as stack:
-        for platform in platforms:
-            stack.enter_context(swapped_adapter(platform, cls))
-        yield cls.reached
+    try:
+        with ExitStack() as stack:
+            for platform in platforms:
+                stack.enter_context(swapped_adapter(platform, cls))
+            yield recorded
+    finally:
+        if previous is None:
+            # Nothing of its own before this block, so leave nothing behind.
+            with suppress(AttributeError):
+                delattr(cls, "reached")
+        else:
+            cls.reached = previous

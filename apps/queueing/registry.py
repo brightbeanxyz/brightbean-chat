@@ -37,6 +37,7 @@ handler committing and the row being marked, and zombie recovery will re-run it.
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -52,6 +53,7 @@ __all__ = [
     "IdempotencyKeyConflictError",
     "UnknownActionTypeError",
     "cancel_pending",
+    "PurgeResult",
     "get_handler",
     "purge_for_contact",
     "register_handler",
@@ -215,8 +217,22 @@ def cancel_pending(workspace: Any, **filters: Any) -> int:
     )
 
 
-def purge_for_contact(workspace: Any, contact_id: Any, *, exclude_action_id: Any = None) -> int:
-    """Delete every row naming ``contact_id``. Returns how many went.
+@dataclass(frozen=True)
+class PurgeResult:
+    """What :func:`purge_for_contact` removed, and what it could not.
+
+    Two numbers rather than one because the second is the interesting one: a
+    row it had to leave behind still holds whatever its ``payload`` held, so a
+    caller erasing personal data needs to be able to say so rather than report
+    a clean sweep it did not perform.
+    """
+
+    deleted: int
+    left_running: int
+
+
+def purge_for_contact(workspace: Any, contact_id: Any, *, exclude_action_id: Any = None) -> PurgeResult:
+    """Delete every row naming ``contact_id``. Returns what went and what stayed.
 
     The erasure-side counterpart to :func:`cancel_pending`, and a *delete* where
     that one is an update, because the two answer different questions.
@@ -226,20 +242,27 @@ def purge_for_contact(workspace: Any, contact_id: Any, *, exclude_action_id: Any
     ``payload`` and ``last_error`` can quote a message body, a rendered
     template or an address. A cancelled row is a row that still holds the text.
 
-    **``running`` rows are left alone**, and the count excludes them. A worker
-    that already claimed a row finishes by writing to it, and deleting it
-    underneath would turn its ``update_fields`` save into "did not affect any
-    rows" — a loud failure in an unrelated handler, for a row that is about to
-    be irrelevant anyway. In practice the caller holds
-    :func:`~apps.queueing.locks.contact_lock`, which is the same lock
-    ``process_action`` takes before dispatching, so a live ``running`` row for
-    this contact should not exist; the erasure records the count rather than
-    assuming it is zero.
+    **``running`` rows are left alone, and counted.** A worker that already
+    claimed a row finishes by writing to it, and deleting it underneath would
+    turn its ``update_fields`` save into "did not affect any rows" — a loud
+    failure in an unrelated handler.
 
-    ``exclude_action_id`` spares one row by primary key, and it is load-bearing
-    on the queued path: the erasure's own action names the contact it is
-    erasing, and a routine that deleted it would remove the row the worker is
-    holding open.
+    Holding :func:`~apps.queueing.locks.contact_lock` does **not** make that set
+    empty, which is the part worth being precise about. The lock stops a *new*
+    handler for this contact starting; it says nothing about a row a worker
+    marked ``running`` before its process died, which stays ``running`` until
+    the zombie sweep resets it ten minutes later. Such a row survives the
+    erasure holding whatever its payload held, so the count comes back in
+    :attr:`PurgeResult.left_running` for the caller to record. Reporting a
+    clean sweep that did not happen is the failure this return type exists to
+    prevent.
+
+    ``exclude_action_id`` spares one row by primary key. On the queued path the
+    RUNNING exclusion above already spares the erasure's own action — the
+    worker marks it ``running`` before dispatching — so this is the guard for a
+    caller that is *not* the worker, and for the day the RUNNING rule changes.
+    It is proven independently by ``apps/queueing/tests/test_registry.py``
+    rather than resting on the exclusion that currently shadows it.
 
     **The column is not the only place a contact id lives**, which is why the
     predicate is a pair. ``apps.api.delivery.enqueue_delivery`` deliberately
@@ -253,15 +276,23 @@ def purge_for_contact(workspace: Any, contact_id: Any, *, exclude_action_id: Any
     ask about.
     """
     identifier = coerce_contact_id(contact_id)
-    rows = (
-        ScheduledAction.objects.for_workspace(workspace)
-        .filter(Q(contact_id=identifier) | Q(payload__data__contact_id=str(identifier)))
-        .exclude(status=ActionStatus.RUNNING)
+    named = ScheduledAction.objects.for_workspace(workspace).filter(
+        Q(contact_id=identifier) | Q(payload__data__contact_id=str(identifier))
     )
+
+    left_running = int(named.filter(status=ActionStatus.RUNNING).count())
+    if left_running:
+        logger.warning(
+            "Erasure left %s running queue row(s) for contact %s; their payloads were not removed.",
+            left_running,
+            identifier,
+        )
+
+    rows = named.exclude(status=ActionStatus.RUNNING)
     if exclude_action_id is not None:
         rows = rows.exclude(pk=exclude_action_id)
     removed, _ = rows.delete()
-    return int(removed)
+    return PurgeResult(deleted=int(removed), left_running=left_running)
 
 
 def _schedule(

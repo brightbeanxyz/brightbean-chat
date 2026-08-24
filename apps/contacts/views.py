@@ -1670,14 +1670,33 @@ def bulk_erase(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         try:
             erasure.begin(contact, source=ErasureSource.BULK, requested_by=request.user, force_queue=True)
         except ContactsError:
-            # Already running for this contact. Not a failure of the request —
-            # the requested state is on its way — so it is simply not counted.
+            # An erasure already in flight. Unreachable from this view today —
+            # ``begin`` tombstones the contact, and ``_selected`` only returns
+            # active ones — but the refusal is real on the detail page and the
+            # API, and swallowing it here without counting it would be the bug
+            # this whole branch exists to avoid. It falls into ``untouched``
+            # below with everything else the request named and did not act on.
             continue
         started += 1
 
+    # "I selected ten and it said seven" is exactly the ambiguity an operator
+    # cannot resolve for themselves on an irreversible action, and the gap has
+    # more causes than a refusal: an id belonging to another workspace, one that
+    # is not a UUID, one already soft-deleted (``_selected`` filters to active),
+    # or one past MAX_BULK_IDS. Reporting the *difference* covers all of them
+    # without the view having to enumerate why each id fell out.
+    named = len({raw for raw in request.POST.getlist("ids")[:MAX_BULK_IDS]})
+    untouched = max(0, named - started)
+
+    body = "They are hidden everywhere already. Their messages, identities and consent records are being removed."
+    if untouched:
+        body += (
+            f" {untouched} of the {named} selected {'was' if untouched == 1 else 'were'} not touched — "
+            f"already deleted, already being erased, or not in this workspace."
+        )
     return _bulk_result(
         f"Erasing {started} contact{'' if started == 1 else 's'}",
-        "They are hidden everywhere already. Their messages, identities and consent records are being removed.",
+        body,
     )
 
 

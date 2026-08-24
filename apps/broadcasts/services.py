@@ -136,7 +136,7 @@ WINDOW_DENIALS: frozenset[str] = frozenset(
 _DELIVERED_STATUSES = frozenset({"delivered", "read"})
 _READ_STATUSES = frozenset({"read"})
 #: And the one that means it never arrived, whatever the recipient row says.
-_FAILED_STATUSES = frozenset({"failed"})
+FAILED_MESSAGE_STATUSES = frozenset({"failed"})
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +781,7 @@ def counters(broadcast: Broadcast) -> Counters:
         .annotate(n=Count("id"))
     ):
         status, n = str(message_row["message__status"]), int(message_row["n"])
-        if status in _FAILED_STATUSES:
+        if status in FAILED_MESSAGE_STATUSES:
             # Recorded as sent, ended failed. Counted where it belongs so
             # queued = sent + failed + cancelled + skipped still holds.
             sent -= n

@@ -81,11 +81,19 @@ def audit_rows() -> list[tuple[str, str, str]]:
 
 
 def cited_test_ids() -> set[str]:
-    """Every backticked ``path`` or ``path::Class`` in a Tests cell."""
+    """Every backticked ``path`` or ``path::Class`` in a Tests cell.
+
+    The parentheses matter. Written as ``A and B or C`` this reads as "a path
+    that is a .py file, or anything with a class selector" but *parses* as
+    ``(A and B) or C``, so any backticked prose containing ``::`` — a
+    ``Model::field`` reference, a spec citation — would be collected as a test
+    id and then fail to resolve for a reason that has nothing to do with the
+    audit being wrong.
+    """
     found: set[str] = set()
     for _, tests, _ in audit_rows():
         for token in re.findall(r"`([^`]+)`", tests):
-            if token.startswith(("apps/", "tests/")) and token.endswith((".py",)) or "::" in token:
+            if token.startswith(("apps/", "tests/")) and (token.endswith(".py") or "::" in token):
                 found.add(token)
     return found
 
@@ -180,6 +188,10 @@ class TestTheCheckerWouldNotice:
 
     def test_a_real_class_does_resolve(self) -> None:
         assert resolves("tests/test_security_audit.py::TestTheAuditIsComplete")
+
+    def test_prose_containing_a_double_colon_is_not_a_test_id(self) -> None:
+        """The precedence trap: ``A and B or C`` would have collected this."""
+        assert not any(token.startswith(("apps/", "tests/")) is False and "::" in token for token in cited_test_ids())
 
     def test_the_baseline_parser_finds_bullets(self) -> None:
         """If the parser silently found nothing, every set comparison above

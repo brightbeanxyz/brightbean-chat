@@ -31,7 +31,14 @@ from apps.channels.models import EmailSuppression, SuppressionReason
 from apps.common.platforms import Platform
 from apps.contacts import erasure
 from apps.contacts.models import Contact, ContactErasure, ContactTag, CustomFieldValue, ErasureSource, ErasureStatus
-from apps.contacts.services import add_tag, create_contact, create_custom_field, get_or_create_tag, set_field_value
+from apps.contacts.services import (
+    add_tag,
+    create_contact,
+    create_custom_field,
+    delete_contact,
+    get_or_create_tag,
+    set_field_value,
+)
 from apps.flows.models import ExecutionStatus, FlowExecution, HandledComment
 from apps.flows.tests.support import graph, node, published_flow
 from apps.messaging.models import (
@@ -554,9 +561,17 @@ class TestInFlightWork:
         assert pending.reason == "contact_deleted"
         assert pending.contact_id is None
 
-    def test_a_sending_broadcast_settles_once_its_last_recipient_is_erased(self, victim: dict[str, Any]) -> None:
+    def test_a_sending_broadcast_settles_once_its_last_recipient_is_erased(
+        self, victim: dict[str, Any], django_capture_on_commit_callbacks: Any
+    ) -> None:
         """Otherwise it sits at ``sending`` until the hourly sweep notices — and
-        its frozen ``stats`` is not written until it settles."""
+        its frozen ``stats`` is not written until it settles.
+
+        The settle is deferred to commit (see
+        ``apps/broadcasts/erasure.py``), so the test has to run the callbacks a
+        real commit would. A test transaction never commits, which is precisely
+        why ``django_capture_on_commit_callbacks`` exists.
+        """
         sending = Broadcast.objects.create(
             workspace=victim["contact"].workspace,
             channel_connection=victim["connection"],
@@ -570,7 +585,8 @@ class TestInFlightWork:
             status=RecipientStatus.PENDING,
         )
 
-        erase(victim)
+        with django_capture_on_commit_callbacks(execute=True):
+            erase(victim)
 
         sending.refresh_from_db()
         assert sending.status == BroadcastStatus.SENT
@@ -821,6 +837,49 @@ class TestConfirmation:
 
 
 class TestBulkErase:
+    def test_it_reports_the_ones_it_did_not_touch(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any], bystander: dict[str, Any]
+    ) -> None:
+        """Report the gap, whatever caused it.
+
+        "I selected two and it said one" is exactly the ambiguity an operator
+        cannot resolve for themselves on an irreversible action. The causes
+        differ — another workspace's id, a malformed one, one past the cap, one
+        already soft-deleted — so the view reports the difference rather than
+        enumerating them. A contact with an erasure already in flight looks like
+        the last of those from here, because ``begin`` tombstones it and
+        ``_selected`` returns only active contacts.
+        """
+        delete_contact(victim["contact"])
+
+        response = client_for(tenancy.owner).post(
+            bulk_erase_url(tenancy),
+            {
+                "ids": [str(victim["contact"].pk), str(bystander["contact"].pk)],
+                "confirm": erasure.CONFIRMATION,
+            },
+        )
+
+        body = response.headers["HX-Trigger"]
+        assert "Erasing 1 contact" in body
+        assert "1 of the 2 selected was not touched" in body
+
+    def test_it_says_nothing_extra_when_it_touched_everything(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any], bystander: dict[str, Any]
+    ) -> None:
+        """The counterpart. A clean run must not grow a caveat."""
+        response = client_for(tenancy.owner).post(
+            bulk_erase_url(tenancy),
+            {
+                "ids": [str(victim["contact"].pk), str(bystander["contact"].pk)],
+                "confirm": erasure.CONFIRMATION,
+            },
+        )
+
+        body = response.headers["HX-Trigger"]
+        assert "Erasing 2 contacts" in body
+        assert "not touched" not in body
+
     def test_it_queues_the_selection(
         self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any], bystander: dict[str, Any]
     ) -> None:
@@ -1106,3 +1165,68 @@ class TestBulkEraseTombstones:
 
         assert not ContactErasure.objects.for_workspace(tenancy.workspace).exists()
         assert Contact.objects.unscoped().filter(pk=victim["contact"].pk).exists()
+
+
+class TestTheReceiptIsHonestAboutWhatItLeft:
+    def test_a_zombie_queue_row_is_reported_rather_than_ignored(self, victim: dict[str, Any]) -> None:
+        """A row a dead worker left ``running`` keeps its payload through the
+        erasure. Holding the contact lock does not make that set empty — it
+        stops a new handler starting, not one whose process died — so the
+        receipt has to say so instead of reporting a clean sweep.
+        """
+        zombie = ScheduledAction.objects.create(
+            workspace=victim["contact"].workspace,
+            contact_id=victim["contact"].pk,
+            run_at=timezone.now(),
+            type=ActionType.SEND_RETRY,
+            payload={"rendered": "hello zqxvictim"},
+            status=ActionStatus.RUNNING,
+        )
+
+        record = erase(victim)
+
+        assert record.counts["queueing.ScheduledAction.left_running"] == 1
+        assert ScheduledAction.objects.unscoped().filter(pk=zombie.pk).exists()
+
+    def test_no_key_when_there_is_nothing_to_report(self, victim: dict[str, Any]) -> None:
+        """The receipt carries what happened, not a row of zeroes."""
+        record = erase(victim)
+
+        assert "queueing.ScheduledAction.left_running" not in record.counts
+
+
+class TestTheBroadcastSettleIsDeferred:
+    def test_it_runs_after_commit_rather_than_inside_the_lock(
+        self, victim: dict[str, Any], django_capture_on_commit_callbacks: Any
+    ) -> None:
+        """``settle`` emits the catalog event and notifies *inside the caller's
+        transaction* by its own design — right for the broadcast worker it was
+        written for, wrong for an erasure holding a contact advisory lock. It is
+        deferred to commit, and the broadcast still settles.
+        """
+        sending = Broadcast.objects.create(
+            workspace=victim["contact"].workspace,
+            channel_connection=victim["connection"],
+            name="Deferred",
+            status=BroadcastStatus.SENDING,
+        )
+        BroadcastRecipient.objects.create(
+            workspace=victim["contact"].workspace,
+            broadcast=sending,
+            contact=victim["contact"],
+            status=RecipientStatus.PENDING,
+        )
+
+        with django_capture_on_commit_callbacks(execute=True) as callbacks:
+            erase(victim)
+            # Still sending *inside* the block: the settle has been registered
+            # and not yet run. That ordering is the whole point — run inline it
+            # would have emitted the catalog event and notified while the
+            # contact's advisory lock was held.
+            sending.refresh_from_db()
+            assert sending.status == BroadcastStatus.SENDING
+
+        assert len(callbacks) == 1
+        sending.refresh_from_db()
+        assert sending.status == BroadcastStatus.SENT
+        assert sending.stats

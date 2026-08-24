@@ -206,18 +206,23 @@ def _reclaim_stale(contact: Contact) -> None:
         contact_id=contact.pk,
         status__in=(ErasureStatus.PENDING, ErasureStatus.RUNNING),
     )
-    for record in live:
-        armed = ScheduledAction.objects.for_workspace(record.workspace_id).filter(
-            type=ACTION_TYPE,
-            contact_id=record.contact_id,
-            status__in=(ActionStatus.PENDING, ActionStatus.RUNNING),
-        )
-        if armed.exists():
-            raise ErasureRefusedError("An erasure for this contact is already running.")
-        record.status = ErasureStatus.FAILED
-        record.error = record.error or "The run stopped without finishing; superseded by a later request."
-        record.save(update_fields=["status", "error", "updated_at"])
-        logger.warning("Superseded a stalled erasure %s for contact %s.", record.pk, record.contact_id)
+    # All or nothing. This is the recovery path for a feature whose failure mode
+    # is "this contact can never be erased", so a half-applied reclaim — one
+    # record superseded, another still blocking — is the state it exists to
+    # prevent, arrived at from a different direction.
+    with transaction.atomic():
+        for record in live.select_for_update():
+            armed = ScheduledAction.objects.for_workspace(record.workspace_id).filter(
+                type=ACTION_TYPE,
+                contact_id=record.contact_id,
+                status__in=(ActionStatus.PENDING, ActionStatus.RUNNING),
+            )
+            if armed.exists():
+                raise ErasureRefusedError("An erasure for this contact is already running.")
+            record.status = ErasureStatus.FAILED
+            record.error = record.error or "The run stopped without finishing; superseded by a later request."
+            record.save(update_fields=["status", "error", "updated_at"])
+            logger.warning("Superseded a stalled erasure %s for contact %s.", record.pk, record.contact_id)
 
 
 def run(record: ContactErasure, *, contact: Contact | None = None, action: Any = None) -> ContactErasure:
@@ -250,8 +255,17 @@ def run(record: ContactErasure, *, contact: Contact | None = None, action: Any =
             contact.pk,
             exclude_action_id=getattr(action, "pk", None),
         )
-        if purged:
-            counts["queueing.ScheduledAction"] = purged
+        if purged.deleted:
+            counts["queueing.ScheduledAction"] = purged.deleted
+        if purged.left_running:
+            # A row a dead worker left ``running`` keeps whatever its payload
+            # held. Holding the contact lock does not make this set empty — it
+            # stops a *new* handler starting, not one whose process died — so
+            # the receipt says what was left rather than claiming a clean
+            # sweep. The zombie sweep returns the row to ``pending`` within ten
+            # minutes and the next erasure request would take it, but this one
+            # did not.
+            counts["queueing.ScheduledAction.left_running"] = purged.left_running
 
         # One statement, and everything the graph knows about goes with it.
         # Django's collector reports what it took, which *is* the audit receipt
@@ -260,7 +274,9 @@ def run(record: ContactErasure, *, contact: Contact | None = None, action: Any =
         for label, rows in cascaded.items():
             counts[label] = counts.get(label, 0) + int(rows)
 
-        record.refresh_from_db()
+        # No refresh before finishing: ``_finish`` assigns and saves every field
+        # it touches, so re-reading the row would cost a query to load values
+        # that are overwritten on the next line.
         return _finish(record, counts=counts)
 
 

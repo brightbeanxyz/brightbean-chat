@@ -28,10 +28,13 @@ Reached from ``apps.contacts`` through ``apps.contacts.activity``, guarded by
 """
 
 import logging
+from functools import partial
 from typing import Any
 
+from django.db import transaction
+
 from apps.broadcasts import services
-from apps.broadcasts.handlers import _settle_recipient
+from apps.broadcasts.handlers import settle_recipient
 from apps.broadcasts.models import Broadcast, BroadcastRecipient, BroadcastStatus, RecipientStatus
 from apps.messaging.codes import Denial
 
@@ -39,10 +42,11 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["prepare_for_erasure"]
 
-#: Message statuses ``services.counters`` treats as a failed send. Imported
-#: rather than re-spelled: if that rule changes, this must change with it or the
-#: reconciliation this module exists to protect quietly stops holding.
-_FAILED_MESSAGE_STATUSES = services._FAILED_STATUSES
+# ``services.FAILED_MESSAGE_STATUSES`` is read through the module rather than
+# bound to a local at import: if ``counters`` ever changes which message
+# statuses count as a failed send, this follows it. A local copy would let the
+# reconciliation this module exists to protect stop holding with nothing
+# failing.
 
 
 def prepare_for_erasure(contact: Any) -> dict[str, int]:
@@ -62,7 +66,19 @@ def prepare_for_erasure(contact: Any) -> dict[str, int]:
         # ``settle_broadcasts`` sweep notices, and its ``stats`` json — the
         # anonymized counter this whole module is protecting — is not written
         # until it settles.
-        services.settle(broadcast)
+        #
+        # **Deferred to commit, and that is not tidiness.** ``settle`` calls
+        # ``_announce``, whose own docstring says it emits the catalog event and
+        # notifies "both inside the caller's transaction, deliberately" — which
+        # is right for the broadcast worker it was written for and wrong here.
+        # The caller is an erasure holding that contact's advisory lock (SPEC
+        # §9.6 serialises everything the contact does behind it), so running a
+        # subscriber fan-out and a notification inside it would extend the
+        # window in which nothing for that person can be processed, on the one
+        # path that must not stall. On commit the work happens with the lock
+        # released; if the erasure rolls back it does not happen at all, which
+        # is the same guarantee ``_announce`` was protecting.
+        transaction.on_commit(partial(services.settle, broadcast))
 
     counts: dict[str, int] = {}
     if reclassified:
@@ -78,10 +94,10 @@ def _freeze_failed_sends(rows: Any) -> int:
     Only ``sent`` rows, and only where the message actually failed: any other
     row already says on its own what ``counters`` would conclude.
     """
-    stale = rows.filter(status=RecipientStatus.SENT, message__status__in=_FAILED_MESSAGE_STATUSES)
+    stale = rows.filter(status=RecipientStatus.SENT, message__status__in=services.FAILED_MESSAGE_STATUSES)
     frozen = 0
     for recipient in stale.select_related("message"):
-        _settle_recipient(recipient, RecipientStatus.FAILED, recipient.message.error or "")
+        settle_recipient(recipient, RecipientStatus.FAILED, recipient.message.error or "")
         frozen += 1
     if frozen:
         logger.info("Erasure: froze %s reclassified-failed recipient row(s).", frozen)
@@ -99,7 +115,7 @@ def _skip_pending(rows: Any) -> tuple[int, list[Broadcast]]:
     touched: dict[Any, Broadcast] = {}
     skipped = 0
     for recipient in pending:
-        _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.CONTACT_DELETED.value)
+        settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.CONTACT_DELETED.value)
         skipped += 1
         if recipient.broadcast.status == BroadcastStatus.SENDING:
             touched[recipient.broadcast_id] = recipient.broadcast

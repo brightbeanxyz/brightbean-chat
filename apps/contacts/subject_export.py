@@ -50,7 +50,7 @@ from django.utils import timezone
 from apps.contacts import activity
 from apps.contacts.models import Contact, CustomFieldValue
 
-__all__ = ["SCHEMA", "VERSION", "build", "filename"]
+__all__ = ["SCHEMA", "VERSION", "build", "filename", "not_included"]
 
 #: Identifies the document, the way ``apps.flows.schema.envelope`` identifies an
 #: exported flow. A consumer that reads one of these in a year should not have
@@ -58,27 +58,40 @@ __all__ = ["SCHEMA", "VERSION", "build", "filename"]
 SCHEMA = "brightbean.contact_export"
 VERSION = 1
 
-#: What this document deliberately does not contain, in words, because the
-#: honest answer to "is this everything?" is "everything but these, and here is
-#: why". Rendered into the payload, not just into this docstring.
-NOT_INCLUDED: tuple[dict[str, str], ...] = (
-    {
-        "category": "Raw webhook payloads",
-        "detail": (
-            "Inbound deliveries are logged verbatim for replay protection and debugging. The log is keyed on the "
-            "channel connection and the platform's event id, with no reference to a contact, so it cannot be "
-            "searched by person. It is pruned automatically 30 days after receipt."
-        ),
-    },
-    {
-        "category": "CSV import files",
-        "detail": (
-            "A spreadsheet uploaded to the importer is stored with the import run and quotes whatever cells it "
-            "contained. Nothing links a row of it back to the contact it created. Files are pruned automatically "
-            "after the workspace's import retention window."
-        ),
-    },
-)
+
+def not_included() -> list[dict[str, str]]:
+    """What this document deliberately does not contain, and why. Fresh each call.
+
+    A **function** rather than a module constant, for the reason
+    ``apps.messaging.ingest.redacted_body`` gives about its own shape: a
+    constant of dicts is only ever copied shallowly, so every document would
+    share these dict objects with the module, and the first caller to annotate
+    one in place — a test, a localiser, a serialiser — would rewrite it for the
+    rest of the process. That docstring names "an export builder" as the thing
+    that would eventually do it. This is the export builder.
+
+    The honest answer to "is this everything?" is "everything but these, and
+    here is why", so it is part of the payload rather than a footnote in the
+    docs.
+    """
+    return [
+        {
+            "category": "Raw webhook payloads",
+            "detail": (
+                "Inbound deliveries are logged verbatim for replay protection and debugging. The log is keyed "
+                "on the channel connection and the platform's event id, with no reference to a contact, so it "
+                "cannot be searched by person. It is pruned automatically 30 days after receipt."
+            ),
+        },
+        {
+            "category": "CSV import files",
+            "detail": (
+                "A spreadsheet uploaded to the importer is stored with the import run and quotes whatever cells "
+                "it contained. Nothing links a row of it back to the contact it created. Files are pruned "
+                "automatically after the workspace's import retention window."
+            ),
+        },
+    ]
 
 
 def build(contact: Contact) -> dict[str, Any]:
@@ -109,7 +122,7 @@ def build(contact: Contact) -> dict[str, Any]:
         "broadcasts": activity.broadcast_receipts_for(contact),
         "retained": _retained(suppressions),
         "truncated": {"messages": truncated},
-        "not_included": list(NOT_INCLUDED),
+        "not_included": not_included(),
     }
 
 
