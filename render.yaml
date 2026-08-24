@@ -1,0 +1,180 @@
+# Render Blueprint — one web service, one background worker, one Postgres.
+#
+# Deploy button: https://render.com/deploy?repo=https://github.com/brightbeanxyz/brightbean-chat
+# Walkthrough: docs/self-hosting.md § Render.
+#
+# THE ENV GROUP IS THE WHOLE POINT OF THIS FILE'S SHAPE. `generateValue: true`
+# generates a DIFFERENT value per service it is written on. Written directly on
+# both services below, the web process and the worker would each get their own
+# SECRET_KEY and ENCRYPTION_KEY_SALT — and every platform credential the worker
+# encrypted would be undecryptable by the web process, and vice versa. It would
+# deploy green and fail on the first channel connection. An env group is
+# generated once and shared, which is the only correct arrangement here.
+
+databases:
+  - name: brightbean-chat-db
+    databaseName: brightbean_chat
+    user: brightbean
+    plan: basic-256mb
+    # Reachable from Render services only. An empty allow list is what closes it
+    # to the public internet; omitting the key leaves it open to any address
+    # (issue #28: the database must not be internet-exposed).
+    ipAllowList: []
+
+envVarGroups:
+  - name: brightbean-chat-secrets
+    envVars:
+      # Django's signing key, and the input to credential encryption.
+      - key: SECRET_KEY
+        generateValue: true
+      # HKDF salt for the AES-256-GCM encrypted fields. Back this and SECRET_KEY
+      # up separately from any database dump — together they decrypt it.
+      - key: ENCRYPTION_KEY_SALT
+        generateValue: true
+      # /internal/tick's shared secret. The worker below is what drains the
+      # queue; this is the fallback for a web-only deployment. The route answers
+      # 404 while it is unset.
+      - key: TICK_TOKEN
+        generateValue: true
+
+services:
+  - type: web
+    name: brightbean-chat
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    # The image's own CMD binds $PORT, which Render sets, so there is no
+    # dockerCommand here — one gunicorn line, in the Dockerfile, not three.
+    healthCheckPath: /healthz
+    # Runs after the image is built and before the new instance takes traffic,
+    # so a migration never races the old release.
+    preDeployCommand: python manage.py migrate --noinput
+    envVars:
+      - fromGroup: brightbean-chat-secrets
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      # Config is the only source of configuration; there is no .env here.
+      - key: DJANGO_ENV_FILE
+        value: /nonexistent
+      - key: DATABASE_URL
+        fromDatabase:
+          name: brightbean-chat-db
+          property: connectionString
+      # Prompted at deploy time rather than defaulted. Django answers 400 to
+      # every request whose Host is not listed, health check included, so a
+      # wildcard here would be the one setting that silently weakens the
+      # deployment. Enter <your-service>.onrender.com, plus any custom domain.
+      - key: ALLOWED_HOSTS
+        sync: false
+      # The public origin including https://, used to build unsubscribe, click
+      # tracking and media links and the webhook URLs you paste into each
+      # platform's dashboard.
+      - key: APP_URL
+        sync: false
+      # Which peers may speak for a client via X-Forwarded-For. Render's router
+      # is what connects to your service, so without this every request is
+      # attributed to the router and all of your users share one bucket for auth
+      # rate limiting, API throttling and the webhook signature ban — one caller
+      # could keep login and password reset throttled for everybody. These are
+      # the private ranges a platform router lives in; a client on the public
+      # internet can never present one of them.
+      - key: TRUSTED_PROXIES
+        value: 127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # USE 's3' HERE. A Render service filesystem is ephemeral and cannot be
+      # shared between services, so with 'local' the web service and the worker
+      # cannot see each other's files: a queued CSV contact import is uploaded by
+      # one and opened by the other, and uploaded media disappears on every
+      # deploy. The S3_* values below are what 's3' needs.
+      #
+      # STORAGE_BACKEND is `sync: false` rather than `value: local` for a
+      # reason that is easy to get wrong: Render re-applies a blueprint `value`
+      # on EVERY sync, overwriting whatever is in the dashboard, while it
+      # ignores `sync: false` entries after the first deploy. Pinned to `local`
+      # here, an operator's switch to `s3` would silently revert on the next
+      # deploy and queued contact imports would start failing again — which
+      # reads as an import bug, not as a config revert. Answer `s3` (or leave it
+      # blank, which means local) at deploy time.
+      #
+      # These are `sync: false` on BOTH services and must be given the SAME
+      # answers — Render does not allow `sync: false` inside an env group, so
+      # unlike the crypto secrets above these cannot be shared declaratively.
+      # docs/self-hosting.md explains moving them into a dashboard env group
+      # afterwards.
+      - key: STORAGE_BACKEND
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_REGION_NAME
+        sync: false
+
+  - type: worker
+    name: brightbean-chat-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    # The queue worker (SPEC §15). Without it nothing time-based ever runs:
+    # delays, retries, sequence steps, broadcast fanout and hourly housekeeping
+    # are all rows in Postgres waiting for a process to claim them.
+    dockerCommand: python manage.py process_tasks
+    envVars:
+      # The same group as the web service — see the note at the top of this file.
+      - fromGroup: brightbean-chat-secrets
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: DJANGO_ENV_FILE
+        value: /nonexistent
+      - key: DATABASE_URL
+        fromDatabase:
+          name: brightbean-chat-db
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        sync: false
+      - key: APP_URL
+        sync: false
+      # Which peers may speak for a client via X-Forwarded-For. Render's router
+      # is what connects to your service, so without this every request is
+      # attributed to the router and all of your users share one bucket for auth
+      # rate limiting, API throttling and the webhook signature ban — one caller
+      # could keep login and password reset throttled for everybody. These are
+      # the private ranges a platform router lives in; a client on the public
+      # internet can never present one of them.
+      - key: TRUSTED_PROXIES
+        value: 127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # USE 's3' HERE. A Render service filesystem is ephemeral and cannot be
+      # shared between services, so with 'local' the web service and the worker
+      # cannot see each other's files: a queued CSV contact import is uploaded by
+      # one and opened by the other, and uploaded media disappears on every
+      # deploy. The S3_* values below are what 's3' needs.
+      #
+      # STORAGE_BACKEND is `sync: false` rather than `value: local` for a
+      # reason that is easy to get wrong: Render re-applies a blueprint `value`
+      # on EVERY sync, overwriting whatever is in the dashboard, while it
+      # ignores `sync: false` entries after the first deploy. Pinned to `local`
+      # here, an operator's switch to `s3` would silently revert on the next
+      # deploy and queued contact imports would start failing again — which
+      # reads as an import bug, not as a config revert. Answer `s3` (or leave it
+      # blank, which means local) at deploy time.
+      #
+      # These are `sync: false` on BOTH services and must be given the SAME
+      # answers — Render does not allow `sync: false` inside an env group, so
+      # unlike the crypto secrets above these cannot be shared declaratively.
+      # docs/self-hosting.md explains moving them into a dashboard env group
+      # afterwards.
+      - key: STORAGE_BACKEND
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_REGION_NAME
+        sync: false

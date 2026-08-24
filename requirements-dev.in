@@ -14,6 +14,12 @@ mypy==2.3.1                # django-stubs' compatible-mypy extra caps this at <2
 django-stubs==6.1.0
 
 # Tests
+#
+# pyyaml is a test-only dependency: tests/test_deploy_config.py parses
+# docker-compose.prod.yml and render.yaml to assert the secure-by-default
+# properties docs/self-hosting.md promises. Nothing at runtime reads YAML, so it
+# stays out of requirements.in and out of the image.
+pyyaml==6.0.3
 pytest==9.1.1
 pytest-django==4.14.0
 pytest-cov==7.1.0
