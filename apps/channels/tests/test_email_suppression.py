@@ -34,6 +34,7 @@ from apps.common.platforms import Platform
 from apps.contacts.models import Contact, ContactStatus
 from apps.contacts.services import create_contact, delete_contact
 from apps.messaging.models import ContactChannelIdentity
+from tests.support import email_identity
 
 pytestmark = pytest.mark.django_db
 
@@ -59,16 +60,8 @@ def connection(tenancy: Any) -> ChannelConnection:
 
 
 def identity_for(workspace: Any, connection: ChannelConnection, address: str = ADDRESS) -> ContactChannelIdentity:
-    contact = create_contact(workspace, source="manual", email=address)
-    return ContactChannelIdentity.objects.create(
-        contact=contact,
-        channel_connection=connection,
-        platform=Platform.EMAIL.value,
-        platform_user_id=address,
-        opt_in=True,
-        opt_in_at=timezone.now(),
-        opt_in_source="data_collection",
-    )
+    """This module's default address, on the shared builder."""
+    return email_identity(workspace, connection, address)
 
 
 def outbound() -> OutboundMessage:

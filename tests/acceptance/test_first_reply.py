@@ -40,12 +40,7 @@ from apps.flows.triggers.budget import (
     INLINE_BUDGET_SECONDS,
     SLOW_CONNECTION_TTL_SECONDS,
 )
-from tests.acceptance.criteria import spec_latency_budgets
-
-#: SPEC §7.1: "2 s hard timeout on the HTTP client". A different number from
-#: §21's reply ceiling that happens to share its value — they are not the same
-#: budget, and conflating them is how the composition below gets missed.
-SPEC_HARD_HTTP_TIMEOUT = 2.0
+from tests.acceptance.criteria import spec_inline_http_timeout, spec_latency_budgets
 
 
 class TestTheReplyStaysInsideTheSpecBudget:
@@ -70,8 +65,14 @@ class TestTheReplyStaysInsideTheSpecBudget:
         ``base.py``'s own comment says the read timeout is that number, so this
         pins the constant to the clause it implements.
         """
-        assert SPEC_HARD_HTTP_TIMEOUT >= READ_TIMEOUT, (
-            f"the read timeout is {READ_TIMEOUT}s; SPEC §7.1 budgets a {SPEC_HARD_HTTP_TIMEOUT}s hard "
+        # Read out of docs/SPEC.md, not copied. §7.1's hard timeout is a
+        # different budget from §21's reply ceiling that happens to share its
+        # value today; a literal here would stop agreeing with the document the
+        # moment either number moved, which is the drift this module argues
+        # against everywhere else.
+        hard_timeout = spec_inline_http_timeout()
+        assert hard_timeout >= READ_TIMEOUT, (
+            f"the read timeout is {READ_TIMEOUT}s; SPEC §7.1 budgets a {hard_timeout}s hard "
             f"timeout for the inline path."
         )
 

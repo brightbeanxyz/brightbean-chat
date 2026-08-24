@@ -11,6 +11,8 @@ accepted everything, every assertion above it would be decoration.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from tests.acceptance.criteria import (
@@ -23,6 +25,7 @@ from tests.acceptance.criteria import (
     UnjustifiedPendingError,
     UnresolvableVerificationError,
     Verification,
+    _headings,
     all_rows,
     readme_ids,
     resolve,
@@ -139,7 +142,7 @@ class TestTheReadmeAndTheRegistryAgree:
 
 
 class TestTheResolverActuallyFires:
-    """Prove the detector detects. Every assertion above rests on these four."""
+    """Prove the detector detects. Every assertion above rests on this class."""
 
     def test_it_rejects_a_class_that_does_not_exist(self, rules: CollectionRules) -> None:
         with pytest.raises(UnresolvableVerificationError, match="defines no class"):
@@ -157,7 +160,7 @@ class TestTheResolverActuallyFires:
         with pytest.raises(UnresolvableVerificationError, match="does not collect"):
             resolve("apps/flows/models.py::Flow", rules)
 
-    def test_it_rejects_a_missing_runbook_anchor(self) -> None:
+    def test_it_rejects_a_missing_runbook_anchor(self, rules: CollectionRules) -> None:
         """Against the real README, so this cannot pass by failing earlier.
 
         An earlier version of this test built a file in tmp_path, which resolves
@@ -166,10 +169,24 @@ class TestTheResolverActuallyFires:
         reason is the same problem it exists to rule out.
         """
         with pytest.raises(UnresolvableVerificationError, match="no heading anchored"):
-            resolve("tests/acceptance/README.md#no-such-anchor")
+            resolve("tests/acceptance/README.md#no-such-anchor", rules)
 
-    def test_it_accepts_an_anchor_that_is_really_there(self) -> None:
-        resolve("tests/acceptance/README.md#manual-runbooks")
+    def test_it_accepts_an_anchor_that_is_really_there(self, rules: CollectionRules) -> None:
+        resolve("tests/acceptance/README.md#manual-runbooks", rules)
+
+    def test_it_rejects_a_node_id_deeper_than_pytest_goes(self) -> None:
+        """Extra segments used to be dropped silently, so a typo resolved clean."""
+        with pytest.raises(UnresolvableVerificationError, match="at most three deep"):
+            resolve(
+                "apps/flows/tests/test_locking.py::TestOneStepPerContact::test_x::nested",
+                CollectionRules(files=("test_*.py",), classes=("Test*",), functions=("test_*",)),
+            )
+
+    def test_it_ignores_a_hash_inside_a_fenced_code_block(self, tmp_path: Path) -> None:
+        """A shell comment in a ```bash fence is not a heading, and must not mint an anchor."""
+        book = tmp_path / "runbook.md"
+        book.write_text("# Real Heading\n\n```bash\n# not a heading\n```\n")
+        assert _headings(book.read_text()) == {"real-heading"}
 
     def test_a_pending_row_without_an_explained_blocker_refuses_to_exist(self) -> None:
         with pytest.raises(UnjustifiedPendingError, match="not in BLOCKING_ISSUES"):
@@ -180,6 +197,73 @@ class TestTheResolverActuallyFires:
                 verification=Verification.PENDING,
                 blocked_by=99999,
                 note="x",
+            )
+
+
+class TestARowCannotClaimMoreThanItsTargets:
+    """The overstatement the p95 and 10k rows were split to stop, pinned.
+
+    ``resolve()`` dispatches on whether a target contains ``#``, not on what the
+    row says it is — so without these, a CI row could point at a heading in the
+    README, resolve perfectly, and have the table report it as verified in CI
+    with nothing but prose behind it.
+    """
+
+    def test_a_ci_row_cannot_point_at_a_runbook(self) -> None:
+        with pytest.raises(ValueError, match="which is a runbook anchor"):
+            Criterion(
+                id="p3-prose",
+                phase=3,
+                clause="whatever",
+                verification=Verification.CI,
+                targets=("tests/acceptance/README.md#manual-runbooks",),
+                note="claims CI, points at prose",
+            )
+
+    def test_a_ci_row_cannot_point_at_something_that_is_not_a_module(self) -> None:
+        with pytest.raises(ValueError, match="not a Python module"):
+            Criterion(
+                id="p3-notamodule",
+                phase=3,
+                clause="whatever",
+                verification=Verification.CI,
+                targets=("apps/flows/tests/",),
+                note="claims CI, points at a directory",
+            )
+
+    def test_a_manual_row_cannot_point_at_a_test(self) -> None:
+        """The mirror. A manual row backed by a test is a runbook nobody wrote."""
+        with pytest.raises(ValueError, match="not a runbook anchor"):
+            Criterion(
+                id="p3-notarunbook",
+                phase=3,
+                clause="whatever",
+                verification=Verification.MANUAL,
+                targets=("apps/flows/tests/test_locking.py::TestOneStepPerContact",),
+                note="claims manual, points at a test",
+            )
+
+    def test_a_pending_row_cannot_name_a_target_at_all(self) -> None:
+        with pytest.raises(UnjustifiedPendingError, match="cannot name a target"):
+            Criterion(
+                id="p3-both",
+                phase=3,
+                clause="whatever",
+                verification=Verification.PENDING,
+                blocked_by=27,
+                targets=("apps/flows/tests/test_locking.py",),
+                note="pending and pointing somewhere",
+            )
+
+    def test_a_pending_row_with_no_blocker_at_all_refuses_to_exist(self) -> None:
+        """The branch the single earlier self-test left unpinned."""
+        with pytest.raises(UnjustifiedPendingError, match="no blocked_by"):
+            Criterion(
+                id="p3-ownerless",
+                phase=3,
+                clause="whatever",
+                verification=Verification.PENDING,
+                note="pending, owned by nobody",
             )
 
 

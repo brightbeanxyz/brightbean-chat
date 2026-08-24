@@ -35,17 +35,16 @@ from urllib.parse import urlparse
 
 import pytest
 from django.test import Client
-from django.utils import timezone
 
 from apps.channels.events import OutboundMessage, TextBlock
 from apps.channels.models import ChannelConnection, EmailSuppression, SuppressionReason
 from apps.channels.providers import email_backends
 from apps.channels.suppression import is_suppressed
 from apps.common.platforms import Platform
-from apps.contacts.services import create_contact
 from apps.messaging import services
 from apps.messaging.codes import Denial
-from apps.messaging.models import ContactChannelIdentity, MessageSource, MessageStatus
+from apps.messaging.models import MessageSource, MessageStatus
+from tests.support import email_identity
 
 pytestmark = pytest.mark.django_db
 
@@ -68,19 +67,6 @@ def connection(tenancy: Any) -> ChannelConnection:
     }
     row.save()
     return row
-
-
-def identity_for(workspace: Any, connection: ChannelConnection, address: str) -> ContactChannelIdentity:
-    contact = create_contact(workspace, source="manual", email=address)
-    return ContactChannelIdentity.objects.create(
-        contact=contact,
-        channel_connection=connection,
-        platform=Platform.EMAIL.value,
-        platform_user_id=address,
-        opt_in=True,
-        opt_in_at=timezone.now(),
-        opt_in_source="data_collection",
-    )
 
 
 @pytest.fixture
@@ -144,7 +130,7 @@ class TestOneClickUnsubscribe:
         because a divergence there is a compliance failure that only shows up in
         one of the two paths people actually use.
         """
-        identity = identity_for(tenancy.workspace, connection, READER)
+        identity = email_identity(tenancy.workspace, connection, READER)
         contact = identity.contact
 
         first = send(tenancy.workspace, contact, connection, key=f"acceptance-{label}-1")
@@ -202,12 +188,12 @@ class TestOneClickUnsubscribe:
         exactly this state, and the person who unsubscribed does not care which
         row we happened to look at.
         """
-        first = identity_for(tenancy.workspace, connection, READER)
+        first = email_identity(tenancy.workspace, connection, READER)
         send(tenancy.workspace, first.contact, connection, key="acceptance-shared-1")
         link = posted[0].headers["List-Unsubscribe"].strip("<>")
         assert client.post(urlparse(link).path, data={"List-Unsubscribe": "One-Click"}).status_code == 200
 
-        other = identity_for(tenancy.workspace, connection, READER.upper())
+        other = email_identity(tenancy.workspace, connection, READER.upper())
         assert other.contact != first.contact
 
         result = send(tenancy.workspace, other.contact, connection, key="acceptance-shared-2")

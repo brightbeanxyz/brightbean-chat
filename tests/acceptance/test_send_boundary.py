@@ -95,7 +95,13 @@ class TestTheAdapterBoundaryIsOneDoor:
         found: dict[str, list[int]] = {}
         for path in python_sources():
             source = path.read_text(encoding="utf-8")
-            if ".send(" not in source:
+            # ``"send"``, not ``".send("``. The tighter string looks equivalent
+            # and is not: ``adapter.send (c, i, o)`` and ``adapter . send(...)``
+            # are both calls the AST finds and neither contains ``.send(``, so
+            # the file would be skipped and a second call site would ship with
+            # this gate green. Any call to a method named ``send`` must contain
+            # the identifier, so this prefilter cannot discard a real one.
+            if "send" not in source:
                 continue
             lines = adapter_send_calls(ast.parse(source, filename=str(path)))
             if lines:
@@ -115,13 +121,23 @@ class TestTheAdapterBoundaryIsOneDoor:
         """The door exists; this is the assertion that it is not a back door.
 
         A call site inside ``services.py`` proves nothing on its own if the
-        module stopped consulting the compliance engine. Both names have to be
-        in the module that holds the boundary.
+        module stopped consulting the compliance engine.
+
+        Asserted over the AST rather than as a substring. ``"can_send" in
+        source`` was the earlier version and it is satisfied by a *comment* —
+        ``services.py``'s own docstring says "applies compliance (can_send)", so
+        the check would have kept passing after the call itself was removed.
         """
         source = (APPS / "messaging" / "services.py").read_text(encoding="utf-8")
-        assert "can_send" in source, (
+        called = {
+            node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name | ast.Attribute)
+        }
+        assert "can_send" in called, (
             "apps/messaging/services.py holds the only adapter.send() call in the codebase but no longer "
-            "mentions can_send. The single door is only worth having while the compliance engine guards it."
+            "calls can_send. The single door is only worth having while the compliance engine guards it. "
+            "(A mention in a comment or docstring does not count — that is what this used to accept.)"
         )
 
 

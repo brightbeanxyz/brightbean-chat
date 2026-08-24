@@ -37,10 +37,10 @@ from typing import Any
 import pytest
 from django.test import Client
 
-from apps.api.delivery import ACTION_TYPE, EVENT_HEADER, SIGNATURE_HEADER, handle_webhook_delivery
+from apps.api.delivery import EVENT_HEADER, SIGNATURE_HEADER
 from apps.api.models import OutboundWebhook
 from apps.api.tests.conftest import bearer, make_key
-from apps.api.tests.support import RECEIVER, FakeInternet, serving
+from apps.api.tests.support import RECEIVER, FakeInternet, drain_webhook_deliveries, serving
 from apps.channels.events import TextBlock
 from apps.channels.models import ChannelConnection
 from apps.channels.tests.fake_adapter import SECRET_HEADER, sign
@@ -51,7 +51,6 @@ from apps.flows.models import FlowExecution, Trigger, TriggerType
 from apps.flows.tests.routing_support import routing_adapter
 from apps.flows.tests.support import graph, node, published_flow
 from apps.messaging.models import ContactChannelIdentity, Message, MessageDirection
-from apps.queueing.models import ActionStatus, ScheduledAction
 
 pytestmark = pytest.mark.django_db
 
@@ -90,22 +89,6 @@ def deliver_platform_event(client: Client, secret: str, *, event_id: str, text: 
     )
 
 
-def drain_deliveries(workspace: Any) -> None:
-    """Run the queued outbound-webhook rows the way the worker would.
-
-    Filtered to this action type on purpose: draining the whole queue here would
-    also run whatever else the chain scheduled, and this helper exists to move
-    deliveries rather than to be a worker. ``apps/broadcasts/tests/test_fanout.py``
-    explains the same choice at more length.
-    """
-    for action in list(
-        ScheduledAction.objects.for_workspace(workspace).filter(type=ACTION_TYPE, status=ActionStatus.PENDING)
-    ):
-        action.status = ActionStatus.DONE
-        action.save(update_fields=["status"])
-        handle_webhook_delivery(action.payload, action)
-
-
 class TestTheChainFromPlatformToIntegrator:
     def test_a_message_from_a_platform_reaches_an_integrator_who_starts_a_flow(
         self, client: Client, tenancy: Any, connection: ChannelConnection, monkeypatch: pytest.MonkeyPatch
@@ -142,13 +125,16 @@ class TestTheChainFromPlatformToIntegrator:
             assert inbound.count() == 1, "the platform delivery must have become a message"
 
             # --- Leg 2: the integrator's endpoint hears about it -------------
-            drain_deliveries(tenancy.workspace)
+            drain_webhook_deliveries(tenancy.workspace)
             received = [
                 json.loads(request.content)
                 for request in internet.requests
                 if request.headers[EVENT_HEADER] == "message.received"
             ]
-            assert len(received) == 1, f"expected one message.received delivery, got {len(internet.requests)}"
+            assert len(received) == 1, (
+                f"expected one message.received delivery, got {len(received)} "
+                f"(of {len(internet.requests)} deliveries in total)"
+            )
             announcement = received[0]
             assert announcement["workspace_id"] == str(tenancy.workspace.pk)
             assert SIGNATURE_HEADER in internet.requests[0].headers, (
@@ -192,7 +178,7 @@ class TestTheChainFromPlatformToIntegrator:
         assert execution.variables["source"] == "make"
 
         # --- And the loop closes: the integrator hears it finished ----------
-        drain_deliveries(tenancy.workspace)
+        drain_webhook_deliveries(tenancy.workspace)
         events = [request.headers[EVENT_HEADER] for request in internet.requests]
         assert "contact.tag_added" in events
         assert "execution.completed" in events

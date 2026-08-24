@@ -84,6 +84,11 @@ SAMPLES = 7
 
 def percentile(values: list[float], fraction: float) -> float:
     """Nearest-rank, on a sorted copy. No numpy, and no interpolation to argue about."""
+    if not values:
+        # ``min(len - 1, ...)`` is -1 here, which would index the last element of
+        # an empty list and raise IndexError from inside a latency assertion.
+        # Say what actually went wrong instead.
+        raise ValueError("percentile() needs at least one sample; none were collected")
     ordered = sorted(values)
     index = min(len(ordered) - 1, max(0, round(fraction * len(ordered)) - 1))
     return ordered[index]

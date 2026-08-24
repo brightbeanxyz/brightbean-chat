@@ -56,6 +56,7 @@ __all__ = [
     "readme_ids",
     "resolve",
     "spec_clauses",
+    "spec_inline_http_timeout",
     "spec_latency_budgets",
     "unclaimed_clauses",
 ]
@@ -135,7 +136,10 @@ class Criterion:
             raise ValueError(f"criterion id {self.id!r} should look like 'p1-first-reply' or 'sec-idor-sweep'")
         if self.verification is Verification.PENDING:
             if self.targets:
-                raise ValueError(f"criterion {self.id!r} is PENDING and cannot name a target")
+                # UnjustifiedPendingError, not ValueError: every way of getting a
+                # PENDING row wrong raises the same type, so one ``except`` clause
+                # covers the class rather than two of the three cases.
+                raise UnjustifiedPendingError(f"criterion {self.id!r} is PENDING and cannot name a target")
             if self.blocked_by is None:
                 raise UnjustifiedPendingError(
                     f"criterion {self.id!r} is PENDING with no blocked_by. Name the issue that owns it."
@@ -148,15 +152,51 @@ class Criterion:
                 )
         elif not self.targets:
             raise ValueError(f"criterion {self.id!r} is {self.verification} and must name at least one target")
+        else:
+            self._check_target_kinds()
+
+    def _check_target_kinds(self) -> None:
+        """A CI row must name a test and a MANUAL row must name a runbook.
+
+        ``resolve()`` dispatches on whether a target contains ``#``, not on what
+        the row claims to be, so without this a CI row could point at a heading
+        in the README and resolve perfectly — and the table would report the
+        criterion as verified in CI when nothing runs. That is the same
+        overstatement the p95 and 10k rows were split to stop, one level up.
+        """
+        for target in self.targets:
+            looks_like_a_runbook = "#" in target
+            if self.verification is Verification.CI and looks_like_a_runbook:
+                raise ValueError(
+                    f"criterion {self.id!r} is CI but names {target!r}, which is a runbook anchor. "
+                    f"A CI row has to name a pytest node id — otherwise the gate reports a criterion as "
+                    f"tested when the only thing behind it is prose."
+                )
+            if self.verification is Verification.CI and not target.split("::")[0].endswith(".py"):
+                raise ValueError(
+                    f"criterion {self.id!r} is CI but names {target!r}, which is not a Python module. "
+                    f"A CI target is 'path.py', 'path.py::TestClass' or 'path.py::TestClass::test_x'."
+                )
+            if self.verification is Verification.MANUAL and not looks_like_a_runbook:
+                raise ValueError(
+                    f"criterion {self.id!r} is MANUAL but names {target!r}, which is not a runbook anchor. "
+                    f"A MANUAL row has to name 'docs/file.md#a-heading' so a maintainer can find the "
+                    f"procedure that stands in for a test."
+                )
 
 
 @dataclass(frozen=True)
 class CollectionRules:
-    """The globs pytest itself collects by, read from the ini rather than guessed."""
+    """The globs pytest itself collects by, read from the ini rather than guessed.
 
-    files: tuple[str, ...] = ("test_*.py", "tests.py")
-    classes: tuple[str, ...] = ("Test*",)
-    functions: tuple[str, ...] = ("test_*",)
+    Every field is required. Defaults would be a second, silent copy of
+    ``pyproject.toml``'s ``[tool.pytest.ini_options]`` that nothing keeps in
+    step — build these with :meth:`from_config` and let pytest be the authority.
+    """
+
+    files: tuple[str, ...]
+    classes: tuple[str, ...]
+    functions: tuple[str, ...]
 
     @classmethod
     def from_config(cls, config: Any) -> CollectionRules:
@@ -249,10 +289,27 @@ def spec_latency_budgets() -> dict[str, float]:
     return budgets
 
 
-def unclaimed_clauses(criteria: tuple[Criterion, ...] | None = None) -> dict[int, tuple[str, ...]]:
+#: SPEC §7.1's "2 s hard timeout on the HTTP client" — a different budget from
+#: §21's reply ceiling that happens to share its value today. Parsed rather than
+#: copied for the same reason the ceiling is: a literal stops agreeing with the
+#: document it came from and nothing says so.
+_HARD_HTTP_TIMEOUT = re.compile(r"\((\d+(?:\.\d+)?) s hard timeout on the HTTP client\)")
+
+
+def spec_inline_http_timeout(spec_path: Path | None = None) -> float:
+    """The hard timeout SPEC §7.1 puts on an inline outbound call, in seconds."""
+    text = (spec_path or SPEC_PATH).read_text(encoding="utf-8")
+    match = _HARD_HTTP_TIMEOUT.search(text)
+    if match is None:
+        raise AssertionError(
+            f"could not find §7.1's '(N s hard timeout on the HTTP client)' in {spec_path or SPEC_PATH}"
+        )
+    return float(match.group(1))
+
+
+def unclaimed_clauses() -> dict[int, tuple[str, ...]]:
     """Clauses in §21 that no row owns. Empty is the only acceptable answer."""
-    rows = CRITERIA if criteria is None else criteria
-    claimed = {(row.phase, row.clause) for row in rows}
+    claimed = {(row.phase, row.clause) for row in CRITERIA}
     unclaimed: dict[int, tuple[str, ...]] = {}
     for phase, clauses in spec_clauses().items():
         missing = tuple(clause for clause in clauses if (phase, clause) not in claimed)
@@ -272,6 +329,26 @@ def _slug(heading: str) -> str:
     return re.sub(r"[\s_]+", "-", cleaned)
 
 
+def _headings(markdown: str) -> set[str]:
+    """Anchors for the ATX headings in ``markdown``, ignoring fenced code.
+
+    The fence tracking is not decoration. A ``#`` at the start of a line inside a
+    ```` ```bash ```` block is a shell comment, not a heading, and counting it
+    would mint an anchor that resolves here and 404s in a browser — turning a
+    gate built to catch stale pointers into one that manufactures them.
+    """
+    headings: set[str] = set()
+    fenced = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fenced = not fenced
+            continue
+        if not fenced and line.startswith("#"):
+            headings.add(_slug(line.lstrip("#")))
+    return headings
+
+
 def _resolve_runbook(target: str) -> None:
     relative, _, anchor = target.partition("#")
     path = REPO_ROOT / relative
@@ -279,9 +356,7 @@ def _resolve_runbook(target: str) -> None:
         raise UnresolvableVerificationError(f"{target}: no such file as {relative}")
     if not anchor:
         return
-    headings = {
-        _slug(line.lstrip("#")) for line in path.read_text(encoding="utf-8").splitlines() if line.startswith("#")
-    }
+    headings = _headings(path.read_text(encoding="utf-8"))
     if anchor not in headings:
         raise UnresolvableVerificationError(
             f"{target}: {relative} has no heading anchored '{anchor}'. It has: {sorted(headings)}. "
@@ -293,20 +368,32 @@ def _definitions(body: list[ast.stmt]) -> dict[str, ast.stmt]:
     return {node.name: node for node in body if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)}
 
 
-def resolve(target: str, rules: CollectionRules | None = None) -> None:
+def resolve(target: str, rules: CollectionRules) -> None:
     """Raise ``UnresolvableVerificationError`` unless pytest would collect ``target``.
 
     Accepts ``path.py``, ``path.py::TestClass`` and ``path.py::TestClass::test_x``
     (or ``path.py::test_x`` for a bare function). Deliberately refuses a
     parametrized id: those churn every time a parametrize list is edited, and a
     traceability row should survive that.
+
+    ``rules`` is required rather than defaulting. A default would be three
+    string literals standing in for ``pyproject.toml``'s collection settings,
+    which is exactly the drift reading them from pytest was meant to remove:
+    a caller who forgot the argument would silently evaluate against a frozen
+    copy and reject a legitimate target with a message quoting rules that are
+    not in force.
     """
-    rules = rules or CollectionRules()
     if "#" in target:
         _resolve_runbook(target)
         return
 
     segments = target.split("::")
+    if len(segments) > 3:
+        raise UnresolvableVerificationError(
+            f"{target}: a node id goes at most three deep — 'path.py', 'path.py::TestClass' or "
+            f"'path.py::TestClass::test_x'. Anything past that was silently ignored before this check, "
+            f"so a typo'd target resolved clean while naming something pytest would never collect."
+        )
     if any("[" in segment for segment in segments):
         raise UnresolvableVerificationError(
             f"{target}: parametrized ids churn whenever the parametrize list is edited. "
