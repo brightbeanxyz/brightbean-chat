@@ -15,8 +15,8 @@ from apps.channels.providers.exceptions import APIError, RateLimitError
 from apps.channels.tests.fake_adapter import registered, unregistered
 from apps.common.platforms import Platform
 from apps.contacts.services import create_contact
-from apps.messaging import services
-from apps.messaging.codes import Denial, Failure
+from apps.messaging import handlers, services
+from apps.messaging.codes import REASON_COPY, Denial, Failure, describe
 from apps.messaging.handlers import MAX_SEND_ATTEMPTS
 from apps.messaging.models import (
     ContactChannelIdentity,
@@ -28,7 +28,7 @@ from apps.messaging.models import (
     SendBucket,
 )
 from apps.messaging.tests.conftest import make_connection
-from apps.queueing.models import ActionType, ScheduledAction
+from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
 
 pytestmark = pytest.mark.django_db
 
@@ -92,6 +92,7 @@ class TestTheContract:
             "close_conversation",
             "assign_conversation",
             "pause_automation",
+            "withdraw_send",
         ):
             assert callable(getattr(services, name))
 
@@ -923,3 +924,311 @@ class TestDeletedContacts:
 
         assert message.internal is True
         assert message.status != MessageStatus.FAILED
+
+
+class TestWithdrawSend:
+    """Retracting a send that was accepted and never dispatched.
+
+    The gap this closes: a message left ``queued`` by an empty token bucket has
+    a ``send_retry`` behind it, and the work that produced it can be cancelled
+    before that fires. Cancelling the action alone leaves the row ``queued``
+    with nothing scheduled to move it — the state ``_defer``'s own docstring
+    calls "stuck forever, with an operator staring at the wrong status".
+    """
+
+    def _deferred(self, tenancy: Any, contact: Any, connection: Any) -> Message:
+        """A message the token bucket deferred: ``queued``, unclaimed, retry armed."""
+        with (
+            override_settings(DEFAULT_SEND_RATE_OVERRIDES={"telegram": 1}, SEND_BUCKET_BURST_SECONDS=1.0),
+            registered(Platform.TELEGRAM),
+        ):
+            send(tenancy, contact, connection, idempotency_key="a")
+            deferred = send(tenancy, contact, connection, idempotency_key="b")
+        assert deferred.status == MessageStatus.QUEUED
+        assert deferred.error == Failure.RATE_DEFERRED
+        assert deferred.dispatched_at is None
+        return deferred
+
+    def _unknown_outcome(self, tenancy: Any, contact: Any, connection: Any) -> Message:
+        """A message whose provider call went out and never came back (SPEC §9.4).
+
+        ``queued`` like the deferred one, but with the claim still held — which
+        is the whole difference this function turns on.
+        """
+        with registered(Platform.TELEGRAM) as adapter:
+
+            def unavailable(*args: Any, **kwargs: Any) -> SendResult:
+                raise APIError("down", status_code=503)
+
+            adapter.send = unavailable  # type: ignore[method-assign,assignment]
+            message = send(tenancy, contact, connection)
+        assert message.status == MessageStatus.QUEUED
+        assert message.dispatched_at is not None
+        return message
+
+    def test_a_deferred_send_is_finalised_rather_than_left_queued(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        deferred = self._deferred(tenancy, contact, connection)
+
+        withdrawn = services.withdraw_send(deferred, reason="broadcast_cancelled")
+
+        assert withdrawn.status == MessageStatus.FAILED
+        assert withdrawn.error == "withdrawn:broadcast_cancelled"
+        assert describe(withdrawn.error) == "The work that queued this message was cancelled before it was sent."
+
+    def test_the_pending_retry_goes_with_it(self, tenancy: Any, contact: Any, connection: Any, identity: Any) -> None:
+        """The two halves of one cancellation. A retry left armed would wake a
+        worker for a message nothing is going to send."""
+        deferred = self._deferred(tenancy, contact, connection)
+        action = ScheduledAction.objects.unscoped().filter(type=ActionType.SEND_RETRY).get()
+
+        services.withdraw_send(deferred, reason="broadcast_cancelled")
+
+        action.refresh_from_db()
+        assert action.status == ActionStatus.CANCELLED
+
+    def test_a_worker_already_inside_the_handler_still_does_not_send(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """The window the ordering exists for: the status is written before the
+        action is cancelled, so a worker holding the row finds a message it must
+        not send. Only ``pending`` rows are cancelled, and this is why that is
+        enough."""
+        deferred = self._deferred(tenancy, contact, connection)
+        action = ScheduledAction.objects.unscoped().filter(type=ActionType.SEND_RETRY).get()
+
+        services.withdraw_send(deferred, reason="broadcast_cancelled")
+
+        with registered(Platform.TELEGRAM) as adapter:
+            handlers.handle_send_retry(action.payload, action)
+            assert adapter.sends == []
+        deferred.refresh_from_db()
+        assert deferred.status == MessageStatus.FAILED
+        assert deferred.error == "withdrawn:broadcast_cancelled"
+
+    def test_a_message_already_handed_to_the_adapter_is_not_rewritten(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """SPEC §9.4's unknown outcome is ``queued`` too, and the platform may
+        well have the message. Retracting it would replace a real send with a
+        fiction, so the compare-and-set requires an unset ``dispatched_at``."""
+        in_flight = self._unknown_outcome(tenancy, contact, connection)
+
+        result = services.withdraw_send(in_flight, reason="broadcast_cancelled")
+
+        assert result.status == MessageStatus.QUEUED
+        assert result.error.startswith(Failure.PROVIDER_UNAVAILABLE)
+
+    def test_a_send_it_could_not_withdraw_keeps_its_retry(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """Cancelling the ladder under a send that is genuinely still in flight
+        would strand it: the row would never be retried and never finalised."""
+        in_flight = self._unknown_outcome(tenancy, contact, connection)
+        action = ScheduledAction.objects.unscoped().filter(type=ActionType.SEND_RETRY).get()
+
+        services.withdraw_send(in_flight, reason="broadcast_cancelled")
+
+        action.refresh_from_db()
+        assert action.status == ActionStatus.PENDING
+
+    def test_a_message_that_already_reached_the_platform_is_not_rewritten(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        with registered(Platform.TELEGRAM):
+            sent = send(tenancy, contact, connection)
+        assert sent.status == MessageStatus.SENT
+
+        result = services.withdraw_send(sent, reason="broadcast_cancelled")
+
+        assert result.status == MessageStatus.SENT
+
+    def test_an_already_failed_message_keeps_the_reason_it_failed_for(
+        self, tenancy: Any, contact: Any, connection: Any
+    ) -> None:
+        """A withdrawal that overwrote a compliance denial would erase why the
+        contact was not messaged, which is the audit SPEC §19 is about."""
+        denied = send(tenancy, contact, connection)
+        assert denied.error == Denial.NO_IDENTITY
+
+        result = services.withdraw_send(denied, reason="broadcast_cancelled")
+
+        assert result.error == Denial.NO_IDENTITY
+
+    def test_a_reason_is_required_at_the_call_site(self) -> None:
+        signature = inspect.signature(services.withdraw_send)
+        assert signature.parameters["reason"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert signature.parameters["reason"].default is inspect.Parameter.empty
+
+    def test_an_empty_reason_still_leaves_a_resolvable_code(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        """``describe()`` splits on the colon, so a trailing empty detail would
+        resolve anyway — but a bare code is what a log is greppable by."""
+        deferred = self._deferred(tenancy, contact, connection)
+
+        withdrawn = services.withdraw_send(deferred, reason="  ")
+
+        assert withdrawn.error == Failure.WITHDRAWN
+
+    def test_a_long_reason_cannot_eat_the_error_column(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+    ) -> None:
+        deferred = self._deferred(tenancy, contact, connection)
+
+        withdrawn = services.withdraw_send(deferred, reason="x" * 500)
+
+        assert withdrawn.error == f"{Failure.WITHDRAWN.value}:{'x' * 64}"
+        assert describe(withdrawn.error) == REASON_COPY[Failure.WITHDRAWN]
+
+    def test_a_withdrawal_racing_the_retry_being_armed_is_not_overwritten(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
+    ) -> None:
+        """Codex review finding: ``_release_claim`` clears ``dispatched_at``
+        before ``_defer`` schedules the retry, reopening ``withdraw_send``'s
+        compare-and-set for exactly that span. Simulated by making the retry
+        scheduling call ``withdraw_send`` on its way past — a caller racing in
+        right after the action row commits, before ``_defer`` writes ``queued``.
+
+        Before the fix this resurrected the message to ``queued`` under a retry
+        the withdrawal had already cancelled: exactly the "stuck forever" state
+        ``_defer`` exists to prevent, reached through the door built to prevent
+        it.
+        """
+        real_schedule = services._schedule_retry
+
+        def schedule_then_withdraw(message: Any, **kwargs: Any) -> Any:
+            scheduled = real_schedule(message, **kwargs)
+            services.withdraw_send(message, reason="raced_after_schedule")
+            return scheduled
+
+        monkeypatch.setattr(services, "_schedule_retry", schedule_then_withdraw)
+
+        with (
+            override_settings(DEFAULT_SEND_RATE_OVERRIDES={"telegram": 1}, SEND_BUCKET_BURST_SECONDS=1.0),
+            registered(Platform.TELEGRAM),
+        ):
+            send(tenancy, contact, connection, idempotency_key="a")
+            deferred = send(tenancy, contact, connection, idempotency_key="b")
+
+        assert deferred.status == MessageStatus.FAILED
+        assert deferred.error == "withdrawn:raced_after_schedule"
+        assert (
+            not ScheduledAction.objects.unscoped()
+            .filter(type=ActionType.SEND_RETRY, status=ActionStatus.PENDING)
+            .exists()
+        )
+
+    def test_a_withdrawal_racing_ahead_of_the_retry_still_wins(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
+    ) -> None:
+        """The other ordering: the withdrawal lands before ``_schedule_retry``
+        even runs. Nothing stops ``_defer`` arming a retry for an
+        already-withdrawn message in that window — the CAS added for the first
+        ordering only catches it on the way out — so this pins that ``_defer``
+        cleans up after itself rather than leaving an orphaned retry for a
+        message that will never move again.
+        """
+        real_schedule = services._schedule_retry
+
+        def withdraw_then_schedule(message: Any, **kwargs: Any) -> Any:
+            services.withdraw_send(message, reason="raced_before_schedule")
+            return real_schedule(message, **kwargs)
+
+        monkeypatch.setattr(services, "_schedule_retry", withdraw_then_schedule)
+
+        with (
+            override_settings(DEFAULT_SEND_RATE_OVERRIDES={"telegram": 1}, SEND_BUCKET_BURST_SECONDS=1.0),
+            registered(Platform.TELEGRAM),
+        ):
+            send(tenancy, contact, connection, idempotency_key="a")
+            deferred = send(tenancy, contact, connection, idempotency_key="b")
+
+        assert deferred.status == MessageStatus.FAILED
+        assert deferred.error == "withdrawn:raced_before_schedule"
+        assert (
+            not ScheduledAction.objects.unscoped()
+            .filter(type=ActionType.SEND_RETRY, status=ActionStatus.PENDING)
+            .exists()
+        )
+
+    def test_a_withdrawal_racing_the_no_adapter_check_is_not_overwritten(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
+    ) -> None:
+        """Code review finding: ``_defer``'s own two writes were not the only
+        unguarded ones. ``_dispatch``'s no-adapter check runs before
+        ``_claim()`` too — the same ``dispatched_at``-NULL window a rate
+        deferral leaves open — and used to reach the row through plain
+        ``_finalize`` rather than ``_finalize_if_queued``. Simulated by making
+        the guarded write call ``withdraw_send`` on its way past, so this
+        proves the wiring at a call site neither of the two tests above
+        touches, not just the compare-and-set primitive itself.
+        """
+        deferred = self._deferred(tenancy, contact, connection)
+
+        real_finalize_if_queued = services._finalize_if_queued
+
+        def finalize_then_withdraw(message: Any, **kwargs: Any) -> Any:
+            services.withdraw_send(deferred, reason="raced_no_adapter_check")
+            return real_finalize_if_queued(message, **kwargs)
+
+        monkeypatch.setattr(services, "_finalize_if_queued", finalize_then_withdraw)
+
+        with unregistered(Platform.TELEGRAM):
+            result = services._dispatch(deferred, connection, identity, TEXT, blocking=False)
+
+        assert result.status == MessageStatus.FAILED
+        assert result.error == "withdrawn:raced_no_adapter_check"
+
+    def test_a_withdrawal_racing_the_retry_budgets_own_give_up_is_not_overwritten(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
+    ) -> None:
+        """The same gap, on the ``handlers.py`` side of the fix:
+        ``handle_send_retry``'s exhausted-budget check runs before it reopens
+        the claim, in the identical window. Simulated by making ``_give_up``
+        itself call ``withdraw_send`` on its way past, standing in for a
+        caller racing in at the exact moment a worker picks the retry back up
+        only to find the budget spent.
+        """
+        deferred = self._deferred(tenancy, contact, connection)
+        Message.objects.for_workspace(tenancy.workspace).filter(pk=deferred.pk).update(
+            send_attempts=handlers.MAX_SEND_ATTEMPTS
+        )
+        action = ScheduledAction.objects.unscoped().filter(type=ActionType.SEND_RETRY).get()
+
+        real_give_up = handlers._give_up
+
+        def give_up_after_withdraw(message: Any) -> Any:
+            services.withdraw_send(deferred, reason="raced_give_up")
+            return real_give_up(message)
+
+        monkeypatch.setattr(handlers, "_give_up", give_up_after_withdraw)
+
+        handlers.handle_send_retry(action.payload, action)
+
+        deferred.refresh_from_db()
+        assert deferred.status == MessageStatus.FAILED
+        assert deferred.error == "withdrawn:raced_give_up"
+
+    def test_a_withdrawal_racing_the_identity_recheck_is_not_overwritten(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
+    ) -> None:
+        """``handle_send_retry``'s identity re-check — SPEC §9.5's reason a
+        retry re-verifies rather than blindly re-sending — used to reach the
+        row through plain ``_finalize`` too, in the same pre-reopen window.
+        """
+        deferred = self._deferred(tenancy, contact, connection)
+        action = ScheduledAction.objects.unscoped().filter(type=ActionType.SEND_RETRY).get()
+
+        def identity_then_withdraw(*args: Any, **kwargs: Any) -> Any:
+            services.withdraw_send(deferred, reason="raced_identity_check")
+            return None
+
+        monkeypatch.setattr(services, "_identity_for", identity_then_withdraw)
+
+        handlers.handle_send_retry(action.payload, action)
+
+        deferred.refresh_from_db()
+        assert deferred.status == MessageStatus.FAILED
+        assert deferred.error == "withdrawn:raced_identity_check"

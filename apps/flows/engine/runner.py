@@ -70,8 +70,8 @@ from apps.flows.engine.results import Continue, End, Fail, Schedule, StartNext, 
 from apps.flows.models import LIVE_STATUSES, ExecutionStatus, Flow, FlowExecution, FlowVersion, StartedBy
 from apps.flows.services import published_version
 from apps.queueing.locks import contact_lock
-from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
-from apps.queueing.registry import schedule
+from apps.queueing.models import ActionType
+from apps.queueing.registry import cancel_pending, schedule
 
 __all__ = [
     "LOOP_CAP",
@@ -587,11 +587,11 @@ def _supersede(contact: Any) -> int:
     # Only the two types that resume an execution. A pending `start_flow` row is
     # a future run somebody scheduled on purpose and is none of this function's
     # business.
-    ScheduledAction.objects.for_workspace(contact.workspace_id).filter(
+    cancel_pending(
+        contact.workspace_id,
         contact_id=contact.pk,
-        status=ActionStatus.PENDING,
         type__in=(ActionType.RESUME_EXECUTION, ActionType.FOLLOWUP_TIMER),
-    ).update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
+    )
     return expired
 
 

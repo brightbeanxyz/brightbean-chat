@@ -14,6 +14,12 @@ facade returns a ``Message`` with ``status=failed`` and a code from
 matters to a caller — a *denial* means "this send is not allowed and retrying
 will not help", while a *failure* means "the platform did not take it this
 time", which the send pipeline is already retrying.
+
+**One ``Failure`` code breaks that second half of the dichotomy on purpose:**
+``withdrawn`` (``apps.messaging.services.withdraw_send``) means work that
+produced this message was cancelled — nothing is retrying it, ever, same as a
+denial. So it gets the same treatment as a ``Denial`` here even though it
+lives in the other enum; see ``_TERMINAL_CODES`` below.
 """
 
 import uuid
@@ -28,7 +34,7 @@ from apps.api.serializers import message_payload
 from apps.channels.events import OutboundMessage, TextBlock
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.members.decorators import require_permission
-from apps.messaging.codes import Denial, describe
+from apps.messaging.codes import Denial, Failure, describe
 from apps.messaging.models import MessageStatus
 
 router = Router(tags=["messages"])
@@ -37,7 +43,16 @@ router = Router(tags=["messages"])
 #: provider's own event id, short enough that the column is not a payload.
 MAX_IDEMPOTENCY_KEY_CHARS = 128
 
-_DENIAL_CODES = frozenset(Denial)
+#: Codes that get SPEC §17's 422 rather than the 201 an ordinary, still-retrying
+#: failure gets — every ``Denial`` (compliance refused this outright), plus
+#: ``Failure.WITHDRAWN`` (cancelled work, not a compliance question, but just as
+#: permanently not going to send). Keyed to a response ``code`` rather than one
+#: shared label, so a caller can tell "compliance said no" from "somebody
+#: cancelled this" without parsing the human sentence.
+_TERMINAL_CODES: dict[str, str] = {
+    **{code.value: "compliance_denied" for code in Denial},
+    Failure.WITHDRAWN.value: "withdrawn",
+}
 
 
 @router.post("/messages", response={201: MessageOut}, url_name="messages_send")
@@ -79,10 +94,10 @@ def send_message(request: ApiRequest, payload: MessageSend) -> Status[dict[str, 
     )
 
     reason = (message.error or "").split(":", 1)[0]
-    if message.status == MessageStatus.FAILED and reason in _DENIAL_CODES:
+    if message.status == MessageStatus.FAILED and reason in _TERMINAL_CODES:
         raise ApiError(
             describe(message.error),
-            code="compliance_denied",
+            code=_TERMINAL_CODES[reason],
             status=422,
             reason=reason,
             message_id=str(message.pk),

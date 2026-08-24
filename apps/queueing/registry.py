@@ -41,6 +41,7 @@ from datetime import datetime
 from typing import Any
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from apps.queueing.models import DEFAULT_MAX_ATTEMPTS, ActionStatus, ScheduledAction, coerce_contact_id
 
@@ -49,6 +50,7 @@ __all__ = [
     "Handler",
     "IdempotencyKeyConflictError",
     "UnknownActionTypeError",
+    "cancel_pending",
     "get_handler",
     "register_handler",
     "registered_types",
@@ -184,6 +186,30 @@ def schedule_system(
         contact=None,
         idempotency_key=idempotency_key,
         max_attempts=max_attempts,
+    )
+
+
+def cancel_pending(workspace: Any, **filters: Any) -> int:
+    """Cancel every ``pending`` row matching ``filters``. Returns how many.
+
+    The disarm-side counterpart to :func:`schedule`: this app owns the
+    mechanics (which statuses exist, and that ``pending`` is the only one safe
+    to cancel), and a caller owns the predicate that says which rows are
+    theirs to disarm — a contact's, a message's, an execution's.  ``filters``
+    is passed straight to ``.filter()``, so it accepts whatever a caller's own
+    query already used: ``contact_id=``, ``type=``/``type__in=``, a JSONB
+    lookup like ``payload__message_id=``.
+
+    Never touches a ``running`` row, deliberately. Cancelling one out from
+    under a worker that already claimed it would not recall the handler
+    inside it — every handler in this codebase re-checks the state it cares
+    about before doing anything consequential, and a ``pending`` row is what
+    actually stops a worker from ever picking the work up in the first place.
+    """
+    return (
+        ScheduledAction.objects.for_workspace(workspace)
+        .filter(status=ActionStatus.PENDING, **filters)
+        .update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
     )
 
 
