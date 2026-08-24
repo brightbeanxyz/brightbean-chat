@@ -1,0 +1,221 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "greet-qr-pricing-pricing",
+            "source": "greet",
+            "sourceHandle": "qr:pricing",
+            "target": "pricing"
+          },
+          {
+            "id": "greet-qr-hours-hours",
+            "source": "greet",
+            "sourceHandle": "qr:hours",
+            "target": "hours"
+          },
+          {
+            "id": "greet-qr-human-tag_human",
+            "source": "greet",
+            "sourceHandle": "qr:human",
+            "target": "tag_human"
+          },
+          {
+            "id": "tag_human-default-handover",
+            "source": "tag_human",
+            "sourceHandle": "default",
+            "target": "handover"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi {{first_name}}! Thanks for starting a chat. What can I help with?",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "pricing",
+                  "label": "Pricing"
+                },
+                {
+                  "id": "hours",
+                  "label": "Opening hours"
+                },
+                {
+                  "id": "human",
+                  "label": "Talk to a person"
+                }
+              ],
+              "retry_unmatched": {
+                "enabled": true,
+                "max": 2,
+                "text": "Sorry, I did not catch that. Pick one of the options above."
+              }
+            },
+            "id": "greet",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Our plans start at $19/month and every plan includes a 14-day trial.",
+                  "type": "text"
+                }
+              ],
+              "buttons": [
+                {
+                  "action": "url",
+                  "id": "plans",
+                  "label": "See all plans",
+                  "url": "https://example.com/pricing"
+                }
+              ]
+            },
+            "id": "pricing",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "We answer messages Monday to Friday, 9am-6pm.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "hours",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Needs a person",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_human",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Someone from the team will reply here shortly.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "handover",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "Edit the three answers to match your business, then publish."
+            },
+            "id": "note",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Telegram welcome and FAQ",
+      "triggers": [
+        {
+          "config": {},
+          "platform": "telegram",
+          "type": "welcome"
+        },
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "help"
+              },
+              {
+                "mode": "any_word",
+                "text": "faq"
+              },
+              {
+                "mode": "any_word",
+                "text": "support"
+              }
+            ]
+          },
+          "platform": "telegram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "telegram",
+        "name": "telegram",
+        "used_by": [
+          "flow-1:trigger-0",
+          "flow-1:trigger-1"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "needs a person",
+        "name": "Needs a person",
+        "used_by": [
+          "flow-1:tag_human"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

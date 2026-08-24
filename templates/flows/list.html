@@ -22,6 +22,8 @@ swap in styles.css meaningful.
         </p>
     </div>
     {% if can_edit %}
+    <div class="flex flex-wrap items-center gap-2">
+    <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}" class="btn-outline btn-inline">Import</a>
     <form class="flex items-center gap-2"
           hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}"
           hx-swap="none"
@@ -32,6 +34,7 @@ swap in styles.css meaningful.
                class="form-input-styled" style="width: 14rem;" aria-label="New flow name">
         <button type="submit" class="btn-brand btn-inline">Create</button>
     </form>
+    </div>
     {% endif %}
 </div>
 {% endblock %}

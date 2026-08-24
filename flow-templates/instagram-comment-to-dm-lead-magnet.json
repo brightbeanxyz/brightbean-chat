@@ -1,0 +1,180 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "deliver-qr-more-ask_email",
+            "source": "deliver",
+            "sourceHandle": "qr:more",
+            "target": "ask_email"
+          },
+          {
+            "id": "ask_email-default-tag_lead",
+            "source": "ask_email",
+            "sourceHandle": "default",
+            "target": "tag_lead"
+          },
+          {
+            "id": "tag_lead-default-thanks",
+            "source": "tag_lead",
+            "sourceHandle": "default",
+            "target": "thanks"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks for commenting! Here is the guide I promised.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Everything in one PDF.",
+                  "title": "The starter guide",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Open the guide",
+                    "url": "https://example.com/guide"
+                  }
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "more",
+                  "label": "Send me more like this"
+                }
+              ]
+            },
+            "id": "deliver",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "Where should I send the next one? Reply with your email address.",
+              "reply_type": "email",
+              "retry": {
+                "invalid_text": "That does not look like an email address - try again?",
+                "max": 2
+              },
+              "target": {
+                "key": "email",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 2,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_email",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Lead magnet",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_lead",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are on the list. Talk soon!",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "thanks",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Comment-to-DM lead magnet",
+      "triggers": [
+        {
+          "config": {
+            "include_keywords": [
+              "guide",
+              "send me"
+            ],
+            "like_comment": true,
+            "once_per_contact_per_post": true,
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "random",
+              "texts": [
+                "Just sent it over!",
+                "Check your DMs."
+              ]
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "lead magnet",
+        "name": "Lead magnet",
+        "used_by": [
+          "flow-1:tag_lead"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

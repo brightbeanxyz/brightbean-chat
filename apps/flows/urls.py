@@ -9,7 +9,7 @@ is SPEC §16's path with the workspace segment RBACMiddleware requires prepended
 
 from django.urls import path
 
-from apps.flows import api, views, views_triggers
+from apps.flows import api, views, views_portability, views_triggers
 
 app_name = "flows"
 
@@ -21,6 +21,26 @@ urlpatterns = [
     path("flows/<uuid:flow_id>/duplicate/", views.flow_duplicate, name="duplicate"),
     path("flows/<uuid:flow_id>/archive/", views.flow_archive, name="archive"),
     path("flows/<uuid:flow_id>/restore/", views.flow_restore, name="restore"),
+    # Portability (issue #27). Export is a download; import is a three-step
+    # wizard whose only write before the confirm is its own FlowImport row.
+    path("flows/<uuid:flow_id>/export/", views_portability.flow_export, name="export"),
+    path("flows/<uuid:flow_id>/export/bundle/", views_portability.flow_export_bundle, name="export_bundle"),
+    path("flows/import/", views_portability.import_start, name="import_start"),
+    path(
+        "flows/imports/<uuid:flow_import_id>/",
+        views_portability.import_review,
+        name="import_review",
+    ),
+    path(
+        "flows/imports/<uuid:flow_import_id>/confirm/",
+        views_portability.import_confirm,
+        name="import_confirm",
+    ),
+    path(
+        "flows/imports/<uuid:flow_import_id>/discard/",
+        views_portability.import_discard,
+        name="import_discard",
+    ),
     # The Triggers panel (issue #11). Partials and one image, all under the
     # existing flow page, so `flows:edit` stays the route the nav lights up for.
     path("flows/<uuid:flow_id>/triggers/", views_triggers.trigger_panel, name="trigger_panel"),

@@ -16,6 +16,7 @@ Tailwind 4 and PostgreSQL, with no Redis and no message broker.
 | [`docs/SPEC.md`](docs/SPEC.md) | The engineering specification — authoritative |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Build layers, workstreams and interface contracts |
 | [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) | The per-PR security checklist |
+| [`docs/flow-templates.md`](docs/flow-templates.md) | The flow export/import format, and how to contribute a template |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Tenant scoping, the IDOR suite, URL and RBAC conventions |
 
 ## Quickstart (Docker)

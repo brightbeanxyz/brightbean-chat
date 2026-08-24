@@ -41,6 +41,8 @@ __all__ = [
     "ExecutionStatus",
     "Flow",
     "FlowExecution",
+    "FlowImport",
+    "FlowImportStatus",
     "FlowStatus",
     "FlowVersion",
     "HandledComment",
@@ -602,3 +604,81 @@ class RoutedEvent(WorkspaceScopedModel):
 
     def __str__(self) -> str:
         return f"{self.provider_event_id} ({self.stage})"
+
+
+class FlowImportStatus(models.TextChoices):
+    """Where an upload has got to. Only ``applied`` has created anything."""
+
+    PENDING = "pending", "Awaiting confirmation"
+    APPLIED = "applied", "Imported"
+    DISCARDED = "discarded", "Discarded"
+
+
+class FlowImport(WorkspaceScopedModel):
+    """One uploaded flow template, between "validated" and "imported" (issue #27).
+
+    A row rather than session state, for the reason ``contacts.ContactImport``
+    is one: the wizard has three steps — upload, map, confirm — and the document
+    has to survive all of them without being re-uploaded or parked in a cookie.
+    Storing it here also makes the promise the issue asks for checkable: **no
+    object is created before the confirm**, and the only thing an upload writes
+    is this row.
+
+    ``document`` holds the **validated** envelope, never the raw upload. Nothing
+    reaches this column until it has been through
+    :func:`apps.flows.portability.imports.parse_and_validate` — size cap, JSON
+    parse, depth cap, envelope schema with unknown keys rejected, then every
+    graph and every trigger config through the validators the product already
+    uses. A hostile file is refused before it becomes a row.
+
+    ``mapping`` is the answers so far: ``{kind: {requirement key: {...}}}``. It
+    is form input and is re-checked against the workspace on every read, not
+    only on the write that stored it — a mapping naming a tag somebody has since
+    deleted is a document that was valid when it was saved (the same discipline
+    ``ContactImport.mapping`` documents).
+
+    Rows are swept after :data:`apps.flows.housekeeping.IMPORTS_KEPT_FOR`, so an
+    abandoned upload does not sit in the database for ever holding somebody's
+    flow.
+    """
+
+    document = models.JSONField(default=dict)
+    mapping = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=16, choices=FlowImportStatus.choices, default=FlowImportStatus.PENDING)
+
+    #: As uploaded. Attacker-controlled text (SECURITY-BASELINE §2): displayed
+    #: escaped and never used to build a path.
+    original_filename = models.CharField(max_length=255, blank=True, default="")
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        # Nothing reads "imports this user started", and a reverse accessor
+        # nothing uses is a name every future User relation has to avoid.
+        related_name="+",
+    )
+    applied_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "flows_flow_import"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["workspace", "status"], name="flows_import_ws_status_idx"),
+            # The housekeeping sweep reads exactly this shape: pending rows
+            # older than a cutoff.
+            models.Index(fields=["status", "created_at"], name="flows_import_swept_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"import {self.pk} ({self.status})"
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == FlowImportStatus.PENDING
+
+    @property
+    def flow_count(self) -> int:
+        flows = self.document.get("flows") if isinstance(self.document, dict) else None
+        return len(flows) if isinstance(flows, list) else 0

@@ -1,0 +1,178 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "confirm-default-ask_name",
+            "source": "confirm",
+            "sourceHandle": "default",
+            "target": "ask_name"
+          },
+          {
+            "id": "ask_name-default-record",
+            "source": "ask_name",
+            "sourceHandle": "default",
+            "target": "record"
+          },
+          {
+            "id": "ask-timeout-record",
+            "source": "ask_name",
+            "sourceHandle": "timeout",
+            "target": "record"
+          },
+          {
+            "id": "record-default-welcome",
+            "source": "record",
+            "sourceHandle": "default",
+            "target": "welcome"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are subscribed. Msg & data rates may apply, around 4 messages a month. Reply STOP to opt out.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "confirm",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "What name should we use?",
+              "reply_type": "text",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "first_name",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_name",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "SMS subscriber",
+                  "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "SMS keyword",
+                  "verb": "set_field"
+                }
+              ]
+            },
+            "id": "record",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks {{first_name}} - you are all set.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "welcome",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "SMS keyword opt-in",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "JOIN"
+              },
+              {
+                "mode": "exact",
+                "text": "START"
+              }
+            ]
+          },
+          "platform": "sms",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:record"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "sms",
+        "name": "sms",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "sms subscriber",
+        "name": "SMS subscriber",
+        "used_by": [
+          "flow-1:record"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

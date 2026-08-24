@@ -157,6 +157,11 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             "api_publish_url": reverse("flows:api_publish", kwargs=keys),
             "api_stats_url": reverse("flows:api_stats", kwargs=keys),
             "api_schema_url": reverse("flows:api_schema", kwargs={"workspace_id": workspace_id}),
+            # #27's export, offered from the builder as well as from the list.
+            # Reversed here like the URLs above rather than assembled in the
+            # bundle, which would break under FORCE_SCRIPT_NAME.
+            "export_url": reverse("flows:export", kwargs=keys),
+            "export_bundle_url": reverse("flows:export_bundle", kwargs=keys),
             # #16's picker, for the send_message media block. Reversed here like
             # its four siblings rather than assembled from location.pathname in
             # the bundle, which would break under FORCE_SCRIPT_NAME.

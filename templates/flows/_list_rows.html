@@ -49,6 +49,17 @@ refresh can never disagree about what a row looks like.
                 <button type="button" class="btn-outline btn-inline"
                         hx-post="{% url 'flows:duplicate' workspace_id=request.workspace.id flow_id=flow.id %}"
                         hx-swap="none">Duplicate</button>
+                {% comment %}
+                  Plain links, not htmx: the response is a file download, and
+                  htmx would swap the JSON into the page instead. "Bundle"
+                  follows this flow's start_flow and sequence-step references
+                  and puts the whole set in one file (issue #27).
+                {% endcomment %}
+                <a href="{% url 'flows:export' workspace_id=request.workspace.id flow_id=flow.id %}"
+                   class="btn-outline btn-inline">Export</a>
+                <a href="{% url 'flows:export_bundle' workspace_id=request.workspace.id flow_id=flow.id %}"
+                   class="btn-outline btn-inline"
+                   title="This flow and every flow it hands over to, as one file">Export bundle</a>
                 {% if flow.status == "archived" %}
                 <button type="button" class="btn-outline btn-inline"
                         hx-post="{% url 'flows:restore' workspace_id=request.workspace.id flow_id=flow.id %}"

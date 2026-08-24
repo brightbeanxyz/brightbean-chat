@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% comment %}
+Step one of the import wizard: choose a file.
+
+Nothing is created here. The upload is size-capped, parsed and validated against
+the flow-template schema, and what is stored is the *validated* document on a
+FlowImport row — see apps/flows/views_portability.py. Every error below is a
+message from that validation, rendered escaped like all imported text.
+{% endcomment %}
+
+{% block title %}Import a flow · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="mb-6">
+    <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Import a flow</h1>
+    <p class="text-sm" style="color: var(--text-secondary);">
+        Upload a flow template. You will see exactly what it needs — and what it will call out to —
+        before anything is created.
+    </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl">
+    {% if errors %}
+    <div class="rounded-xl border p-4 mb-4"
+         style="border-color: var(--danger-500); background: rgba(var(--danger-500-rgb), 0.08);">
+        <p class="text-sm font-medium" style="color: var(--text-primary);">That file was not imported</p>
+        <ul class="mt-2 space-y-1">
+            {% for error in errors %}
+            <li class="text-sm" style="color: var(--text-secondary);">{{ error }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data"
+          action="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
+          class="rounded-xl border p-6" style="border-color: var(--border); background: var(--surface-1);">
+        {% csrf_token %}
+        <label for="flow-template-file" class="block text-sm font-medium mb-2" style="color: var(--text-primary);">
+            Flow template file
+        </label>
+        <input id="flow-template-file" type="file" name="file" accept=".json,application/json" required
+               class="form-input-styled w-full">
+        <p class="text-xs mt-2" style="color: var(--text-tertiary);">
+            JSON, up to {{ max_bytes|filesizeformat }}. A template exported from any BrightBean Chat installation.
+        </p>
+
+        <div class="mt-4 rounded-lg p-3" style="background: var(--surface-2);">
+            <p class="text-xs" style="color: var(--text-secondary);">
+                Imported flows arrive as <strong>unpublished drafts</strong> with their triggers switched off.
+                Nothing runs until you publish it yourself.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-2 mt-5">
+            <button type="submit" class="btn-brand btn-inline">Continue</button>
+            <a href="{{ list_url }}" class="btn-outline btn-inline">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

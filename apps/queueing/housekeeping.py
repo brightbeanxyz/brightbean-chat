@@ -98,6 +98,8 @@ OPTIONAL_JOB_PATHS: tuple[tuple[str, str], ...] = (
     ("expire_stale_executions", "apps.flows.housekeeping.expire_stale_executions"),
     # issue #19 (L5-C): poll Meta for template review outcomes.
     ("poll_whatsapp_templates", "apps.channels.providers.whatsapp.poll_template_statuses"),
+    # issue #27 (L7-B): unconfirmed flow-template uploads older than 7 days.
+    ("discard_stale_flow_imports", "apps.flows.housekeeping.discard_stale_imports"),
 )
 
 

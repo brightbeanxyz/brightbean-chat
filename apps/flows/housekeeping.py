@@ -1,4 +1,4 @@
-"""Expiring executions nobody is ever going to answer (SPEC §15).
+"""Two sweeps: executions nobody will answer, and uploads nobody confirmed.
 
     Housekeeping (hourly, via self-rescheduling action): […] expire stale
     waiting executions (waiting > 30 d -> expired) […]
@@ -21,15 +21,23 @@ from datetime import timedelta
 
 from django.utils import timezone
 
-from apps.flows.models import ExecutionStatus, FlowExecution
+from apps.flows.models import ExecutionStatus, FlowExecution, FlowImport, FlowImportStatus
 from apps.queueing.housekeeping import register_housekeeping_job
 
-__all__ = ["STALE_AFTER", "expire_stale_executions"]
+__all__ = ["IMPORTS_KEPT_FOR", "STALE_AFTER", "discard_stale_imports", "expire_stale_executions"]
 
 logger = logging.getLogger(__name__)
 
 #: SPEC §15: "waiting > 30 d -> expired".
 STALE_AFTER = timedelta(days=30)
+
+#: How long an unconfirmed flow-template upload is kept (issue #27).
+#:
+#: A pending ``FlowImport`` holds somebody's whole automation in a jsonb column
+#: and has created nothing, so an abandoned one is pure storage. A week is long
+#: enough that "I will finish the mapping tomorrow" survives a weekend and short
+#: enough that a workspace does not accumulate strangers' templates.
+IMPORTS_KEPT_FOR = timedelta(days=7)
 
 #: Only the waiting statuses. A ``running`` execution older than the cutoff is a
 #: different fault — a worker died mid-step — and it belongs to the queue's
@@ -48,3 +56,23 @@ def expire_stale_executions() -> str:
     if expired:
         logger.info("Expired %s flow execution(s) that had been waiting since before %s", expired, cutoff)
     return f"expired {expired} stale execution(s)"
+
+
+@register_housekeeping_job("discard_stale_flow_imports")
+def discard_stale_imports() -> str:
+    """Delete flow-template uploads nobody confirmed. Idempotent, as every job must be.
+
+    Only ``pending`` rows, and they are **deleted** rather than marked
+    ``discarded``: the point of the sweep is to stop holding the document, and a
+    row whose ``document`` column has been emptied is a tombstone nothing reads.
+    An ``applied`` row is kept — it is the record of where a workspace's flows
+    came from.
+    """
+    cutoff = timezone.now() - IMPORTS_KEPT_FOR
+    # Cross-tenant on purpose: housekeeping sweeps the whole deployment, and an
+    # abandoned upload belongs to whichever workspace owns it (CONTRIBUTING.md).
+    stale = FlowImport.objects.unscoped().filter(status=FlowImportStatus.PENDING, created_at__lt=cutoff)
+    discarded, _ = stale.delete()
+    if discarded:
+        logger.info("Discarded %s unconfirmed flow import(s) from before %s", discarded, cutoff)
+    return f"discarded {discarded} unconfirmed flow import(s)"

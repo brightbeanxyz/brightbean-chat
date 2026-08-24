@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% comment %}
+Step two: answer what the template needs, then confirm.
+
+Everything from the uploaded file — flow names, tag names, request URLs — is
+somebody else's text and is rendered through Django's autoescaping. There is no
+`|safe` and no `mark_safe` on this page, deliberately: a message body in a
+template carries {{ placeholders }} that apps/flows/rendering.py substitutes at
+send time and no template engine ever evaluates (SECURITY-BASELINE §3), and a
+review page that rendered one as markup would be the hole that undoes it.
+
+The external-request URLs are printed as text rather than linked. The importer
+did not choose them, and a clickable link on a review page is one misread away
+from visiting a stranger's address.
+{% endcomment %}
+
+{% block title %}Import a flow · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="mb-6">
+    <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Review this import</h1>
+    <p class="text-sm" style="color: var(--text-secondary);">
+        From {{ record.original_filename|default:"an uploaded file" }}.
+        Nothing has been created yet.
+    </p>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl">
+
+    {% comment %} What will be created {% endcomment %}
+    <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-1);">
+        <h2 class="text-sm font-semibold mb-2" style="color: var(--text-primary);">Flows in this file</h2>
+        <ul class="space-y-1">
+            {% for flow in plan.document.flows %}
+            <li class="text-sm" style="color: var(--text-secondary);">
+                <span style="color: var(--text-primary);">{{ flow.name }}</span>
+                — {{ flow.graph.nodes|length }} node{{ flow.graph.nodes|length|pluralize }},
+                {{ flow.triggers|length }} trigger{{ flow.triggers|length|pluralize }}
+                {% if flow.key == plan.document.entry %}
+                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ml-1"
+                      style="background: var(--primary-soft); color: var(--primary);">Main flow</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        <p class="text-xs mt-3" style="color: var(--text-tertiary);">
+            They will be created as unpublished drafts. Their triggers arrive switched off.
+        </p>
+    </section>
+
+    {% comment %} Outbound calls the importer did not choose {% endcomment %}
+    {% if plan.outbound_requests %}
+    <section class="rounded-xl border p-4 mb-4"
+             style="border-color: var(--warning-500); background: rgba(var(--warning-500-rgb), 0.08);">
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">This flow calls out to the internet</h2>
+        <p class="text-xs mb-2" style="color: var(--text-secondary);">
+            Whoever wrote this template chose these addresses. Read them before you publish the flow.
+        </p>
+        <ul class="space-y-1">
+            {% for call in plan.outbound_requests %}
+            <li class="text-sm font-mono break-all" style="color: var(--text-secondary);">
+                {{ call.method }} {{ call.url }}
+                <span class="font-sans text-xs" style="color: var(--text-tertiary);">
+                    ({{ call.flow_name }}, node {{ call.node_id }})
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    {% if plan.notes %}
+    <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-2);">
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Worth knowing</h2>
+        <ul class="space-y-1">
+            {% for note in plan.notes %}
+            <li class="text-sm" style="color: var(--text-secondary);">{{ note }}</li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    {% comment %} The mapping form {% endcomment %}
+    <form method="post" action="{{ review_url }}">
+        {% csrf_token %}
+        {% for group in groups %}
+        <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-1);">
+            <h2 class="text-sm font-semibold" style="color: var(--text-primary);">{{ group.label }}</h2>
+            {% if group.help %}
+            <p class="text-xs mt-0.5 mb-3" style="color: var(--text-tertiary);">{{ group.help }}</p>
+            {% endif %}
+            <div class="space-y-3">
+                {% for question in group.questions %}
+                {% include "flows/_import_requirement.html" with resolution=question.resolution options=question.options kind=group.kind field_types=group.field_types %}
+                {% endfor %}
+            </div>
+        </section>
+        {% endfor %}
+
+        <div class="flex flex-wrap items-center gap-2">
+            <button type="submit" class="btn-outline btn-inline">Save answers</button>
+            {% comment %}
+              A refusal answers 2xx as well — htmx drops HX-Trigger on anything
+              else, so a 4xx would show no toast at all (see
+              apps/flows/views_triggers.py). So navigation keys off the event in
+              the header rather than off event.detail.successful, the same way
+              contacts/import_list.html reads importCreated.
+            {% endcomment %}
+            <button type="button" class="btn-brand btn-inline"
+                    hx-post="{{ confirm_url }}" hx-swap="none"
+                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportApplied) window.location = '{{ list_url|escapejs }}';"
+                    {% if not plan.can_apply or applied %}disabled{% endif %}>
+                Import {{ plan.document.flows|length }} flow{{ plan.document.flows|length|pluralize }}
+            </button>
+            <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                    hx-post="{{ discard_url }}" hx-swap="none"
+                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">Discard</button>
+            <a href="{{ list_url }}" class="btn-outline btn-inline">Back to flows</a>
+        </div>
+        {% if not plan.can_apply %}
+        <p class="text-xs mt-2" style="color: var(--text-tertiary);">
+            {{ plan.unanswered|length }} answer{{ plan.unanswered|length|pluralize }} still needed before this can be
+            imported. Save your answers to re-check.
+        </p>
+        {% endif %}
+    </form>
+</div>
+{% endblock %}

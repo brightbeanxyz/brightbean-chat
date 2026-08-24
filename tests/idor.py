@@ -61,6 +61,12 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     "segment_id": lambda t: _victim_segment(t).pk,
     "identity_id": lambda t: _victim_identity(t).pk,
     "import_id": lambda t: _victim_contact_import(t).pk,
+    # Issue #27's flow templates. Deliberately **not** spelled ``import_id``:
+    # that kwarg is already the contacts CSV import's, and reusing it would send
+    # a ContactImport pk at a flows route, which 404s because the row is the
+    # wrong type rather than because of tenancy — the sweep passing for exactly
+    # the reason this file keeps warning about.
+    "flow_import_id": lambda t: _victim_flow_import(t).pk,
     "connection_id": lambda t: _victim_connection(t).pk,
     # Issue #19's WhatsApp template manager. Workspace-scoped like the rest of
     # the channels app, so the sweep's ordinary rules apply.
@@ -417,6 +423,36 @@ def _victim_trigger(tenancy: Tenancy) -> Any:
         )
         trigger.save()
     return trigger
+
+
+def _victim_flow_import(tenancy: Tenancy) -> Any:
+    """An unconfirmed flow-template import owned by the victim (issue #27).
+
+    Built by exporting ``_victim_flow`` and parsing it back, rather than by
+    hand-writing a document: the routes under test read ``document`` and render
+    a mapping form from it, so a fixture that was not a real export would make
+    the review route 404 on its own content instead of on tenancy.
+
+    Left ``pending``. The confirm and discard routes both refuse an applied
+    import before they look at anything else, and a 405-or-404 sweep would then
+    be passing on the status rather than on the workspace.
+    """
+    from apps.flows import portability
+    from apps.flows.models import FlowImport
+
+    record = FlowImport.objects.for_workspace(tenancy.workspace).first()
+    if record is not None:
+        return record
+    document = portability.export_document(_victim_flow(tenancy))
+    record = FlowImport(
+        workspace=tenancy.workspace,
+        document=document,
+        mapping=portability.default_mapping(tenancy.workspace, document, user=tenancy.owner),
+        original_filename="victim.flow.json",
+        created_by=tenancy.owner,
+    )
+    record.save()
+    return record
 
 
 def _victim_sequence(tenancy: Tenancy) -> Any:
