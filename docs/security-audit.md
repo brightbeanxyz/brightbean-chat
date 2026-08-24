@@ -65,17 +65,17 @@ without a linked passing test": an unmapped item cannot be given a legal status.
 | ID | Requirement | Enforcing tests | Status |
 |---|---|---|---|
 | §5.1 | Credentials live only in encrypted fields; never plain columns, fixtures or logs | `apps/common/tests/test_encryption.py`, `tests/test_gitleaks_config.py` | COVERED |
-| §5.2 | The scrubbing filter is installed everywhere; tokens never reach logs, error reports, admin displays or API responses | `apps/common/tests/test_logging.py::TestInstallation`, `apps/common/tests/test_logging.py::TestEncryptedFieldPlaintextNeverReachesLogs`, `apps/common/tests/test_sentry.py::TestScrubEvent`, `apps/channels/tests/test_telegram_scrubbing.py::TestNothingLogsTheToken`, `apps/channels/tests/test_whatsapp_scrubbing.py::TestNothingLogsTheToken`, `apps/api/tests/test_keys.py` | PARTIAL — logs, Sentry and per-adapter shapes are covered thoroughly. "Admin list displays" and "API responses" have no dedicated sweep; the admin registers only `Segment` and `PlatformCredential` (superuser-gated), and no serializer emits an encrypted column, but neither is asserted by a test that would fail if one started to. Filed. |
+| §5.2 | The scrubbing filter is installed everywhere; tokens never reach logs, error reports, admin displays or API responses | `apps/common/tests/test_logging.py::TestInstallation`, `apps/common/tests/test_logging.py::TestEncryptedFieldPlaintextNeverReachesLogs`, `apps/common/tests/test_sentry.py::TestScrubEvent`, `apps/channels/tests/test_telegram_scrubbing.py::TestNothingLogsTheToken`, `apps/channels/tests/test_whatsapp_scrubbing.py::TestNothingLogsTheToken`, `apps/api/tests/test_keys.py` | PARTIAL — logs, Sentry and per-adapter shapes are covered thoroughly. "Admin list displays" and "API responses" have no dedicated sweep; the admin registers only `Segment` and `PlatformCredential` (superuser-gated), and no serializer emits an encrypted column, but neither is asserted by a test that would fail if one started to. Filed as [#94](https://github.com/brightbeanxyz/brightbean-chat/issues/94). |
 
 ## §6 Outbound HTTP (SSRF)
 
 | ID | Requirement | Enforcing tests | Status |
 |---|---|---|---|
-| §6.1 | Every server-initiated request to an influenceable URL goes through the guard. No exceptions | `tests/test_ssrf_call_sites.py::TestEveryRequestLeavesThroughAKnownDoor`, `apps/flows/tests/test_node_external_request.py`, `apps/api/tests/test_delivery.py`, `apps/channels/tests/test_media.py` | PARTIAL — every httpx request leaves through one of two doors, asserted structurally. Two paths reach the network without passing either, because neither is httpx: Django's SMTP backend (address rules pre-flighted, connection not pinned) and boto3 to SES (own transport). Filed. |
+| §6.1 | Every server-initiated request to an influenceable URL goes through the guard. No exceptions | `tests/test_ssrf_call_sites.py::TestEveryRequestLeavesThroughAKnownDoor`, `apps/flows/tests/test_node_external_request.py`, `apps/api/tests/test_delivery.py`, `apps/channels/tests/test_media.py` | PARTIAL — every httpx request leaves through one of two doors, asserted structurally. Two paths reach the network without passing either, because neither is httpx: Django's SMTP backend (address rules pre-flighted, connection not pinned) and boto3 to SES (own transport). Filed as [#92](https://github.com/brightbeanxyz/brightbean-chat/issues/92) and [#91](https://github.com/brightbeanxyz/brightbean-chat/issues/91). |
 | §6.2 | "Proving" means `guard_required()`, not a patched `guarded_request` | `tests/test_ssrf_helper.py::TestGuardRequired`, `tests/test_ssrf_call_sites.py::TestEveryGuardedCallSiteIsProven` | COVERED — new in #29. `apps/channels/providers/email_signatures.py` was the one call site whose tests replaced the symbol; it now has `apps/channels/tests/test_email_signature_fetch.py`. |
 | §6.3 | The guard denies private ranges, pins the resolved address, re-validates redirects, caps the body | `apps/common/tests/test_outbound.py` | COVERED |
 | §6.4 | `request_json` is the sibling for adapter-built URLs | `apps/channels/tests/test_providers_base.py`, `tests/test_ssrf_call_sites.py::TestEveryRequestLeavesThroughAKnownDoor` | COVERED |
-| §6.5 | The two non-HTTP egress paths are named and bounded | `tests/test_ssrf_call_sites.py::TestEveryRequestLeavesThroughAKnownDoor` | PARTIAL — pinned so a third cannot appear quietly, and the SMTP pre-flight is asserted. The gaps themselves are filed, not closed. |
+| §6.5 | The two non-HTTP egress paths are named and bounded | `tests/test_ssrf_call_sites.py::TestEveryRequestLeavesThroughAKnownDoor` | PARTIAL — pinned so a third cannot appear quietly, and the SMTP pre-flight is asserted. The gaps themselves are filed ([#91](https://github.com/brightbeanxyz/brightbean-chat/issues/91), [#92](https://github.com/brightbeanxyz/brightbean-chat/issues/92)), not closed. |
 
 ## §7 Input limits
 
@@ -140,8 +140,8 @@ list so a fourth cannot join it quietly.
 | Category | Why it survives | Bound |
 |---|---|---|
 | `channels.EmailSuppression` | A bounce or spam report is a fact about a **mailbox**, not about a contact row. The list is keyed on the address with no foreign key precisely so deleting and re-importing a contact cannot undo it — `apps/channels/models.py` argues it, and a test has asserted it since Layer 5. | Kept indefinitely, by design. Disclosed in the subject export's `retained` section. |
-| `channels.WebhookEventLog.raw` | Raw inbound deliveries, kept for replay protection and debugging. Keyed on `(connection, provider_event_id)` with no contact reference, so it cannot be searched by person. | Pruned 30 days after receipt by housekeeping. Filed. |
-| `contacts.ContactImport` | An uploaded spreadsheet quotes whatever cells it contained, and nothing links a row of it to the contact it created. | The file is pruned after the retention window; the row errors are not. Filed. |
+| `channels.WebhookEventLog.raw` | Raw inbound deliveries, kept for replay protection and debugging. Keyed on `(connection, provider_event_id)` with no contact reference, so it cannot be searched by person. | Pruned 30 days after receipt by housekeeping. Filed as [#95](https://github.com/brightbeanxyz/brightbean-chat/issues/95). |
+| `contacts.ContactImport` | An uploaded spreadsheet quotes whatever cells it contained, and nothing links a row of it to the contact it created. | The file is pruned after the retention window; the row errors are not. Filed as [#95](https://github.com/brightbeanxyz/brightbean-chat/issues/95). |
 
 The subject export names all three in its `not_included` and `retained` sections
 rather than presenting itself as complete.
@@ -172,13 +172,13 @@ to do.
 
 ### Filed
 
-| # | Finding | Baseline | Why not fixed here |
+| Issue | Finding | Baseline | Why not fixed here |
 |---|---|---|---|
-| 11 | boto3/SES reaches the network outside both the guard and `request_json`; botocore owns its transport | §6.1, §6.5 | Closing it means a botocore event hook that validates addresses — design work in another app's provider |
-| 12 | Workspace SMTP applies the guard's address rules as a pre-flight but does not pin the connection, leaving a check-then-connect window | §6.1, §6.5 | Needs a custom `smtplib` socket factory |
-| 13 | The SES `region` is unvalidated free text and becomes part of the outbound host, while the sibling `CERT_URL_RE` does pin its region label | §6.1 | Belongs with 11; a regex on the form alone would be a half-measure |
-| 14 | No secrets sweep over admin displays and API responses, which §5.2 names alongside logs | §5.2 | Wants a canary-based sweep across every registered ModelAdmin and every API route — worth doing properly, not squeezed in |
-| 15 | `WebhookEventLog.raw` and `ContactImport.errors` hold personal data erasure cannot target | SPEC §19.6 | Retention is the control today. Shortening the webhook window would weaken replay protection, so it needs a decision rather than a patch |
+| [#91](https://github.com/brightbeanxyz/brightbean-chat/issues/91) | boto3/SES reaches the network outside both the guard and `request_json`; botocore owns its transport | §6.1, §6.5 | Closing it means a botocore event hook that validates addresses — design work in another app's provider |
+| [#92](https://github.com/brightbeanxyz/brightbean-chat/issues/92) | Workspace SMTP applies the guard's address rules as a pre-flight but does not pin the connection, leaving a check-then-connect window | §6.1, §6.5 | Needs a custom `smtplib` socket factory |
+| [#93](https://github.com/brightbeanxyz/brightbean-chat/issues/93) | The SES `region` is unvalidated free text and becomes part of the outbound host, while the sibling `CERT_URL_RE` does pin its region label | §6.1 | Belongs with 11; a regex on the form alone would be a half-measure |
+| [#94](https://github.com/brightbeanxyz/brightbean-chat/issues/94) | No secrets sweep over admin displays and API responses, which §5.2 names alongside logs | §5.2 | Wants a canary-based sweep across every registered ModelAdmin and every API route — worth doing properly, not squeezed in |
+| [#95](https://github.com/brightbeanxyz/brightbean-chat/issues/95) | `WebhookEventLog.raw` and `ContactImport.errors` hold personal data erasure cannot target | SPEC §19.6 | Retention is the control today. Shortening the webhook window would weaken replay protection, so it needs a decision rather than a patch |
 
 Two more worth knowing about and not filed: `apps/api/tests/support.py` keeps a
 private `FakeInternet` that duplicates `tests/ssrf.py`'s, contradicting the
