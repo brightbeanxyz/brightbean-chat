@@ -291,3 +291,27 @@ class TestEmptyFanout:
         broadcast.refresh_from_db()
         assert broadcast.status == BroadcastStatus.SENT
         assert broadcast.recipients.count() == 0
+
+
+@pytest.mark.django_db
+def test_the_bell_item_links_at_the_broadcast(tenancy, make_contacts, make_broadcast, connection, adapter_for):
+    """The useful act on "your broadcast finished" is reading its counters.
+
+    ``action_url`` is the one context key notify() turns into a link rather than
+    text; without it the item lands on the generic notifications page.
+    """
+    from django.urls import reverse
+
+    from apps.notifications.models import Notification
+
+    make_contacts(1, connection=connection)
+    broadcast = make_broadcast(connection=connection)
+
+    with adapter_for(connection.platform):
+        _run_to_completion(tenancy.workspace, broadcast)
+
+    notification = Notification.objects.get(user=tenancy.owner, event_type="broadcast_finished")
+    assert notification.payload["action_url"] == reverse(
+        "broadcasts:detail",
+        kwargs={"workspace_id": tenancy.workspace.pk, "broadcast_id": broadcast.pk},
+    )

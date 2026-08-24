@@ -40,10 +40,28 @@ honestly live (SECURITY-BASELINE §7).
       }
       // image / audio / video / file — the schema wants media_id or url, one of
       // the two, so a blank row is dropped rather than sent as an empty string.
-      if (!block.media_id) return null;
-      var media = { type: block.type, media_id: block.media_id };
+      if (!block.media) return null;
+      var media = { type: block.type };
+      // The same rule apps/flows/engine/nodes/send_message.py::_is_media_id
+      // applies: a value that parses as a UUID is a library id, anything else is
+      // a URL. Storing a pasted link under media_id makes the send node resolve
+      // it against the library, and an id that does not resolve raises rather
+      // than falling back — so the whole message is dropped for a link that was
+      // perfectly deliverable.
+      if (isLibraryId(block.media)) {
+        media.media_id = block.media;
+      } else {
+        media.url = block.media;
+      }
       if (block.caption) media.caption = block.caption;
       return media;
+    }
+
+    //: UUID in any of the shapes Python's uuid.UUID() accepts a string in.
+    var UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+    function isLibraryId(value) {
+      return UUID_RE.test(String(value).trim().replace(/^urn:uuid:/i, ""));
     }
 
     function packButton(button, index) {
@@ -62,7 +80,9 @@ honestly live (SECURITY-BASELINE §7).
         return {
           type: block.type,
           text: block.text || '',
-          media_id: block.media_id || '',
+          // One editor field, either stored key — so re-opening a draft shows
+          // what was typed rather than an empty box beside a stored url.
+          media: block.media_id || block.url || '',
           caption: block.caption || '',
           title: block.title || '',
           subtitle: block.subtitle || '',
@@ -77,7 +97,7 @@ honestly live (SECURITY-BASELINE §7).
       variables: savedVariables && !Array.isArray(savedVariables) ? savedVariables : {},
 
       addBlock: function (kind) {
-        this.blocks.push({ type: kind, text: '', media_id: '', caption: '', title: '', subtitle: '', image: '' });
+        this.blocks.push({ type: kind, text: '', media: '', caption: '', title: '', subtitle: '', image: '' });
       },
       addButton: function () {
         if (this.buttons.length >= this.config.max_buttons) return;

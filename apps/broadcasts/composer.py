@@ -55,7 +55,15 @@ __all__ = [
 #: The block kinds a broadcast composer offers, in the order it offers them.
 #: ``text`` is not in the list because every platform has it and it is the
 #: composer's default block; the rest are capability-gated.
-BLOCK_KINDS: tuple[str, ...] = ("image", "video", "audio", "file", "card", "gallery")
+#:
+#: ``gallery`` is deliberately absent even where the capability table allows it.
+#: The schema's ``block_gallery`` requires a ``cards`` array, and this composer
+#: has no multi-card editor — SPEC §13.1 writes a broadcast's content as
+#: "send_message [+ buttons]" — so offering the button could only produce a
+#: block the validator refuses. An affordance that cannot succeed is worse than
+#: one that is absent; a gallery belongs in the flow builder, which has the
+#: canvas for it.
+BLOCK_KINDS: tuple[str, ...] = ("image", "video", "audio", "file", "card")
 
 
 def broadcastable_connections(workspace: Any) -> list[ChannelConnection]:

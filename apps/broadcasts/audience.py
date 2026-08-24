@@ -53,6 +53,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from django.db.models import Case, Count, IntegerField, QuerySet, Value, When
+from django.utils import timezone
 
 from apps.channels.events import OutboundMessage
 from apps.channels.suppression import is_suppressed
@@ -69,6 +70,7 @@ __all__ = [
     "AudiencePreview",
     "Candidate",
     "PREVIEW_SAMPLE",
+    "bind_pending_identities",
     "SOURCE",
     "iter_candidates",
     "preview",
@@ -158,6 +160,61 @@ def probe_for(broadcast: Any) -> OutboundMessage:
         tag=broadcast.message_tag or None,
         template_ref=template.reference if template is not None else None,
     )
+
+
+def bind_pending_identities(broadcast: Any) -> int:
+    """Contract 1's lazy upgrade, applied to this audience before it is counted.
+
+    An address captured before any connection of its platform existed is stored
+    as a **pending** record — ``channel_connection`` NULL — and ROADMAP contract
+    1 says it is "upgraded lazily at first send". That upgrade lives in
+    ``apps.messaging.services._identity_for`` and happens one contact at a time,
+    inside a send.
+
+    A broadcast never gets there. ``compliance.annotate_eligibility`` classifies
+    a pending row as ``no_connection`` — deliberately, so it is *counted* rather
+    than dropped — and fanout therefore skips it and never calls the facade at
+    all. The result is the shape a CSV import produces: ten thousand contacts
+    imported, an SMS number connected afterwards, and a broadcast that skips
+    every one of them with "this address was captured before a channel
+    connection existed". Nothing an operator can do about it except send each
+    person something else first.
+
+    So the upgrade is done here, set-wise, at the one moment a broadcast commits
+    to an audience. It is the same upgrade with the same rule, not a second
+    policy: bind a pending row of this platform to this connection, and leave
+    alone any address the connection already holds — which is what
+    ``_identity_for``'s ``IntegrityError`` branch does one row at a time, and
+    what ``identity_unique_conn_user`` would otherwise refuse.
+
+    One statement rather than a loop, because the alternative is ten thousand
+    round trips inside a request. Returns how many rows it bound.
+
+    Deliberately **not** called from :func:`preview`: that runs on every
+    keystroke of the composer and a write there would be a GET that mutates. The
+    consequence is that the composer's live count can under-report a freshly
+    imported audience until the broadcast is scheduled — which is the one
+    imprecision this module's docstring is talking about when it calls the
+    preview advisory and the recipient rows the record.
+    """
+    connection = broadcast.channel_connection
+    if connection is None:
+        return 0
+
+    identities = ContactChannelIdentity.objects.for_workspace(broadcast.workspace_id)
+    already_bound = identities.filter(channel_connection=connection).values("platform_user_id")
+    pending = (
+        identities.filter(
+            contact__in=target_queryset(broadcast.workspace_id, _compile(broadcast)).values("pk"),
+            channel_connection__isnull=True,
+            platform=connection.platform,
+        )
+        # The connection already knows this address through another row. That row
+        # is authoritative; binding a second one to it would violate
+        # identity_unique_conn_user.
+        .exclude(platform_user_id__in=already_bound)
+    )
+    return int(pending.update(channel_connection=connection, updated_at=timezone.now()))
 
 
 def target_queryset(workspace: Any, filter_json: Any) -> QuerySet[Contact]:

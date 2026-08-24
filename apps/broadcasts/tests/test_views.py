@@ -346,3 +346,60 @@ class TestListTruncation:
         body = client_for(tenancy.owner).get(_url("broadcasts:rows", tenancy)).content.decode()
 
         assert "most recent" not in body
+
+
+@pytest.mark.django_db
+class TestMediaBlocksAcceptEitherShape:
+    """One field for "the picture", two schema keys underneath.
+
+    apps/flows/engine/nodes/send_message.py::_media_url treats a non-empty
+    media_id as a library id and *raises* when it does not resolve — which drops
+    the whole message rather than the picture. So a pasted link has to be stored
+    under `url`, and the composer decides which by the same UUID rule the node
+    uses.
+    """
+
+    def _saved_config(self, tenancy, client_for, connection, blocks):
+        from apps.broadcasts.tests.conftest import EVERYONE
+
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Media", connection=connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+        import json
+
+        response = client_for(tenancy.owner).post(
+            _url("broadcasts:save_content", tenancy, broadcast_id=broadcast.pk),
+            {"mode": "message", "config": json.dumps({"blocks": blocks})},
+        )
+        assert response.status_code == 200
+        broadcast.refresh_from_db()
+        return services.node_config(broadcast.flow.versions.first().graph_json)
+
+    def test_a_url_is_stored_under_url(self, tenancy, client_for, connection):
+        config = self._saved_config(
+            tenancy, client_for, connection, [{"type": "image", "url": "https://example.test/a.png"}]
+        )
+
+        assert config["blocks"][0] == {"type": "image", "url": "https://example.test/a.png"}
+
+    def test_a_library_id_is_stored_under_media_id(self, tenancy, client_for, connection):
+        from apps.media_library.models import MediaAsset
+
+        asset = MediaAsset.objects.create(
+            workspace=tenancy.workspace, filename="a.png", kind="image", mime="image/png", size=1, file="media/a.png"
+        )
+        config = self._saved_config(tenancy, client_for, connection, [{"type": "image", "media_id": str(asset.pk)}])
+
+        assert config["blocks"][0] == {"type": "image", "media_id": str(asset.pk)}
+
+    def test_the_composer_script_routes_by_the_same_uuid_rule_as_the_send_node(self):
+        """Structural: the two must agree about what a library id looks like, or
+        a value routed one way here is read the other way there."""
+        from pathlib import Path
+
+        script = (Path(__file__).resolve().parents[3] / "templates" / "broadcasts" / "_compose_script.html").read_text()
+
+        assert "isLibraryId" in script
+        assert "media.url = block.media" in script
+        assert "media.media_id = block.media" in script

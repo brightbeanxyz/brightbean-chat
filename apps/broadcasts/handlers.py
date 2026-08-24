@@ -71,6 +71,7 @@ from apps.broadcasts.models import (
     RecipientStatus,
 )
 from apps.channels.events import OutboundMessage
+from apps.channels.models import ConnectionStatus
 from apps.contacts.models import Contact
 from apps.messaging import buckets
 from apps.messaging.codes import Denial
@@ -280,6 +281,19 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
         return
 
     connection = broadcast.channel_connection
+    if connection.status == ConnectionStatus.DISABLED:
+        # Re-read at send time, because the composer's own selector already
+        # refuses a disabled connection (composer.broadcastable_connections) and
+        # hours can pass between that choice and this row being claimed.
+        # Switching a channel off is the most explicit instruction an operator
+        # has for "stop using this", and nothing downstream enforces it: the
+        # facade takes the connection object it is handed, and adapter_for keys
+        # on the platform. So it has to be refused here or the stored
+        # credentials go on being used.
+        _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.NO_CONNECTION.value)
+        _maybe_settle(broadcast)
+        return
+
     identity = _identity_for(broadcast, contact, recipient)
     if identity is None:
         _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.NO_IDENTITY.value)

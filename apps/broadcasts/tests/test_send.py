@@ -494,3 +494,35 @@ class TestIdentityAgreement:
 
         assert broadcast.recipients.get().status == RecipientStatus.SENT
         assert spare.pk is not None
+
+
+@pytest.mark.django_db
+def test_a_connection_disabled_after_scheduling_stops_the_send(
+    tenancy, make_contacts, make_broadcast, connection, adapter_for
+):
+    """Switching a channel off is the most explicit "stop using this" there is.
+
+    Nothing downstream enforces it: the facade takes the connection object it is
+    handed and ``adapter_for`` keys on the platform, so a disabled connection
+    goes on sending with its stored credentials. The composer's own selector
+    already refuses one; the send has to agree.
+    """
+    from apps.channels.models import ChannelConnection, ConnectionStatus
+
+    make_contacts(2, connection=connection)
+    broadcast = make_broadcast(connection=connection)
+
+    with adapter_for(connection.platform) as adapter:
+        actions = _fan_out(tenancy.workspace, broadcast)
+        ChannelConnection.objects.for_workspace(tenancy.workspace).filter(pk=connection.pk).update(
+            status=ConnectionStatus.DISABLED
+        )
+        for action in actions:
+            _send(action)
+
+        assert adapter.sends == []
+
+    counts = services.counters(broadcast)
+    assert counts.sent == 0
+    assert counts.skipped == 2
+    assert counts.queued == counts.sent + counts.failed + counts.cancelled + counts.skipped

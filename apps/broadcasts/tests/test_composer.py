@@ -687,3 +687,91 @@ class TestContentValidatesAgainstItsOwnChannel:
 
         assert seen == [(whatsapp_connection.platform,)]
         assert connection.platform not in seen[0]
+
+
+@pytest.mark.django_db
+class TestTemplateVariablesAreExactlyTheSlots:
+    """Meta binds template parameters by position, not by name.
+
+    ``apps.channels.providers.whatsapp._template_components`` renders every
+    stored slot as a contiguous run, so an extra entry is not inert — it makes
+    the parameter count disagree with the template Meta reviewed, and the whole
+    message is refused, once per recipient.
+    """
+
+    def _template(self, tenancy, connection, name, body):
+        from apps.channels.models import WhatsAppTemplate, WhatsAppTemplateStatus
+
+        return WhatsAppTemplate.objects.create(
+            workspace=tenancy.workspace,
+            channel_connection=connection,
+            name=name,
+            language="en_US",
+            category="utility",
+            status=WhatsAppTemplateStatus.APPROVED,
+            body_structure={"body": {"text": body}},
+        )
+
+    def test_a_slot_the_template_does_not_declare_is_dropped(self, tenancy, whatsapp_connection):
+        """The shape the composer produces when an operator switches templates:
+        Alpine keeps the first template's entries in its state."""
+        from apps.broadcasts.tests.conftest import EVERYONE
+
+        one_slot = self._template(tenancy, whatsapp_connection, "one_slot", "Hi {{1}}.")
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Switch", connection=whatsapp_connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+
+        services.save_template(broadcast, one_slot, {"body.1": "Ada", "body.2": "left over", "header.1": "stale"})
+
+        broadcast.refresh_from_db()
+        assert broadcast.template_variables == {"body.1": "Ada"}
+
+    def test_a_missing_slot_is_still_refused(self, tenancy, whatsapp_connection):
+        from apps.broadcasts.tests.conftest import EVERYONE
+
+        two_slots = self._template(tenancy, whatsapp_connection, "two_slots", "Hi {{1}}, order {{2}}.")
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Gappy", connection=whatsapp_connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+
+        with pytest.raises(services.BroadcastError, match="body.2"):
+            services.save_template(broadcast, two_slots, {"body.1": "Ada", "body.9": "nonsense"})
+
+
+@pytest.mark.django_db
+class TestGalleryIsNotOffered:
+    def test_the_composer_does_not_advertise_a_block_it_cannot_build(self, tenancy, connection):
+        """The schema's block_gallery requires a `cards` array and this composer
+        has no multi-card editor, so the button could only produce a block the
+        validator refuses."""
+        from apps.channels.capabilities import capabilities_for
+
+        assert "gallery" not in composer.BLOCK_KINDS
+        # And the exclusion is the composer's own, not an accident of an empty
+        # capability table: some platform does render galleries, and it still
+        # does not get the button.
+        assert [p for p in Platform.values if capabilities_for(p).gallery], (
+            "no platform declares gallery support, so this test proves nothing"
+        )
+        offered = {
+            kind
+            for platform in Platform.values
+            for kind in composer.BLOCK_KINDS
+            if capabilities_for(platform).supports_block(kind)
+        }
+        assert "gallery" not in offered
+
+    def test_a_hand_crafted_gallery_is_still_refused(self, tenancy, connection):
+        """Nothing offers it, and the validator is the backstop if something did."""
+        from apps.broadcasts.tests.conftest import EVERYONE
+
+        broadcast = services.create_broadcast(
+            workspace=tenancy.workspace, name="Gallery", connection=connection, user=tenancy.owner
+        )
+        services.set_audience(broadcast, filter_json=EVERYONE)
+
+        with pytest.raises(services.BroadcastError):
+            services.save_content(broadcast, {"blocks": [{"type": "gallery", "media_id": "not-cards"}]})

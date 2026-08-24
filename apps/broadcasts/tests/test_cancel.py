@@ -326,3 +326,59 @@ def test_a_cancel_does_not_rewrite_a_recipient_that_was_already_delivered(
     assert counts.sent == 1
     assert counts.cancelled == 1
     assert counts.queued == counts.sent + counts.failed + counts.cancelled + counts.skipped
+
+
+@pytest.mark.django_db
+def test_a_retry_already_running_is_not_recorded_as_cancelled(
+    tenancy, make_contacts, make_broadcast, connection, adapter_for, settings
+):
+    """Only the retries this cancel actually stopped may settle their recipients.
+
+    ``handle_send_retry`` knows nothing about broadcasts, so a retry that was
+    already claimed will finish its provider call. Recording its recipient as
+    cancelled would report a message on its way to somebody's phone as stopped,
+    and take a count out of ``sent`` for a send that happened.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone as tz
+
+    from apps.messaging.buckets import rate_for
+    from apps.messaging.models import SendBucket
+    from apps.queueing.models import ActionType as QueueType
+
+    settings.SEND_BUCKET_MAX_WAIT_SECONDS = 0
+    # Three recipients, two sends run: the third keeps the broadcast at
+    # ``sending``, which is the state a cancel is for.
+    make_contacts(3, connection=connection)
+    broadcast = make_broadcast(connection=connection)
+
+    with adapter_for(connection.platform):
+        actions = _fan_out(tenancy.workspace, broadcast)
+        SendBucket.objects.create(
+            connection=connection,
+            tokens=0.0,
+            capacity=1.0,
+            refill_rate=rate_for(connection.platform),
+            refilled_at=tz.now() + timedelta(hours=1),
+        )
+        for action in actions[:2]:
+            handlers.handle_broadcast_send(action.payload, action)
+
+    retries = ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=QueueType.SEND_RETRY)
+    assert retries.count() == 2
+    # One of them is already claimed when the cancel lands.
+    claimed = retries.first()
+    retries.filter(pk=claimed.pk).update(status=ActionStatus.RUNNING)
+
+    services.cancel_broadcast(broadcast)
+
+    claimed.refresh_from_db()
+    assert claimed.status == ActionStatus.RUNNING, "the flip must not reach a claimed row"
+
+    counts = services.counters(broadcast)
+    # One deferred send stopped, one left alone because its retry was already
+    # claimed, and one recipient whose send never ran at all.
+    assert counts.cancelled == 2, "the stopped retry, plus the recipient that never ran"
+    assert counts.sent == 1, "the in-flight one is still on its way, and is reported as such"
+    assert counts.queued == counts.sent + counts.failed + counts.cancelled + counts.skipped

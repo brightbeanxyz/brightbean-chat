@@ -92,11 +92,22 @@ script tag out of its own comment for its extractor.
                       placeholder="What do you want to say?"></textarea>
           </template>
 
+          {% comment %}
+            One field for both, because that is how an author thinks about it —
+            they have "the picture", and it is either in the library or it is a
+            link. Which of the schema's two keys it becomes is decided in
+            packBlock by the same rule apps/flows/engine/nodes/send_message.py
+            uses: a value that parses as a UUID is a library id, anything else is
+            a URL. Binding everything to media_id, as this did, made a pasted
+            link a library lookup that could only fail — and _media_url raises on
+            an unresolvable id, which drops the whole message rather than the
+            picture.
+          {% endcomment %}
           <template x-if="block.type !== 'text' && block.type !== 'card'">
             <div class="bc-row">
-              <label class="sr-only" :for="`block-media-${index}`">Media id or URL</label>
+              <label class="sr-only" :for="`block-media-${index}`">Media library id or URL</label>
               <input :id="`block-media-${index}`" type="text" class="form-input-styled" style="width: 22rem;"
-                     x-model="block.media_id" placeholder="Media library id">
+                     x-model="block.media" placeholder="Media library id, or https://…">
               <input type="text" class="form-input-styled" style="width: 16rem;"
                      x-model="block.caption" placeholder="Caption (optional)">
             </div>
@@ -109,7 +120,8 @@ script tag out of its own comment for its extractor.
                 <input type="text" class="form-input-styled" style="width: 18rem;" x-model="block.subtitle" placeholder="Subtitle" maxlength="400">
               </div>
               <div class="bc-row">
-                <input type="text" class="form-input-styled" style="width: 22rem;" x-model="block.image" placeholder="Image: media library id or URL">
+                <input type="text" class="form-input-styled" style="width: 22rem;" x-model="block.image"
+                       placeholder="Image: media library id, or https://…">
               </div>
             </div>
           </template>

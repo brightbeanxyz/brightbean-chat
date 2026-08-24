@@ -11,7 +11,8 @@ from datetime import timedelta
 
 import pytest
 
-from apps.broadcasts import audience
+from apps.broadcasts import audience, services
+from apps.broadcasts.models import BroadcastStatus
 from apps.broadcasts.tests.conftest import EVERYONE
 from apps.messaging.codes import Denial
 
@@ -262,3 +263,96 @@ class TestSamplesPerReason:
         preview = audience.preview(broadcast)
 
         assert len(preview.samples[Denial.OPTED_OUT.value]) == audience.PREVIEW_SAMPLE
+
+
+@pytest.mark.django_db
+class TestPendingIdentitiesAreReached:
+    """The shape a CSV import produces, which the seam alone would skip.
+
+    An address captured before any connection of its platform existed is stored
+    pending, and ``annotate_eligibility`` classifies it ``no_connection`` —
+    deliberately, so it is counted. But fanout then skips it and never reaches
+    the facade's lazy upgrade, so a workspace that imports ten thousand contacts
+    and *then* connects a number would have every one of them skipped.
+    """
+
+    def _pending(self, tenancy, contact, platform, address):
+        from django.utils import timezone as tz
+
+        from apps.messaging.models import ContactChannelIdentity, OptInSource
+
+        return ContactChannelIdentity.objects.create(
+            workspace=tenancy.workspace,
+            contact=contact,
+            channel_connection=None,
+            platform=platform,
+            platform_user_id=address,
+            opt_in=True,
+            opt_in_at=tz.now(),
+            opt_in_source=OptInSource.IMPORT,
+        )
+
+    def test_an_imported_audience_is_bound_and_then_eligible(self, tenancy, connection, make_contacts, make_broadcast):
+        from apps.contacts.models import Contact
+
+        imported = [Contact.objects.create(workspace=tenancy.workspace, first_name=f"Imported{i}") for i in range(3)]
+        for index, contact in enumerate(imported):
+            self._pending(tenancy, contact, connection.platform, f"imported-{index}")
+        broadcast = make_broadcast(connection=connection)
+
+        # Before binding, the seam counts them as unreachable — which is the
+        # behaviour that made the bug invisible.
+        assert audience.preview(broadcast).eligible == 0
+        assert audience.preview(broadcast).needs(Denial.NO_CONNECTION.value) == 3
+
+        bound = audience.bind_pending_identities(broadcast)
+
+        assert bound == 3
+        assert audience.preview(broadcast).eligible == 3
+
+    def test_scheduling_binds_them_before_it_counts(self, tenancy, connection, make_broadcast):
+        """The gate's numbers have to be the numbers fanout will produce."""
+        from apps.contacts.models import Contact
+
+        contact = Contact.objects.create(workspace=tenancy.workspace, first_name="Imported")
+        self._pending(tenancy, contact, connection.platform, "imported-solo")
+        broadcast = make_broadcast(connection=connection)
+
+        # Would be refused as "nobody can be messaged" if the bind came after.
+        services.schedule_broadcast(broadcast)
+
+        broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.SCHEDULED
+        assert contact.channel_identities.get().channel_connection_id == connection.pk
+
+    def test_an_address_the_connection_already_holds_is_left_alone(
+        self, tenancy, connection, make_contacts, make_broadcast
+    ):
+        """identity_unique_conn_user would refuse a second row for one address.
+
+        The facade's own upgrade handles this with an IntegrityError branch, one
+        row at a time; set-wise it has to be an exclusion.
+        """
+        [contact] = make_contacts(1, connection=connection, prefix="dup")
+        bound_address = contact.channel_identities.get().platform_user_id
+        # A stray pending row for an address the connection already knows.
+        other = self._pending(tenancy, contact, connection.platform, bound_address)
+        broadcast = make_broadcast(connection=connection)
+
+        assert audience.bind_pending_identities(broadcast) == 0
+
+        other.refresh_from_db()
+        assert other.channel_connection_id is None
+
+    def test_a_pending_row_for_another_platform_is_untouched(self, tenancy, connection, make_broadcast):
+        from apps.common.platforms import Platform
+        from apps.contacts.models import Contact
+
+        contact = Contact.objects.create(workspace=tenancy.workspace, first_name="Emailed")
+        row = self._pending(tenancy, contact, Platform.EMAIL, "someone@example.test")
+        broadcast = make_broadcast(connection=connection)
+
+        audience.bind_pending_identities(broadcast)
+
+        row.refresh_from_db()
+        assert row.channel_connection_id is None

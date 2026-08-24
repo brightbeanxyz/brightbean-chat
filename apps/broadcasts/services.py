@@ -55,6 +55,7 @@ from typing import Any
 
 from django.db import transaction
 from django.db.models import Count
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.broadcasts import events as broadcast_events
@@ -285,15 +286,25 @@ def save_template(broadcast: Broadcast, template: Any, variables: dict[str, str]
     if whatsapp_templates.sendable(template.pk, broadcast.channel_connection) is None:
         raise BroadcastError("That template is not approved for use on this channel.")
 
-    # Every slot the approved copy declares needs a value. Meta rejects a
-    # template message whose parameter count does not match the one it reviewed,
-    # so the alternative to checking here is discovering it once per recipient —
-    # and the slots come from ``slots_for``, the same reading of
+    # Exactly the slots this template declares — no more, no fewer.
+    #
+    # Meta binds template parameters **by position**, and
+    # ``apps.channels.providers.whatsapp._template_components`` renders every
+    # stored slot as a contiguous run. So an extra entry is not inert: an
+    # operator who fills one template's variables and then picks a different one
+    # leaves the first template's slots in the composer's state, and storing them
+    # would send a two-parameter body to a one-placeholder template. Meta refuses
+    # the whole message, once per recipient.
+    #
+    # Missing is checked for the same reason from the other side: a gap delivers
+    # the wrong value in {{1}}'s place. ``slots_for`` is the same reading of
     # ``body_structure`` the composer built its form from.
-    values = {str(k): str(v) for k, v in (variables or {}).items()}
-    missing = [slot for slot in whatsapp_templates.slots_for(template) if not values.get(slot, "").strip()]
+    declared = list(whatsapp_templates.slots_for(template))
+    supplied = {str(k): str(v) for k, v in (variables or {}).items()}
+    missing = [slot for slot in declared if not supplied.get(slot, "").strip()]
     if missing:
         raise BroadcastError(f"This template needs a value for {', '.join(missing)}.")
+    values = {slot: supplied[slot] for slot in declared}
 
     with transaction.atomic():
         broadcast.whatsapp_template = template
@@ -439,6 +450,12 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
         # Reachable through the API, where nothing walks the wizard's steps.
         raise BroadcastError("Choose who this broadcast goes to.")
     _require_sendable_template(broadcast)
+
+    # Before the audience is counted, not after: the numbers this gate refuses
+    # or accepts on have to be the numbers fanout will produce.
+    upgraded = audience_module.bind_pending_identities(broadcast)
+    if upgraded:
+        logger.info("Broadcast %s bound %s pending identit(ies) to its connection", broadcast.pk, upgraded)
 
     counts = audience_module.preview(broadcast)
     if counts.total == 0:
@@ -633,29 +650,48 @@ def _cancel_deferred_sends(broadcast: Broadcast) -> int:
 
     Returns how many retries were stopped.
     """
-    stalled = list(
-        BroadcastRecipient.objects.for_workspace(broadcast.workspace_id)
+    stalled = {
+        str(message_id): pk
+        for pk, message_id in BroadcastRecipient.objects.for_workspace(broadcast.workspace_id)
         .filter(broadcast=broadcast, status=RecipientStatus.SENT, message__status=MessageStatus.QUEUED)
         .values_list("pk", "message_id")
-    )
+    }
     if not stalled:
         return 0
 
-    cancelled = (
+    # Which retries are actually still stoppable, read under a row lock so a
+    # worker cannot claim one between this read and the update below.
+    retries = (
         ScheduledAction.objects.for_workspace(broadcast.workspace_id)
+        .select_for_update()
         .filter(
             type=ActionType.SEND_RETRY,
             status=ActionStatus.PENDING,
-            payload__message_id__in=[str(message_id) for _, message_id in stalled],
+            payload__message_id__in=sorted(stalled),
         )
-        .update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
     )
-    BroadcastRecipient.objects.for_workspace(broadcast.workspace_id).filter(pk__in=[pk for pk, _ in stalled]).update(
-        status=RecipientStatus.CANCELLED, updated_at=timezone.now()
-    )
+    stoppable = {str(row.payload.get("message_id")) for row in retries}
+    if not stoppable:
+        return 0
 
-    logger.info("Broadcast %s: stopped %s deferred send(s) on cancellation", broadcast.pk, cancelled)
-    return int(cancelled)
+    ScheduledAction.objects.for_workspace(broadcast.workspace_id).filter(
+        type=ActionType.SEND_RETRY,
+        status=ActionStatus.PENDING,
+        payload__message_id__in=sorted(stoppable),
+    ).update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
+
+    # **Only** the recipients whose retry this call actually stopped. A retry
+    # that was already ``running`` is out of reach — ``handle_send_retry`` knows
+    # nothing about broadcasts and will finish its provider call — so marking its
+    # recipient ``cancelled`` would record as stopped a message that is on its
+    # way to somebody's phone, and take a count out of ``sent`` for a send that
+    # happened. Those stay ``sent``, which is what they are.
+    BroadcastRecipient.objects.for_workspace(broadcast.workspace_id).filter(
+        pk__in=[stalled[message_id] for message_id in stoppable]
+    ).update(status=RecipientStatus.CANCELLED, updated_at=timezone.now())
+
+    logger.info("Broadcast %s: stopped %s deferred send(s) on cancellation", broadcast.pk, len(stoppable))
+    return len(stoppable)
 
 
 # ---------------------------------------------------------------------------
@@ -913,6 +949,14 @@ def _announce(broadcast: Broadcast, current: Counters) -> None:
                 "sent": current.sent,
                 "failed": current.failed,
                 "skipped": current.skipped,
+                # The one context key ``notify()`` turns into a link rather than
+                # text (apps.notifications.action_urls). Without it the bell item
+                # lands on the generic notifications page, and the useful act on
+                # "your broadcast finished" is looking at its counters.
+                "action_url": reverse(
+                    "broadcasts:detail",
+                    kwargs={"workspace_id": broadcast.workspace_id, "broadcast_id": broadcast.pk},
+                ),
             },
         )
     except Exception:  # noqa: BLE001 - a bell that will not ring is not a failed send
