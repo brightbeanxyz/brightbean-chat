@@ -53,6 +53,7 @@ from typing import Any
 from uuid import UUID
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.flows.compat import installed_model
 from apps.flows.models import Flow
@@ -66,15 +67,18 @@ __all__ = [
     "ACTION_KEEP",
     "ACTION_MAP",
     "ACTION_SKIP",
+    "ANY_CONNECTION",
     "CREATABLE_KINDS",
     "OPTIONAL_KINDS",
     "ImportNotReadyError",
     "ImportPlan",
+    "ImportRefusedError",
     "Requirement",
     "Resolution",
     "TRIGGER_KIND",
     "TriggerChoice",
     "apply_import",
+    "confirm_import",
     "default_mapping",
     "outbound_requests",
     "parse_and_validate",
@@ -101,6 +105,13 @@ TRIGGER_KIND = "trigger"
 ACTION_KEEP = "keep"
 ACTION_SKIP = "skip"
 
+#: The channel picker's sentinel for "leave this trigger unbound".
+#:
+#: A separate value from "nothing chosen", because the two are opposite
+#: intentions that a ``<select>`` whose blank option means both cannot tell
+#: apart — and the widening one must never be reachable by *not* answering.
+ANY_CONNECTION = "any"
+
 #: Kinds the mapping step can create from nothing.
 #:
 #: A **segment** is absent on purpose: it is a saved *filter*, and inventing one
@@ -120,6 +131,11 @@ CREATABLE_KINDS: frozenset[str] = frozenset({refs.KIND_TAG, refs.KIND_CUSTOM_FIE
 
 #: Kinds an import may leave unanswered because the resulting document is still
 #: valid and still honest about what it is missing.
+#:
+#: ``platform`` is a member because a null connection is a legal trigger — but
+#: it never reaches this set's users: :func:`_resolve` and the review template
+#: both branch on it first, so "leave the trigger unbound" is a choice that has
+#: to be made rather than one that happens by default. See that branch for why.
 OPTIONAL_KINDS: frozenset[str] = frozenset(
     {
         "platform",
@@ -139,8 +155,17 @@ class Requirement:
     kind: str
     #: Identifies the requirement within its kind, and keys the mapping.
     key: str
-    #: The synthetic reference the graphs use, when anything addresses it by id.
-    ref: str = ""
+    #: **Every** synthetic reference that folded onto this question.
+    #:
+    #: Usually one. It can be several, and the case that makes it several is
+    #: hostile: the folding is done by the *name* the document's manifest claims
+    #: for a reference, and a manifest is advisory data a stranger wrote. Two
+    #: different references both claiming to be "VIP" collapse into one question
+    #: here — which is fine, and is the answer the person gets to give — but
+    #: both of them still sit in the graphs and both have to be rewritten.
+    #: Keeping only the first is how the second stays in the imported flow as a
+    #: workspace-local id belonging to somebody else's workspace.
+    refs: list[str] = field(default_factory=list)
     #: What the exporting workspace called it. A label and a default — the
     #: manifest is the only place this can come from and it is not trusted for
     #: anything else.
@@ -150,6 +175,11 @@ class Requirement:
     #: True when this reference is satisfied by the document itself: a
     #: ``start_flow`` pointing at another flow in the same bundle.
     in_document: str = ""
+
+    @property
+    def ref(self) -> str:
+        """The first reference, for display. :attr:`refs` is what rewriting uses."""
+        return self.refs[0] if self.refs else ""
 
     @property
     def creatable(self) -> bool:
@@ -280,7 +310,7 @@ def requirements_for(document: dict[str, Any]) -> list[Requirement]:
             requirement = Requirement(
                 kind=kind,
                 key=key,
-                ref=ref,
+                refs=[ref] if ref else [],
                 name=name or str(label.get("name") or ""),
                 detail=str(label.get("detail") or ""),
             )
@@ -288,8 +318,8 @@ def requirements_for(document: dict[str, Any]) -> list[Requirement]:
                 requirement.in_document = requirement.detail
             found[identity] = requirement
             order.append(identity)
-        if ref and not requirement.ref:
-            requirement.ref = ref
+        if ref and ref not in requirement.refs:
+            requirement.refs.append(ref)
         if location not in requirement.used_by:
             requirement.used_by.append(location)
         return requirement
@@ -396,6 +426,17 @@ def default_mapping(workspace: Any, document: dict[str, Any], *, user: Any = Non
             answer = {"action": ACTION_BLANK}
         elif existing is not None:
             answer = {"action": ACTION_MAP, "id": str(existing)}
+        elif requirement.kind == "platform":
+            # **No default.** A blank channel picker is a legal answer, but it
+            # is not a harmless one: SPEC §5 makes a null connection mean "every
+            # connection of a matching platform", and "matching" is the trigger
+            # *type's* whole platform set — so defaulting a Telegram-bound
+            # keyword trigger to blank would quietly widen it to SMS, WhatsApp,
+            # Instagram and Messenger the moment somebody enabled it. The one
+            # connection of the right platform is offered when there is exactly
+            # one; otherwise the person chooses, and the choice is explicit.
+            candidates = _connections_on(workspace, requirement.key)
+            answer = {"id": str(candidates[0])} if len(candidates) == 1 else {}
         elif requirement.kind == refs.KIND_MEMBER and user is not None and getattr(user, "pk", None):
             answer = {"action": ACTION_MAP, "id": str(user.pk)}
         elif requirement.creatable:
@@ -425,7 +466,7 @@ def plan_import(workspace: Any, document: dict[str, Any], mapping: dict[str, Any
         document=document,
         resolutions=resolutions,
         outbound_requests=outbound_requests(document),
-        notes=_notes(document),
+        notes=_notes(document, resolutions),
         triggers=trigger_choices(document, mapping),
     )
 
@@ -489,7 +530,7 @@ def outbound_requests(document: dict[str, Any]) -> list[dict[str, str]]:
     return found
 
 
-def _notes(document: dict[str, Any]) -> list[str]:
+def _notes(document: dict[str, Any], resolutions: list[Resolution] | None = None) -> list[str]:
     """Non-blocking findings, including where the manifest disagrees with the file.
 
     Graph errors are notes rather than refusals. A dangling edge or a missing
@@ -506,7 +547,7 @@ def _notes(document: dict[str, Any]) -> list[str]:
 
     requirements = requirements_for(document)
     derived = {(requirement.kind, requirement.key) for requirement in requirements}
-    derived |= {(requirement.kind, requirement.ref) for requirement in requirements if requirement.ref}
+    derived |= {(requirement.kind, reference) for requirement in requirements for reference in requirement.refs}
     declared = {
         (kind, str(entry.get("key")))
         for kind, entries in (document.get("requirements") or {}).items()
@@ -514,6 +555,20 @@ def _notes(document: dict[str, Any]) -> list[str]:
         for entry in entries
         if isinstance(entry, dict)
     }
+    for resolution in resolutions or ():
+        requirement = resolution.requirement
+        if requirement.kind == "platform" and resolution.action == ACTION_BLANK and not resolution.problem:
+            notes.append(
+                f"The {requirement.key} trigger(s) will listen on every connection their trigger type supports, "
+                f"not only {requirement.key} — that is what leaving the channel blank means (SPEC §5). "
+                f"Pick a connection to keep them where the template had them."
+            )
+        if requirement.kind == refs.KIND_COMMENT_POSTS and not _post_ids(resolution.literal):
+            notes.append(
+                "A comment trigger watches specific posts and none are listed, so it will match nothing "
+                "until you add some post ids."
+            )
+
     stale = declared - derived
     if stale:
         notes.append(
@@ -558,12 +613,38 @@ def _resolve(workspace: Any, requirement: Requirement, answer: dict[str, Any]) -
         resolution.action = ACTION_MAP
         return resolution
 
+    if requirement.kind == "platform":
+        # One control, three outcomes, no overlap: a connection, the explicit
+        # "any connection" answer, or nothing chosen yet. The generic
+        # create/map/blank flow cannot express that — "map" with an empty picker
+        # would fall through to unbound, which is the widening this whole branch
+        # exists to keep off the accidental path.
+        chosen = str(answer.get("id") or "")
+        if chosen == ANY_CONNECTION:
+            resolution.action = ACTION_BLANK
+            return resolution
+        target = _existing(workspace, requirement, chosen) if chosen else None
+        if target is not None:
+            resolution.action = ACTION_MAP
+            resolution.target_id = str(target[0])
+            resolution.name = str(target[1])
+            return resolution
+        resolution.problem = f"Pick a {requirement.key} connection, or choose to leave the trigger unbound."
+        return resolution
+
     if requirement.kind in refs.STRIPPED_KINDS:
         # These were not translated, they were **removed** — a credential, an
         # account handle, the exporter's own post ids. There is nothing to map
         # to and nothing to create; there is only a value to supply or not.
         resolution.action = ACTION_BLANK
         resolution.literal = str(answer.get("value") or "")
+        limit = _literal_limit(requirement.kind)
+        if limit is not None and len(resolution.literal) > limit:
+            # Checked here so the dry run says so. Without it the value reaches
+            # the substituted document and fails there — where the trigger it
+            # belongs to is dropped, or the graph is stored in a shape the
+            # schema refuses and only the next publish finds out.
+            resolution.problem = f"At most {limit} characters."
         return resolution
 
     if resolution.action == ACTION_BLANK:
@@ -643,6 +724,28 @@ def _resolve_create(
     return resolution
 
 
+def _literal_limit(kind: str) -> int | None:
+    """The schema's own ``maxLength`` for a stripped field, or ``None``.
+
+    Read off the schema fragments rather than restated, so this cannot drift
+    from what the validator will actually accept — the same reason
+    :func:`_name_limit` reads a model column. ``comment_posts`` is absent
+    because :func:`_post_ids` bounds both the item length and the list length
+    itself, which a single number cannot express.
+    """
+    from apps.flows.schema.nodes import NODE_TYPES, SHARED_DEFS
+    from apps.flows.triggers import schema as trigger_schema
+
+    fragments: dict[str, dict[str, Any]] = {
+        refs.KIND_LINK_HANDLE: trigger_schema.REF_URL["properties"]["link_handle"],
+        refs.KIND_FROM_OVERRIDE: NODE_TYPES["send_email"].config["properties"]["from_override"],
+        refs.KIND_REQUEST_HEADER: SHARED_DEFS["http_header"]["properties"]["value"],
+    }
+    fragment = fragments.get(kind)
+    maximum = fragment.get("maxLength") if fragment else None
+    return maximum if isinstance(maximum, int) else None
+
+
 def _name_limit(kind: str) -> int:
     """The name column's width for a creatable kind, read off the model itself."""
     if kind == refs.KIND_FLOW:
@@ -713,6 +816,17 @@ def _find_by_name(workspace: Any, requirement: Requirement) -> Any | None:
     return row["id"] if row is not None else None
 
 
+def _connections_on(workspace: Any, platform: str) -> list[Any]:
+    """This workspace's connection ids on one platform, scoped."""
+    model = installed_model("channels", "apps.channels", "ChannelConnection")
+    if model is None:
+        return []
+    return [
+        row["id"]
+        for row in model.objects.for_workspace(workspace).filter(platform=platform).order_by("created_at").values("id")
+    ]
+
+
 def _uuid(value: Any) -> UUID | None:
     try:
         return value if isinstance(value, UUID) else UUID(str(value))
@@ -723,6 +837,33 @@ def _uuid(value: Any) -> UUID | None:
 # --------------------------------------------------------------------------
 # Step 5: the only writes in this module
 # --------------------------------------------------------------------------
+
+
+@transaction.atomic
+def confirm_import(record: Any, *, user: Any = None) -> list[Flow] | None:
+    """Apply a stored :class:`~apps.flows.models.FlowImport` **once**.
+
+    The lock is the point. Without it two confirmations — a double-clicked
+    button, a retried request — both read ``pending``, both run
+    :func:`apply_import`, and the workspace gets two copies of every flow and
+    every trigger. ``SELECT … FOR UPDATE`` on the import row serialises them,
+    and the status transition commits *with* the flows rather than after them,
+    so a process that dies in between leaves neither.
+
+    ``None`` means the row was no longer pending when the lock was taken —
+    somebody else confirmed it — which is a result rather than an error.
+    """
+    from apps.flows.models import FlowImport, FlowImportStatus
+
+    locked = FlowImport.objects.for_workspace(record.workspace_id).select_for_update().get(pk=record.pk)
+    if locked.status != FlowImportStatus.PENDING:
+        return None
+
+    flows = apply_import(locked.workspace, locked.document, locked.mapping, user=user)
+    locked.status = FlowImportStatus.APPLIED
+    locked.applied_at = timezone.now()
+    locked.save(update_fields=["status", "applied_at", "updated_at"])
+    return flows
 
 
 @transaction.atomic
@@ -755,11 +896,12 @@ def apply_import(workspace: Any, document: dict[str, Any], mapping: dict[str, An
     lookup: dict[Any, Resolution] = {}
     for resolution in plan.resolutions:
         lookup[(resolution.requirement.kind, resolution.requirement.key)] = resolution
-        if resolution.requirement.ref:
-            lookup[(resolution.requirement.kind, resolution.requirement.ref)] = resolution
+        for reference in resolution.requirement.refs:
+            lookup[(resolution.requirement.kind, reference)] = resolution
     for entry in document["flows"]:
         flow = flows[entry["key"]]
         graph = refs.rewrite_graph(entry["graph"], _substitute(lookup, flows, entry["key"]))
+        _refuse_if_unstorable(entry["name"], graph)
         _save(flow, graph, user=user)
         _create_triggers(flow, entry, lookup, flows, kept)
 
@@ -777,6 +919,32 @@ class ImportNotReadyError(RuntimeError):
     def __init__(self, plan: ImportPlan) -> None:
         super().__init__("Some requirements have not been answered.")
         self.plan = plan
+
+
+class ImportRefusedError(RuntimeError):
+    """The answers were complete but the document they produce is not storable.
+
+    Distinct from :class:`ImportNotReadyError`, which means "you have not
+    finished answering". This one means "what your answers produce is not a
+    thing this server will store", and it is raised from inside the transaction
+    so nothing partial survives it.
+    """
+
+
+def _refuse_if_unstorable(flow_name: str, graph: Any) -> None:
+    """Validate a substituted graph before it is written.
+
+    ``save_draft`` sanitizes but does not validate — the builder's autosave
+    calls it after the API has already checked the document, so it trusts its
+    caller. This is the other caller, and its input is a stranger's file put
+    through a mapping somebody filled in, so it checks. Only document-level
+    findings: a dangling edge is an ordinary half-wired draft and imports fine.
+    """
+    from apps.flows.schema import validate_graph
+
+    issues = validate_graph(graph).document_errors
+    if issues:
+        raise ImportRefusedError(f"“{flow_name}” would not be storable after mapping: {issues[0].message}")
 
 
 def _create(workspace: Any, resolution: Resolution) -> Any:
@@ -854,17 +1022,17 @@ def _create_triggers(
         try:
             create_trigger(flow, trigger_type=trigger["type"], config=config, connection=connection, enabled=False)
         except TriggerValidationError as exc:
-            # Every config here already passed validate_config on the way in, so
-            # reaching this means the *rewrite* produced something the type will
-            # not take — a mapped connection on a type that cannot bind, say.
-            # The flow is worth more than the trigger: keep the flow, drop the
-            # trigger, and say so.
-            logger.warning(
-                "Import: trigger %s of flow %s was refused and not created: %s",
-                trigger["type"],
-                flow.pk,
-                "; ".join(issue.message for issue in exc.issues),
-            )
+            # Every config passed ``validate_config`` on the way in, so reaching
+            # this means the **rewrite** produced something the type will not
+            # take. Refusing the whole import rather than dropping the trigger:
+            # the person asked to keep it (the mapping step let them skip it),
+            # and importing a flow while quietly discarding what starts it is
+            # the worst of the three outcomes. The transaction rolls back, so
+            # nothing partial survives.
+            raise ImportRefusedError(
+                f"The {trigger['type']} trigger on “{entry['name']}” cannot be created here: "
+                + "; ".join(issue.message for issue in exc.issues)
+            ) from exc
 
 
 def _connection(workspace_id: Any, connection_id: str) -> Any:

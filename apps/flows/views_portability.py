@@ -38,7 +38,6 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.campaigns.errors import CampaignsError
@@ -326,13 +325,19 @@ _KIND_HELP: dict[str, str] = {
     "member": "Who the flow assigns conversations to and notifies. Defaults to you.",
     "flow": "Flows this one hands over to. A bundle export carries them with it.",
     "media": "Pick an asset from your library, or paste a URL to use instead.",
-    "platform": "Which connection each trigger should watch. Leave blank for every connection of that platform.",
+    "platform": (
+        "Which connection each trigger should watch. Leaving one unbound does not mean "
+        "“every connection of this platform” — it means every platform that trigger type supports "
+        "(SPEC §5), so a Telegram keyword trigger would also listen on SMS."
+    ),
     "request_header": "Header values were removed on export so no credential could travel. Supply your own.",
     "whatsapp_template": "The flow sends these approved templates. Nothing to answer — make sure you have them.",
     "link_handle": "The public handle a ref link is built from was removed on export.",
     "from_override": "The sending address was removed on export.",
-    "comment_posts": "The trigger watched specific posts. Their ids were removed; list your own, or leave it blank "
-    "to watch every post.",
+    "comment_posts": (
+        "The trigger watched specific posts and their ids were removed on export. List your own — "
+        "leaving it blank keeps the trigger scoped to specific posts with none listed, so it matches nothing."
+    ),
 }
 
 
@@ -383,9 +388,14 @@ def import_confirm(request: WorkspaceRequest, workspace_id: str, flow_import_id:
         return toast_response(tone="info", title="Already imported", body="This file has already been imported.")
 
     try:
-        flows = portability.apply_import(request.workspace, record.document, record.mapping, user=request.user)
+        # ``confirm_import`` takes the row's lock and commits the flows and the
+        # status transition together, so a double-clicked button imports once.
+        # The check above is only a cheap early exit; it is not the guard.
+        flows = portability.confirm_import(record, user=request.user)
     except portability.ImportNotReadyError as exc:
         return toast_response(tone="error", title="Not ready to import", body=_first_problem(exc.plan))
+    except portability.ImportRefusedError as exc:
+        return toast_response(tone="error", title="Nothing was imported", body=str(exc))
     except (ContactsError, CampaignsError) as exc:
         # The dry run checks every name and type before we get here, so this is
         # the narrow race: something the mapping named was created, renamed or
@@ -398,9 +408,11 @@ def import_confirm(request: WorkspaceRequest, workspace_id: str, flow_import_id:
             body=f"{exc} Re-check your answers and try again.",
         )
 
-    record.status = FlowImportStatus.APPLIED
-    record.applied_at = timezone.now()
-    record.save(update_fields=["status", "applied_at", "updated_at"])
+    if flows is None:
+        # Somebody else confirmed it between the check above and the lock.
+        return toast_response(tone="info", title="Already imported", body="This file has already been imported.")
+
+    record.refresh_from_db()
     logger.info("Workspace %s imported %s flow(s) from %r", request.workspace.pk, len(flows), record.original_filename)
     return toast_response(
         tone="success",

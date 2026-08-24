@@ -305,6 +305,66 @@ class TestReviewAndConfirm:
         record.refresh_from_db()
         assert record.status == FlowImportStatus.PENDING
 
+    def test_a_second_confirmation_under_a_lock_imports_nothing_further(self, tenancy: Any, client_for: Any) -> None:
+        """``confirm_import`` takes the row's lock and answers None the second time.
+
+        The status check in the view is a cheap early exit, not the guard: two
+        requests can both read ``pending`` before either writes. The guard is
+        the lock, and this drives it directly rather than through two clients,
+        because a real race is not something a test can schedule reliably.
+        """
+        client = client_for(tenancy.owner)
+        _upload(client, tenancy, _tiny())
+        record = _record_for(tenancy)
+
+        first = portability.confirm_import(record, user=tenancy.owner)
+        second = portability.confirm_import(record, user=tenancy.owner)
+
+        assert first is not None and len(first) == 1
+        assert second is None
+        assert Flow.objects.for_workspace(tenancy.workspace).filter(name="Tiny").count() == 1
+
+    def test_the_status_transition_commits_with_the_flows(self, tenancy: Any, client_for: Any) -> None:
+        client = client_for(tenancy.owner)
+        _upload(client, tenancy, _tiny())
+        record = _record_for(tenancy)
+
+        portability.confirm_import(record, user=tenancy.owner)
+
+        record.refresh_from_db()
+        assert record.status == FlowImportStatus.APPLIED
+        assert record.applied_at is not None
+
+    def test_a_trigger_the_rewrite_breaks_refuses_the_whole_import(self, tenancy: Any, client_for: Any) -> None:
+        """A kept trigger that cannot be created is a refusal, not a quiet drop.
+
+        The person asked to keep it — the mapping step let them skip it — so
+        importing the flow while discarding what starts it would be the worst of
+        the three outcomes.
+        """
+        from apps.flows.models import Trigger
+
+        document = _tiny()
+        document["flows"][0]["triggers"] = [
+            {"type": "ref_url", "platform": None, "config": {"ref": "welcome", "link_handle": ""}}
+        ]
+        client = client_for(tenancy.owner)
+        _upload(client, tenancy, document)
+        record = _record_for(tenancy)
+        # Past the plan's own length check, so the failure lands where the
+        # rewrite produces it rather than where the form is read.
+        requirement = next(r for r in portability.requirements_for(record.document) if r.kind == "link_handle")
+        record.mapping = {"link_handle": {requirement.key: {"value": "x" * 101}}}
+        record.save(update_fields=["mapping"])
+        before = Flow.objects.for_workspace(tenancy.workspace).count()
+
+        response = client.post(_url("import_confirm", tenancy, flow_import_id=record.pk))
+
+        assert response.status_code == 204
+        assert b"Not ready to import" in response["HX-Trigger"].encode()
+        assert Flow.objects.for_workspace(tenancy.workspace).count() == before
+        assert not Trigger.objects.for_workspace(tenancy.workspace).filter(type="ref_url").exists()
+
     def test_discard_removes_a_pending_import(self, tenancy: Any, client_for: Any) -> None:
         client = client_for(tenancy.owner)
         _upload(client, tenancy, _tiny())

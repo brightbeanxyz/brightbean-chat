@@ -353,6 +353,108 @@ class TestUntrustedContent:
         plan = portability.plan_import(tenancy.workspace, parsed, {})
         assert any("nothing in it actually references" in note for note in plan.notes)
 
+    def test_two_references_claiming_one_name_are_both_rewritten(self, tenancy: Any) -> None:
+        """A hostile manifest folds two references onto one question — both must move.
+
+        The fold is keyed on the *name* the manifest claims, and a manifest is
+        advisory data a stranger wrote. Two different synthetic references both
+        labelled "VIP" collapse into a single question, which is fine and is the
+        answer the importer gets to give — but both references are still sitting
+        in the graphs, and rewriting only the first leaves the second behind as
+        an id belonging to somebody else's workspace.
+        """
+        from apps.contacts.models import Tag
+
+        first, second = "11111111-1111-5111-8111-111111111111", "22222222-2222-5222-8222-222222222222"
+        document = _minimal()
+        document["flows"][0]["graph"] = graph(
+            [
+                node(
+                    "n1",
+                    "condition",
+                    {
+                        "match": "any",
+                        "rules": [
+                            {"source": "tag", "key": first, "op": "has"},
+                            {"source": "tag", "key": second, "op": "has_not"},
+                        ],
+                    },
+                )
+            ]
+        )
+        document["requirements"]["tag"] = [
+            {"key": first, "ref": first, "name": "VIP", "used_by": ["flow-1:n1"]},
+            {"key": second, "ref": second, "name": "VIP", "used_by": ["flow-1:n1"]},
+        ]
+        parsed, issues = portability.parse_and_validate(json.dumps(document))
+        assert not issues
+        assert parsed is not None
+
+        requirements = portability.requirements_for(parsed)
+        assert len(requirements) == 1, "same name, so one question"
+        assert sorted(requirements[0].refs) == sorted([first, second])
+
+        clean = create_tenancy("folded-refs")
+        mapping = portability.default_mapping(clean.workspace, parsed, user=clean.owner)
+        flows = portability.apply_import(clean.workspace, parsed, mapping, user=clean.owner)
+
+        version = FlowVersion.objects.for_workspace(clean.workspace).filter(flow=flows[0]).first()
+        assert version is not None
+        stored = str(version.graph_json)
+        assert first not in stored
+        assert second not in stored
+        tag = Tag.objects.for_workspace(clean.workspace).filter(name__iexact="VIP").first()
+        assert tag is not None
+        assert stored.count(str(tag.pk)) == 2
+
+    def test_an_over_long_stripped_value_is_a_dry_run_problem(self, tenancy: Any) -> None:
+        """Not a silently dropped trigger, and not an unstorable draft.
+
+        A ref-link handle is capped at 100 characters by the trigger schema. A
+        longer one used to sail through planning and be refused by
+        ``create_trigger``, which logged and moved on — so the flow imported
+        without the thing that starts it.
+        """
+        document = _minimal()
+        document["flows"][0]["triggers"] = [
+            {"type": "ref_url", "platform": None, "config": {"ref": "welcome", "link_handle": ""}}
+        ]
+        parsed, _ = portability.parse_and_validate(json.dumps(document))
+        assert parsed is not None
+        requirement = next(r for r in portability.requirements_for(parsed) if r.kind == "link_handle")
+
+        plan = portability.plan_import(
+            tenancy.workspace, parsed, {"link_handle": {requirement.key: {"value": "x" * 101}}}
+        )
+        assert not plan.can_apply
+        assert "At most 100 characters." in [r.problem for r in plan.unanswered]
+
+    def test_a_blank_channel_is_reported_as_the_widening_it_is(self, tenancy: Any) -> None:
+        """SPEC §5: a null connection is every platform the *type* supports."""
+        document = _minimal()
+        document["flows"][0]["triggers"] = [
+            {"type": "keyword", "platform": "telegram", "config": {"keywords": [{"text": "hi", "mode": "exact"}]}}
+        ]
+        parsed, _ = portability.parse_and_validate(json.dumps(document))
+        assert parsed is not None
+
+        # No default: nobody gets to widen a trigger by not looking at the form.
+        defaults = portability.default_mapping(tenancy.workspace, parsed, user=tenancy.owner)
+        assert not (defaults.get("platform") or {}).get("telegram")
+
+        # "Any connection" is a sentinel, not an empty picker: choosing to widen
+        # a trigger has to be an act, and an unfinished form must not be one.
+        assert not portability.plan_import(tenancy.workspace, parsed, {"platform": {"telegram": {"id": ""}}}).can_apply
+        assert not portability.plan_import(
+            tenancy.workspace, parsed, {"platform": {"telegram": {"action": portability.ACTION_MAP}}}
+        ).can_apply
+
+        plan = portability.plan_import(
+            tenancy.workspace, parsed, {"platform": {"telegram": {"id": portability.ANY_CONNECTION}}}
+        )
+        assert plan.can_apply
+        assert any("every connection their trigger type supports" in note for note in plan.notes)
+
     def test_an_external_request_url_is_surfaced_before_the_import_can_run(self, tenancy: Any) -> None:
         """The importer did not choose this address, so they are shown it."""
         raw = portability.serialize(_document(tenancy))

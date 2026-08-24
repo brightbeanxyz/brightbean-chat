@@ -269,7 +269,12 @@ def _referenced_flows(workspace_id: Any, graph: Any) -> list[Flow]:
         raw = str(site.value) if isinstance(site.value, str) else ""
         if site.kind == refs.KIND_FLOW and raw:
             flow_ids.append(raw)
-        elif site.kind == refs.KIND_SEQUENCE and site.addressing == refs.ADDRESS_ID and raw:
+        elif site.kind == refs.KIND_SEQUENCE and site.detail == "subscribe_sequence" and raw:
+            # **Only** subscribe_sequence. An ``unsubscribe_sequence`` verb takes
+            # somebody *off* a ladder and a condition rule merely asks whether
+            # they are on one; neither hands execution to that sequence's flows,
+            # so following them would pull unrelated automations into a shared
+            # file and spend the closure cap on flows the template never runs.
             sequence_ids.append(raw)
         return site.value
 
@@ -565,7 +570,13 @@ def export_filename(flow: Flow, *, bundle: bool = False) -> str:
     The name is author text, so it is reduced to an ASCII slug rather than
     quoted: a filename reaches a ``Content-Disposition`` header, and a header is
     the wrong place to discover that somebody put a newline in a flow name.
+
+    ``isascii()`` as well as ``isalnum()``, because ``isalnum()`` alone is
+    **Unicode**-aware: "Übersicht" and a CJK flow name pass it intact, and the
+    header then needs RFC 5987 encoding to carry them — which browsers handle
+    inconsistently and which this function claims not to need. A name with no
+    ASCII alphanumerics at all falls back to ``flow``.
     """
-    slug = "".join(character if character.isalnum() else "-" for character in flow.name.lower())
+    slug = "".join(character if character.isascii() and character.isalnum() else "-" for character in flow.name.lower())
     slug = "-".join(part for part in slug.split("-") if part)[:60] or "flow"
     return f"{slug}{'-bundle' if bundle else ''}.flow.json"

@@ -189,6 +189,45 @@ class TestBundles:
         names = [flow["name"] for flow in portability.export_document(seeded.flow, bundle=True)["flows"]]
         assert names == ["Welcome", "Follow up", "Day two"]
 
+    def test_the_closure_follows_only_a_subscription(self, tenancy: Any) -> None:
+        """``unsubscribe_sequence`` and a condition rule do not hand over to a sequence.
+
+        One removes somebody from a ladder and the other merely asks whether
+        they are on it. Following either would pull every flow those sequences
+        run into a shared file — unrelated automations, and 20 flows of closure
+        cap spent on content the template never executes.
+        """
+        from apps.campaigns.services import add_step, create_sequence
+        from apps.flows.services import create_flow, save_draft
+        from apps.flows.tests.support import graph, node
+
+        other = create_sequence(tenancy.workspace, name="Win back")
+        unrelated = create_flow(workspace=tenancy.workspace, name="Never exported")
+        save_draft(unrelated, graph([node("n1", "send_message", {"blocks": [{"type": "text", "text": "hi"}]})]))
+        add_step(other, flow=unrelated, delay_value=1, delay_unit="days")
+
+        flow = create_flow(workspace=tenancy.workspace, name="Only unsubscribes")
+        save_draft(
+            flow,
+            graph(
+                [
+                    node("a", "action", {"actions": [{"verb": "unsubscribe_sequence", "sequence": str(other.pk)}]}),
+                    node(
+                        "b",
+                        "condition",
+                        {"match": "all", "rules": [{"source": "sequence", "key": str(other.pk), "op": "subscribed"}]},
+                        x=200,
+                    ),
+                ],
+                [{"id": "a-b", "source": "a", "sourceHandle": "default", "target": "b"}],
+            ),
+        )
+
+        names = [entry["name"] for entry in portability.export_document(flow, bundle=True)["flows"]]
+        assert names == ["Only unsubscribes"]
+        # The sequence is still a requirement — the flow does reference it.
+        assert portability.export_document(flow)["requirements"]["sequence"]
+
     def test_a_single_flow_export_carries_one_flow(self, tenancy: Any) -> None:
         seeded = seed(tenancy)
         document = portability.export_document(seeded.flow)
@@ -217,6 +256,21 @@ class TestFilenames:
         name = portability.export_filename(seeded.flow)
         assert name == "welcome-drop-table.flow.json"
         assert portability.export_filename(seeded.flow, bundle=True).endswith("-bundle.flow.json")
+
+    def test_a_non_ascii_name_does_not_reach_the_header(self, tenancy: Any) -> None:
+        """``isalnum()`` is Unicode-aware; the header contract is ASCII.
+
+        Left alone, "Übersicht" and a CJK name survive intact and Django has to
+        RFC 5987-encode the ``Content-Disposition`` value, which browsers handle
+        inconsistently.
+        """
+        from apps.flows.services import rename_flow
+
+        seeded = seed(tenancy)
+        rename_flow(seeded.flow, "Übersicht 概要 v2")
+        name = portability.export_filename(seeded.flow)
+        assert name.isascii()
+        assert name == "bersicht-v2.flow.json"
 
     def test_a_flow_named_only_in_punctuation_still_gets_a_filename(self, tenancy: Any) -> None:
         from apps.flows.services import rename_flow

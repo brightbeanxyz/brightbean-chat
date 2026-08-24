@@ -36,8 +36,41 @@ hand-posted field cannot introduce one.
     {% endcomment %}
     <input type="text" name="{{ kind }}|{{ requirement.key }}|value" value="{{ resolution.literal }}"
            maxlength="2000" class="form-input-styled w-full mt-2"
-           placeholder="{% if kind == 'comment_posts' %}Post ids, comma separated — blank watches every post{% else %}Leave blank to omit{% endif %}"
+           {% comment %}
+             Blank does **not** mean "every post". The trigger keeps
+             post_scope="specific" and an empty list, which the matcher treats
+             as matching nothing — switching the scope to "all" on the user's
+             behalf would silently widen what a stranger's trigger watches.
+           {% endcomment %}
+           placeholder="{% if kind == 'comment_posts' %}Post ids, comma separated — blank matches no posts{% else %}Leave blank to omit{% endif %}"
            aria-label="Value for {{ requirement.name|default:kind }}">
+
+    {% elif kind == "platform" %}
+    {% comment %}
+      One control, deliberately. The generic action select plus a connection
+      dropdown had two ways to say "unbound" and one of them — "use an existing
+      one" with nothing picked — was reachable by not finishing the form. An
+      unbound trigger listens on every platform its type supports (SPEC §5), so
+      that had to stop being the accidental answer.
+    {% endcomment %}
+    <select name="{{ kind }}|{{ requirement.key }}|id" class="form-input-styled w-full mt-2"
+            aria-label="Connection for the {{ requirement.key }} trigger(s)">
+        <option value="">Choose…</option>
+        {% for option in options %}
+        <option value="{{ option.id }}" {% if resolution.target_id == option.id %}selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+        <option value="any" {% if resolution.action == "blank" %}selected{% endif %}>
+            Any connection this trigger type supports
+        </option>
+    </select>
+    {% if resolution.action == "blank" %}
+    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+        This trigger will listen on every platform its type supports, not only {{ requirement.key }}.
+    </p>
+    {% endif %}
+    {% if resolution.problem %}
+    <p class="text-xs mt-2" style="color: var(--danger-500);">{{ resolution.problem }}</p>
+    {% endif %}
 
     {% else %}
     <div class="mt-2 flex flex-wrap items-center gap-2">
@@ -68,15 +101,7 @@ hand-posted field cannot introduce one.
         </select>
         {% endif %}
 
-        {% if kind == "platform" %}
-        <select name="{{ kind }}|{{ requirement.key }}|id" class="form-input-styled" style="width: 14rem;"
-                aria-label="Connection">
-            <option value="">Every {{ requirement.key }} connection</option>
-            {% for option in options %}
-            <option value="{{ option.id }}" {% if resolution.target_id == option.id %}selected{% endif %}>{{ option.label }}</option>
-            {% endfor %}
-        </select>
-        {% elif kind == "media" %}
+        {% if kind == "media" %}
         <select name="{{ kind }}|{{ requirement.key }}|id" class="form-input-styled" style="width: 12rem;"
                 aria-label="Media asset">
             <option value="">Pick an asset…</option>

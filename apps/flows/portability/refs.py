@@ -224,6 +224,11 @@ _CONDITION_SOURCE_KINDS: dict[str, str] = {
 }
 
 #: Action verbs whose payload is one reference: verb → (config key, kind, addressing).
+#:
+#: The verb travels on the site as :attr:`Site.detail`, because two verbs can
+#: name the same kind of object and mean opposite things — a bundle follows the
+#: flows a ``subscribe_sequence`` will run and must **not** follow the ones an
+#: ``unsubscribe_sequence`` merely removes somebody from.
 _VERB_SITES: dict[str, tuple[str, str, str]] = {
     "add_tag": ("tag", KIND_TAG, ADDRESS_NAME),
     "remove_tag": ("tag", KIND_TAG, ADDRESS_NAME),
@@ -304,7 +309,7 @@ def _rewrite_step(step: Any, visit: Visit, index: int, node_id: str | None) -> A
     site = _VERB_SITES.get(verb) if isinstance(verb, str) else None
     if site is not None:
         key, kind, addressing = site
-        return _apply(step, key, visit, kind, addressing, f"{path}.{key}", node_id)
+        return _apply(step, key, visit, kind, addressing, f"{path}.{key}", node_id, detail=str(verb))
 
     if verb == "notify_members":
         members = step.get("member_ids")

@@ -21,7 +21,7 @@ import pytest
 
 from apps.flows import portability
 from apps.flows.models import Flow, FlowStatus, FlowVersion, Trigger
-from apps.flows.tests.portability_support import seed, seed_second_flow
+from apps.flows.tests.portability_support import answer_channels, seed, seed_second_flow
 from tests.support import create_tenancy
 
 pytestmark = pytest.mark.django_db
@@ -46,18 +46,10 @@ def _answer_everything(workspace: Any, document: dict[str, Any], *, user: Any) -
         answer = (mapping.get(requirement.kind) or {}).get(requirement.key) or {}
         if requirement.kind == "platform":
             # A connection of the right platform, so a bound trigger lands bound.
-            # The default is "leave it unbound", which is legal and which
-            # ``TestUnansweredOptionalAnswers`` covers — it just is not the
-            # like-for-like answer this comparison is about.
-            from apps.flows.tests.support import connection_for
-
-            connection = connection_for(
-                workspace, platform=requirement.key, external_id=f"{requirement.key}-{workspace.pk}"
-            )
-            mapping.setdefault("platform", {})[requirement.key] = {
-                "action": portability.ACTION_MAP,
-                "id": str(connection.pk),
-            }
+            # There is no default here on purpose — leaving a channel blank
+            # widens the trigger to every platform its type supports — so the
+            # like-for-like answer has to be given explicitly.
+            answer_channels(document, mapping, connections=True, workspace=workspace)
             continue
         if answer.get("action"):
             continue
@@ -238,7 +230,7 @@ class TestMediaWithoutALibrary:
         assert document is not None
 
         clean = create_tenancy("importer-media-url")
-        mapping = portability.default_mapping(clean.workspace, document, user=clean.owner)
+        mapping = answer_channels(document, portability.default_mapping(clean.workspace, document, user=clean.owner))
         for requirement in portability.requirements_for(document):
             if requirement.kind == "media":
                 mapping.setdefault("media", {})[requirement.key] = {

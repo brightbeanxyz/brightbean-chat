@@ -18,7 +18,7 @@ from apps.flows.models import Flow, Trigger, TriggerType
 from apps.flows.services import create_flow, save_draft
 from apps.flows.tests.support import edge, graph, node
 
-__all__ = ["Seeded", "seed", "seed_second_flow"]
+__all__ = ["Seeded", "answer_channels", "seed", "seed_second_flow"]
 
 
 @dataclass
@@ -220,3 +220,33 @@ def _triggers(flow: Flow, connection: Any, tag: Any, field_row: Any) -> list[Tri
             connection=connection,
         ),
     ]
+
+
+def answer_channels(
+    document: Any, mapping: dict[str, Any], *, connections: bool = False, workspace: Any = None
+) -> dict[str, Any]:
+    """Answer every channel question, which has no default on purpose.
+
+    A blank channel is a legal answer and a widening one — SPEC §5 makes a null
+    connection mean every platform the trigger *type* supports — so
+    ``default_mapping`` deliberately leaves the question open rather than
+    choosing for you. Tests therefore have to say which they want, and saying so
+    is the point: ``connections=False`` is what a workspace with no channels at
+    all can answer, and ``connections=True`` is like-for-like with the export.
+    """
+    from apps.flows import portability
+
+    for requirement in portability.requirements_for(document):
+        if requirement.kind != "platform":
+            continue
+        if connections:
+            from apps.flows.tests.support import connection_for
+
+            connection = connection_for(
+                workspace, platform=requirement.key, external_id=f"{requirement.key}-{workspace.pk}"
+            )
+            answer = {"id": str(connection.pk)}
+        else:
+            answer = {"id": portability.ANY_CONNECTION}
+        mapping.setdefault("platform", {})[requirement.key] = answer
+    return mapping

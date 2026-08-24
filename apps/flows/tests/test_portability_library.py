@@ -21,6 +21,7 @@ import pytest
 from apps.flows import portability
 from apps.flows.models import Flow, Trigger
 from apps.flows.portability.library import library_path, read_template, template_paths
+from apps.flows.tests.portability_support import answer_channels
 from tests.support import create_tenancy
 
 pytestmark = pytest.mark.django_db
@@ -62,6 +63,16 @@ class TestTheShippedTemplates:
 
         clean = create_tenancy(name.replace(".json", "")[:20])
         mapping = portability.default_mapping(clean.workspace, document, user=clean.owner)
+
+        # The channel question has no default, deliberately: a blank one widens
+        # the trigger to every platform its type supports, so nobody gets to
+        # choose that by not looking. Everything *else* is answered by the
+        # defaults, which is the acceptance criterion.
+        assert [r.requirement.kind for r in portability.plan_import(clean.workspace, document, mapping).unanswered] == [
+            "platform"
+        ]
+
+        answer_channels(document, mapping)
         plan = portability.plan_import(clean.workspace, document, mapping)
         assert plan.can_apply, [
             f"{r.requirement.kind} {r.requirement.name or r.requirement.key}: {r.problem}" for r in plan.unanswered
@@ -86,21 +97,15 @@ class TestTheShippedTemplates:
         assert document is not None
 
         clean = create_tenancy(f"rt-{name.replace('.json', '')}"[:20])
-        mapping = portability.default_mapping(clean.workspace, document, user=clean.owner)
         # Like for like on the one thing no default can guess: the channel each
         # trigger watches. Without it a bound trigger lands unbound, which is a
         # legal import and a different document.
-        for requirement in portability.requirements_for(document):
-            if requirement.kind == "platform":
-                from apps.flows.tests.support import connection_for
-
-                connection = connection_for(
-                    clean.workspace, platform=requirement.key, external_id=f"{requirement.key}-{clean.workspace.pk}"
-                )
-                mapping.setdefault("platform", {})[requirement.key] = {
-                    "action": portability.ACTION_MAP,
-                    "id": str(connection.pk),
-                }
+        mapping = answer_channels(
+            document,
+            portability.default_mapping(clean.workspace, document, user=clean.owner),
+            connections=True,
+            workspace=clean.workspace,
+        )
         flows = portability.apply_import(clean.workspace, document, mapping, user=clean.owner)
         assert portability.serialize(portability.export_document(flows[0])) == raw
 
@@ -116,22 +121,17 @@ class TestTheShippedTemplates:
         outcome.
         """
         from apps.flows.services import publish
-        from apps.flows.tests.support import connection_for
 
         document, _ = read_template(library_path() / name)
         assert document is not None
         clean = create_tenancy(f"p-{name[:16]}".replace(".", "-"))
 
-        mapping = portability.default_mapping(clean.workspace, document, user=clean.owner)
-        for requirement in portability.requirements_for(document):
-            if requirement.kind == "platform":
-                connection = connection_for(
-                    clean.workspace, platform=requirement.key, external_id=f"pub-{requirement.key}-{clean.workspace.pk}"
-                )
-                mapping.setdefault("platform", {})[requirement.key] = {
-                    "action": portability.ACTION_MAP,
-                    "id": str(connection.pk),
-                }
+        mapping = answer_channels(
+            document,
+            portability.default_mapping(clean.workspace, document, user=clean.owner),
+            connections=True,
+            workspace=clean.workspace,
+        )
         flows = portability.apply_import(clean.workspace, document, mapping, user=clean.owner)
 
         for flow in flows:
@@ -144,7 +144,7 @@ class TestTheShippedTemplates:
         document, _ = read_template(library_path() / name)
         assert document is not None
         clean = create_tenancy(f"d-{name.replace('.json', '')}"[:20])
-        mapping = portability.default_mapping(clean.workspace, document, user=clean.owner)
+        mapping = answer_channels(document, portability.default_mapping(clean.workspace, document, user=clean.owner))
         flows = portability.apply_import(clean.workspace, document, mapping, user=clean.owner)
 
         for flow in flows:

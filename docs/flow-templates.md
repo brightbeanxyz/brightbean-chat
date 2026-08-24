@@ -116,7 +116,7 @@ field is `Plan tier`.
 | Member | `assign_conversation`, `notify_members` | reference **and nothing else** | map to a member; defaults to you |
 | Flow | `start_flow` | reference + name | resolved from the bundle when it is in the file; otherwise map, or create an empty draft under the expected name |
 | Media asset | `send_message` media block, card image | reference + filename and kind | pick an asset, or paste a URL |
-| Channel connection | a trigger's binding | its **platform**, or `null` | pick a connection, or leave it to every connection of that platform |
+| Channel connection | a trigger's binding | its **platform**, or `null` | pick a connection, or explicitly leave it unbound — see below |
 
 A custom field reached only by **name** carries no type, so "create it" defaults
 to text and the mapping step asks you to confirm. Deriving the type from the
@@ -124,6 +124,16 @@ exporting workspace's field would be a nicer default and would break the
 byte-stable round trip: a template referencing a field its own workspace does not
 have would gain a type on the way back, and the second export would no longer
 match the first.
+
+**The channel question has no default, on purpose.** Leaving a trigger unbound
+does *not* mean "every connection of this platform" — SPEC §5 makes a null
+connection mean every platform that trigger *type* supports, so an unbound
+keyword trigger listens on Telegram, Instagram, Messenger, WhatsApp and SMS
+alike. A template's Telegram trigger would therefore quietly widen to SMS if the
+importer never looked at the form. So the wizard offers exactly one obvious
+default — the single connection of the right platform, when there is exactly one
+— and otherwise makes you choose. Choosing "any connection this trigger type
+supports" is legal, and the dry run says what it means.
 
 A **segment** is the one thing that can only be mapped. It is a saved *filter*,
 and inventing one that matches nobody would silently change what an imported
@@ -138,7 +148,7 @@ the wrong thing.
 | `external_request` header **values** | An `Authorization: Bearer …` is the exporter's credential. Header *names* survive and each becomes a question you can answer with your own value. |
 | `ref_url.link_handle` | The exporting account's public handle. |
 | `send_email.from_override` | The exporting workspace's sending address. |
-| `comment.post_ids` | Platform ids of the exporter's own posts. The list is **emptied**, not removed: `post_scope: specific` with no posts listed matches nothing, and keeping the key is what raises the question so you can list your own. |
+| `comment.post_ids` | Platform ids of the exporter's own posts. The list is **emptied**, not removed: `post_scope: specific` with no posts listed matches nothing, and keeping the key is what raises the question so you can list your own. Leaving it blank is legal and the dry run says the trigger will match nothing — the scope is never widened to "all" on your behalf. |
 | `whatsapp_template.template_id` | A row id in the exporter's workspace. `reference` (`<name>/<language>`) survives — that is the Cloud API's own key and what actually reaches the wire, so the node still works. |
 | Row ids, timestamps, `created_by`, workspace and organization identifiers | Not part of a template. |
 | Media **delivery URLs** | They are unguessable, long-lived signed URLs. Putting one in a shared file would hand every reader read access to the exporter's asset for as long as it exists. A library asset leaves as a reference and a filename hint instead. |
@@ -172,7 +182,16 @@ serialised bytes.
    trigger the template brings. Every imported trigger arrives disabled either
    way, so skipping is the difference between "off and ready to enable" and "not
    imported at all".
-7. **Creation**, in one transaction, on an explicit confirm.
+7. **Creation**, in one transaction, on an explicit confirm. The import row is
+   locked for that transaction and its status changes with the flows, so a
+   double-clicked button or a retried request imports once, not twice.
+
+If what your answers produce would not be storable — a value past a field's
+limit, a trigger the rewrite makes invalid — the import is **refused** rather
+than partly applied. A kept trigger that cannot be created fails the whole
+import: you asked to keep it, and importing a flow while quietly discarding what
+starts it is the worst of the three outcomes. The dry run catches the common
+cases first.
 
 Nothing before step 7 creates a flow, a tag, a field, a sequence or a trigger.
 The only thing an upload writes is the `FlowImport` row holding the validated
@@ -222,6 +241,12 @@ DNS cannot rebind under it, and re-validates every redirect
 A `start_flow` node hands over to another flow, and a sequence a flow subscribes
 to runs flows of its own. **Export bundle** follows both references to their
 closure and puts the whole set in one file, up to 20 flows.
+
+Only a `subscribe_sequence` expands a sequence. An `unsubscribe_sequence` takes
+somebody *off* a ladder and a condition rule merely asks whether they are on
+one; neither hands execution to that sequence's flows, so following them would
+pull unrelated automations into a shared file and spend the closure cap on
+content the template never runs.
 
 The sequence itself is *not* exported — it is a workspace object with a schedule
 and live enrollments, so it appears in `requirements` as something to create or
