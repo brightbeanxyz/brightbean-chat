@@ -215,6 +215,21 @@ def _finish(record: ContactErasure, *, counts: dict[str, int]) -> ContactErasure
     return record
 
 
+def _fail(record: ContactErasure, exc: Exception) -> None:
+    """Mark a run failed, with a scrubbed reason.
+
+    Through ``apps.common.logging.scrub`` and capped, because a traceback
+    quotes what it was working on — the same discipline
+    ``FlowExecution.last_error`` applies, and this column is read in an audit.
+    """
+    from apps.common.logging import scrub
+
+    record.status = ErasureStatus.FAILED
+    record.error = scrub(f"{type(exc).__name__}: {exc}")[:2000]
+    record.save(update_fields=["status", "error", "updated_at"])
+    logger.error("Erasure %s failed for contact %s.", record.pk, record.contact_id)
+
+
 def _contact_for(record: ContactErasure) -> Contact | None:
     """The contact this record names, tombstone included.
 
@@ -263,4 +278,15 @@ def handle_contact_erasure(payload: dict[str, Any], action: Any) -> None:
     if record is None:
         logger.warning("Erasure %s is gone; nothing to run.", payload.get("erasure_id"))
         return
-    run(record, action=action)
+
+    try:
+        run(record, action=action)
+    except Exception as exc:
+        # Re-raised, so SPEC §15's ladder still owns the retry — but the last
+        # attempt records why it stopped. Without this the row would sit at
+        # ``running`` for ever with nothing saying what happened, which is the
+        # one state an audit trail must not have: an erasure that was requested,
+        # is not finished, and does not know it failed.
+        if action.attempts >= action.max_attempts:
+            _fail(record, exc)
+        raise

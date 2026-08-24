@@ -1646,6 +1646,13 @@ def bulk_erase(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     ``_selected`` re-scopes the posted ids to this workspace, so another
     tenant's simply are not there: a miss, not a refusal, the same answer every
     other id in this app gets.
+
+    It also filters to **active** contacts, which means this cannot erase a
+    tombstone even though :func:`contact_erase` can. That matches what the page
+    can select — the list renders active contacts only — and widening
+    ``_selected`` would widen ``bulk_tag`` and ``bulk_delete`` with it. An
+    operator clearing out contacts they soft-deleted earlier goes one at a time
+    through the detail page, or through the API.
     """
     if (request.POST.get("confirm") or "").strip() != erasure.CONFIRMATION:
         return toast_response(

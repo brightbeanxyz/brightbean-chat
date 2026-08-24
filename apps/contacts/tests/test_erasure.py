@@ -857,3 +857,92 @@ class TestBulkErase:
         )
 
         assert response.status_code == 403
+
+
+class TestAFailedRun:
+    """``FAILED`` and ``error`` exist, so something has to write them."""
+
+    def test_the_last_attempt_records_why_it_stopped(self, victim: dict[str, Any], monkeypatch: Any) -> None:
+        """An erasure that was requested, is not finished, and does not know it
+        failed is the one state an audit trail must not have."""
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
+        action.attempts = action.max_attempts
+
+        def boom(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("the database went away")
+
+        monkeypatch.setattr(erasure.activity, "tear_down", boom)
+
+        with pytest.raises(RuntimeError):
+            erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+
+        record.refresh_from_db()
+        assert record.status == ErasureStatus.FAILED
+        assert "the database went away" in record.error
+
+    def test_an_earlier_attempt_leaves_it_for_the_retry(self, victim: dict[str, Any], monkeypatch: Any) -> None:
+        """SPEC §15's ladder still owns the retry; only the last attempt gives up."""
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
+        action.attempts = 1
+
+        def boom(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("transient")
+
+        monkeypatch.setattr(erasure.activity, "tear_down", boom)
+
+        with pytest.raises(RuntimeError):
+            erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+
+        record.refresh_from_db()
+        assert record.status != ErasureStatus.FAILED
+
+    def test_the_recorded_error_is_scrubbed(self, victim: dict[str, Any], monkeypatch: Any) -> None:
+        """A traceback quotes what it was working on, and this column is read in
+        an audit — the discipline ``FlowExecution.last_error`` already applies.
+
+        The fixture is assembled from parts and made of a repeating pattern, for
+        the two reasons this repo has met before: GitHub push protection matches
+        a contiguous provider-shaped literal, and gitleaks' ``generic-api-key``
+        matches a high-entropy run near a credential keyword. Split and
+        patterned satisfies both while the value the scrubber sees at runtime
+        still has the shape its rule is written against.
+        """
+        credential = "sk" + "_live_" + "deadbeef" * 2
+        record = erasure.begin(victim["contact"], source=ErasureSource.BULK, force_queue=True)
+        action = ScheduledAction.objects.unscoped().get(type=erasure.ACTION_TYPE)
+        action.attempts = action.max_attempts
+
+        def boom(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError(f"provider refused: {credential}")
+
+        monkeypatch.setattr(erasure.activity, "tear_down", boom)
+
+        with pytest.raises(RuntimeError):
+            erasure.handle_contact_erasure({"erasure_id": str(record.pk)}, action)
+
+        record.refresh_from_db()
+        assert credential not in record.error
+        assert "[REDACTED]" in record.error
+
+    def test_it_cannot_reach_a_tombstone_the_way_the_detail_page_can(
+        self, tenancy: Tenancy, client_for: Any, victim: dict[str, Any]
+    ) -> None:
+        """A documented asymmetry, not an oversight.
+
+        ``_selected`` filters to active contacts because that is what the list
+        can select; widening it would widen ``bulk_tag`` and ``bulk_delete``
+        too. The single-contact route reaches a tombstone, and so does the API.
+        """
+        from apps.contacts.services import delete_contact
+
+        delete_contact(victim["contact"])
+
+        client_for(tenancy.owner).post(
+            bulk_erase_url(tenancy),
+            {"ids": [str(victim["contact"].pk)], "confirm": erasure.CONFIRMATION},
+        )
+
+        assert not ContactErasure.objects.for_workspace(tenancy.workspace).exists()
+        assert Contact.objects.unscoped().filter(pk=victim["contact"].pk).exists()
