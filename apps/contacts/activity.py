@@ -452,13 +452,9 @@ def stand_down(contact: Contact) -> int:
     """
     stopped = stop_automation(contact)
 
-    from apps.queueing.models import ActionStatus, ScheduledAction
+    from apps.queueing.registry import cancel_pending
 
-    cancelled = (
-        ScheduledAction.objects.for_workspace(contact.workspace_id)
-        .filter(contact_id=contact.pk, status=ActionStatus.PENDING)
-        .update(status=ActionStatus.CANCELLED, updated_at=timezone.now())
-    )
+    cancelled = cancel_pending(contact.workspace_id, contact_id=contact.pk)
     if cancelled:
         logger.info("Cancelled %s pending action(s) for contact %s.", cancelled, contact.pk)
     return stopped

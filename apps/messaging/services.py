@@ -106,6 +106,7 @@ __all__ = [
     "send_outbound",
     "send_via_api",
     "upsert_contact_identity",
+    "withdraw_send",
 ]
 
 #: SPEC §14: "Agent send sets conversation.automation_paused_until = now + 30
@@ -551,6 +552,56 @@ def send_compliance_reply(
     return _dispatch(message, connection, identity, outbound, blocking=False)
 
 
+def withdraw_send(message: Message, *, reason: str) -> Message:
+    """Retract a send that was accepted but never handed to the adapter.
+
+    The other end of contract 1 from :func:`send_outbound`. Some work that
+    produced a message can be cancelled after the row exists — a broadcast
+    stopped mid-fanout, a sequence unsubscribed while a step waits on the token
+    bucket — and until this existed the caller could cancel the ``send_retry``
+    but had no way to say so on the message. What it left behind is the exact
+    state :func:`_defer` calls out: ``queued`` with nothing scheduled to move it,
+    stuck forever, with an operator staring at the wrong status.
+
+    **Compare-and-set, on ``queued`` and an unset ``dispatched_at``.** Not a
+    read-then-save: ``dispatched_at`` is what :func:`_claim` grants, so a message
+    the adapter has already been handed is one whose outcome belongs to whoever
+    holds that claim, and a retraction that overwrote it would replace a real
+    send with a fiction — including SPEC §9.4's unknown outcome, the one state
+    where the platform may well have the message. Losing the race is not an
+    error and not a raise: the message comes back with whatever status the
+    winner wrote, which is the truth about it. Callers that need to know can
+    compare ``status``.
+
+    ``reason`` is the caller's own machine-readable word for *why*, stored as
+    ``withdrawn:<reason>`` in the same shape as :func:`_code` — the code before
+    the colon is what ``codes.describe()`` renders, so the detail costs an
+    operator nothing and gives whoever is debugging the cancellation a thread to
+    pull. It is required rather than defaulted because "cancelled by what?" is
+    the only question a withdrawn row raises.
+
+    The pending ``send_retry`` goes with it, and only once the compare-and-set
+    has won — cancelling first would disarm the ladder under a send that is
+    genuinely still in flight. The two cannot then disagree: the status is
+    written before the action is cancelled, and ``handle_send_retry`` re-reads
+    that status, so even a worker that claims the row in the window between them
+    finds a message it must not send.
+    """
+    error = _code(Failure.WITHDRAWN, reason.strip())
+    withdrawn = (
+        Message.objects.for_workspace(message.workspace_id)
+        .filter(pk=message.pk, status=MessageStatus.QUEUED, dispatched_at__isnull=True)
+        .update(status=MessageStatus.FAILED, error=error, updated_at=timezone.now())
+    )
+    if not withdrawn:
+        message.refresh_from_db()
+        return message
+    _cancel_retry(message)
+    message.status = MessageStatus.FAILED
+    message.error = error
+    return message
+
+
 def _record(
     conversation: Conversation,
     outbound: OutboundMessage,
@@ -632,12 +683,19 @@ def _dispatch(
         # reach the platform. Issue #13's delete cancels those queue rows, but
         # the invariant belongs here rather than resting on every caller of
         # `delete_contact` remembering to tidy up.
-        return _finalize(message, status=MessageStatus.FAILED, error=Denial.CONTACT_DELETED.value)
+        #
+        # `_finalize_if_queued` rather than `_finalize`: this runs before
+        # `_claim()`, with `dispatched_at` still NULL — precisely the window
+        # `withdraw_send` can also match, and an unconditional save here could
+        # silently overwrite a withdrawal that won that race first.
+        finalized = _finalize_if_queued(message, status=MessageStatus.FAILED, error=Denial.CONTACT_DELETED.value)
+        return finalized or _reread(message)
 
     try:
         adapter = adapter_for(connection.platform)
     except LookupError:
-        return _finalize(message, status=MessageStatus.FAILED, error=Failure.NO_ADAPTER.value)
+        finalized = _finalize_if_queued(message, status=MessageStatus.FAILED, error=Failure.NO_ADAPTER.value)
+        return finalized or _reread(message)
 
     if not _claim(message):
         # Another caller owns this attempt. Its outcome is the one that counts.
@@ -711,38 +769,113 @@ def _defer(
     the ``default`` edge rather than killing the flow), and "the retry could not
     be scheduled" is a send outcome like any other — so it fails the message
     with its own code instead of leaving it queued and unreferenced.
+
+    **The rate-deferral caller reopens a second race, on top of the first.**
+    ``_dispatch`` clears ``dispatched_at`` (:func:`_release_claim`) before
+    calling here, and that is exactly the compare-and-set
+    :func:`withdraw_send` needs — for the span of this one call, a message mid
+    rate-deferral looks identical to one nobody is touching. A withdrawal that
+    lands in that span must not be resurrected by an unconditional write: the
+    message would come back ``queued`` under a retry the withdrawal had already
+    cancelled (or is about to), which is the exact "stuck forever" state this
+    function exists to prevent, reached through the one door built to prevent
+    it. So both final writes below go through :func:`_finalize_if_queued`
+    rather than :func:`_finalize` — a compare-and-set on ``status=QUEUED``,
+    true going in from every caller — and losing it means a withdrawal won
+    first; the retry just armed is cancelled rather than left to outlive the
+    message it belongs to.
     """
     try:
         scheduled = _schedule_retry(message, delay_seconds=delay_seconds, use_backoff=use_backoff)
     except Exception:
         logger.exception("Could not schedule a retry for message %s", message.pk)
-        return _finalize(message, status=MessageStatus.FAILED, error=Failure.RETRY_UNSCHEDULABLE.value)
+        return _finalize_if_queued(
+            message, status=MessageStatus.FAILED, error=Failure.RETRY_UNSCHEDULABLE.value
+        ) or _reread(message)
 
     if scheduled is None:
         # _schedule_retry already failed the row with retries_exhausted.
         message.refresh_from_db()
         return message
-    return _finalize(message, status=MessageStatus.QUEUED, error=error)
+
+    finalized = _finalize_if_queued(message, status=MessageStatus.QUEUED, error=error)
+    if finalized is None:
+        # Lost the race: something else — only withdraw_send can, per the
+        # docstring above — already finalised this message. Its outcome wins,
+        # and the retry just armed is not it.
+        _cancel_retry(message)
+        return _reread(message)
+    return finalized
+
+
+def _finalize_if_queued(message: Message, *, status: str, error: str = "") -> Message | None:
+    """Write a terminal or re-queued outcome, but only while it is still ``queued``.
+
+    Every call site here runs before a claim is (re)taken: the two checks at
+    the top of :func:`_dispatch` (before :func:`_claim`), ``handle_send_retry``'s
+    identity and compliance re-checks and its own give-up-on-budget check
+    (before it reopens the claim), and both of :func:`_defer`'s own final
+    writes on the rate-deferral path, where :func:`_release_claim` has just
+    cleared ``dispatched_at``. That is exactly the window
+    :func:`withdraw_send`'s compare-and-set targets, and an earlier version of
+    this module reached every one of these outcomes through :func:`_finalize`'s
+    unconditional save — which let a concurrent withdrawal's reason be
+    silently overwritten by whichever of the two ran second. The *status*
+    stayed right either way (still ``failed``, no resurrection, no
+    double-send), but the *reason* — the whole point of a withdrawal being
+    auditable — was not.
+
+    A compare-and-set closes it: ``status=queued`` is true of every message
+    reaching any of these call sites, by construction of when they run, so
+    filtering on it costs nothing on the ordinary path and catches exactly the
+    race. Returns ``None`` on the loss rather than the message, so a caller
+    cannot mistake "someone else already decided" for "I decided". Sets the
+    written fields on the Python object directly rather than refreshing from
+    the database on the win — every value here is already known, and
+    ``cancel_send_retry``'s own docstring expects ``withdraw_send`` to run once
+    per broadcast recipient, where an avoidable extra ``SELECT`` is not free.
+    """
+    updated = (
+        Message.objects.for_workspace(message.workspace_id)
+        .filter(pk=message.pk, status=MessageStatus.QUEUED)
+        .update(status=status, error=error[:200], updated_at=timezone.now())
+    )
+    if not updated:
+        return None
+    message.status = status
+    message.error = error[:200]
+    return message
+
+
+def _reread(message: Message) -> Message:
+    """The row's true current state, after losing a compare-and-set to
+    whatever else already decided this message's fate."""
+    message.refresh_from_db()
+    return message
 
 
 def _record_api_error(message: Message, exc: APIError) -> Message:
     """4xx is permanent; 5xx, a timeout and an unknown status are not (SPEC §9.5)."""
     status_code = exc.status_code
     retryable = status_code is None or status_code >= 500 or status_code in _RETRYABLE_STATUSES
+    detail = exc.code or (str(status_code) if status_code is not None else "")
     if not retryable:
-        return _finalize(message, status=MessageStatus.FAILED, error=_code(Failure.PROVIDER_REJECTED, exc))
-    return _defer(message, error=_code(Failure.PROVIDER_UNAVAILABLE, exc))
+        return _finalize(message, status=MessageStatus.FAILED, error=_code(Failure.PROVIDER_REJECTED, detail))
+    return _defer(message, error=_code(Failure.PROVIDER_UNAVAILABLE, detail))
 
 
-def _code(failure: Failure, exc: APIError) -> str:
-    """``failure:<provider code>``, with nothing of the provider's prose.
+def _code(failure: Failure, detail: str) -> str:
+    """``failure:<detail>``, capped, with nothing more added.
 
-    ``APIError.code`` is the platform's own machine-readable code and is already
-    capped at 64 characters by ``apps.channels.providers.base``; the message is
-    deliberately not included, because a provider's error text quotes the
-    request that caused it (SECURITY-BASELINE §5).
+    Sixty-four characters, the limit ``apps.channels.providers.base`` already
+    puts on a platform's own code — the same budget applies whether the detail
+    came from a provider's error or from a caller's own withdrawal reason
+    (:func:`withdraw_send`), so one cap serves both. ``error`` holds 200 total
+    and :func:`_finalize`/:func:`_finalize_if_queued` truncate there too, but
+    nothing here should be spending that whole budget on free-form text
+    (SECURITY-BASELINE §5) — a code that stays short stays greppable in a log.
     """
-    detail = exc.code or (str(exc.status_code) if exc.status_code is not None else "")
+    detail = detail[:64]
     return f"{failure.value}:{detail}" if detail else failure.value
 
 
@@ -836,3 +969,10 @@ def _schedule_retry(message: Message, *, delay_seconds: float | None = None, use
     from apps.messaging.handlers import schedule_send_retry
 
     return schedule_send_retry(message, delay_seconds=delay_seconds, use_backoff=use_backoff)
+
+
+def _cancel_retry(message: Message) -> int:
+    """Disarm a pending ``send_retry``. Imported late for the same cycle."""
+    from apps.messaging.handlers import cancel_send_retry
+
+    return cancel_send_retry(message)

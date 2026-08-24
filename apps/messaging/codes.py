@@ -56,6 +56,11 @@ class Failure(StrEnum):
     RATE_DEFERRED = "rate_deferred"
     RETRIES_EXHAUSTED = "retries_exhausted"
     RETRY_UNSCHEDULABLE = "retry_unschedulable"
+    # The one code here that is not the platform's doing: the caller retracted a
+    # send it had already been given a row for. It belongs with the failures
+    # anyway, because `failed` is the only terminal status a never-sent message
+    # can hold and an operator reading the thread needs to know it will not go.
+    WITHDRAWN = "withdrawn"
 
 
 #: One sentence per code, for the inbox and the flow-run log. Keyed by the raw
@@ -82,6 +87,7 @@ REASON_COPY: dict[str, str] = {
     Failure.RATE_DEFERRED: "Waiting for this connection's send rate to allow another message.",
     Failure.RETRIES_EXHAUSTED: "Gave up after retrying this send.",
     Failure.RETRY_UNSCHEDULABLE: "The send failed and another attempt could not be scheduled.",
+    Failure.WITHDRAWN: "The work that queued this message was cancelled before it was sent.",
 }
 
 

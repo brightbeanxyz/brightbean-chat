@@ -174,14 +174,75 @@ class TestRepeatedRateDeferral:
         assert first.pk != second.pk
 
     def test_two_callers_arming_the_same_moment_collapse_into_one(
-        self, tenancy: Any, contact: Any, connection: Any, identity: Any
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
     ) -> None:
-        """Which is what the idempotency key is actually for."""
+        """Which is what the idempotency key is actually for.
+
+        **The clock is held still, and that is the test rather than scenery.**
+        The key is ``send_retry:{message}:{int(run_at.timestamp())}`` and each
+        call works out its own ``run_at = now + delay``, so two calls that
+        happen to straddle a whole second produce keys a second apart and two
+        rows. Left on the wall clock this failed intermittently for a reason
+        with nothing to do with what it asserts: "the same moment" is the
+        premise, so the test has to actually supply one rather than hope for it.
+
+        The only frozen clock in this suite, and the exception proves the rule.
+        The project ships no freezer and moves time through the ORM instead
+        (``apps/flows/tests/test_routing_pipeline.py``: "The clock is moved
+        through the ORM"), which answers "has an hour passed?" and cannot
+        express "did these two calls land in the same second?".
+        """
         message = queued_message(tenancy, contact, connection)
+
+        # After queued_message, so the send itself still runs on the real clock.
+        frozen = timezone.now()
+        monkeypatch.setattr(timezone, "now", lambda: frozen)
+
         first = handlers.schedule_send_retry(message, delay_seconds=60, use_backoff=False)
         second = handlers.schedule_send_retry(message, delay_seconds=60, use_backoff=False)
+
         assert first is not None and second is not None
+        # Asserted before the pks: this is the mechanism, and a key shape that
+        # stopped collapsing would otherwise show up only as a puzzling
+        # duplicate row.
+        assert first.idempotency_key == second.idempotency_key
         assert first.pk == second.pk
+
+    def test_a_second_later_is_a_different_action(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, monkeypatch: Any
+    ) -> None:
+        """The key's granularity, pinned as a decision rather than left a surprise.
+
+        One second is as close together as two callers can be and still be told
+        apart, so two workers arming the same rung either side of a boundary do
+        arm two actions. That is redundant work and not a correctness problem:
+        both rows name the same contact, the worker takes the contact advisory
+        lock for either (SPEC §9.6) so they cannot interleave, and by the time
+        the second runs ``handle_send_retry`` re-reads the message and returns
+        on anything but ``queued`` — with ``services._claim``'s compare-and-set
+        behind that as the last word on who may call the provider. Only a real
+        provider call spends a retry attempt, which is what SPEC §9.5's budget
+        is counting.
+
+        Widening the key to collapse those two would cost the property the
+        class above exists for: a rate deferral spends no attempt, so keying on
+        anything coarser than the run time risks a second deferral reusing the
+        first one's key, ``schedule()`` handing back a completed row, and the
+        message sitting queued forever with nothing to move it. The trade is
+        deliberate; this test is where it is written down.
+        """
+        message = queued_message(tenancy, contact, connection)
+
+        clock = timezone.now()
+        monkeypatch.setattr(timezone, "now", lambda: clock)
+
+        first = handlers.schedule_send_retry(message, delay_seconds=60, use_backoff=False)
+        clock += timedelta(seconds=1)
+        second = handlers.schedule_send_retry(message, delay_seconds=60, use_backoff=False)
+
+        assert first is not None and second is not None
+        assert first.idempotency_key != second.idempotency_key
+        assert first.pk != second.pk
 
     def test_a_deferral_spends_no_retry_budget(
         self, tenancy: Any, contact: Any, connection: Any, identity: Any

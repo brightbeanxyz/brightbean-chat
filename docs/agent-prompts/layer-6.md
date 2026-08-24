@@ -31,6 +31,7 @@ This is the layer where the reserved seams pay off, and the failure mode is buil
 | Approved-WhatsApp-template selector | `apps/channels/whatsapp_templates.py::approved_templates_for` / `variable_schema` | Written for "L6-B's broadcast composer and the flow builder's template picker" |
 | SMS segment counting | `apps/channels/segments.py` | Pure, no Django/DB/clock; the composer multiplies by its own price |
 | Eligibility filtering | `apps/messaging/compliance.py::eligible` / `annotate_eligibility` | Docstring says "Exported for L6-B" |
+| Retracting an accepted-but-unsent message | `apps/messaging/services.py::withdraw_send` | Contract 1; finalises the message **and** cancels its `send_retry` |
 | Email suppression | `apps/channels/suppression.py::is_suppressed` | Workspace-scoped address check |
 | Media picker payload | `apps/media_library/picker.py` | Names "the broadcast composer (#23)" as a caller |
 
@@ -70,7 +71,7 @@ Fanout is the one genuinely hard part and the pieces are all placed:
 - **Batching** — `ActionType.BROADCAST_FANOUT` splits, `BROADCAST_SEND` delivers. Both are already spelled in `apps/queueing/models.py`.
 - **Sends** — through `apps.messaging.services`, never the ORM. `apps/messaging/tests/test_write_sites.py` runs an AST scan that fails the build on a second write site.
 
-**Cancellation has to be real.** A broadcast cancelled mid-fanout must stop scheduling *and* skip already-scheduled sends that have not run. Decide where that check lives and test it against a partially-drained queue.
+**Cancellation has to be real.** A broadcast cancelled mid-fanout must stop scheduling *and* skip already-scheduled sends that have not run. Decide where that check lives and test it against a partially-drained queue. A send the token bucket already deferred is a third case and it is not yours to settle by hand: `apps.messaging.services.withdraw_send(message, reason=...)` finalises the message to `failed` and cancels its `send_retry` together. Cancelling the queue row on its own leaves the row `queued` with nothing scheduled to move it — stuck forever, with an operator staring at the wrong status.
 
 **You own `broadcast.finished`.** `apps/api/events.py` already offers it to webhook subscribers and `apps/api/models.py` notes nothing emits it yet. Emit it through your app's `EVENT_CATALOG` and L5-F's delivery picks it up with no edit.
 
@@ -139,7 +140,7 @@ Specifics for you:
 - Targeting is apps.contacts.conditions.queryset(workspace, filter_json) — the same engine segments use, so an audience and a segment agree by construction.
 - Rate limiting is apps.messaging.buckets (rate_for / capacity_for / try_acquire), per connection, already tuned per platform in apps/channels/policy.py. A broadcast must not bypass it and must not add a second throttle beside it.
 - Fanout uses ActionType.BROADCAST_FANOUT to split and BROADCAST_SEND to deliver; both are already spelled in apps/queueing/models.py. Sends go through apps.messaging.services — apps/messaging/tests/test_write_sites.py fails the build on a second write site.
-- CANCELLATION MUST BE REAL: a broadcast cancelled mid-fanout stops scheduling AND skips already-scheduled sends that have not run. Test it against a partially-drained queue.
+- CANCELLATION MUST BE REAL: a broadcast cancelled mid-fanout stops scheduling AND skips already-scheduled sends that have not run. Test it against a partially-drained queue. For a send the token bucket already deferred, call apps.messaging.services.withdraw_send(message, reason=...) — it finalises the message to failed and cancels its send_retry together. Do not cancel the queue row and leave the message queued: nothing is then scheduled to move it.
 - YOU OWN broadcast.finished. apps/api/events.py already lists it in SUBSCRIBABLE_EVENTS and apps/api/models.py notes nothing emits it yet — subscribing today is a deliberate no-op. Emit it through your app's EVENT_CATALOG and L5-F's delivery picks it up with no edit.
 - Per-platform composer affordances read from the registries, never a branch: apps/channels/whatsapp_templates.py::approved_templates_for + variable_schema (both written for your composer by name), apps/channels/segments.py for SMS length (pure — you multiply by your own price), apps/channels/suppression.py::is_suppressed for email, apps/channels/capabilities.py for renderable blocks, apps/media_library/picker.py for media. No platform branch in apps/messaging/ and no {% if platform == "..." %} in a template.
 - Live counters: decide the polling story deliberately. apps/common/polling.py already does conditional GETs with a (max(updated_at), count) version token, and templates/inbox/list.html documents the htmx-swaps-on-304 trap and its fix. Reuse both.

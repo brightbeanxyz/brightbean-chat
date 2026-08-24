@@ -42,12 +42,12 @@ from apps.messaging.codes import Denial, Failure
 from apps.messaging.compliance import Allowed, can_send
 from apps.messaging.models import Message, MessageStatus
 from apps.queueing.models import ActionType, ScheduledAction
-from apps.queueing.registry import register_handler, schedule
+from apps.queueing.registry import cancel_pending, register_handler, schedule
 from apps.queueing.worker import BACKOFF_SCHEDULE, next_run_at
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MAX_SEND_ATTEMPTS", "handle_send_retry", "schedule_send_retry"]
+__all__ = ["MAX_SEND_ATTEMPTS", "cancel_send_retry", "handle_send_retry", "schedule_send_retry"]
 
 #: Cap on a platform's ``Retry-After``. A hostile or broken header must not be
 #: able to park a message a month into the future.
@@ -126,10 +126,61 @@ def schedule_send_retry(
     )
 
 
+def cancel_send_retry(message: Message) -> int:
+    """Disarm the pending attempt for a message nothing is going to send now.
+
+    The counterpart to :func:`schedule_send_retry`, and it lives beside it
+    because the ladder is one thing: the module that arms a rung is the module
+    that knows how to find it again. Returns how many rows were cancelled.
+
+    ``pending`` only, matching ``apps.flows.engine.runner._supersede`` and
+    ``apps.contacts.activity.stand_down``. Cancelling a ``running`` row would
+    not recall the handler already inside it, and does not need to: that handler
+    re-reads ``message.status`` before it does anything and returns on anything
+    but ``queued``, with ``services._claim``'s compare-and-set behind it as the
+    last word. So the message's status is the authority on whether a send
+    happens and this is the optimisation that stops a worker waking up to
+    rediscover it.
+
+    Matched on ``contact_id`` as well as the payload. The payload is the precise
+    predicate — ``schedule_send_retry`` writes ``{"message_id": ...}`` and JSONB
+    carries no index here — but every ``send_retry`` also names the contact, and
+    that column *is* indexed with ``status``. Cancelling a broadcast withdraws a
+    row per recipient, and one narrow index scan each is the difference between
+    that being linear and being a scan of the whole pending backlog per message.
+
+    Goes through :func:`apps.queueing.registry.cancel_pending`, the disarm-side
+    counterpart to :func:`~apps.queueing.registry.schedule` this function's own
+    docstring already promises: the mechanics of "what pending means and how to
+    cancel it" belong to the queue, not to every app that arms work on it.
+    """
+    cancelled = cancel_pending(
+        message.workspace_id,
+        type=ActionType.SEND_RETRY,
+        contact_id=message.conversation.contact_id,
+        payload__message_id=str(message.pk),
+    )
+    if cancelled:
+        logger.info("Cancelled %s pending send_retry action(s) for message %s.", cancelled, message.pk)
+    return cancelled
+
+
 def _give_up(message: Message) -> None:
-    message.status = MessageStatus.FAILED
-    message.error = Failure.RETRIES_EXHAUSTED.value
-    message.save(update_fields=["status", "error", "updated_at"])
+    """Fail the row for exhausting its retry budget — but only if nothing
+    else already decided its fate.
+
+    A compare-and-set on ``status=queued``, for the same reason
+    ``apps.messaging.services._finalize_if_queued`` exists: both callers of
+    this function reach it before a claim is (re)taken, in the exact window a
+    concurrent ``withdraw_send`` can also match. Losing the race is not an
+    error — it means the message is already ``failed`` for a better reason
+    than "gave up", and there is nothing useful left for this call to do.
+    Neither caller reads ``message`` again afterward, so there is nothing to
+    return.
+    """
+    Message.objects.for_workspace(message.workspace_id).filter(pk=message.pk, status=MessageStatus.QUEUED).update(
+        status=MessageStatus.FAILED, error=Failure.RETRIES_EXHAUSTED.value, updated_at=timezone.now()
+    )
 
 
 @register_handler(ActionType.SEND_RETRY, replace=True)
@@ -144,7 +195,7 @@ def handle_send_retry(payload: dict[str, Any], action: ScheduledAction) -> None:
     """
     from apps.messaging.lookup import provider_message_id
     from apps.messaging.rendering import outbound_from_body
-    from apps.messaging.services import _dispatch, _finalize, _identity_for
+    from apps.messaging.services import _dispatch, _finalize, _finalize_if_queued, _identity_for
 
     message = _load(payload, action)
     if message is None or message.status != MessageStatus.QUEUED:
@@ -161,7 +212,12 @@ def handle_send_retry(payload: dict[str, Any], action: ScheduledAction) -> None:
         # channel, which is a different thing from the platform having no
         # adapter installed — and ``error`` is what an operator debugging a
         # stuck send reads, through codes.describe().
-        _finalize(message, status=MessageStatus.FAILED, error=Denial.NO_IDENTITY.value)
+        #
+        # `_finalize_if_queued` rather than `_finalize`: `dispatched_at` is
+        # still NULL here (the claim is reopened only further down), so a
+        # concurrent `withdraw_send` can match the same row. Its return value
+        # is unused either way — nothing below reads `message` again this run.
+        _finalize_if_queued(message, status=MessageStatus.FAILED, error=Denial.NO_IDENTITY.value)
         return
 
     if message.dispatched_at is not None and not message.provider_message_id:
@@ -181,7 +237,9 @@ def handle_send_retry(payload: dict[str, Any], action: ScheduledAction) -> None:
     outbound = outbound_from_body(message.body)
     decision = can_send(identity, message.source, outbound)
     if not isinstance(decision, Allowed):
-        _finalize(message, status=MessageStatus.FAILED, error=decision.code)
+        # Same reasoning as the NO_IDENTITY check above: still pre-claim,
+        # still a window `withdraw_send` can match.
+        _finalize_if_queued(message, status=MessageStatus.FAILED, error=decision.code)
         return
 
     # Re-open the claim: this is a new, intended attempt rather than a racing

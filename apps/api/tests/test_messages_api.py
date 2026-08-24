@@ -161,6 +161,52 @@ class TestComplianceDenials:
 
 
 @pytest.mark.django_db
+class TestWithdrawnMessages:
+    """``Failure.WITHDRAWN`` is not a ``Denial`` — it lives in the other code
+    vocabulary, for a cancellation rather than a compliance refusal — but it
+    means exactly the same thing to a caller polling this endpoint: nobody is
+    ever retrying it. A response that told them otherwise (this router's
+    documented 201-means-still-retrying contract) would be actively wrong.
+    """
+
+    def test_a_withdrawn_message_is_a_422_not_a_201_on_retry(self, client, tenancy, auth, reachable, connection):
+        from apps.messaging.services import withdraw_send
+
+        adapter = fake_adapter_for(Platform.TELEGRAM)
+        payload = {
+            "contact_id": str(reachable.pk),
+            "connection_id": str(connection.pk),
+            "body": {"text": "hello"},
+            "idempotency_key": "order-withdrawn-1",
+        }
+        with swapped_adapter(Platform.TELEGRAM, adapter):
+            first = send(client, auth, **payload)
+        assert first.status_code == 201
+        message = Message.objects.for_workspace(tenancy.workspace).get(pk=first.json()["id"])
+
+        # Force it to the state withdraw_send targets — queued, unclaimed,
+        # which is what a rate-deferred send looks like — without needing to
+        # actually drain the token bucket for this test.
+        Message.objects.for_workspace(tenancy.workspace).filter(pk=message.pk).update(
+            status=MessageStatus.QUEUED, dispatched_at=None
+        )
+        message.refresh_from_db()
+        withdraw_send(message, reason="broadcast_cancelled")
+
+        # Same idempotency key: SPEC §9.4's ordinary retry path, which is how
+        # a caller actually discovers this — not the first response, which it
+        # never sees, but a later poll on a key it already holds.
+        second = send(client, auth, **payload)
+
+        assert second.status_code == 422
+        body = second.json()["error"]
+        assert body["code"] == "withdrawn"
+        assert body["detail"]["reason"] == "withdrawn"
+        assert body["detail"]["message_id"] == str(message.pk)
+        assert body["message"] == "The work that queued this message was cancelled before it was sent."
+
+
+@pytest.mark.django_db
 class TestTenancyAndScopes:
     def test_another_workspaces_contact_is_a_404(self, client, tenancy, other_tenancy, auth, connection):
         stranger = Contact.objects.create(workspace=other_tenancy.workspace, first_name="Stranger")

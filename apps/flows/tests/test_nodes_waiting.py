@@ -475,6 +475,28 @@ class TestContinueWindow:
         local = run_at.astimezone(ZoneInfo(tenancy.workspace.effective_timezone))
         assert local.hour == 9 and local.minute == 0
 
+    def test_a_duration_delay_is_forwarded_by_the_window_too(self, tenancy, monkeypatch):
+        """The fixed-instant tests around this one pin the window boundary
+        precisely using smart_delay's date mode; this confirms mode:duration
+        — arguably the more common real configuration, and the one
+        continue_window was written for — reaches the identical
+        ``_into_window`` through ``_from_duration``, not only through the
+        fixed-instant path.
+
+        The clock is frozen to ``SATURDAY_NIGHT`` for the same reason the
+        fixed-instant tests pin to it: mode:duration computes ``run_at`` from
+        ``timezone.now()``, so a window narrow enough to force a move would
+        otherwise be flaky for the same band-of-the-day reason those tests
+        exist to avoid.
+        """
+        monkeypatch.setattr(timezone, "now", lambda: SATURDAY_NIGHT)
+        window = {"enabled": True, "from": "09:00", "to": "09:01"}
+
+        run_at = self._run_at(tenancy.workspace, window)
+
+        local = run_at.astimezone(ZoneInfo(tenancy.workspace.effective_timezone))
+        assert local.hour == 9 and local.minute == 0
+
     def test_a_disallowed_day_is_skipped(self, tenancy):
         """A Saturday delay with only Mondays allowed waits for Monday morning."""
         window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00"}
@@ -500,6 +522,24 @@ class TestContinueWindow:
         # keeps the test off what that zone happens to be: measuring the window
         # there would have given Monday 09:00 *its* time, half a day later.
         assert run_at == datetime(2026, 8, 23, 21, 0, tzinfo=UTC)
+
+    def test_an_instant_already_inside_the_contacts_window_is_untouched(self, tenancy):
+        """The other half, and the sharper of the two.
+
+        Monday morning in Auckland is inside the window; the same instant is
+        *Sunday* evening in UTC, which is not an allowed day at all. Reading
+        the window in the wrong clock would push this forward to the next
+        Monday, so "unchanged" is only the right answer for the contact's own
+        timezone.
+        """
+        contact = contact_for(tenancy.workspace, timezone="Pacific/Auckland")
+        window = {"enabled": True, "days": ["mon"], "from": "09:00", "to": "17:00", "use_contact_timezone": True}
+        # Monday 10:00 NZST — inside the window — and Sunday 22:00 UTC.
+        monday_in_auckland = datetime(2026, 8, 24, 10, 0, tzinfo=ZoneInfo("Pacific/Auckland"))
+
+        run_at = self._run_at_from(tenancy.workspace, window, monday_in_auckland, contact=contact)
+
+        assert run_at == monday_in_auckland
 
     def test_an_unparseable_contact_timezone_falls_back(self, tenancy, caplog):
         """Contact timezones come from platform profiles — attacker-controlled."""
