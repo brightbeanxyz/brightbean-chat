@@ -78,7 +78,7 @@ _AUTH_SCHEMES = r"Bearer|Basic|Token|Digest"
 # URL path prefixes whose next segment is a bearer credential. Extend this when
 # a new unauthenticated token route lands; the shared signer's docstring
 # (apps/common/signing.py) lists the ones still to come.
-_TOKEN_PATH_PREFIXES = r"invite|u"  # noqa: S105 - URL prefixes, not a credential
+_TOKEN_PATH_PREFIXES = r"invite|u|m"  # noqa: S105 - URL prefixes, not a credential
 
 # Ordered: the first pattern that matches a region wins.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -133,6 +133,11 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # and does not fire at all, leaving the whole credential in the log. The
     # first version of this rule had that bug, and the fixture it was tested
     # against was all-alphanumeric, so the test could not have caught it.
+    #
+    # Covers Messenger's page, user and app tokens too (#18) — same prefix, same
+    # shape. There were two identical copies of this rule for a while, one added
+    # by each issue; a second compiled pattern that can never match anything the
+    # first did not is dead weight in a table whose ordering is load-bearing.
     (re.compile(r"\bEAA[A-Za-z0-9_\-]{20,}"), REDACTED),
     # Twilio account SIDs and API keys: a two-letter prefix plus 32 hex.
     #
@@ -175,17 +180,6 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # this credential to reach a log was the one form the pattern missed
     # (found by apps/channels/tests/test_telegram_scrubbing.py, issue #12).
     (re.compile(r"(?:(?<=/bot)|(?<![A-Za-z0-9_]))\d{6,12}:[A-Za-z0-9_\-]{30,}"), REDACTED),
-    # Meta access tokens: page, user and app tokens all begin ``EAA`` followed by
-    # a long base64url run. Added by issue #18 (Messenger), per the Layer-5 rule
-    # that a platform whose token has a recognisable shape adds it here.
-    #
-    # Belt and braces rather than the only defence: the Meta adapters send the
-    # token in an ``Authorization: Bearer`` header, which the first pattern above
-    # already covers, and never in a URL — precisely so there is nothing here to
-    # catch. This exists for the paths nobody planned: an operator pasting a token
-    # into a form that logs its input, a Graph error body quoted into an
-    # exception, a fixture that ends up in CI output.
-    (re.compile(r"\bEAA[A-Za-z0-9_\-]{20,}"), REDACTED),
     # Bearer credentials carried in a URL path. An invitation link is a
     # capability — anyone holding it joins the organization — and it reaches
     # logs through the request line rather than through any key=value pair:
@@ -195,6 +189,13 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # every later token route can add its prefix in one place; `/u/` joined it
     # with issue #21, and an unsubscribe token is the same kind of capability —
     # anyone holding it can withdraw somebody else's consent.
+    #
+    # `/m/` joined with issue #29, having been missed when the media library
+    # landed: ``apps/media_library/views.py`` reads the signed token and then
+    # queries ``unscoped()``, so the token *is* the authorisation, and every
+    # request for an asset was putting a live capability in the access log.
+    # ``tests/test_token_routes.py`` now derives this list from the URL conf, so
+    # the next route to arrive cannot be missed the same way.
     (re.compile(rf"(?i)(/(?:{_TOKEN_PATH_PREFIXES})/)[A-Za-z0-9._~+/=\-]{{8,}}"), rf"\1{REDACTED}"),
 )
 

@@ -34,8 +34,10 @@ apps/contacts/activity.py before it can become a src.
     <div class="flex items-center gap-2 flex-shrink-0">
       <a class="media-pill" href="{% url 'contacts:list' workspace_id=request.workspace.id %}">Back to contacts</a>
       {% if can_manage_crm %}
-        {# SPEC §19's subject access response. A plain link, not htmx: the
-           answer is a file download, and hx-get would swap JSON into the DOM. #}
+        {% comment %}
+          SPEC §19's subject access response. A plain link, not htmx: the answer
+          is a file download, and hx-get would swap JSON into the DOM.
+        {% endcomment %}
         <a class="media-pill"
            href="{% url 'contacts:subject_export' workspace_id=request.workspace.id contact_id=contact.id %}"
            download>Export data</a>
