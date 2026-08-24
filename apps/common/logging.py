@@ -78,7 +78,7 @@ _AUTH_SCHEMES = r"Bearer|Basic|Token|Digest"
 # URL path prefixes whose next segment is a bearer credential. Extend this when
 # a new unauthenticated token route lands; the shared signer's docstring
 # (apps/common/signing.py) lists the ones still to come.
-_TOKEN_PATH_PREFIXES = r"invite|u|m"  # noqa: S105 - URL prefixes, not a credential
+_TOKEN_PATH_PREFIXES = r"invite|u|m|c|o"  # noqa: S105 - URL prefixes, not a credential
 
 # Ordered: the first pattern that matches a region wins.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -196,6 +196,12 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # request for an asset was putting a live capability in the access log.
     # ``tests/test_token_routes.py`` now derives this list from the URL conf, so
     # the next route to arrive cannot be missed the same way.
+    #
+    # `/c/` and `/o/` are that mechanism working: #26 landed the click redirect
+    # and the open pixel while #29 was in review, and the sweep failed on the
+    # merge rather than letting two more signed capabilities into the access log
+    # unnoticed. Both carry a payload that names a workspace's flow, node and
+    # message, which is exactly what a log line should not.
     (re.compile(rf"(?i)(/(?:{_TOKEN_PATH_PREFIXES})/)[A-Za-z0-9._~+/=\-]{{8,}}"), rf"\1{REDACTED}"),
 )
 

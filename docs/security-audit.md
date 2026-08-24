@@ -55,7 +55,7 @@ without a linked passing test": an unmapped item cannot be given a legal status.
 
 | ID | Requirement | Enforcing tests | Status |
 |---|---|---|---|
-| §4.1 | Unauthenticated token routes use the one shared signing utility | `apps/common/tests/test_signing.py`, `apps/channels/tests/test_unsubscribe.py`, `apps/media_library/tests/test_delivery.py` | DEVIATION — two, both argued in code and now named in the baseline: `/internal/tick`'s bare env token and Telegram's 64-character preview handles. `/c/` and `/o/` do not exist yet (issue #26). |
+| §4.1 | Unauthenticated token routes use the one shared signing utility | `apps/common/tests/test_signing.py`, `apps/channels/tests/test_unsubscribe.py`, `apps/media_library/tests/test_delivery.py`, `tests/test_token_routes.py::TestEveryTokenRouteIsScrubbedFromLogs` | DEVIATION — two, both argued in code and now named in the baseline: `/internal/tick`'s bare env token and Telegram's 64-character preview handles. `/c/` and `/o/` landed with #26 while this audit was in review and go through the shared signer like the rest. |
 | §4.2 | Verification is constant-time; every failure is a generic 404 | `tests/test_token_routes.py::TestEveryTokenRouteAnswersABare404`, `tests/test_token_routes.py::TestNoCredentialIsComparedWithEquality`, `apps/common/tests/test_signing.py` | COVERED |
 | §4.3 | The two divergences keep constant-time compare and a bare 404 | `apps/queueing/tests/test_views.py`, `apps/channels/tests/test_telegram_preview.py` | COVERED |
 | §4.4 | A token route's prefix is scrubbed from request lines | `tests/test_token_routes.py::TestEveryTokenRouteIsScrubbedFromLogs` | COVERED — new in #29, and it found `/m/` missing. Media delivery tokens are bearer capabilities and every asset request had been logging one in full. |
@@ -184,5 +184,8 @@ Two more worth knowing about and not filed: `apps/api/tests/support.py` keeps a
 private `FakeInternet` that duplicates `tests/ssrf.py`'s, contradicting the
 latter's own consolidation rationale — left alone because editing another
 workstream's suite for zero behaviour change is what this PR is meant not to do.
-And `/c/` and `/o/` (§4.1) do not exist: they are issue #26's, and
-`tests/test_token_routes.py` will require their prefixes the moment they land.
+`/c/` and `/o/` (§4.1) landed with #26 while this was in review, and the sweep
+did what it was written to do: `tests/test_token_routes.py` went red on the merge
+because two new signed capabilities were not in the log scrubber's prefix list.
+Fixed here rather than filed — the whole point of deriving that list from the URL
+conf was that the next route could not be missed the way `/m/` had been.
