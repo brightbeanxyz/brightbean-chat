@@ -41,7 +41,8 @@ curl_opts=(--silent --show-error)
 wait_curl_opts=""
 
 usage() {
-    sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # Lines 2-23 are the help text; what follows is an implementation note.
+    sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit "${1:-2}"
 }
 

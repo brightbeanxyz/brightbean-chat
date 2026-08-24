@@ -290,7 +290,7 @@ jobs:
         # share a source: .nvmrc is a dotfile only setup-node reads, the
         # Dockerfile and compose carry literal image tags (kept literal so
         # Dependabot's docker ecosystem can see and bump them), engines is a
-        # semver range npm enforces, and the README is prose. Dependabot bumps
+        # semver range npm enforces, and CONTRIBUTING is prose. Dependabot bumps
         # exactly one of those at a time, so without this step a PR moving the
         # base image alone would go green while CI still tested the old major.
         #
@@ -301,20 +301,25 @@ jobs:
           dockerfile="$(sed -n 's/^FROM node:\([0-9][0-9]*\)-slim.*/\1/p' Dockerfile | head -1)"
           compose="$(sed -n 's/^[[:space:]]*image:[[:space:]]*node:\([0-9][0-9]*\)-slim.*/\1/p' docker-compose.override.yml | head -1)"
           engines="$(node -p "((require('./package.json').engines||{}).node||'').match(/[0-9]+/)?.[0] || ''")"
-          readme="$(sed -n 's/.*Node \([0-9][0-9]*\)+ and.*/\1/p' README.md | head -1)"
+          # The prose pin lives in CONTRIBUTING.md's "Local development"
+          # section. It was in the README until issue #28 rebuilt that around
+          # deploying rather than developing and moved the setup detail here;
+          # this check followed the sentence rather than being weakened to
+          # accept its absence.
+          contributing="$(sed -n 's/.*Node \([0-9][0-9]*\)+ and.*/\1/p' CONTRIBUTING.md | head -1)"
 
           # An empty capture means the pattern stopped matching — a silently
           # skipped comparison would be worse than no check at all.
-          for pair in "nvmrc:${nvmrc}" "Dockerfile:${dockerfile}" "compose:${compose}" "engines:${engines}" "README:${readme}"; do
+          for pair in "nvmrc:${nvmrc}" "Dockerfile:${dockerfile}" "compose:${compose}" "engines:${engines}" "CONTRIBUTING:${contributing}"; do
             if [ -z "${pair##*:}" ]; then
               echo "::error::Could not read the Node version out of ${pair%%:*} — this check's pattern needs updating."
               exit 1
             fi
           done
 
-          echo ".nvmrc=${nvmrc} Dockerfile=${dockerfile} compose=${compose} engines=${engines} README=${readme}"
+          echo ".nvmrc=${nvmrc} Dockerfile=${dockerfile} compose=${compose} engines=${engines} CONTRIBUTING=${contributing}"
           if [ "${nvmrc}" != "${dockerfile}" ] || [ "${nvmrc}" != "${compose}" ] \
-             || [ "${nvmrc}" != "${engines}" ] || [ "${nvmrc}" != "${readme}" ]; then
+             || [ "${nvmrc}" != "${engines}" ] || [ "${nvmrc}" != "${contributing}" ]; then
             echo "::error::Node version pins disagree. All five must name the same major; .nvmrc is the one CI runs on."
             exit 1
           fi
