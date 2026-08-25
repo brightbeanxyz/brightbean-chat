@@ -12,6 +12,7 @@ from apps.queueing.registry import (
     DuplicateHandlerError,
     IdempotencyKeyConflictError,
     get_handler,
+    purge_for_contact,
     register_handler,
     registered_types,
     schedule,
@@ -205,3 +206,114 @@ class TestTheSystemBoundary:
         import inspect
 
         assert "contact" not in inspect.signature(schedule_system).parameters
+
+
+@pytest.mark.django_db
+class TestPurgeForContact:
+    """Issue #29's erasure-side counterpart to ``cancel_pending``.
+
+    A delete rather than an update, because a cancelled row is a row that still
+    holds whatever its ``payload`` held — and for a GDPR erasure the payload is
+    the point.
+    """
+
+    def action(self, workspace: Any, **kwargs: Any) -> ScheduledAction:
+        defaults: dict[str, Any] = {
+            "workspace": workspace,
+            "run_at": timezone.now(),
+            "type": "send_retry",
+            "status": ActionStatus.PENDING,
+        }
+        defaults.update(kwargs)
+        return ScheduledAction.objects.create(**defaults)
+
+    def test_it_deletes_rows_naming_the_contact_in_the_column(self, tenancy: Any) -> None:
+        contact_id = uuid.uuid4()
+        row = self.action(tenancy.workspace, contact_id=contact_id)
+
+        result = purge_for_contact(tenancy.workspace, contact_id)
+
+        assert result.deleted == 1
+        assert not ScheduledAction.objects.unscoped().filter(pk=row.pk).exists()
+
+    def test_it_deletes_rows_naming_the_contact_in_the_payload(self, tenancy: Any) -> None:
+        """``enqueue_delivery`` leaves the column null on purpose and puts the id
+        under ``payload["data"]``; matching only the column would leave a
+        webhook that fires after the erasure."""
+        contact_id = uuid.uuid4()
+        row = self.action(
+            tenancy.workspace,
+            contact_id=None,
+            type="webhook_delivery",
+            payload={"event": "contact.tag_added", "data": {"contact_id": str(contact_id)}},
+        )
+
+        result = purge_for_contact(tenancy.workspace, contact_id)
+
+        assert result.deleted == 1
+        assert not ScheduledAction.objects.unscoped().filter(pk=row.pk).exists()
+
+    def test_it_deletes_terminal_rows_too(self, tenancy: Any) -> None:
+        """A done or failed row still holds its payload."""
+        contact_id = uuid.uuid4()
+        for status in (ActionStatus.DONE, ActionStatus.FAILED, ActionStatus.CANCELLED):
+            self.action(tenancy.workspace, contact_id=contact_id, status=status)
+
+        assert purge_for_contact(tenancy.workspace, contact_id).deleted == 3
+
+    def test_it_leaves_running_rows_alone_and_counts_them(self, tenancy: Any) -> None:
+        """The privacy gap this return type exists to surface.
+
+        Holding the contact lock stops a *new* handler starting; it says nothing
+        about a row a worker marked running before its process died. That row
+        survives with its payload, so the caller has to be able to say so rather
+        than report a clean sweep.
+        """
+        contact_id = uuid.uuid4()
+        zombie = self.action(tenancy.workspace, contact_id=contact_id, status=ActionStatus.RUNNING)
+        self.action(tenancy.workspace, contact_id=contact_id)
+
+        result = purge_for_contact(tenancy.workspace, contact_id)
+
+        assert result.deleted == 1
+        assert result.left_running == 1
+        assert ScheduledAction.objects.unscoped().filter(pk=zombie.pk).exists()
+
+    def test_it_honours_exclude_action_id(self, tenancy: Any) -> None:
+        """Proven independently of the RUNNING exclusion that currently shadows
+        it: on the queued path the worker has already marked the erasure's own
+        action running, so without this test the parameter would be untested
+        and the day the RUNNING rule changes it would be load-bearing and
+        unproven."""
+        contact_id = uuid.uuid4()
+        spared = self.action(tenancy.workspace, contact_id=contact_id, type="contact_erasure")
+        doomed = self.action(tenancy.workspace, contact_id=contact_id)
+
+        result = purge_for_contact(tenancy.workspace, contact_id, exclude_action_id=spared.pk)
+
+        assert result.deleted == 1
+        assert ScheduledAction.objects.unscoped().filter(pk=spared.pk).exists()
+        assert not ScheduledAction.objects.unscoped().filter(pk=doomed.pk).exists()
+
+    def test_it_leaves_another_contacts_rows_alone(self, tenancy: Any) -> None:
+        mine, theirs = uuid.uuid4(), uuid.uuid4()
+        self.action(tenancy.workspace, contact_id=mine)
+        survivor = self.action(tenancy.workspace, contact_id=theirs)
+
+        assert purge_for_contact(tenancy.workspace, mine).deleted == 1
+        assert ScheduledAction.objects.unscoped().filter(pk=survivor.pk).exists()
+
+    def test_it_leaves_rows_naming_no_contact_alone(self, tenancy: Any) -> None:
+        """A housekeeping row, or a ``broadcast.finished`` delivery."""
+        contact_id = uuid.uuid4()
+        system = self.action(tenancy.workspace, contact_id=None, type="housekeeping")
+
+        assert purge_for_contact(tenancy.workspace, contact_id).deleted == 0
+        assert ScheduledAction.objects.unscoped().filter(pk=system.pk).exists()
+
+    def test_it_is_scoped_to_the_workspace(self, tenancy: Any, other_tenancy: Any) -> None:
+        contact_id = uuid.uuid4()
+        theirs = self.action(other_tenancy.workspace, contact_id=contact_id)
+
+        assert purge_for_contact(tenancy.workspace, contact_id).deleted == 0
+        assert ScheduledAction.objects.unscoped().filter(pk=theirs.pk).exists()

@@ -213,7 +213,25 @@ class BroadcastRecipient(WorkspaceScopedModel):
     """One person's copy of one broadcast. See the module docstring."""
 
     broadcast = models.ForeignKey(Broadcast, on_delete=models.CASCADE, related_name="recipients")
-    contact = models.ForeignKey("contacts.Contact", on_delete=models.CASCADE, related_name="broadcast_recipients")
+    #: ``SET_NULL`` rather than ``CASCADE``, and nullable, because of issue
+    #: #29's GDPR erasure. This row is a **counter**: :func:`counters` recomputes
+    #: a finished broadcast's figures from these rows live, while the list page
+    #: reads the ``stats`` json ``settle()`` froze. A cascade would delete the
+    #: counter along with the person and leave the two disagreeing about a
+    #: broadcast that has already been sent. Nulling the three references
+    #: instead leaves a row carrying a status and a machine-readable ``reason``
+    #: and nothing else — SPEC §19's "keep anonymized counters", exactly.
+    #:
+    #: The ``(broadcast, contact)`` unique constraint still holds: Postgres
+    #: treats NULLs as distinct, which is the right reading here — two erased
+    #: recipients are two recipients, not one recorded twice.
+    contact = models.ForeignKey(
+        "contacts.Contact",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="broadcast_recipients",
+    )
     identity = models.ForeignKey(
         "messaging.ContactChannelIdentity",
         on_delete=models.SET_NULL,

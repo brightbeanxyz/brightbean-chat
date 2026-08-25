@@ -556,6 +556,128 @@ class ContactImport(WorkspaceScopedModel):
         return min(100, round(self.processed_rows * 100 / self.total_rows))
 
 
+class ErasureStatus(models.TextChoices):
+    """The lifecycle of one erasure request."""
+
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    DONE = "done", "Done"
+    FAILED = "failed", "Failed"
+
+
+class ErasureSource(models.TextChoices):
+    """Which surface asked for it. Part of the audit answer, not decoration."""
+
+    UI = "ui", "Contact page"
+    BULK = "bulk", "Bulk action"
+    API = "api", "Public API"
+
+
+class ContactErasure(WorkspaceScopedModel):
+    """Who erased which contact, when, and what went — SPEC §19, issue #29.
+
+    The first audit table in the product, and it exists because erasure is the
+    one act with no undo. ``delete_contact`` sets a flag and every row survives;
+    this removes a person, their identities, their consent records and their
+    message history outright. "It was done" has to remain answerable after the
+    only evidence has been deleted, so the receipt is a row of its own rather
+    than a log line.
+
+    --------------------------------------------------------------------------
+    What it deliberately does not hold
+    --------------------------------------------------------------------------
+
+    **No name, no email, no phone.** A record that survives an erasure by
+    keeping the erased person's identifiers has not erased them; it has moved
+    them. :attr:`contact_id` is the whole reference — a UUID this deployment
+    minted, which after the delete resolves to nothing and identifies nobody. It
+    is enough to answer "was this request honoured", which is the question an
+    audit is for, and not enough to reconstruct who it was about.
+
+    ``requested_by_label`` is the exception that proves it: that is the
+    *operator's* address, not the contact's. Accountability runs the other way.
+
+    --------------------------------------------------------------------------
+    Two jobs, one row
+    --------------------------------------------------------------------------
+
+    It is also the queue-backed run's state, the way :class:`ContactImport` is
+    for a CSV import — a large contact's erasure outlives the request that asked
+    for it, so ``status`` and ``error`` are here rather than in a second table
+    that would have to be kept in step with this one.
+
+    No foreign key to ``Contact``: the row it names is gone by the time this one
+    matters, and a cascade would delete exactly the record that has to survive —
+    the reasoning ``apps/channels/models.py``'s ``EmailSuppression`` gives for
+    the same choice.
+    """
+
+    #: The erased contact. A plain UUID, for the reason in the class docstring.
+    contact_id = models.UUIDField(db_index=True)
+
+    #: The operator, while they still have an account. ``SET_NULL`` because the
+    #: audit outlives the membership — the same reading ``ApiKey.created_by``
+    #: takes, and why the label below is stored beside it rather than derived.
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="contact_erasures",
+        help_text="Audit only. Null once the account goes; see requested_by_label.",
+    )
+    #: Who they were at the time. Denormalised on purpose: a foreign key alone
+    #: answers "nobody" after the account is removed, which is the moment an
+    #: audit trail is most often read.
+    requested_by_label = models.CharField(max_length=254, blank=True, default="")
+
+    source = models.CharField(max_length=8, choices=ErasureSource.choices)
+
+    #: Which API key, when ``source`` is ``api``. A plain UUID rather than a
+    #: foreign key so ``apps.contacts`` does not grow an import of ``apps.api``.
+    api_key_id = models.UUIDField(null=True, blank=True)
+
+    status = models.CharField(max_length=8, choices=ErasureStatus.choices, default=ErasureStatus.PENDING)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    #: ``{"messaging.Message": 412, ...}`` — the anonymised receipt. Row counts
+    #: carry no personal data and are what makes "it removed what it claimed"
+    #: checkable a year later.
+    counts = models.JSONField(default=dict, blank=True)
+
+    error = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "contacts_contact_erasure"
+        ordering = ["-created_at"]
+        constraints = [
+            # One erasure in flight per contact, as a database fact rather than
+            # a check in the service. ``begin()`` probes first so a
+            # double-clicked button gets a sentence instead of a 500, but a
+            # probe is a check-then-create and two concurrent requests both
+            # pass it — the same race ``apps/contacts/services.py`` handles for
+            # tag creation, and the reason that code has an ``IntegrityError``
+            # branch too.
+            #
+            # Partial, on the two live statuses only: a contact erased once has
+            # a ``done`` row for ever, and a second erasure of a *re-imported*
+            # contact reusing the same id must not be refused by the first
+            # one's receipt. Same shape as
+            # ``campaigns.SequenceEnrollment::enrollment_one_active_per_contact``.
+            models.UniqueConstraint(
+                fields=["workspace", "contact_id"],
+                condition=models.Q(status__in=("pending", "running")),
+                name="erasure_one_live_per_contact",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["workspace", "-created_at"], name="erasure_ws_created_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"erasure of {self.contact_id} ({self.get_status_display()})"
+
+
 @receiver(m2m_changed, sender=Contact.tags.through)
 def _refuse_direct_tag_mutation(sender: Any, action: str, **kwargs: Any) -> None:
     """Make ``Contact.tags``'s read-only contract real instead of advisory.

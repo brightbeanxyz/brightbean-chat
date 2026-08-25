@@ -128,6 +128,30 @@ class TestScopeMapping:
         for scope in SCOPE_PERMISSIONS:
             assert forbidden not in SCOPE_PERMISSIONS[scope]
 
+    def test_erasure_is_its_own_scope_and_write_does_not_grant_it(self):
+        """Issue #29's ``DELETE /api/v1/contacts/<id>``, deliberately not in ``write``.
+
+        The escalation this prevents is the reason: ``_validated_scopes`` caps a
+        requested scope against the issuer's own permissions, so a scope holding
+        the admin-only ``erase_contacts`` can only be granted by an admin —
+        while folding the key into ``write`` would have handed irreversible
+        erasure to every key **already issued**, at upgrade, with nothing on the
+        keys page changing.
+        """
+        from apps.api.models import ApiScope
+
+        assert SCOPE_PERMISSIONS[ApiScope.ERASE.value] == frozenset({"erase_contacts"})
+        assert "erase_contacts" not in SCOPE_PERMISSIONS[ApiScope.WRITE.value]
+        assert "erase_contacts" not in SCOPE_PERMISSIONS[ApiScope.READ.value]
+        assert permissions_for_scopes(["write"])["erase_contacts"] is False
+        assert permissions_for_scopes(["erase"])["erase_contacts"] is True
+
+    def test_the_erase_scope_grants_nothing_else(self):
+        """A deletion-sync integration should be able to erase and nothing more."""
+        granted = {key for key, allowed in permissions_for_scopes(["erase"]).items() if allowed}
+
+        assert granted == {"erase_contacts"}
+
     def test_an_unknown_scope_grants_nothing(self):
         """A row ahead of the code denies rather than guessing permissively."""
         resolved = permissions_for_scopes(["read", "superuser"])

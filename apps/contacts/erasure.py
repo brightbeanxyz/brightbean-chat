@@ -1,0 +1,367 @@
+"""GDPR erasure: removing a contact for real (SPEC §19, issue #29).
+
+``delete_contact`` sets ``status=deleted`` and stops there, deliberately —
+:mod:`apps.contacts.services` says so, and says this module owns the rest. A
+tombstone hides someone from every read surface; it does not answer a right-to-
+erasure request, because their identities, their consent records and their
+message bodies are all still in the database.
+
+--------------------------------------------------------------------------
+The foreign-key graph does most of the work, and that is on purpose
+--------------------------------------------------------------------------
+
+``Contact.delete()`` is one statement, and it cascades identities,
+conversations, every message in them, every conversation-scoped row in
+``apps.inbox`` (notes, labels, reminders, and a scheduled reply's drafted
+``body``), flow executions with their collected ``variables``, default-reply
+state, sequence enrollments and rule-trigger fires. Hand-writing any of that
+here would be a second description of a rule the database already enforces, and
+the two would drift the first time somebody added a model.
+
+So this module contributes only what a cascade *cannot* reach, and each piece
+lives in the app that owns those rows — the direction ``merge_contacts`` already
+established, through :mod:`apps.contacts.activity` and ``installed_model``:
+
+* ``queueing.ScheduledAction`` — ``contact_id`` is a plain ``UUIDField``, not a
+  foreign key, so nothing cascades it, and ``payload`` and ``last_error`` can
+  quote a rendered message.
+* ``flows.HandledComment`` — ``SET_NULL``, and the row keeps ``commenter_ref``.
+* ``notifications.Notification`` — no workspace column and no contact column,
+  with a display name baked into the stored copy.
+* ``broadcasts.BroadcastRecipient`` — ``SET_NULL`` *by design*, because it is an
+  anonymised counter that has to survive; it needs its verdict written down
+  before the evidence goes.
+
+Whether that list is complete is not a claim this docstring makes. It is
+asserted by ``apps/contacts/tests/test_erasure.py``, which walks the model graph
+for every reference to ``Contact`` and fails on one nobody has classified.
+
+--------------------------------------------------------------------------
+Order, and the lock
+--------------------------------------------------------------------------
+
+Stand the contact down *before* tombstoning it, and tombstone it before the
+teardown: a live execution must be expired while the engine will still accept
+the contact, and every read surface should 404 the moment the erasure is
+accepted rather than when it finishes. The destructive half then runs under
+``contact_lock`` — the same advisory lock ``process_action`` takes before
+dispatching a handler (SPEC §9.6) — which is what makes "nothing is written
+while we delete" true rather than hoped, and what makes it safe to delete queue
+rows out from under a worker that would otherwise be running one.
+
+--------------------------------------------------------------------------
+Two paths
+--------------------------------------------------------------------------
+
+A contact with a handful of messages is erased in the request. A contact with
+tens of thousands is not: that is a long transaction holding a lock, and SPEC
+§15 has a worker for exactly this. Either way a :class:`ContactErasure` row is
+committed *first*, so a crash leaves a record that the request was made — the
+same reason ``ContactImport`` exists before its work does.
+"""
+
+import logging
+from typing import Any
+
+from django.conf import settings
+from django.db import IntegrityError, transaction
+from django.utils import timezone
+
+from apps.contacts import activity
+from apps.contacts import services as contact_services
+from apps.contacts.errors import ContactsError
+from apps.contacts.models import Contact, ContactErasure, ErasureStatus
+from apps.queueing.locks import contact_lock
+from apps.queueing.models import ActionStatus, ScheduledAction
+from apps.queueing.registry import purge_for_contact, register_handler, schedule
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "ACTION_TYPE",
+    "CONFIRMATION",
+    "ErasureRefusedError",
+    "begin",
+    "handle_contact_erasure",
+    "run",
+    "should_queue",
+]
+
+#: The queue action type. ``ActionType`` is an open set and the registry is the
+#: authority, so this needs no migration in ``apps.queueing``.
+ACTION_TYPE = "contact_erasure"
+
+#: What an operator types to confirm. A fixed word, **not** the contact's name:
+#: ``display_name`` can be empty, can be a ``Contact 0193a…`` fallback, and
+#: asking someone to type a real person's name puts it in a request body for the
+#: sake of a speed bump.
+CONFIRMATION = "ERASE"
+
+
+class ErasureRefusedError(ContactsError):
+    """The request was not accepted. Carries a message written for an operator."""
+
+
+def should_queue(contact: Contact) -> bool:
+    """Whether this contact is too big to erase inside a web request."""
+    return activity.message_count(contact) > settings.CONTACT_ERASURE_SYNC_MAX_MESSAGES
+
+
+def begin(
+    contact: Contact,
+    *,
+    source: str,
+    requested_by: Any = None,
+    api_key_id: Any = None,
+    force_queue: bool = False,
+) -> ContactErasure:
+    """Accept an erasure request. The single entry point for every surface.
+
+    Returns the audit row. Its ``status`` says which path was taken: ``done``
+    when the work happened inline, ``pending`` when it was handed to the queue.
+
+    Refuses a second **live** request for the same contact, and the word is
+    load-bearing: a record left ``pending`` by a run that died is not live, and
+    treating it as though it were would make one failure permanent. See
+    :func:`_reclaim_stale`.
+    """
+    _reclaim_stale(contact)
+
+    queued = force_queue or should_queue(contact)
+
+    try:
+        with transaction.atomic():
+            record = ContactErasure.objects.create(
+                workspace=contact.workspace,
+                contact_id=contact.pk,
+                source=source,
+                requested_by=requested_by,
+                # Denormalised deliberately: the foreign key answers "nobody"
+                # once the account goes, which is when an audit trail is most
+                # often read.
+                requested_by_label=str(getattr(requested_by, "email", "") or "")[:254],
+                api_key_id=api_key_id,
+                status=ErasureStatus.PENDING,
+            )
+    except IntegrityError as exc:
+        # ``erasure_one_live_per_contact``. The reclaim above is a
+        # check-then-create, so two concurrent requests can both pass it; the
+        # database arbitrates and the loser gets a sentence rather than a 500.
+        raise ErasureRefusedError("An erasure for this contact is already running.") from exc
+
+    with transaction.atomic():
+        # Both before the tombstone, and in this order. ``stand_down`` expires
+        # live executions and cancels the queue rows that would resume them,
+        # which the engine will only do for a contact it still considers real;
+        # the tombstone then takes the contact off every read surface, so
+        # "delete → export 404s" holds from the moment the request is accepted
+        # rather than from the moment a worker gets to it.
+        activity.stand_down(contact)
+        contact_services.delete_contact(contact)
+
+        if queued:
+            _enqueue(record, contact)
+            return record
+
+    try:
+        return run(record, contact=contact)
+    except Exception as exc:
+        # The inline path has no queue row behind it, so nothing will come back
+        # for this later. Recording the failure is what keeps the contact
+        # erasable: ``_reclaim_stale`` needs a record that is not ``pending``,
+        # and without this one the tombstone would sit there for ever with the
+        # personal data still under it and every retry refused.
+        #
+        # Safe to write here, and *only* here: this runs outside the
+        # transaction ``run()`` opened, so the rollback that just happened
+        # cannot take it with it. The queued path cannot do the same — see
+        # :func:`handle_contact_erasure`.
+        _fail(record, exc)
+        raise
+
+
+def _reclaim_stale(contact: Contact) -> None:
+    """Fail any erasure record for ``contact`` that is not going to finish.
+
+    An erasure record blocks the next attempt, which is right while work is in
+    flight and wrong the moment it is not. Three ways a record stops being live
+    without saying so:
+
+    * the inline path raised somewhere :func:`begin`'s handler did not cover;
+    * the queued path exhausted SPEC §15's ladder, and the worker marked the
+      *action* failed while the record stayed ``pending`` — the handler cannot
+      mark it itself, because it runs inside the worker's transaction and the
+      re-raise rolls the write back;
+    * the queue row was cancelled or pruned out from under it.
+
+    In all three the personal data is still there under a tombstone, which is
+    the worst state this feature has: erasure requested, not performed, and no
+    way to ask again. So a record whose action is gone or finished-unhappily is
+    marked ``failed`` and stops blocking.
+
+    A record whose action is still ``pending`` or ``running`` is left alone —
+    that one really is live.
+    """
+    live = ContactErasure.objects.for_workspace(contact.workspace_id).filter(
+        contact_id=contact.pk,
+        status__in=(ErasureStatus.PENDING, ErasureStatus.RUNNING),
+    )
+    # All or nothing. This is the recovery path for a feature whose failure mode
+    # is "this contact can never be erased", so a half-applied reclaim — one
+    # record superseded, another still blocking — is the state it exists to
+    # prevent, arrived at from a different direction.
+    with transaction.atomic():
+        for record in live.select_for_update():
+            armed = ScheduledAction.objects.for_workspace(record.workspace_id).filter(
+                type=ACTION_TYPE,
+                contact_id=record.contact_id,
+                status__in=(ActionStatus.PENDING, ActionStatus.RUNNING),
+            )
+            if armed.exists():
+                raise ErasureRefusedError("An erasure for this contact is already running.")
+            record.status = ErasureStatus.FAILED
+            record.error = record.error or "The run stopped without finishing; superseded by a later request."
+            record.save(update_fields=["status", "error", "updated_at"])
+            logger.warning("Superseded a stalled erasure %s for contact %s.", record.pk, record.contact_id)
+
+
+def run(record: ContactErasure, *, contact: Contact | None = None, action: Any = None) -> ContactErasure:
+    """Do the destructive half. Idempotent: a finished record is returned as is.
+
+    ``action`` is the queue row running this, when there is one. It is excluded
+    from the queue purge for the obvious reason — it names the contact being
+    erased, and deleting it would remove the row the worker is holding open.
+    """
+    if record.status == ErasureStatus.DONE:
+        return record
+
+    if contact is None:
+        contact = _contact_for(record)
+    if contact is None:
+        # The row is already gone: a retry after the delete committed but before
+        # the record was stamped. The requested state holds, so complete rather
+        # than raising — five attempts over six hours cannot un-delete it.
+        return _finish(record, counts={})
+
+    counts: dict[str, int] = {}
+    with transaction.atomic(), contact_lock(contact):
+        ContactErasure.objects.for_workspace(record.workspace_id).filter(pk=record.pk).update(
+            status=ErasureStatus.RUNNING, updated_at=timezone.now()
+        )
+
+        counts.update(activity.tear_down(contact))
+        purged = purge_for_contact(
+            record.workspace_id,
+            contact.pk,
+            exclude_action_id=getattr(action, "pk", None),
+        )
+        if purged.deleted:
+            counts["queueing.ScheduledAction"] = purged.deleted
+        if purged.left_running:
+            # A row a dead worker left ``running`` keeps whatever its payload
+            # held. Holding the contact lock does not make this set empty — it
+            # stops a *new* handler starting, not one whose process died — so
+            # the receipt says what was left rather than claiming a clean
+            # sweep. The zombie sweep returns the row to ``pending`` within ten
+            # minutes and the next erasure request would take it, but this one
+            # did not.
+            counts["queueing.ScheduledAction.left_running"] = purged.left_running
+
+        # One statement, and everything the graph knows about goes with it.
+        # Django's collector reports what it took, which *is* the audit receipt
+        # — a count per model label, derived rather than hand-maintained.
+        _total, cascaded = contact.delete()
+        for label, rows in cascaded.items():
+            counts[label] = counts.get(label, 0) + int(rows)
+
+        # No refresh before finishing: ``_finish`` assigns and saves every field
+        # it touches, so re-reading the row would cost a query to load values
+        # that are overwritten on the next line.
+        return _finish(record, counts=counts)
+
+
+def _finish(record: ContactErasure, *, counts: dict[str, int]) -> ContactErasure:
+    record.status = ErasureStatus.DONE
+    record.completed_at = timezone.now()
+    record.counts = counts
+    record.error = ""
+    record.save(update_fields=["status", "completed_at", "counts", "error", "updated_at"])
+    logger.info("Erased contact %s: %s", record.contact_id, counts)
+    return record
+
+
+def _fail(record: ContactErasure, exc: Exception) -> None:
+    """Mark a run failed, with a scrubbed reason.
+
+    Through ``apps.common.logging.scrub`` and capped, because a traceback
+    quotes what it was working on — the same discipline
+    ``FlowExecution.last_error`` applies, and this column is read in an audit.
+    """
+    from apps.common.logging import scrub
+
+    record.status = ErasureStatus.FAILED
+    record.error = scrub(f"{type(exc).__name__}: {exc}")[:2000]
+    record.save(update_fields=["status", "error", "updated_at"])
+    logger.error("Erasure %s failed for contact %s.", record.pk, record.contact_id)
+
+
+def _contact_for(record: ContactErasure) -> Contact | None:
+    """The contact this record names, tombstone included.
+
+    ``all_objects`` would skip the workspace scoping this table is entitled to,
+    so the scoped manager is used and the status is simply not filtered — the
+    row is a tombstone by the time any of this runs, and a lookup that insisted
+    on ``ACTIVE`` could never find its own subject.
+    """
+    return Contact.objects.for_workspace(record.workspace_id).filter(pk=record.contact_id).first()
+
+
+def _enqueue(record: ContactErasure, contact: Contact) -> Any:
+    """Hand the work to a worker, naming the contact.
+
+    Naming it is what makes ``process_action`` take ``contact_lock`` before
+    dispatch, so the handler inherits the serialisation this needs instead of
+    arranging it again.
+
+    No idempotency key, for the reason ``imports.enqueue`` gives about its own:
+    the obvious key would make a legitimate retry a silent no-op, and what
+    actually prevents two concurrent teardowns is the partial unique constraint
+    on the record plus the contact lock.
+    """
+    return schedule(
+        ACTION_TYPE,
+        timezone.now(),
+        {"erasure_id": str(record.pk)},
+        workspace=record.workspace,
+        contact=contact,
+    )
+
+
+@register_handler(ACTION_TYPE)
+def handle_contact_erasure(payload: dict[str, Any], action: Any) -> None:
+    """Run a queued erasure.
+
+    A record that has vanished is not an error worth retrying — nothing can
+    reconstruct it — so it is logged and dropped rather than raised, the same
+    division ``handle_contact_import`` draws between a row failure and a run
+    failure. Anything else propagates onto SPEC §15's backoff ladder.
+
+    **This deliberately does not mark the record failed, because it cannot.**
+    ``apps.queueing.worker.process_action`` runs the handler inside
+    ``transaction.atomic()``, so a status written here and then followed by a
+    re-raise is rolled back with everything else — the write would look right in
+    review, run green in a test that called the handler directly, and do
+    nothing in production. The worker records the failure on the *action*, and
+    :func:`_reclaim_stale` reads that back the next time somebody asks to erase
+    this contact. The inline path has no such constraint and does mark its own
+    failure; see :func:`begin`.
+    """
+    erasure_id = str(payload.get("erasure_id") or "")
+    record = (
+        ContactErasure.objects.for_workspace(action.workspace_id).filter(pk=erasure_id).first() if erasure_id else None
+    )
+    if record is None:
+        logger.warning("Erasure %s is gone; nothing to run.", payload.get("erasure_id"))
+        return
+
+    run(record, action=action)

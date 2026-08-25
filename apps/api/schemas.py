@@ -200,6 +200,26 @@ class FlowStartIn(StrictSchema):
     connection_id: UUID | None = None
 
 
+class ErasureOut(Schema):
+    """The receipt for a GDPR erasure (SPEC §19, issue #29).
+
+    Returned with ``202`` when the work was handed to a worker, and pollable at
+    ``GET /erasures/{id}`` until ``status`` reads ``done``. A ``202`` with no way
+    to check the outcome would make "did it happen?" unanswerable over the API,
+    which is the opposite of what an audit trail is for.
+
+    ``counts`` is a row count per model label. It carries no personal data —
+    that is the point of it being counts.
+    """
+
+    id: UUID
+    contact_id: UUID
+    status: str
+    counts: dict[str, int] = {}
+    created_at: dt.datetime
+    completed_at: dt.datetime | None = None
+
+
 class FlowStartOut(Schema):
     """The outcome of firing an ``api`` trigger.
 

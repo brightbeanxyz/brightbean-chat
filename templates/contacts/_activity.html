@@ -95,7 +95,12 @@ Message text and platform usernames are attacker-controlled
         <span>{% if row.inbound %}Received{% else %}Sent{% endif %}</span>
         <span>{{ row.created_at }}</span>
         {% if row.message.internal %}<span class="status-pill status-pill-disabled">Internal note</span>{% endif %}
-        <a href="{% url 'inbox' workspace_id=request.workspace.id %}">Open in inbox</a>
+        {% comment %}
+          `inbox:list`, not `inbox` — apps/inbox/urls.py sets app_name, so the
+          bare name does not resolve and this partial raised NoReverseMatch for
+          any contact with at least one message.
+        {% endcomment %}
+        <a href="{% url 'inbox:list' workspace_id=request.workspace.id %}">Open in inbox</a>
       </div>
       <div class="crm-msg-body">
         {% if row.text %}{{ row.text }}{% else %}<span class="muted">No text</span>{% endif %}

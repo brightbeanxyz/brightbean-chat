@@ -56,6 +56,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import Exists, OuterRef, Q, QuerySet
 from django.utils import timezone
 
+from apps.common.platforms import Platform
 from apps.contacts.models import Contact
 from apps.flows.compat import installed_model
 
@@ -66,6 +67,11 @@ __all__ = [
     "MessagePreview",
     "annotate_reachability",
     "avatar_url",
+    "broadcast_receipts_for",
+    "consent_records",
+    "conversation_history",
+    "enrollments_for",
+    "executions_for",
     "identities_for",
     "identity_for",
     "live_execution",
@@ -77,6 +83,8 @@ __all__ = [
     "startable_flow",
     "startable_flows",
     "stop_automation",
+    "suppressions_for",
+    "tear_down",
 ]
 
 #: Rows shown in the activity pane. A window, not a thread — the thread is the
@@ -471,3 +479,312 @@ def stop_automation(contact: Contact) -> int:
     from apps.flows.engine import stop_automation as engine_stop
 
     return engine_stop(contact)
+
+
+# ---------------------------------------------------------------------------
+# GDPR erasure and subject export (issue #29)
+# ---------------------------------------------------------------------------
+#
+# Everything below is read or removed on behalf of :mod:`apps.contacts.erasure`
+# and :mod:`apps.contacts.subject_export`, and it lives here for the reason the
+# module docstring gives: this file is the one place ``apps.contacts`` knows
+# about another app, and an erasure that reaches five of them is exactly the
+# code that would otherwise scatter those imports across views.
+#
+# The division of labour is the same one ``merge_contacts`` already uses. The
+# foreign-key graph does most of the work — ``Contact.delete()`` cascades
+# identities, conversations, messages, every conversation-scoped inbox row,
+# executions, enrollments and rule fires in one statement — so re-spelling any
+# of that in Python would be a second description of a rule the database
+# already enforces, and the two would drift. :func:`tear_down` contributes only
+# what a cascade cannot: rows whose foreign key is ``SET_NULL``, and rows that
+# have no foreign key to a contact at all.
+
+
+def message_count(contact: Contact) -> int:
+    """How many message rows this contact owns. Drives the inline/queue choice."""
+    model = _message_model()
+    if model is None:
+        return 0
+    return int(model.objects.for_workspace(contact.workspace_id).filter(conversation__contact=contact).count())
+
+
+def tear_down(contact: Contact) -> dict[str, int]:
+    """The cross-app rows a cascade will not reach. ``{model label: rows}``.
+
+    Called from inside the erasure's transaction, holding its contact lock, and
+    **before** ``contact.delete()`` — every one of these is found *by* the link
+    the delete is about to remove or null.
+
+    Order matters between the two halves only in that both precede the delete.
+    Each app owns its own rows and says in its own module why they need hands.
+    """
+    counts: dict[str, int] = {}
+
+    if installed_model("broadcasts", "apps.broadcasts", "BroadcastRecipient") is not None:
+        from apps.broadcasts.erasure import prepare_for_erasure
+
+        counts.update(prepare_for_erasure(contact))
+
+    if _execution_model() is not None:
+        from apps.flows.erasure import erase_for_contact as erase_flows
+
+        counts.update(erase_flows(contact))
+
+    if installed_model("notifications", "apps.notifications", "Notification") is not None:
+        from apps.notifications.erasure import erase_for_contact as erase_notifications
+
+        counts.update(erase_notifications(contact.workspace_id, contact.pk))
+
+    return counts
+
+
+def consent_records(contact: Contact) -> list[dict[str, Any]]:
+    """Every identity with its consent audit — SPEC §11.8, and the part a
+    regulator asks about.
+
+    A separate reader from :func:`identities_for` rather than an extension of
+    :class:`ContactChannel`, and deliberately so: that dataclass answers "can we
+    reach this person right now" for the CRM's channel pane, and carries neither
+    ``opt_in_at`` nor ``opt_in_source``. An export answers a different question —
+    *when* consent was given and *how* — and a field added to the presentation
+    shape to serve the export would make the pane's meaning depend on a caller
+    it does not have.
+
+    Plain dict literals throughout. ``apps/messaging/tests/test_write_sites.py``
+    records the keyword arguments of any ``.update(...)`` call without looking
+    at what it was called on, so ``row.update(opted_out_at=...)`` on an ordinary
+    dict would fail the build exactly as an ORM write would.
+    """
+    model = _identity_model()
+    if model is None:
+        return []
+    rows = (
+        model.objects.for_workspace(contact.workspace_id)
+        .filter(contact=contact)
+        .select_related("channel_connection")
+        .order_by("platform", "created_at")
+    )
+    records = []
+    for row in rows:
+        extra = row.extra if isinstance(row.extra, dict) else {}
+        records.append(
+            {
+                "id": str(row.pk),
+                "platform": row.platform,
+                "address": row.platform_user_id,
+                "username": str(extra.get("username") or "")[:200],
+                "channel_connection": _connection_label(row.channel_connection),
+                "opt_in": row.opt_in,
+                "opt_in_at": _stamp(row.opt_in_at),
+                "opt_in_source": row.opt_in_source,
+                "opted_out_at": _stamp(row.opted_out_at),
+                "window_expires_at": _stamp(row.window_expires_at),
+                "last_inbound_at": _stamp(row.last_inbound_at),
+                "created_at": _stamp(row.created_at),
+            }
+        )
+    return records
+
+
+def conversation_history(contact: Contact, *, limit: int) -> tuple[list[dict[str, Any]], bool]:
+    """Every thread and message, and whether the message list was cut short.
+
+    Not :func:`recent_messages`, which caps at twenty for a UI pane. A subject
+    access request wants the history, so the cap here is a safety limit rather
+    than a page size — and when it bites the document says so, because an export
+    that looks complete and is not is worse than one that admits the cut.
+    """
+    conversations = _conversation_model()
+    messages = _message_model()
+    if conversations is None or messages is None:
+        return [], False
+
+    threads = (
+        conversations.objects.for_workspace(contact.workspace_id)
+        .filter(contact=contact)
+        .select_related("channel_connection")
+        .order_by("created_at")
+    )
+    rows = (
+        messages.objects.for_workspace(contact.workspace_id)
+        .filter(conversation__contact=contact)
+        .order_by("created_at", "id")[: limit + 1]
+    )
+    kept = list(rows)
+    truncated = len(kept) > limit
+    if truncated:
+        kept = kept[:limit]
+
+    by_thread: dict[Any, list[dict[str, Any]]] = {}
+    for message in kept:
+        by_thread.setdefault(message.conversation_id, []).append(
+            {
+                "id": str(message.pk),
+                "direction": message.direction,
+                "source": message.source,
+                "status": message.status,
+                "internal": message.internal,
+                "created_at": _stamp(message.created_at),
+                # The normalised SPEC §7.2 body, verbatim. A redacted row
+                # (Instagram's message_deletions, SPEC §6.3) exports as the
+                # tombstone it already is rather than as content nobody kept.
+                "body": message.body if isinstance(message.body, dict) else {},
+            }
+        )
+
+    return [
+        {
+            "id": str(thread.pk),
+            "channel": _connection_label(thread.channel_connection),
+            "platform": thread.channel_connection.platform if thread.channel_connection_id else "",
+            "state": thread.state,
+            "last_message_at": _stamp(thread.last_message_at),
+            "created_at": _stamp(thread.created_at),
+            "messages": by_thread.get(thread.pk, []),
+        }
+        for thread in threads
+    ], truncated
+
+
+def executions_for(contact: Contact) -> list[dict[str, Any]]:
+    """Flow runs, including ``variables``.
+
+    ``variables`` holds what a ``data_collection`` node collected — the
+    subject's own answers, typed by them. An export that listed which flows ran
+    but not what they gathered would omit the most personal thing in the record.
+    """
+    model = _execution_model()
+    if model is None:
+        return []
+    rows = (
+        model.objects.for_workspace(contact.workspace_id)
+        .filter(contact=contact)
+        .select_related("flow_version", "flow_version__flow")
+        .order_by("created_at")
+    )
+    return [
+        {
+            "id": str(row.pk),
+            "flow": getattr(getattr(row.flow_version, "flow", None), "name", ""),
+            "version": getattr(row.flow_version, "version", None),
+            "status": row.status,
+            "current_node_id": row.current_node_id,
+            "started_by": row.started_by,
+            "variables": row.variables if isinstance(row.variables, dict) else {},
+            "created_at": _stamp(row.created_at),
+            "updated_at": _stamp(row.updated_at),
+        }
+        for row in rows
+    ]
+
+
+def enrollments_for(contact: Contact) -> list[dict[str, Any]]:
+    """Sequence enrollment history (issue #22's app, absent in a deployment
+    without it)."""
+    model = installed_model("campaigns", "apps.campaigns", "SequenceEnrollment")
+    if model is None:
+        return []
+    rows = (
+        model.objects.for_workspace(contact.workspace_id)
+        .filter(contact=contact)
+        .select_related("sequence")
+        .order_by("created_at")
+    )
+    return [
+        {
+            "id": str(row.pk),
+            "sequence": getattr(row.sequence, "name", ""),
+            "current_step": row.current_step,
+            "status": row.status,
+            "next_run_at": _stamp(row.next_run_at),
+            "last_sent_at": _stamp(row.last_sent_at),
+            "created_at": _stamp(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def broadcast_receipts_for(contact: Contact) -> list[dict[str, Any]]:
+    """Which broadcasts reached this person, and what happened to each."""
+    model = installed_model("broadcasts", "apps.broadcasts", "BroadcastRecipient")
+    if model is None:
+        return []
+    rows = (
+        model.objects.for_workspace(contact.workspace_id)
+        .filter(contact=contact)
+        .select_related("broadcast")
+        .order_by("created_at")
+    )
+    return [
+        {
+            "broadcast": getattr(row.broadcast, "name", ""),
+            "status": row.status,
+            "reason": row.reason,
+            "created_at": _stamp(row.created_at),
+            "updated_at": _stamp(row.updated_at),
+        }
+        for row in rows
+    ]
+
+
+def suppressions_for(contact: Contact) -> list[dict[str, Any]]:
+    """Email suppressions matching this person's addresses.
+
+    In the export because this is the one category of their data that
+    **survives** erasure by design: the list is keyed on the mailbox, not on the
+    contact, precisely so a bounce or a spam complaint is not undone by deleting
+    and re-importing a row (``apps/channels/models.py`` argues it at length). An
+    Article 15 answer that omits what the controller keeps is the wrong answer,
+    so the export discloses it and the ``retained`` note explains why.
+    """
+    model = installed_model("channels", "apps.channels", "EmailSuppression")
+    if model is None:
+        return []
+    from apps.common.addresses import normalize_email
+
+    addresses = {normalize_email(contact.email)} if contact.email else set()
+    identities = _identity_model()
+    if identities is not None:
+        addresses.update(
+            normalize_email(address)
+            for address in identities.objects.for_workspace(contact.workspace_id)
+            .filter(contact=contact, platform=Platform.EMAIL.value)
+            .values_list("platform_user_id", flat=True)
+        )
+    addresses.discard("")
+    if not addresses:
+        return []
+    rows = (
+        model.objects.for_workspace(contact.workspace_id).filter(address__in=sorted(addresses)).order_by("created_at")
+    )
+    return [
+        {
+            "address": row.address,
+            "reason": row.reason,
+            "created_at": _stamp(row.created_at),
+        }
+        for row in rows
+    ]
+
+
+def _conversation_model() -> Any:
+    return installed_model("messaging", "apps.messaging", "Conversation")
+
+
+def _connection_label(connection: Any) -> str:
+    """A channel's display name, or its platform when there is no connection.
+
+    A pending identity has no connection at all (an address captured before the
+    workspace connected that platform), and the export should say which channel
+    it was for rather than an empty string.
+    """
+    if connection is None:
+        return ""
+    return str(getattr(connection, "display_name", "") or getattr(connection, "platform", ""))
+
+
+def _stamp(moment: Any) -> str | None:
+    """ISO 8601, or ``None``. One spelling, so every timestamp in the document
+    reads the same way."""
+    return moment.isoformat() if moment is not None else None

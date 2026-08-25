@@ -30,6 +30,7 @@ from apps.api.schemas import (
     ContactCreate,
     ContactOut,
     ContactUpdate,
+    ErasureOut,
     FieldValueIn,
     FieldValueOut,
     FlowStartIn,
@@ -41,10 +42,20 @@ from apps.api.schemas import (
 from apps.api.serializers import contact_payload, field_value_payload, tag_payload
 from apps.common.jsonlimits import max_json_depth
 from apps.common.shortcuts import get_scoped_object_or_404
+from apps.contacts import erasure as contact_erasure
 from apps.contacts import filters as contact_filters
 from apps.contacts import services as contact_services
 from apps.contacts.errors import ContactsError
-from apps.contacts.models import Contact, ContactStatus, CustomField, CustomFieldValue, Tag
+from apps.contacts.models import (
+    Contact,
+    ContactErasure,
+    ContactStatus,
+    CustomField,
+    CustomFieldValue,
+    ErasureSource,
+    ErasureStatus,
+    Tag,
+)
 from apps.flows.models import Flow
 from apps.members.decorators import require_permission
 
@@ -68,6 +79,32 @@ def _contact_or_404(request: ApiRequest, contact_id: UUID) -> Contact:
     if contact.status != ContactStatus.ACTIVE:
         raise Http404("No such contact.")
     return contact
+
+
+def _erasable_or_404(request: ApiRequest, contact_id: UUID) -> Contact:
+    """Fetch a contact for erasure, **tombstone included**.
+
+    :func:`_contact_or_404` refuses a soft-deleted contact so the API never
+    becomes the surface that reports one. Erasure is the exception, and it has
+    to be: a deletion request routinely arrives for somebody a `PATCH`-happy
+    integration already marked deleted, and refusing it would mean the endpoint
+    that finishes a deletion could not reach a deleted contact.
+
+    A *second* erasure still answers 404, because by then the row is genuinely
+    gone and the scoped lookup finds nothing.
+    """
+    return get_scoped_object_or_404(Contact, request.workspace, pk=contact_id)
+
+
+def _erasure_payload(record: ContactErasure) -> dict[str, Any]:
+    return {
+        "id": record.pk,
+        "contact_id": record.contact_id,
+        "status": record.status,
+        "counts": record.counts or {},
+        "created_at": record.created_at,
+        "completed_at": record.completed_at,
+    }
 
 
 def _aware(moment: dt.datetime | None) -> dt.datetime | None:
@@ -328,3 +365,83 @@ def start_flow_for_contact(
         # rather than a 500 is the right answer if it ever becomes reachable.
         raise Http404("No such flow.")
     raise ApiError("This flow cannot be started.", code="flow_not_runnable", status=422)
+
+
+# ---------------------------------------------------------------------------
+# Erasure (SPEC §19, issue #29)
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/contacts/{uuid:contact_id}",
+    response={204: None, 202: ErasureOut},
+    url_name="contacts_delete",
+)
+@require_permission("erase_contacts")
+def erase_contact(
+    request: ApiRequest,
+    contact_id: UUID,
+    confirm: str = Query("", description='Must be "erase". Guards against an accidental DELETE.'),
+) -> Any:
+    """Erase a contact and everything held about them. **Irreversible.**
+
+    This is not the soft delete the CRM's Delete button performs. It removes the
+    contact row, their channel identities and consent records, their
+    conversations and message bodies, their flow executions and enrollments —
+    keeping only anonymised counters (SPEC §19).
+
+    **Scope ``erase``, not ``write``.** Deliberate, and argued in
+    ``apps.api.models.ApiScope``: ``_validated_scopes`` caps a requested scope
+    against the issuer's own permissions, so a scope carrying the admin-only
+    ``erase_contacts`` key can only ever be granted by an admin — while folding
+    the key into ``write`` would have handed irreversible erasure to every key
+    already issued, at upgrade, with nothing on the keys page changing.
+
+    ``?confirm=erase`` is required. It is **not** a permission check —
+    ``erase_contacts`` is — and it buys exactly one thing: a client that issues
+    ``DELETE`` out of habit, or a cleanup script pointed at the wrong
+    environment, gets a 422 instead of an irreversible act.
+
+    ``204`` when the work finished inline. ``202`` with an
+    :class:`~apps.api.schemas.ErasureOut` when it was handed to a worker, which
+    happens above a message-count threshold; poll
+    ``GET /erasures/{id}`` until ``status`` reads ``done``.
+    """
+    # Tenancy first, then the shape of the request. The same ordering
+    # CONTRIBUTING gives for decorator stacking — "a GET from another tenant
+    # answers 404 rather than 405" — so a caller probing another workspace's ids
+    # gets the same bare 404 whether or not they remembered the parameter.
+    contact = _erasable_or_404(request, contact_id)
+    if confirm != "erase":
+        raise ApiError(
+            "Erasing a contact is irreversible. Pass ?confirm=erase to proceed.",
+            code="confirmation_required",
+            status=422,
+        )
+
+    try:
+        record = contact_erasure.begin(
+            contact,
+            source=ErasureSource.API,
+            api_key_id=getattr(request.api_key, "pk", None),
+        )
+    except ContactsError as exc:
+        raise ApiError(str(exc), code="erasure_in_progress", status=409) from exc
+
+    if record.status == ErasureStatus.DONE:
+        return Status(204, None)
+    return Status(202, _erasure_payload(record))
+
+
+@router.get("/erasures/{uuid:erasure_id}", response=ErasureOut, url_name="erasures_detail")
+@require_permission("erase_contacts")
+def get_erasure(request: ApiRequest, erasure_id: UUID) -> dict[str, Any]:
+    """The state of an erasure this key started.
+
+    Exists because a ``202`` that cannot be followed up is a promise with no
+    receipt: an integration honouring a deletion request has to be able to
+    record that it completed, and the audit row is the only thing that can say
+    so once the contact is gone.
+    """
+    record = get_scoped_object_or_404(ContactErasure, request.workspace, pk=erasure_id)
+    return _erasure_payload(record)

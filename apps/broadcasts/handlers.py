@@ -271,12 +271,12 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
         # Half two of cancellation, and the one that matters most: this row was
         # already ``running`` when the cancel landed, so the bulk flip could not
         # reach it. A claimed action has to refuse itself.
-        _settle_recipient(recipient, RecipientStatus.CANCELLED, "")
+        settle_recipient(recipient, RecipientStatus.CANCELLED, "")
         return
 
     contact = _scoped(Contact, action.workspace_id, payload.get("contact_id"))
     if contact is None:
-        _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.CONTACT_DELETED.value)
+        settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.CONTACT_DELETED.value)
         _maybe_settle(broadcast)
         return
 
@@ -290,13 +290,13 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
         # facade takes the connection object it is handed, and adapter_for keys
         # on the platform. So it has to be refused here or the stored
         # credentials go on being used.
-        _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.NO_CONNECTION.value)
+        settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.NO_CONNECTION.value)
         _maybe_settle(broadcast)
         return
 
     identity = _identity_for(broadcast, contact, recipient)
     if identity is None:
-        _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.NO_IDENTITY.value)
+        settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.NO_IDENTITY.value)
         _maybe_settle(broadcast)
         return
 
@@ -305,7 +305,7 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
     if not isinstance(decision, Allowed):
         # SPEC §13.2's send-time re-check. A contact who opted out between fanout
         # and send lands here, and is *counted* rather than quietly dropped.
-        _settle_recipient(recipient, RecipientStatus.SKIPPED, decision.code)
+        settle_recipient(recipient, RecipientStatus.SKIPPED, decision.code)
         _maybe_settle(broadcast)
         return
 
@@ -313,7 +313,7 @@ def handle_broadcast_send(payload: dict[str, Any], action: ScheduledAction) -> N
         # The email suppression list, re-read at send time for the same reason
         # compliance is: hours can pass, and a bounce recorded in between should
         # stop this send rather than be discovered by the provider.
-        _settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.OPTED_OUT.value)
+        settle_recipient(recipient, RecipientStatus.SKIPPED, Denial.OPTED_OUT.value)
         _maybe_settle(broadcast)
         return
 
@@ -451,15 +451,15 @@ def _record_send(recipient: BroadcastRecipient, message: Message | None) -> None
     app.
     """
     if message is None:
-        _settle_recipient(recipient, RecipientStatus.FAILED, "")
+        settle_recipient(recipient, RecipientStatus.FAILED, "")
         return
     if message.status == MessageStatus.FAILED:
-        _settle_recipient(recipient, RecipientStatus.FAILED, message.error, message=message)
+        settle_recipient(recipient, RecipientStatus.FAILED, message.error, message=message)
         return
-    _settle_recipient(recipient, RecipientStatus.SENT, "", message=message)
+    settle_recipient(recipient, RecipientStatus.SENT, "", message=message)
 
 
-def _settle_recipient(
+def settle_recipient(
     recipient: BroadcastRecipient,
     status: str,
     reason: str,

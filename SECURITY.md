@@ -79,12 +79,50 @@ backports to older commits.
   self-XSS
 - social engineering, physical access, and denial of service by volume
 
+## Safe harbour
+
+Good-faith research within this policy is authorised, and we will not pursue or
+report you for it. The conditions all amount to "test your own instance":
+
+- Test a deployment **you own or are authorised to test**. Not somebody else's,
+  and not `brightbean.xyz`.
+- Do not access, modify or retain another person's data. If you encounter it,
+  stop and tell us what you did to get there.
+- No denial of service, no resource exhaustion, and no spam through a
+  deployment's channel integrations — the compliance engine is real, and a
+  broadcast fired at a seeded list actually sends.
+- No social engineering of maintainers, contributors or users, and no physical
+  attacks.
+- Do not attack infrastructure we do not control: GitHub, PyPI, npm, or the
+  messaging platforms this integrates with.
+- Stop at proof. You do not need to pivot to demonstrate impact.
+
+[`docs/pentest-runbook.md`](docs/pentest-runbook.md) is the practical companion:
+what to probe on your own instance, what a correct instance does in response,
+which routes are public by design, and a report template that gets a finding
+triaged faster.
+
+## Who can do what
+
+Most findings are about a boundary between two of these, so saying which one you
+crossed is the fastest way to have a report understood:
+
+| | Who | What they may legitimately do |
+|---|---|---|
+| **Untrusted** | Webhook callers, contacts, anyone holding a public token | Reach the webhook endpoints and the signed token routes. Nothing else. |
+| **Semi-trusted** | Workspace members, API keys | Bound by the role matrix (`apps/members/roles.py`) and by scope (`apps/api/auth.py`), and by workspace. A member of one workspace is untrusted with respect to another. |
+| **Trusted** | The operator | Controls the settings, the database and the encrypted credentials. |
+
 ## How this project defends itself
 
 [`docs/SECURITY-BASELINE.md`](docs/SECURITY-BASELINE.md) is the per-PR security
 checklist every change is reviewed against: tenancy isolation, untrusted inbound
 content, the template-injection ban, public token routes, secrets handling, the
 SSRF guard, input limits, web platform hardening, file uploads and supply chain.
+[`docs/security-audit.md`](docs/security-audit.md) maps every one of those items
+to the test that enforces it, and records the ones only partly covered with the
+issue tracking each — worth reading before you spend time on an area, because
+the known gaps are written down.
 CI enforces the automatable parts — an IDOR fuzz suite over every registered
 route, `pip-audit` and `npm audit`, a secret scan, and security lint rules — and
 a security review runs over each layer's merged diff.

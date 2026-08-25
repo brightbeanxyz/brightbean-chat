@@ -23,7 +23,7 @@ import json
 import pytest
 
 from apps.api.tests.conftest import bearer, make_key
-from apps.contacts.models import Contact, CustomField, CustomFieldType, Tag
+from apps.contacts.models import Contact, ContactErasure, CustomField, CustomFieldType, ErasureSource, Tag
 from apps.contacts.services import add_tag
 from apps.flows.models import Trigger, TriggerType
 from apps.flows.tests.support import graph, node, published_flow
@@ -42,12 +42,14 @@ def victim_objects(workspace):
     flow = published_flow(workspace, graph([node("a", "action", NOOP_ACTION)]), name="Victim flow")
     Trigger(flow=flow, type=TriggerType.API).save()
     connection = make_connection(workspace, suffix="victim")
+    erasure = ContactErasure.objects.create(workspace=workspace, contact_id=contact.pk, source=ErasureSource.UI)
     return {
         "contact": contact,
         "tag": tag,
         "field": field,
         "flow": flow,
         "connection": connection,
+        "erasure": erasure,
     }
 
 
@@ -82,6 +84,13 @@ def object_routes(victim):
             f"/api/v1/contacts/{contact.pk}/flows/{victim['flow'].pk}/start",
             {},
         ),
+        # ``confirm`` is supplied so the refusal has to come from tenancy. The
+        # route checks the workspace before the parameter (see the operation's
+        # comment), so a 404 here would be reachable either way — but a sweep
+        # that got its 404 from a missing query parameter would keep passing on
+        # the day the tenancy check was removed.
+        ("api_v1:contacts_delete", "delete", f"/api/v1/contacts/{contact.pk}?confirm=erase", None),
+        ("api_v1:erasures_detail", "get", f"/api/v1/erasures/{victim['erasure'].pk}", None),
     ]
 
 
@@ -98,11 +107,14 @@ class TestApiV1CrossWorkspaceIsolation:
     def test_every_object_route_404s_for_a_key_from_another_workspace(self, client, tenancy, other_tenancy):
         """The sweep proper.
 
-        The attacker's key is a full read+write key — the refusal has to come
-        from tenancy, not from a missing scope, or the test proves nothing.
+        The attacker's key carries every scope — the refusal has to come from
+        tenancy, not from a missing scope, or the test proves nothing. ``erase``
+        is included for that reason and no other: without it the two erasure
+        routes would answer 403 and the sweep would pass without ever reaching
+        the tenancy check it exists to exercise.
         """
         victim = victim_objects(other_tenancy.workspace)
-        _, plaintext = make_key(tenancy.workspace, scopes=("read", "write"))
+        _, plaintext = make_key(tenancy.workspace, scopes=("read", "write", "erase"))
         auth = bearer(plaintext)
 
         for name, method, path, body in object_routes(victim):
@@ -113,7 +125,7 @@ class TestApiV1CrossWorkspaceIsolation:
     def test_the_victims_objects_are_untouched(self, client, tenancy, other_tenancy):
         """A 404 that still wrote is not isolation."""
         victim = victim_objects(other_tenancy.workspace)
-        _, plaintext = make_key(tenancy.workspace)
+        _, plaintext = make_key(tenancy.workspace, scopes=("read", "write", "erase"))
         auth = bearer(plaintext)
 
         for _, method, path, body in object_routes(victim):

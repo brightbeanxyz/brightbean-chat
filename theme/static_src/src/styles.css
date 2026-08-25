@@ -2365,6 +2365,20 @@ span.flatpickr-weekday {
 }
 .crm-panel h2 { margin-bottom: 0.5rem; }
 
+/* The erase panel (SPEC §19, issue #29). A component class rather than
+   utilities, for the reason the file's own conventions give: these rules are
+   unlayered and would beat a utility anyway, so mixing the two here would mean
+   a later `w-auto` silently doing nothing. The border is the only signal that
+   this panel is different from the four above it, and it should be. */
+.crm-danger-zone { border-color: var(--error-500); }
+.crm-danger-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.crm-danger-form input[type="text"] { width: auto; max-width: 12rem; }
+
 .crm-inline-field { margin-bottom: 0.625rem; }
 .crm-inline-field form { margin-bottom: 0; }
 

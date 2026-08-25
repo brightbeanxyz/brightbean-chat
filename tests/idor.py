@@ -58,6 +58,7 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
     # a contacts URL nested under its contact, so the victim it needs is a
     # contact's.
     "contact_id": lambda t: _victim_contact(t).pk,
+    "erasure_id": lambda t: _victim_erasure(t).pk,
     "segment_id": lambda t: _victim_segment(t).pk,
     "identity_id": lambda t: _victim_identity(t).pk,
     "import_id": lambda t: _victim_contact_import(t).pk,
@@ -200,6 +201,8 @@ WAIVED_ROUTES: dict[str, str] = {
     "api_v1:contacts_field_set": _API_V1_WAIVER,
     "api_v1:contacts_field_list": _API_V1_WAIVER,
     "api_v1:contacts_flow_start": _API_V1_WAIVER,
+    "api_v1:contacts_delete": _API_V1_WAIVER,
+    "api_v1:erasures_detail": _API_V1_WAIVER,
     "accept_invite": (
         "Public by design: the invitation token IS the credential, and the page "
         "renders the same 404 body for unknown, expired and accepted tokens. "
@@ -653,6 +656,30 @@ def _victim_identity(tenancy: Tenancy) -> Any:
         )
         identity.save()
     return identity
+
+
+def _victim_erasure(tenancy: Tenancy) -> Any:
+    """A contact-erasure audit row owned by the victim (issue #29).
+
+    Registered even though the only route naming one is a waived ``/api/v1/``
+    operation, and that is the point: ``iter_tenant_routes`` skips a route whose
+    kwargs it recognises *none* of, so an id nobody registers does not raise
+    ``UnregisteredRouteKwargError`` — it escapes the sweep in silence. Naming it
+    here is what makes ``erasures_detail`` visible to the walker, and therefore
+    what forces it to carry a waiver and be covered by
+    ``apps/api/tests/test_isolation.py``.
+
+    Built through the model rather than ``erasure.begin``, which would erase the
+    victim's contact as a side effect of building a fixture.
+    """
+    from apps.contacts.models import ContactErasure, ErasureSource
+
+    row = ContactErasure.objects.for_workspace(tenancy.workspace).first()
+    return row or ContactErasure.objects.create(
+        workspace=tenancy.workspace,
+        contact_id=_victim_contact(tenancy).pk,
+        source=ErasureSource.UI,
+    )
 
 
 def _victim_contact_import(tenancy: Tenancy) -> Any:

@@ -190,6 +190,19 @@ jobs:
         # those tests depend on ambient build state.
         run: npm run test:js
 
+      - name: Models and migrations agree
+        # apps/messaging/migrations/0003_deleted_status_and_comment_consent.py
+        # has claimed since Layer 4 that this runs in CI. It did not — issue
+        # #29's traceability pass found the claim and this is the step that
+        # makes it true. It lives in `test` rather than `lint` because
+        # makemigrations needs the app registry and a database URL, both of
+        # which only this job has.
+        #
+        # A missing migration was never *silent*: pytest builds the test
+        # database from migrations, so the suite failed with a missing-column
+        # error somewhere unrelated. This turns that into one clean diff.
+        run: python manage.py makemigrations --check --dry-run
+
       - name: pytest
         # --dist loadfile comes from addopts in pyproject.toml (see the comment
         # there for why the grouping is load*file*); -n is supplied here and in

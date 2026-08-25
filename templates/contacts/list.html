@@ -211,6 +211,23 @@ inert — a button that looks fine and does nothing.
       </form>
     {% endif %}
 
+    {% comment %}
+      Erase, beside Delete rather than instead of it: they are different acts.
+      Admin only, and the typed sentinel is checked in the view — hx-confirm
+      cannot be. See apps/contacts/views.py::bulk_erase.
+    {% endcomment %}
+    {% if can_erase_contacts %}
+      <form class="crm-danger-form mb-0"
+            hx-post="{% url 'contacts:bulk_erase' workspace_id=request.workspace.id %}"
+            hx-swap="none"
+            hx-confirm="Erase the selected contacts permanently? Their messages, identities and consent records are removed for good. This cannot be undone.">
+        <template x-for="id in ids" :key="id"><input type="hidden" name="ids" :value="id"></template>
+        <input type="text" name="confirm" autocomplete="off" spellcheck="false"
+               placeholder="{{ erase_confirmation }}" aria-label="Type {{ erase_confirmation }} to confirm" required>
+        <button type="submit" class="btn-outline btn-inline btn-danger-soft">Erase</button>
+      </form>
+    {% endif %}
+
     <button type="button" @click="clear()">Clear selection</button>
   </div>
 
