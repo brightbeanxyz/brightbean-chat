@@ -89,3 +89,23 @@ paths = [
     '''apps/channels/tests/test_email_scrubbing\.py''',
     '''apps/channels/tests/fixtures/email/.*\.json''',
 ]
+
+# The secrets canary sweep (issue #94).
+#
+# `apps/common/tests/test_secret_canaries.py` seeds every encrypted column in the
+# project with a unique high-entropy string and then asserts that string never
+# appears in an admin page or an API response (SECURITY-BASELINE §5.2). The
+# values have to look like secrets and have to be unmistakable — a canary a
+# template could plausibly reproduce for some other reason would make a failure
+# ambiguous — so `generic-api-key` fires on them by design.
+#
+# They are the file's whole subject. Removing the shape would leave a sweep that
+# searches for nothing, which is the failure mode the sweep's own falsifiability
+# probe exists to prevent. All are module-level literals, never read from an
+# environment, and grant access to nothing.
+[[allowlists]]
+description = "Secrets-canary sweep fixtures"
+targetRules = ["generic-api-key"]
+paths = [
+    '''apps/common/tests/test_secret_canaries\.py''',
+]
