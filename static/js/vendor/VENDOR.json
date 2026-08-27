@@ -11,8 +11,8 @@
     {
       "file": "alpine.min.js",
       "package": "alpinejs",
-      "version": "3.16.2",
-      "sha256": "c13d85e590cf4c91959aeaaef1ba755344e911d55c5ec56f472ed2894e2b4684",
+      "version": "3.16.3",
+      "sha256": "e31d6d92aefd41979d3c66f994d3a6b77fafa5062aec67d13f3ec5099d70d5d6",
       "consumer": "L1-B (loaded by base.html)"
     },
     {
