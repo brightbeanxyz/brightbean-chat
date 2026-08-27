@@ -115,6 +115,49 @@ def check_s3_custom_domain_signing(app_configs: Any = None, **kwargs: Any) -> li
     ]
 
 
+#: The shortest webhook-log retention that still protects against replay
+#: (issue #95). ``channels.WebhookEventLog``'s unique ``(connection,
+#: provider_event_id)`` is what makes a redelivered webhook a no-op instead of a
+#: duplicate send, and a pruned row is a forgotten delivery id — so retention is
+#: not only a privacy dial, it is the memory that guard runs on.
+#:
+#: Seven days is comfortably past every platform's own redelivery window (Meta
+#: retries for about 36 hours, Twilio and Telegram for less), with room for a
+#: deployment that was down for a long weekend. Below it, a platform can still
+#: be retrying a delivery this deployment has forgotten, and the same inbound
+#: message is processed twice.
+MIN_WEBHOOK_LOG_RETENTION_DAYS = 7
+
+
+@register(Tags.security)
+def check_webhook_log_retention(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """Refuse a retention window too short to keep redelivery idempotent.
+
+    Issue #95 asked whether ``WebhookEventLog.raw`` retention should be
+    configurable and what the floor is. It already was configurable; what was
+    missing was the floor, and the reason a floor is needed at all: the rows are
+    verbatim inbound payloads, so shortening the window is the one lever an
+    operator has over that residue — and it is a lever that silently disables
+    replay protection if pulled far enough.
+    """
+    days = getattr(settings, "WEBHOOK_EVENT_LOG_RETENTION_DAYS", 30)
+    if days >= MIN_WEBHOOK_LOG_RETENTION_DAYS:
+        return []
+    return [
+        Error(
+            f"WEBHOOK_EVENT_LOG_RETENTION_DAYS is {days}, below the {MIN_WEBHOOK_LOG_RETENTION_DAYS}-day floor.",
+            hint=(
+                "The webhook event log is not only a log: its unique (connection, provider_event_id) "
+                "is what makes a redelivered webhook a no-op, so a pruned row is a delivery id this "
+                "deployment has forgotten. Below the floor a platform can still be retrying a delivery "
+                "we no longer recognise, and the same inbound message is processed twice. Raise the "
+                "value, or accept the duplicate sends and say so deliberately."
+            ),
+            id="common.E006",
+        )
+    ]
+
+
 @register(Tags.models)
 def check_workspace_scoped_models(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
     """Every tenant model must keep the plain manager as its default.

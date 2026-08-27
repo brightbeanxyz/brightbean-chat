@@ -44,12 +44,14 @@ it — including, on a bad-credential path, the credential.
 
 import logging
 import smtplib
+import socket
 import ssl
 import threading
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
 from typing import Any
+from urllib.parse import urlsplit
 
 from django.conf import settings
 
@@ -62,6 +64,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DEFAULT_PROVIDER",
     "check_destination",
+    "guard_boto_client",
+    "resolved_destination",
     "Envelope",
     "PROVIDERS",
     "RESEND_API_ROOT",
@@ -250,20 +254,49 @@ def check_destination(host: str, port: int) -> None:
     single-tenant deployment needs a way to say so, and a multi-tenant one needs
     the default to stay closed.
 
-    This is a pre-flight check rather than a pinned connection: ``smtplib``
-    resolves the host itself and gives no hook to pin an address, so a
-    determined rebinding attack is still possible in the window between this
-    check and the connect. The check is what stops the straightforward case —
-    `host=127.0.0.1` typed into the form — and the residual gap is written down
-    here rather than left to be discovered.
+    Issue #92: this used to be a pre-flight check and nothing more, which left
+    the window ``guarded_request`` closes for HTTP — between the lookup here and
+    ``smtplib``'s own, the answer can change. :func:`resolved_destination` now
+    returns the address it validated and :func:`smtp_connection` connects to
+    *that*, so the check and the connect can no longer disagree.
+    """
+    resolved_destination(host, port)
+
+
+def resolved_destination(host: str, port: int) -> str:
+    """The literal address to connect to, or ``""`` when pinning is waived.
+
+    Every rule :func:`check_destination` documents, plus the thing that makes
+    pinning possible: the caller is handed back the address that passed, so the
+    connection goes to a value that has already been checked rather than to
+    whatever a second lookup returns.
+
+    ``""`` means "connect by name": either the internal-SMTP escape hatch is on,
+    or the host is already a literal. Both are cases where pinning would add
+    nothing.
     """
     if not MIN_PORT <= port <= MAX_PORT:
         raise APIError(f"{port} is not a port number.", status_code=400, code="bad_port")
     if getattr(settings, "EMAIL_SMTP_ALLOW_INTERNAL", False):
-        return
+        return ""
+    return _checked_address(host, subject="That mail server")
+
+
+def _checked_address(host: str, *, subject: str) -> str:
+    """Validate every address ``host`` resolves to and return the first.
+
+    The one place the non-HTTP egress paths classify an address, so SMTP (#92)
+    and boto3 (#91) cannot drift apart or from the guard: the classification is
+    ``apps.common.outbound.refusal_for``, and a category added there is denied
+    on both.
+
+    **Every** resolved address is checked, not just the one returned, so a
+    hostname answering with one public and one private address is refused
+    outright rather than pinned to whichever came first.
+    """
     addresses = resolve_host(host)
     if not addresses:
-        raise APIError("That mail server's hostname does not resolve.", status_code=400, code="dns")
+        raise APIError(f"{subject}'s hostname does not resolve.", status_code=400, code="dns")
     for address in addresses:
         refusal = refusal_for(address)
         if refusal:
@@ -271,10 +304,11 @@ def check_destination(host: str, port: int) -> None:
             # workspace admin, and confirming which internal addresses exist is
             # the reconnaissance the check exists to prevent.
             raise APIError(
-                f"That mail server resolves to {refusal}, which this deployment will not connect to.",
+                f"{subject} resolves to {refusal}, which this deployment will not connect to.",
                 status_code=400,
                 code="blocked_host",
             )
+    return str(addresses[0])
 
 
 def smtp_connection(connection: Any) -> Any:
@@ -292,13 +326,51 @@ def smtp_connection(connection: Any) -> Any:
     config = _smtp_settings(connection)
     if not config["host"]:
         raise APIError("This email connection has no SMTP host stored.")
-    check_destination(config["host"], config["port"])
-    return get_connection(
+    address = resolved_destination(config["host"], config["port"])
+    backend = get_connection(
         backend="django.core.mail.backends.smtp.EmailBackend",
         fail_silently=False,
         timeout=SMTP_TIMEOUT,
         **config,
     )
+    if address:
+        # `connection_class` is set in SMTP EmailBackend.__init__ but is not on
+        # BaseEmailBackend, which is what get_connection is typed as returning.
+        backend.connection_class = _pinned_smtp_class(  # type: ignore[attr-defined]
+            backend.connection_class,  # type: ignore[attr-defined]
+            address,
+        )
+    return backend
+
+
+def _pinned_smtp_class(base: type, address: str) -> type:
+    """``base``, but connecting to ``address`` instead of re-resolving the name.
+
+    Issue #92. Django's backend owns the socket, so the address
+    :func:`resolved_destination` validated was previously discarded and
+    ``smtplib`` looked the name up again — the DNS-rebinding window
+    ``guarded_request`` closes for HTTP by connecting to the literal it checked.
+
+    ``_get_socket`` is the seam, and it is the right one for all three security
+    modes. ``SMTP_SSL._get_socket`` calls ``super()`` and then wraps with
+    ``server_hostname=self._host``, and ``starttls()`` wraps with ``self._host``
+    too — both the *name*, which is what certificate validation must see. So the
+    name still governs TLS and EHLO while the connection goes to the address we
+    checked, which is exactly the split the HTTP guard makes.
+    """
+
+    class PinnedSMTP(base):  # type: ignore[misc, valid-type]
+        pinned_address = address
+
+        def _get_socket(self, host: str, port: int, timeout: Any) -> Any:
+            if timeout is not None and not timeout:
+                # smtplib's own guard: 0 would mean a non-blocking socket.
+                raise OSError("Non-blocking socket (timeout=0) is not supported")
+            return socket.create_connection((self.pinned_address, port), timeout, getattr(self, "source_address", None))
+
+    PinnedSMTP.__name__ = f"Pinned{base.__name__}"
+    PinnedSMTP.__qualname__ = PinnedSMTP.__name__
+    return PinnedSMTP
 
 
 def _mime(envelope: Envelope) -> EmailMessage:
@@ -573,12 +645,48 @@ def ses_client(connection: Any, service: str = "sesv2") -> Any:
     region = str(credentials.get("region") or "")
     if not key_id or not secret or not region:
         raise APIError("This email connection has no complete set of SES credentials stored.")
-    return boto3.client(
+    client = boto3.client(
         service,
         region_name=region,
         aws_access_key_id=key_id,
         aws_secret_access_key=secret,
     )
+    return guard_boto_client(client)
+
+
+def guard_boto_client(client: Any) -> Any:
+    """Register the address check on ``client`` and return it.
+
+    Issue #91. SECURITY-BASELINE §6 says every server-initiated request goes
+    through the guard "no exceptions", and ``tests/test_ssrf_call_sites.py``
+    asserts that structurally — for httpx. boto3 passed neither door because it
+    is not httpx: botocore owns its own transport, so nothing validated the host
+    its endpoint was built from.
+
+    ``before-send`` is botocore's last hook before the request goes on the wire,
+    and a handler returning ``None`` lets it proceed. So the rules are
+    :func:`_checked_address`'s, which are ``apps.common.outbound.refusal_for``'s
+    — one classification for both non-HTTP paths and for the guard itself.
+
+    **This validates; it does not pin.** botocore owns the connection pool and
+    gives no address seam the way ``smtplib._get_socket`` does, so the residual
+    rebinding window SMTP no longer has is still open here. That is the honest
+    limit of option 1 in the issue, and it is recorded in
+    ``docs/security-audit.md`` rather than left to be rediscovered. The endpoint
+    host is also derived from an operator-supplied region rather than from
+    contact input, and #93 constrains that region's shape, so what remains is
+    narrow.
+    """
+
+    def _check_endpoint(request: Any = None, **_kwargs: Any) -> None:
+        host = urlsplit(getattr(request, "url", "") or "").hostname or ""
+        if not host:
+            raise APIError("That AWS endpoint has no host.", status_code=400, code="blocked_host")
+        _checked_address(host, subject="That AWS endpoint")
+        return None
+
+    client.meta.events.register("before-send.*", _check_endpoint)
+    return client
 
 
 def _deliver_ses(connection: Any, envelope: Envelope) -> str:

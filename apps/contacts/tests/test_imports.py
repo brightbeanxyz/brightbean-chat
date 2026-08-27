@@ -474,7 +474,19 @@ class TestRunFailures:
 
 @pytest.mark.django_db
 class TestHousekeeping:
-    def test_a_finished_run_loses_its_file_but_keeps_its_report(self, tenancy, settings):
+    def test_a_finished_run_loses_its_file_and_its_quoted_rows(self, tenancy, settings):
+        """Issue #95. This test previously asserted ``errors`` **survived** the prune.
+
+        That was the leak: every entry quotes the offending cell, so the list
+        holds the same names, addresses and phone numbers as the spreadsheet it
+        came from, and nothing links a row of it back to the contact it created —
+        so a contact erasure cannot reach it either. Dropping the file while
+        keeping its rejected rows retained the personal data and deleted only the
+        evidence of where it came from.
+
+        ``error_count`` is what an aged report needs and is kept: "2 rows failed"
+        stays true and useful once the rows are gone.
+        """
         from datetime import timedelta
 
         from django.utils import timezone
@@ -484,7 +496,7 @@ class TestHousekeeping:
         settings.CONTACT_IMPORT_FILE_RETENTION_DAYS = 30
         run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.DONE)
         run.error_count = 2
-        run.errors = [{"row": 1, "column": "", "message": "bad"}]
+        run.errors = [{"row": 1, "column": "email", "message": "ada@example.test is not an address"}]
         run.finished_at = timezone.now() - timedelta(days=31)
         run.save()
 
@@ -492,7 +504,69 @@ class TestHousekeeping:
 
         run.refresh_from_db()
         assert not run.file
-        assert run.errors == [{"row": 1, "column": "", "message": "bad"}]
+        assert run.errors == []
+        assert run.error_count == 2
+
+    def test_no_cell_value_survives_the_prune(self, tenancy, settings):
+        """The property, rather than the shape: nothing quoted is still readable."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.contacts.housekeeping import prune_import_files
+
+        settings.CONTACT_IMPORT_FILE_RETENTION_DAYS = 30
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.DONE)
+        run.errors = [
+            {"row": 3, "column": "email", "message": "ada@example.test is not an address"},
+            {"row": 9, "column": "phone", "message": "+441234567890 is not a number"},
+        ]
+        run.finished_at = timezone.now() - timedelta(days=31)
+        run.save()
+
+        prune_import_files()
+
+        run.refresh_from_db()
+        for leaked in ("ada@example.test", "+441234567890"):
+            assert leaked not in str(run.errors)
+
+    def test_a_second_sweep_is_a_query_and_nothing_else(self, tenancy, settings):
+        """Idempotence, which the filter change could have broken."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.contacts.housekeeping import prune_import_files
+
+        settings.CONTACT_IMPORT_FILE_RETENTION_DAYS = 30
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.DONE)
+        run.errors = [{"row": 1, "column": "email", "message": "bad"}]
+        run.finished_at = timezone.now() - timedelta(days=31)
+        run.save()
+
+        assert prune_import_files() == "pruned 1 import(s)"
+        assert prune_import_files() == "pruned 0 import(s)"
+
+    def test_a_run_whose_file_is_already_gone_still_loses_its_rows(self, tenancy, settings):
+        """The pre-#95 rows are exactly the ones with no file left to find them by."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.contacts.housekeeping import prune_import_files
+
+        settings.CONTACT_IMPORT_FILE_RETENTION_DAYS = 30
+        run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING, status=ImportStatus.DONE)
+        run.file.delete(save=False)
+        run.file = ""
+        run.errors = [{"row": 1, "column": "email", "message": "ada@example.test is not an address"}]
+        run.finished_at = timezone.now() - timedelta(days=31)
+        run.save()
+
+        prune_import_files()
+
+        run.refresh_from_db()
+        assert run.errors == []
 
     def test_a_recent_run_keeps_its_file(self, tenancy):
         from django.utils import timezone
