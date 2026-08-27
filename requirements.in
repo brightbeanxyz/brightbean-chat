@@ -53,7 +53,7 @@ Pillow==12.3.0
 # `django-storages` release away from vanishing. The import is deferred inside
 # the one function that builds a client, so an SMTP-only or Resend-only
 # deployment never loads botocore.
-boto3==1.43.76
+boto3==1.43.78
 
 # Monitoring (inert unless SENTRY_DSN is set)
 sentry-sdk[django]==2.68.0
