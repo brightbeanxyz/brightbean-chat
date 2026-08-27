@@ -254,17 +254,27 @@ jobs:
         run: pip-audit --strict --requirement requirements.txt --requirement requirements-dev.txt
 
       - name: Compiled requirements are in sync with their .in files
-        # Recompiling from unchanged .in files must be byte-identical. If it is
-        # not, someone edited a requirements*.in without running `make lock`,
-        # and the pins CI installs are not the ones under review.
+        # Recompiling from unchanged .in files must produce the same pins. If it
+        # does not, someone edited a requirements*.in without running
+        # `make lock`, and the pins CI installs are not the ones under review.
+        #
+        # Everything is compared byte for byte except one line: pip-compile's
+        # provenance header, `#    pip-compile <the invocation>`. That line
+        # records the *command*, not a dependency, and it drifts on its own —
+        # it gained `--no-index` here when the runner's pip moved to 26.x, with
+        # no requirements*.in touched and no pin changed, which failed every PR
+        # in the repo. Diffing it asserted something this check was never about.
+        # The `# via …` comments are NOT stripped: those describe the dependency
+        # graph, and a change in one is a real change.
         run: |
           pip install "pip-tools==7.6.1"
           for pair in "requirements.in:requirements.txt" "requirements-dev.in:requirements-dev.txt"; do
             src="${pair%%:*}"; lock="${pair##*:}"
-            cp "${lock}" "/tmp/$(basename "${lock}").before"
+            grep -v '^#    pip-compile ' "${lock}" > "/tmp/$(basename "${lock}").before"
             pip-compile --generate-hashes --strip-extras --allow-unsafe --quiet \
               --output-file "${lock}" "${src}"
-            if ! diff -u "/tmp/$(basename "${lock}").before" "${lock}"; then
+            grep -v '^#    pip-compile ' "${lock}" > "/tmp/$(basename "${lock}").after"
+            if ! diff -u "/tmp/$(basename "${lock}").before" "/tmp/$(basename "${lock}").after"; then
               echo "::error::${lock} is stale — run \`make lock\` and commit the result."
               exit 1
             fi
