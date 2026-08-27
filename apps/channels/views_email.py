@@ -40,6 +40,7 @@ Telegram flow makes.
 """
 
 import logging
+import re
 from typing import Any
 
 from django.contrib import messages
@@ -66,6 +67,15 @@ from apps.members.requests import WorkspaceRequest
 logger = logging.getLogger(__name__)
 
 __all__ = ["email_connect", "send_test_email", "update_credentials"]
+
+#: An AWS region label, and the reason it is validated rather than trusted
+#: (issue #93): ``providers.email_backends.ses_client`` hands this value to
+#: boto3, which builds ``email.<region>.amazonaws.com`` from it — so an
+#: unconstrained string is an unconstrained outbound hostname. The sibling
+#: pattern is ``providers.email_signatures.CERT_URL_RE``, which pins an SNS
+#: region label for exactly the same reason. Rejected rather than normalised: a
+#: value that needs repairing to be valid is a typo the operator should see.
+AWS_REGION_RE = re.compile(r"^[a-z]{2}(-gov)?-[a-z]+-\d$")
 
 #: Shown when a provider refuses the credentials. One message per provider
 #: rather than per failure mode, for the reason ``views_telegram`` gives: an
@@ -218,6 +228,8 @@ def _credentials(request: WorkspaceRequest, provider: str, from_address: str) ->
         region = (request.POST.get("region") or "").strip().lower()
         if not key_id or not secret or not region:
             return "Enter the access key, the secret and the AWS region."
+        if not AWS_REGION_RE.match(region):
+            return "That is not an AWS region name. It looks like eu-west-1 or us-gov-east-1."
         return {
             **common,
             "access_key_id": key_id,

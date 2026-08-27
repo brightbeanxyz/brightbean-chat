@@ -235,6 +235,59 @@ class TestSESConnect:
         assert connection.credentials["region"] == "eu-west-1"
         assert connection.credentials["secret_access_key"] == SES_SECRET
 
+    @pytest.mark.parametrize(
+        "region",
+        [
+            "eu-west-1.attacker.test",
+            "eu-west-1/../../x",
+            "not-a-region",
+            "eu-west-1 ",
+            "../metadata",
+        ],
+        ids=["suffixed host", "traversal", "shapeless", "trailing space", "traversal only"],
+    )
+    def test_a_region_that_is_not_a_region_is_refused(self, admin_client: Client, tenancy: Any, region: str) -> None:
+        """Issue #93: boto3 builds ``email.<region>.amazonaws.com`` from this value.
+
+        An unconstrained string here is an unconstrained outbound hostname, which
+        is the shape SECURITY-BASELINE §6 exists for whoever supplies it. The
+        sibling constraint is ``email_signatures.CERT_URL_RE`` on the SNS side.
+        """
+        response = admin_client.post(
+            connect_url(tenancy),
+            {
+                "provider": "ses",
+                "from_address": "hello@sender.test",
+                "access_key_id": "AKIA0000000000000000",
+                "secret_access_key": SES_SECRET,
+                "region": region,
+            },
+        )
+
+        assert response.status_code == 200
+        assert connections(tenancy).count() == 0
+
+    @pytest.mark.parametrize("region", ["eu-west-1", "us-gov-east-1", "ap-southeast-3", "il-central-1"])
+    def test_the_real_regions_still_pass(
+        self, admin_client: Client, tenancy: Any, monkeypatch: pytest.MonkeyPatch, region: str
+    ) -> None:
+        """A validator that rejected a real region would be worse than none."""
+        monkeypatch.setattr(email_backends, "ses_client", lambda *a, **k: FakeSESClient())
+
+        response = admin_client.post(
+            connect_url(tenancy),
+            {
+                "provider": "ses",
+                "from_address": "hello@sender.test",
+                "access_key_id": "AKIA0000000000000000",
+                "secret_access_key": SES_SECRET,
+                "region": region,
+            },
+        )
+
+        assert response.status_code == 302
+        assert connections(tenancy).get().credentials["region"] == region
+
     def test_the_secret_is_never_echoed_back(self, admin_client: Client, tenancy: Any) -> None:
         response = admin_client.post(
             connect_url(tenancy),

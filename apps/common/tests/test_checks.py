@@ -2,7 +2,12 @@
 
 import pytest
 
-from apps.common.checks import check_production_secrets, check_s3_custom_domain_signing
+from apps.common.checks import (
+    MIN_WEBHOOK_LOG_RETENTION_DAYS,
+    check_production_secrets,
+    check_s3_custom_domain_signing,
+    check_webhook_log_retention,
+)
 
 
 def _ids(messages):
@@ -102,3 +107,42 @@ class TestS3CustomDomainSigning:
         settings.AWS_CLOUDFRONT_KEY = ""
 
         assert "common.W001" in _ids(check_s3_custom_domain_signing())
+
+
+class TestWebhookLogRetentionFloor:
+    """Issue #95: the retention dial is also the replay-protection memory.
+
+    ``WebhookEventLog``'s unique ``(connection, provider_event_id)`` is what makes
+    a redelivered webhook a no-op, so a pruned row is a delivery id this
+    deployment has forgotten. An operator shortening the window for privacy is
+    doing something reasonable; shortening it below every platform's redelivery
+    window is silently accepting duplicate sends, and that should not be silent.
+    """
+
+    def test_the_default_is_accepted(self, settings):
+        settings.WEBHOOK_EVENT_LOG_RETENTION_DAYS = 30
+
+        assert check_webhook_log_retention() == []
+
+    def test_the_floor_itself_is_accepted(self, settings):
+        settings.WEBHOOK_EVENT_LOG_RETENTION_DAYS = MIN_WEBHOOK_LOG_RETENTION_DAYS
+
+        assert check_webhook_log_retention() == []
+
+    @pytest.mark.parametrize("days", [0, 1, 6])
+    def test_below_the_floor_is_an_error(self, settings, days):
+        settings.WEBHOOK_EVENT_LOG_RETENTION_DAYS = days
+
+        assert "common.E006" in _ids(check_webhook_log_retention())
+
+    def test_the_hint_says_why_rather_than_just_what(self, settings):
+        """An operator who shortened this on purpose needs the reason, not the rule."""
+        settings.WEBHOOK_EVENT_LOG_RETENTION_DAYS = 1
+
+        hint = check_webhook_log_retention()[0].hint
+
+        assert "redelivered" in hint and "twice" in hint
+
+    def test_the_floor_clears_every_platforms_redelivery_window(self):
+        """Meta retries for about 36 hours; the others for less. Seven days has room."""
+        assert MIN_WEBHOOK_LOG_RETENTION_DAYS >= 2

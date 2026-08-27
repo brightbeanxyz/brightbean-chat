@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 
 @register_housekeeping_job("prune_contact_import_files")
 def prune_import_files() -> str:
-    """Delete the stored CSV of finished imports past the retention window.
+    """Drop the stored CSV **and the quoted row errors** of finished imports.
 
-    Idempotent, as every housekeeping job must be: a run whose file is already
-    gone is excluded by the ``file=""`` filter, so a repeat sweep is a query and
-    nothing else.
+    Idempotent, as every housekeeping job must be: a run with nothing left to
+    drop is excluded by the filter, so a repeat sweep is a query and nothing
+    else.
 
     The delete and the column clear share a transaction per row, in that order.
     Storage deletion is not transactional, so the pairing cannot be atomic in
@@ -44,6 +44,18 @@ def prune_import_files() -> str:
     between them leaves a row pointing at a file that is gone, which the next
     sweep skips and which nothing reads, whereas clearing first would leave an
     orphaned file no sweep can ever find again.
+
+    **``errors`` is cleared with the file (issue #95).** Each entry quotes the
+    offending cell, so the list holds names, email addresses and phone numbers
+    from the uploaded spreadsheet — the same personal data as the file it came
+    from, and just as unreachable by a contact erasure, because nothing links a
+    row of it back to the contact it created. Dropping the file while keeping
+    its rejected rows would have retained the residue and deleted only the
+    evidence of where it came from.
+
+    ``error_count`` is deliberately **kept**. It is what an aged report actually
+    needs — "412 rows failed" stays true and useful once the rows themselves are
+    gone — and it is a number, not personal data.
     """
     cutoff = timezone.now() - timedelta(days=settings.CONTACT_IMPORT_FILE_RETENTION_DAYS)
     # unscoped(): housekeeping sweeps the whole deployment by definition, and an
@@ -52,15 +64,17 @@ def prune_import_files() -> str:
     stale = (
         ContactImport.objects.unscoped()
         .filter(status__in=sorted(FINISHED_IMPORT_STATUSES), finished_at__lt=cutoff)
-        .exclude(file="")
+        .exclude(file="", errors=[])
     )
     dropped = 0
     for run in stale.iterator():
         with transaction.atomic():
-            run.file.delete(save=False)
-            run.file = ""
-            run.save(update_fields=["file", "updated_at"])
+            if run.file:
+                run.file.delete(save=False)
+                run.file = ""
+            run.errors = []
+            run.save(update_fields=["file", "errors", "updated_at"])
         dropped += 1
     if dropped:
-        logger.info("Dropped %s contact-import file(s) finished before %s", dropped, cutoff)
-    return f"dropped {dropped} import file(s)"
+        logger.info("Pruned %s finished contact import(s) from before %s", dropped, cutoff)
+    return f"pruned {dropped} import(s)"
