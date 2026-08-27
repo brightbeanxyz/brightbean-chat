@@ -56,7 +56,7 @@ Pillow==12.3.0
 boto3==1.43.76
 
 # Monitoring (inert unless SENTRY_DSN is set)
-sentry-sdk[django]==2.68.0
+sentry-sdk[django]==2.68.1
 
 # Auth
 django-allauth[socialaccount]==65.19.1   # 65.x API: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS
