@@ -8,7 +8,7 @@
 #
 # The vendored JS in static/js/vendor/ is committed and needs no build step —
 # see scripts/vendor-js.mjs for why.
-FROM node:24-slim AS frontend
+FROM node:25-slim AS frontend
 
 WORKDIR /app
 
