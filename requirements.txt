@@ -83,9 +83,9 @@ bcrypt==5.0.0 \
     --hash=sha256:f8429e1c410b4073944f03bd778a9e066e7fad723564a52ff91841d278dfc822 \
     --hash=sha256:fc746432b951e92b58317af8e0ca746efe93e66555f1b40888865ef5bf56446b
     # via -r requirements.in
-boto3==1.43.78 \
-    --hash=sha256:2fa59116e298171ef59e7600a8be6c01177faef8af4b9a4314b7a57a04009ada \
-    --hash=sha256:893f06a171469618e17de78dc927aca6e74fcf45a70d2c5918e9ac9919e96cc9
+boto3==1.43.79 \
+    --hash=sha256:4c2381cf99abf749c82762a636337f4aba4800fda6525412fcae2bebe4f72748 \
+    --hash=sha256:a36b4209a8170f7f8d2c19b36f350808f313b178939c9e5df0a8f683717a6d9c
     # via
     #   -r requirements.in
     #   django-storages
