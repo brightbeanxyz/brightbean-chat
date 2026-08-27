@@ -15,7 +15,6 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "types": ["node", "vitest/globals", "@testing-library/jest-dom"],
-    "baseUrl": ".",
     "paths": {
       "@flow-schema": ["./src/schema/flow-schema.d.ts"]
     }

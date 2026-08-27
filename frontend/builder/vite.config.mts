@@ -15,11 +15,15 @@ export default defineConfig({
   // grants neither.
   appType: "custom",
 
-  // Vite's built-in esbuild JSX transform. @vitejs/plugin-react exists for Fast
+  // Vite's built-in JSX transform. @vitejs/plugin-react exists for Fast
   // Refresh, which needs the dev server we do not have, and it would drag the
   // @babel/core tree into a lockfile that has to keep `npm audit
   // --audit-level=low` green — and npm audit has no waiver mechanism.
-  esbuild: { jsx: "automatic" },
+  //
+  // `oxc`, not `esbuild`: Vite 8 transforms with Oxc and deprecated the
+  // `esbuild` option, whose type no longer carries `jsx` at all. Same
+  // automatic runtime, same reason for not reaching for a plugin.
+  oxc: { jsx: { runtime: "automatic" } },
 
   resolve: {
     alias: {
