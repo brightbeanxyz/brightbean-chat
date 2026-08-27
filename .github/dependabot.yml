@@ -41,6 +41,26 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # zustand is not ours to choose. @xyflow/react depends on "zustand":
+      # "^4.4.0", so a 5.x top level does not replace React Flow's copy — npm
+      # installs both, and the store the builder reads stops being the store
+      # React Flow writes. Dependabot opened #98 for 5.0.15; it put 7 builder
+      # tests into "Maximum update depth exceeded" with the loop running
+      # through node_modules/@xyflow/react/node_modules/zustand. Drop this
+      # block when @xyflow/react widens its range to "^4 || ^5".
+      - dependency-name: "zustand"
+        update-types:
+          - "version-update:semver-major"
+      # @types/node must track the Node runtime rather than lead it. Types that
+      # lag merely under-describe the runtime; types that lead it let tsc
+      # accept APIs the container does not have, so the break surfaces in
+      # production instead of at build time. Majors move when the runtime
+      # below does, in the same PR. Patches and minors within the line are
+      # exactly what we want arriving weekly.
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -59,8 +79,32 @@ updates:
   # agree` step in the audit job is what makes that safe: a Dependabot PR here
   # fails until the other four sites are moved to match, which is the intended
   # workflow — Dependabot proposes the bump, the check makes it complete.
+  #
+  # Two runtime lines are held back here, because for those the check can only
+  # report the incompleteness — it cannot decide whether the move is wanted.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # Node stays on an LTS line. Odd-numbered majors never become LTS: 25
+      # goes end-of-life around Jun 2026, while 24 has security support into
+      # 2028. Dependabot cannot tell the two apart and opened #97 for 25, so
+      # majors are chosen here — take 26 when it goes LTS in Oct 2026, and
+      # move .nvmrc, both `engines` fields and ci.yml in the same PR. Minor
+      # and patch bumps within the line still arrive automatically.
+      - dependency-name: "node"
+        update-types:
+          - "version-update:semver-major"
+      # Python's image tag is one of five pins on the interpreter: ci.yml (in
+      # four jobs), ruff's target-version, mypy's python_version and the
+      # compiled lockfiles are the others. Moving only the image ships a
+      # runtime that nothing in CI exercises — green pipeline, runtime-only
+      # break. Dependabot opened #56 for 3.14; Django 5.2 does support it, so
+      # the objection is not the framework but the coordination. A tag bump is
+      # semver-minor here, so both types are held.
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
