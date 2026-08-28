@@ -458,7 +458,7 @@ Instagram never appears in the broadcast channel selector.
 
 ## 16. Flow builder UI
 
-- Route `/w/<workspace>/flows/<id>/edit` serves a Django template with a mount div; the React bundle (React 18 + @xyflow/react) loads from static files. Everything else in the app stays HTMX.
+- Route `/w/<workspace>/flows/<id>/edit` serves a Django template with a mount div; the React bundle (React 19 + @xyflow/react) loads from static files. Everything else in the app stays HTMX.
 - Data API (session-authenticated, workspace-scoped, CSRF via X-CSRFToken header):
   - `GET  /api/flows/<id>/` -> latest draft version graph + metadata + tags/fields/sequences/flows lists for config panels + capability warnings
   - `PUT  /api/flows/<id>/` -> save draft (server validation; response includes validation warnings)
