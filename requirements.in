@@ -27,7 +27,7 @@ gunicorn==26.1.0
 
 # Security
 django-csp==4.0            # 4.x dict-form config; see config/settings/base.py
-cryptography==50.0.0       # AES-256-GCM + HKDF for apps/common/encryption.py
+cryptography==50.0.1       # AES-256-GCM + HKDF for apps/common/encryption.py
 
 # Platform HTTP (channel adapters — apps/channels/providers/base.py)
 # Direct dependency of the adapter base: timeouts, 429 handling and error
