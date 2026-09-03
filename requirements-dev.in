@@ -7,7 +7,7 @@
 -r requirements.in
 
 # Lint and format (ruff's S rules cover the Bandit checks — SECURITY-BASELINE §10)
-ruff==0.16.4
+ruff==0.16.5
 
 # Type checking
 mypy==2.3.1                # django-stubs' compatible-mypy extra caps this at <2.4
