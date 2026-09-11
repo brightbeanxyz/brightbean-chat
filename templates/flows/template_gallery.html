@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% comment %}
+Step zero of the import wizard: pick one of the templates this installation ships
+instead of uploading a file.
+
+Nothing is created here either. "Use this template" posts to flows:template_start,
+which reads the file through the same parse_and_validate an upload uses and lands
+on the same mapping page — see apps/flows/views_portability.py.
+
+The search and category filter are Alpine over the already-rendered cards rather
+than a second HTMX endpoint. There are around twenty of them, so a round trip per
+keystroke buys nothing; it also sidesteps the $nextTick trap documented in
+list.html, which exists only because htmx has to serialise a form first.
+{% endcomment %}
+
+{% block title %}Start from a template · BrightBean Chat{% endblock %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+    <div>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Start from a template</h1>
+        <p class="text-sm" style="color: var(--text-secondary);">
+            Pick one and you will see exactly what it needs before anything is created.
+        </p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+        <a href="{{ upload_url }}" class="btn-outline btn-inline">Upload a file instead</a>
+        <a href="{{ list_url }}" class="btn-outline btn-inline">Cancel</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+{% if errors %}
+<div class="rounded-xl border p-4 mb-4"
+     style="border-color: var(--danger-500); background: rgba(var(--danger-500-rgb), 0.08);">
+    <p class="text-sm font-medium" style="color: var(--text-primary);">That template could not be read</p>
+    <ul class="mt-2 space-y-1">
+        {% for error in errors %}
+        <li class="text-sm" style="color: var(--text-secondary);">{{ error }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if cards %}
+<div x-data="{
+        q: '',
+        category: '',
+        matches(haystack, category) {
+            if (this.category && category !== this.category) return false;
+            if (!this.q) return true;
+            return haystack.toLowerCase().includes(this.q.toLowerCase());
+        }
+     }">
+
+    <div class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3">
+        <input type="search" x-model="q" placeholder="Search templates"
+               class="form-input-styled" style="width: 16rem;" aria-label="Search templates">
+        <button type="button" class="btn-outline btn-inline" @click="category = ''"
+                :aria-pressed="category === ''">All</button>
+        {% for name in categories %}
+        <button type="button" class="btn-outline btn-inline"
+                @click="category = '{{ name|escapejs }}'"
+                :aria-pressed="category === '{{ name|escapejs }}'">{{ name }}</button>
+        {% endfor %}
+    </div>
+
+    <div class="grid gap-4 mt-2" style="grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));">
+        {% for entry in cards %}
+        {% include "flows/_template_card.html" %}
+        {% endfor %}
+    </div>
+
+    <div class="rounded-lg p-3 mt-6" style="background: var(--surface-2);">
+        <p class="text-xs" style="color: var(--text-secondary);">
+            Every template arrives as an <strong>unpublished draft</strong> with its triggers switched off,
+            and its links and tags are placeholders. Nothing runs until you edit it and publish it yourself.
+        </p>
+    </div>
+</div>
+{% else %}
+<div class="rounded-xl border p-6 text-center" style="border-color: var(--border); background: var(--surface-1);">
+    <p class="text-sm font-medium" style="color: var(--text-primary);">No templates are installed</p>
+    <p class="text-sm mt-1" style="color: var(--text-secondary);">
+        This installation ships none, or none of them could be read.
+        You can still <a href="{{ upload_url }}" class="btn-link">upload a template file</a>.
+    </p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,187 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Engage",
+      "graph": {
+        "edges": [
+          {
+            "id": "reply-qr-shop-shop",
+            "source": "reply",
+            "sourceHandle": "qr:shop",
+            "target": "shop"
+          },
+          {
+            "id": "reply-qr-help-help",
+            "source": "reply",
+            "sourceHandle": "qr:help",
+            "target": "help"
+          },
+          {
+            "id": "reply-qr-human-human",
+            "source": "reply",
+            "sourceHandle": "qr:human",
+            "target": "human"
+          },
+          {
+            "id": "human-default-handoff",
+            "source": "human",
+            "sourceHandle": "default",
+            "target": "handoff"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi {{first_name}}, thanks for the message! I read everything here. Pick one below and I can help right away.",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "shop",
+                  "label": "I want to buy"
+                },
+                {
+                  "id": "help",
+                  "label": "I have a question"
+                },
+                {
+                  "id": "human",
+                  "label": "Talk to a person"
+                }
+              ]
+            },
+            "id": "reply",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Everything is here. Shout if you want a recommendation.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "The full range.",
+                  "title": "Shop",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Browse",
+                    "url": "https://example.com/shop"
+                  }
+                }
+              ]
+            },
+            "id": "shop",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Ask away and I will get you an answer.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "help",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "verb": "open_conversation"
+                }
+              ]
+            },
+            "id": "human",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "A person is picking this up now, hang tight.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "handoff",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "'Personalised' here means {{placeholders}}, not AI: the greeting fills in whatever you know about the contact. There is no intent detection in this flow.\n\nA default reply runs only when nothing else matched, and at most once per contact per day — so keyword automations always win, and nobody gets this twice.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "personalised_not_ai",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Respond to every DM",
+      "triggers": [
+        {
+          "config": {},
+          "platform": "instagram",
+          "type": "default_reply"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

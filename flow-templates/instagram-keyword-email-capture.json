@@ -1,0 +1,220 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Grow",
+      "graph": {
+        "edges": [
+          {
+            "id": "offer-qr-yes-ask_email",
+            "source": "offer",
+            "sourceHandle": "qr:yes",
+            "target": "ask_email"
+          },
+          {
+            "id": "offer-qr-no-declined",
+            "source": "offer",
+            "sourceHandle": "qr:no",
+            "target": "declined"
+          },
+          {
+            "id": "ask_email-default-tag_subscriber",
+            "source": "ask_email",
+            "sourceHandle": "default",
+            "target": "tag_subscriber"
+          },
+          {
+            "id": "tag_subscriber-default-deliver",
+            "source": "tag_subscriber",
+            "sourceHandle": "default",
+            "target": "deliver"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Happy to send it. Where should it go?",
+                  "type": "text"
+                },
+                {
+                  "text": "One email a week, unsubscribe whenever. Nothing else.",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "yes",
+                  "label": "Send it over"
+                },
+                {
+                  "id": "no",
+                  "label": "Not right now"
+                }
+              ]
+            },
+            "id": "offer",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "Perfect. What is your email address?",
+              "reply_type": "email",
+              "retry": {
+                "invalid_text": "That does not look like an email address. Try once more?",
+                "max": 2
+              },
+              "target": {
+                "key": "email",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 6,
+                "enabled": true,
+                "unit": "hours"
+              }
+            },
+            "id": "ask_email",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Email list",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_subscriber",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Sent. It should land in a minute.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Grab it here too.",
+                  "title": "Your download",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Open it",
+                    "url": "https://example.com/download"
+                  }
+                }
+              ]
+            },
+            "id": "deliver",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "All good. The offer stands whenever you want it.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "declined",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "The email answer records consent along with the address, which is the record you want if anybody ever asks how a contact joined the list. Keep the sentence about what you send and how to leave: that is the part the consent record refers to.\n\nThis captures the address; it does not send email. Push the list to your email tool and send from there.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "consent",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Grow the email list",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "GUIDE"
+              },
+              {
+                "mode": "exact",
+                "text": "FREEBIE"
+              },
+              {
+                "mode": "exact",
+                "text": "EBOOK"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "email list",
+        "name": "Email list",
+        "used_by": [
+          "flow-1:tag_subscriber"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

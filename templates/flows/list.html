@@ -27,6 +27,8 @@ swap in styles.css meaningful.
           A page rather than a modal: the import is three steps and the middle
           one can be long (issue #27).
         {% endcomment %}
+        <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
+           class="btn-outline btn-inline">Start from a template</a>
         <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
            class="btn-outline btn-inline">Import</a>
         <form class="flex items-center gap-2"

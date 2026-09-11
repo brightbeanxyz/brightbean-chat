@@ -1,0 +1,131 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Grow",
+      "graph": {
+        "edges": [
+          {
+            "id": "send-default-tag_viewer",
+            "source": "send",
+            "sourceHandle": "default",
+            "target": "tag_viewer"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "The full version is on YouTube. Here you go.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "New one every week.",
+                  "title": "Watch the long version",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Watch now",
+                    "url": "https://example.com/youtube"
+                  }
+                }
+              ]
+            },
+            "id": "send",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "YouTube viewer",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_viewer",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "Replace the placeholder with your own channel URL. A template cannot ship a real link to somebody else's channel.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "own_url",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Send people to YouTube",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "VIDEO"
+              },
+              {
+                "mode": "exact",
+                "text": "WATCH"
+              },
+              {
+                "mode": "exact",
+                "text": "YT"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "youtube viewer",
+        "name": "YouTube viewer",
+        "used_by": [
+          "flow-1:tag_viewer"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

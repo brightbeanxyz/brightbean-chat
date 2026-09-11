@@ -121,6 +121,13 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # message_id resolver's job. Zero is as good as any — the route 404s for an
     # outsider at the conversation lookup, long before it looks at this.
     "index": 0,
+    # The filename stem of a template this repository ships (flows:template_*).
+    # It names a file on the server, identical for every tenant and the same on
+    # every installation — there is no row behind it and no workspace it could
+    # belong to, so it is neutral in the strict sense this table means. It is
+    # never used to build a path either: apps/flows/portability/library.py
+    # resolves it by comparing against the stems of flow-templates/*.json.
+    "template_slug": "telegram-welcome-and-faq",
 }
 
 #: Why the inbound webhook routes cannot answer 404 and are therefore not

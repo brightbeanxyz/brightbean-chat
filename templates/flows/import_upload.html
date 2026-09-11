@@ -46,6 +46,10 @@ message from that validation, rendered escaped like all imported text.
         <p class="text-xs mt-2" style="color: var(--text-tertiary);">
             JSON, up to {{ max_bytes|filesizeformat }}. A template exported from any BrightBean Chat installation.
         </p>
+        <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+            Or <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
+                  class="btn-link">start from one of the built-in templates</a>.
+        </p>
 
         <div class="mt-4 rounded-lg p-3" style="background: var(--surface-2);">
             <p class="text-xs" style="color: var(--text-secondary);">

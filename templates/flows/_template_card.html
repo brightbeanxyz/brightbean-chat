@@ -1,0 +1,58 @@
+{% comment %}
+One template in the gallery. Everything here is text from the validated document
+or from TEMPLATE_COPY — no |safe, no mark_safe, matching the rule the review page
+states: a template's message bodies carry {{placeholders}} that only
+apps.flows.rendering ever substitutes, and showing one must not be the exception.
+
+A plain form rather than hx-post: the response is a redirect to the mapping page,
+which is what the upload form already does.
+{% endcomment %}
+<article class="rounded-xl border p-4 flex flex-col gap-3"
+         style="border-color: var(--border); background: var(--surface-1);"
+         x-show="matches('{{ entry.card.name|escapejs }} {{ entry.card.summary|escapejs }}', '{{ entry.card.category|escapejs }}')">
+    <div>
+        <div class="flex items-start justify-between gap-2">
+            <h2 class="text-sm font-semibold" style="color: var(--text-primary);">{{ entry.card.name }}</h2>
+            {% if entry.card.category %}
+            <span class="text-xs rounded-full px-2 py-0.5 shrink-0"
+                  style="background: var(--surface-2); color: var(--text-secondary);">{{ entry.card.category }}</span>
+            {% endif %}
+        </div>
+        {% if entry.card.summary %}
+        <p class="text-sm mt-1" style="color: var(--text-secondary);">{{ entry.card.summary }}</p>
+        {% endif %}
+    </div>
+
+    <dl class="text-xs space-y-1" style="color: var(--text-tertiary);">
+        {% if entry.platforms %}
+        <div class="flex gap-1">
+            <dt class="font-medium">Channels:</dt>
+            <dd>{{ entry.platforms|join:", " }}</dd>
+        </div>
+        {% endif %}
+        {% comment %}
+          Guarded like the two rows above: the envelope puts no minimum on a
+          flow's triggers, so a template reached only through start_flow is legal
+          and would otherwise render a "Starts on:" label with nothing after it.
+        {% endcomment %}
+        <div class="flex gap-1">
+            <dt class="font-medium">Starts on:</dt>
+            <dd>{% if entry.triggers %}{{ entry.triggers|join:", " }}{% else %}Another flow{% endif %}</dd>
+        </div>
+        {% if entry.needs %}
+        <div class="flex gap-1">
+            <dt class="font-medium">Also needs:</dt>
+            <dd>{{ entry.needs|join:", " }}</dd>
+        </div>
+        {% endif %}
+        <div class="flex gap-1">
+            <dt class="font-medium">Size:</dt>
+            <dd>{{ entry.card.step_count }} step{{ entry.card.step_count|pluralize }}</dd>
+        </div>
+    </dl>
+
+    <form method="post" action="{{ entry.start_url }}" class="mt-auto pt-1">
+        {% csrf_token %}
+        <button type="submit" class="btn-brand btn-inline w-full">Use this template</button>
+    </form>
+</article>
