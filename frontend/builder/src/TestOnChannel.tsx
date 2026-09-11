@@ -1,11 +1,16 @@
 /**
- * SPEC §16's "test on Telegram": run the draft against a real chat.
+ * Run the draft against a real chat, on the channel the flow is built for.
+ *
+ * Which channel that is comes from the flow's own triggers and is decided by
+ * the server (apps/channels/views_preview.py), so the button names it rather
+ * than assuming Telegram — an Instagram automation whose only preview was
+ * "Test on Telegram" could not be seen before it went to real customers.
  *
  * The button does not open anything by itself. Pressing it asks the server for
  * a fresh, short-lived deep link and then shows it, because the interesting
- * failure is the one where the workspace has no Telegram bot connected — and a
- * `window.open` that lands on an error page is a worse way to say that than a
- * sentence with a link to the connect flow.
+ * answers are the ones that are not a link — nothing connected yet, or a
+ * channel with no live test at all — and a `window.open` that lands on an error
+ * page is a worse way to say either than a sentence.
  *
  * The link is deliberately single-use-ish and expires in minutes
  * (apps/channels/preview.py), so it is minted on press rather than rendered
@@ -25,7 +30,7 @@ type State =
   | { kind: "blocked"; message: string; settingsUrl: string }
   | { kind: "error"; message: string };
 
-export function TestOnTelegram() {
+export function TestOnChannel() {
   const env = useBuilder((state) => state.env);
   const [state, setState] = useState<State>({ kind: "idle" });
 
@@ -37,7 +42,7 @@ export function TestOnTelegram() {
         setState({ kind: "ready", link: result });
         return;
       }
-      setState({ kind: "blocked", message: result.message, settingsUrl: result.settings_url });
+      setState({ kind: "blocked", message: result.message, settingsUrl: result.settings_url ?? "" });
     } catch (error) {
       setState({
         kind: "error",
@@ -48,14 +53,14 @@ export function TestOnTelegram() {
   };
 
   return (
-    <span className="fb-test-telegram inline-flex items-center gap-2">
+    <span className="fb-test-channel inline-flex items-center gap-2">
       <button
         type="button"
         className="btn-link text-xs"
         disabled={state.kind === "loading"}
         onClick={() => void press()}
       >
-        {state.kind === "loading" ? "Preparing…" : "Test on Telegram"}
+        {state.kind === "loading" ? "Preparing…" : "Test this flow"}
       </button>
 
       {state.kind === "ready" ? (
@@ -68,13 +73,30 @@ export function TestOnTelegram() {
           // window.opener.
           rel="noopener noreferrer"
         >
-          Open {state.link.bot} →
+          Open {state.link.account} on {state.link.platform_label} →
         </a>
+      ) : null}
+
+      {/*
+        Telegram acts on the tap; Meta opens a composer and the referral rides
+        in with the first message the tester sends. Saying so is the difference
+        between a working link and a bug report about one.
+      */}
+      {state.kind === "ready" && state.link.instructions ? (
+        <span className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {state.link.instructions}
+        </span>
       ) : null}
 
       {state.kind === "blocked" ? (
         <span className="fb-badge fb-badge-warning">
-          {state.message} <a href={state.settingsUrl}>Connect Telegram</a>
+          {state.message}
+          {state.settingsUrl ? (
+            <>
+              {" "}
+              <a href={state.settingsUrl}>Connect one</a>
+            </>
+          ) : null}
         </span>
       ) : null}
 

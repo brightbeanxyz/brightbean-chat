@@ -22,7 +22,7 @@
 import { useState } from "react";
 
 import { ApiError } from "./api/client";
-import { TestOnTelegram } from "./TestOnTelegram";
+import { TestOnChannel } from "./TestOnChannel";
 import type { ValidationPayload } from "./schema/types";
 import { publishFlow } from "./api/flows";
 import { publishView } from "./publishState";
@@ -117,7 +117,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         surrounding canvas looks; the server enforces `edit_flows` on the
         endpoint either way.
       */}
-      {canEdit ? <TestOnTelegram /> : null}
+      {canEdit ? <TestOnChannel /> : null}
 
       <span className="ml-auto flex items-center gap-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
         {errorCount > 0 ? <span className="fb-badge fb-badge-error">{errorCount} to fix</span> : null}
