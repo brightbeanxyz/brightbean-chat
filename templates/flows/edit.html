@@ -82,9 +82,29 @@ fetch lazy: most visits to the builder never touch the drawer, and `load once`
 made every one of them pay for the panel query plus a channel query per ref
 trigger.
 {% endcomment %}
+{% comment %}
+`open-trigger` is the canvas asking for one trigger's form. React dispatches it
+on document.body with bubbles:true; Alpine catches it here and *re-dispatches*
+`triggers-opened`, which is what htmx is actually listening for.
+
+Two things about this are load-bearing.
+
+The indirection, and the statement order inside the handler. The id must be set
+before `$dispatch('triggers-opened')`: htmx listens on body (target phase) and
+Alpine on window (bubble phase), so if `open-trigger` were itself in the
+hx-trigger list htmx would fire first and request with no id. Going through
+Alpine makes the ordering program order rather than DOM phase order.
+
+And the id is written **straight to the input's .value**, not through a `:value`
+binding. Alpine flushes reactive bindings on its own scheduler, so a bound value
+is still the old one when htmx reads hx-include in this same tick — the drawer
+opened on the list rather than the form, with nothing to say why.
+{% endcomment %}
 <div class="flex-1 min-h-0 relative"
-     x-data="{ triggersOpen: false }"
-     @toggle-triggers.window="triggersOpen = !triggersOpen; if (triggersOpen) $dispatch('triggers-opened')"
+     x-data="{ triggersOpen: false, focus(id) { this.$refs.triggerFocus.value = id || ''; } }"
+     @toggle-triggers.window="focus(''); triggersOpen = !triggersOpen; if (triggersOpen) $dispatch('triggers-opened')"
+     @open-trigger.window="focus($event.detail?.triggerId); triggersOpen = true; $dispatch('triggers-opened')"
+     @htmx:after-swap="focus('')"
      @keydown.escape.window="triggersOpen = false">
 {% comment %}
 x-ignore keeps Alpine out of the React island entirely. Alpine 3 observes the
@@ -130,9 +150,23 @@ attacker-authored HTML.
 
 <aside x-show="triggersOpen" x-cloak aria-label="Triggers"
        class="bb-drawer anim-collapse absolute inset-y-0 right-0 w-96 max-w-full z-30 overflow-y-auto">
+    {% comment %}
+    Outside #flow-triggers, which every refetch replaces wholesale — an input
+    inside it would be swapped away mid-request. Cleared on after-swap so the
+    refetch that follows a save reopens the list, not the form the user just
+    submitted.
+    {% endcomment %}
+    <input type="hidden" id="trigger-focus" name="trigger" x-ref="triggerFocus" value="">
     <div id="flow-triggers"
          hx-get="{% url 'flows:trigger_panel' workspace_id=request.workspace.id flow_id=flow.id %}"
-         hx-trigger="triggers-opened from:body once, triggersChanged from:body"
+         {% comment %}
+         No `once`: an explicit open now refetches, because the panel may need
+         to come back focused on a different trigger than last time. The
+         laziness that mattered — not fetching at page load — is unaffected,
+         since `triggers-opened` only fires when somebody opens the drawer.
+         {% endcomment %}
+         hx-trigger="triggers-opened from:body, triggersChanged from:body"
+         hx-include="#trigger-focus"
          hx-swap="outerHTML">
         <p class="p-4 text-sm" style="color: var(--text-secondary);">Loading triggers…</p>
     </div>

@@ -73,9 +73,24 @@ _RULE_EVENTS: list[tuple[str, str]] = [
 @require_workspace_member
 @require_GET
 def trigger_panel(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
-    """The drawer's body. Re-fetched by every mutation's ``triggersChanged``."""
+    """The drawer's body. Re-fetched by every mutation's ``triggersChanged``.
+
+    ``?trigger=<id>`` opens straight onto that trigger's edit form, which is
+    what clicking its card on the canvas asks for. The id is matched against the
+    rows this panel has already loaded rather than fetched: it costs no extra
+    query, and an id for a trigger that was deleted in another tab is then
+    *ignored* rather than turning the whole drawer into a 404. That also means
+    the looser gate on this view leaks nothing — an id from another flow or
+    another workspace simply does not match, so it is not an existence oracle.
+    """
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
-    return render(request, "flows/_triggers_panel.html", _panel_context(request, flow))
+    context = _panel_context(request, flow)
+    focus = (request.GET.get("trigger") or "").strip()
+    if focus and context["can_edit"]:
+        focused = next((row["trigger"] for row in context["triggers"] if str(row["trigger"].pk) == focus), None)
+        if focused is not None:
+            context.update(_form_context(request, flow, focused, focused.type))
+    return render(request, "flows/_triggers_panel.html", context)
 
 
 @login_required
@@ -91,8 +106,24 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     if spec is None:
         return toast_response(tone="error", title="Unknown trigger type", body="Pick one from the list.")
 
-    config = trigger.config_json if trigger is not None else spec.default_config()
     context = _panel_context(request, flow)
+    context.update(_form_context(request, flow, trigger, trigger_type))
+    return render(request, "flows/_trigger_form.html", context)
+
+
+def _form_context(request: WorkspaceRequest, flow: Flow, trigger: Trigger | None, trigger_type: str) -> dict[str, Any]:
+    """Everything one trigger's form needs, minus the panel around it.
+
+    Extracted so ``trigger_panel`` can render the drawer already open on a
+    trigger without duplicating this — and so the two cannot drift, which for
+    the rule panel would mean a filter bar present on one route and missing on
+    the other.
+    """
+    spec = spec_for(trigger_type)
+    if spec is None:  # pragma: no cover - callers check first
+        return {}
+    config = trigger.config_json if trigger is not None else spec.default_config()
+    context: dict[str, Any] = {}
     context.update(
         {
             "trigger": trigger,
@@ -116,11 +147,11 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             # has an API for it, and a post picker is offered by whichever
             # platforms ship one. See apps.flows.triggers.comments.
             "like_supported": comments.like_supported_on(spec.platforms),
-            "post_pickers": _post_pickers(spec, workspace_id),
+            "post_pickers": _post_pickers(spec, str(flow.workspace_id)),
         }
     )
     context.update(_comment_text(trigger_type, config))
-    return render(request, "flows/_trigger_form.html", context)
+    return context
 
 
 def _comment_text(trigger_type: str, config: dict[str, Any] | None) -> dict[str, str]:

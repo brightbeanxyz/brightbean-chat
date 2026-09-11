@@ -13,6 +13,11 @@
  * been edited since, which the builder can support: any edit bumps `revision`,
  * which moves save.state to dirty, which re-enables the button. See
  * publishState.ts.
+ *
+ * The trigger count used to live here as a badge, because the canvas gave no
+ * hint that a flow with no trigger never runs. The canvas now says so itself,
+ * in the place the missing thing would be, so a header chip repeating it would
+ * be a second copy of a fact the user is already looking at.
  */
 import { useState } from "react";
 
@@ -35,9 +40,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const canRedo = useBuilder((state) => state.future.length > 0);
   const errorCount = useBuilder((state) => state.validation.errors.length);
   const warningCount = useBuilder((state) => state.validation.warnings.length);
-  const triggerCount = useBuilder((state) => state.triggers.length);
   const flowStatus = useBuilder((state) => state.flow?.status);
-  const loaded = useBuilder((state) => state.loaded);
   const view = publishView(save, flowStatus);
   const [publishing, setPublishing] = useState(false);
 
@@ -119,21 +122,6 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       <span className="ml-auto flex items-center gap-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
         {errorCount > 0 ? <span className="fb-badge fb-badge-error">{errorCount} to fix</span> : null}
         {warningCount > 0 ? <span className="fb-badge fb-badge-warning">{warningCount} to check</span> : null}
-        {/*
-          A published flow with no trigger never runs, and the canvas gives no
-          hint of that — so it is the one thing worth saying about triggers from
-          an island that does not own them. Editing happens in the HTMX drawer
-          behind the header's Triggers button.
-        */}
-        {loaded ? (
-          triggerCount > 0 ? (
-            <span className="fb-badge">
-              {triggerCount} trigger{triggerCount === 1 ? "" : "s"}
-            </span>
-          ) : (
-            <span className="fb-badge fb-badge-warning">No triggers</span>
-          )
-        ) : null}
         {view.liveChip ? <span className="fb-badge fb-badge-success">{view.liveChip}</span> : null}
         <span data-save-state={save.state} data-publish-tone={view.tone}>
           {view.label}

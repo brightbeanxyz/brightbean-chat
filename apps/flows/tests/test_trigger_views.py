@@ -90,6 +90,11 @@ class _FormReader(HTMLParser):
             self._select = None
 
 
+#: The form slot with nothing in it. The panel carries its own "Add" form
+#: whatever happens, so asserting on ``<form`` would pass for either outcome.
+_EMPTY_FORM_SLOT = b'<div id="trigger-form" class="mt-4"></div>'
+
+
 def _events(response):
     raw = response.headers.get("HX-Trigger")
     return json.loads(raw) if raw else {}
@@ -103,6 +108,61 @@ class TestThePanel:
 
         assert response.status_code == 200
         assert b"help" in response.content
+
+    def test_it_opens_on_one_trigger_when_asked(self, tenancy, client_for, flow):
+        """Clicking a trigger card on the canvas asks for this. The panel comes
+        back with that trigger's edit form already rendered, rather than the
+        list plus a second round trip."""
+        trigger = _trigger(flow)
+
+        response = client_for(tenancy.owner).get(_url("flows:trigger_panel", tenancy, flow) + f"?trigger={trigger.pk}")
+
+        assert response.status_code == 200
+        assert _url("flows:trigger_update", tenancy, flow, trigger_id=trigger.pk).encode() in response.content
+
+    def test_an_unknown_trigger_id_is_ignored_rather_than_404(self, tenancy, client_for, flow):
+        """A card clicked after the trigger was deleted in another tab. Ignoring
+        it costs the user a list instead of an error page — and, because the id
+        is matched against rows already loaded, tells a prober nothing."""
+        _trigger(flow)
+
+        response = client_for(tenancy.owner).get(
+            _url("flows:trigger_panel", tenancy, flow) + "?trigger=01a00000-0000-7000-0000-000000000000"
+        )
+
+        assert response.status_code == 200
+        assert _EMPTY_FORM_SLOT in response.content
+
+    def test_a_trigger_from_another_flow_is_ignored(self, tenancy, client_for, flow):
+        other = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]), name="Other")
+        stranger = _trigger(other)
+
+        response = client_for(tenancy.owner).get(_url("flows:trigger_panel", tenancy, flow) + f"?trigger={stranger.pk}")
+
+        assert response.status_code == 200
+        assert _EMPTY_FORM_SLOT in response.content
+
+    def test_a_viewer_gets_no_form_even_when_focused(self, tenancy, client_for, flow):
+        """trigger_panel is member-readable but trigger_form needs edit_flows.
+        Focusing must not become the looser route to the tighter thing."""
+        trigger = _trigger(flow)
+
+        response = client_for(tenancy.user_for("viewer")).get(
+            _url("flows:trigger_panel", tenancy, flow) + f"?trigger={trigger.pk}"
+        )
+
+        assert response.status_code == 200
+        assert _EMPTY_FORM_SLOT in response.content
+
+    def test_a_focused_rule_trigger_still_gets_its_filter_bar(self, tenancy, client_for, flow):
+        """The filter bar is built only for the rule type and only in the form
+        context. Extracting that context is what keeps both routes equal."""
+        trigger = _trigger(flow, TriggerType.RULE, {"event": "contact_created", "filters": None})
+
+        response = client_for(tenancy.owner).get(_url("flows:trigger_panel", tenancy, flow) + f"?trigger={trigger.pk}")
+
+        assert response.status_code == 200
+        assert response.context["filter_config"] is not None
 
     def test_it_warns_about_a_second_enabled_default_reply(self, tenancy, client_for, flow):
         """Legal, and resolved by priority like every type — but the second one

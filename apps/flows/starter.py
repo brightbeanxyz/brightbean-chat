@@ -29,9 +29,12 @@ from apps.flows.schema.envelope import SCHEMA_VERSION
 
 __all__ = ["starter_graph"]
 
-#: Placed a little in from the top-left rather than at the origin: the canvas
-#: fits the view to its contents, and a node at 0,0 sits against the palette.
-_POSITION = {"x": 160, "y": 120}
+#: Far enough in to leave room for the trigger cards, which sit to the *left* of
+#: whichever node starts the flow (frontend/builder/src/canvas/triggerNodes.ts).
+#: At x=160 the card landed at x=-160 and opened outside the visible pane, so
+#: the one thing a brand-new flow most needs to show was the one thing off
+#: screen.
+_POSITION = {"x": 520, "y": 160}
 
 _FIRST_MESSAGE = "Hi! Thanks for getting in touch — how can we help?"
 

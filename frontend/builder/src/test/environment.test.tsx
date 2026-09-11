@@ -22,7 +22,15 @@ describe("the jsdom environment", () => {
 
     const { container } = renderWith(store, <Canvas />);
 
-    expect(container.querySelectorAll(".react-flow__node").length).toBe(NODE_TYPES.length);
+    // Graph nodes specifically. The canvas also carries the synthetic trigger
+    // cards (canvas/triggerNodes.ts), and this fixture has no triggers, so it
+    // draws the "Add a trigger" card as well — counting everything would make
+    // this assertion drift every time that layer changes.
+    const cards = [...container.querySelectorAll<HTMLElement>(".react-flow__node")].filter(
+      (node) => !(node.getAttribute("data-id") ?? "").startsWith("trigger:"),
+    );
+
+    expect(cards.length).toBe(NODE_TYPES.length);
   });
 
   it("draws every node type from the artefact, by label", () => {

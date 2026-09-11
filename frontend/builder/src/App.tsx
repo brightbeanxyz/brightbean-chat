@@ -102,14 +102,24 @@ function Shell() {
     let last = 0;
     const refresh = (throttle: boolean) => {
       const now = Date.now();
-      if ((throttle && now - last < 30_000) || store.getState().save.state !== "clean") {
+      if (throttle && now - last < 30_000) {
         return;
       }
       last = now;
+      // The clean-store guard applies to what the *server derived from the
+      // graph* — a verdict about a draft the server has not seen would be a
+      // verdict about the wrong graph, and versions move with it. Triggers are
+      // not the graph: they live in their own table, the drawer edits them
+      // while the canvas is dirty, and refusing them here meant a trigger you
+      // just saved never reached the cards until you saved the flow too.
+      const clean = store.getState().save.state === "clean";
       void loadFlow(store.getState().env)
         .then((detail) => {
-          store.getState().applyValidation(detail.validation, store.getState().revision);
           store.getState().setTriggers(detail.triggers);
+          if (!clean) {
+            return;
+          }
+          store.getState().applyValidation(detail.validation, store.getState().revision);
           store.getState().setFlow(detail.flow);
           store.getState().setSave({ version: detail.version, publishedVersion: detail.published_version });
         })

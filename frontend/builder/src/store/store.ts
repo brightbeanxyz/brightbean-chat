@@ -346,7 +346,12 @@ export function createBuilderStore(env: BuilderEnv) {
           set((state) => (state.dragging ? { dragging: false, revision: state.revision + 1 } : {})),
 
         deleteNodes: (ids) => {
-          const doomed = new Set(ids);
+          // Ids this store has never heard of are dropped rather than deleted.
+          // Without this an unknown id still ran withHistory: a no-op undo
+          // entry pushed, `revision` bumped, the flow marked dirty, and a
+          // pointless PUT sent. The trigger cards are synthetic ids on the same
+          // canvas, so this closes the class rather than that one instance.
+          const doomed = new Set([...ids].filter((id) => get().nodeType[id] !== undefined));
           if (doomed.size === 0) {
             return;
           }
@@ -372,7 +377,8 @@ export function createBuilderStore(env: BuilderEnv) {
         },
 
         deleteEdges: (ids) => {
-          const doomed = new Set(ids);
+          // As in deleteNodes: an id no edge has is not a deletion.
+          const doomed = new Set([...ids].filter((id) => get().edge[id] !== undefined));
           if (doomed.size === 0) {
             return;
           }

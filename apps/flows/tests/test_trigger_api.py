@@ -59,6 +59,57 @@ class TestTheTriggersKey:
         assert row["platforms"] == [Platform.TELEGRAM]
         assert "help" in row["summary"]
 
+    def test_a_comment_summary_names_the_public_reply(self, tenancy, client_for):
+        """The card on the canvas is only worth having if it says this.
+
+        A comment trigger's public reply is configured on the trigger and
+        appears nowhere in the graph, which is why people conclude the feature
+        is missing and go looking for a node that replies to a comment. A
+        summary reading only "Comments on any post" leaves them exactly where
+        the drawer did.
+        """
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
+        _trigger(
+            flow,
+            TriggerType.COMMENT,
+            config={
+                "post_scope": "all",
+                "post_ids": [],
+                "include_keywords": ["PRICE"],
+                "exclude_keywords": [],
+                "top_level_only": True,
+                "public_reply": {"mode": "static", "texts": ["Just sent you a DM!"]},
+                "like_comment": False,
+                "once_per_contact_per_post": True,
+            },
+        )
+
+        summary = _detail(client_for(tenancy.owner), tenancy, flow)["triggers"][0]["summary"]
+
+        assert "PRICE" in summary
+        assert "replies publicly" in summary
+
+    def test_a_comment_summary_stays_quiet_about_a_reply_it_does_not_send(self, tenancy, client_for):
+        flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
+        _trigger(
+            flow,
+            TriggerType.COMMENT,
+            config={
+                "post_scope": "all",
+                "post_ids": [],
+                "include_keywords": [],
+                "exclude_keywords": [],
+                "top_level_only": True,
+                "public_reply": {"mode": "none", "texts": []},
+                "like_comment": False,
+                "once_per_contact_per_post": True,
+            },
+        )
+
+        summary = _detail(client_for(tenancy.owner), tenancy, flow)["triggers"][0]["summary"]
+
+        assert summary == "Comments on any post"
+
     def test_an_unbound_trigger_reports_a_null_connection(self, tenancy, client_for):
         flow = published_flow(tenancy.workspace, graph([node("a", "action", NOOP_ACTION)]))
         connection_for(tenancy.workspace, external_id="bot-1")
