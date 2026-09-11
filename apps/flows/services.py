@@ -112,16 +112,29 @@ def published_version(flow: Flow) -> FlowVersion | None:
 
 
 @transaction.atomic
-def create_flow(*, workspace: Any, name: str, folder: str = "", user: Any = None) -> Flow:
-    """A new flow, with version 1 already there as an empty draft.
+def create_flow(*, workspace: Any, name: str, folder: str = "", user: Any = None, graph: Any = None) -> Flow:
+    """A new flow, with version 1 already there as a draft.
 
     Creating the first version here rather than lazily means every read path can
     assume a draft exists, and the builder never has to special-case a flow with
     nothing in it.
+
+    ``graph`` defaults to empty on purpose. The importer and the broadcast
+    composer both call this and then overwrite version 1 immediately, and
+    several tests read "still empty" as "nothing was written" — so seeding every
+    caller would turn those into false greens rather than failures. Only the
+    Create button on the flows list asks for a starter; the product decision
+    stays at the product surface.
     """
     flow = Flow(workspace=workspace, name=name, folder=folder, status=FlowStatus.DRAFT)
     flow.save()
-    FlowVersion(workspace=flow.workspace, flow=flow, version=1, graph_json=empty_graph(), created_by=user).save()
+    FlowVersion(
+        workspace=flow.workspace,
+        flow=flow,
+        version=1,
+        graph_json=empty_graph() if graph is None else graph,
+        created_by=user,
+    ).save()
     return flow
 
 

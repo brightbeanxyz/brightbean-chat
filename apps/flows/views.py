@@ -25,6 +25,7 @@ from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
 from apps.flows.models import Flow, FlowStatus
+from apps.flows.starter import starter_graph
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
 from apps.members.roles import WorkspaceRole
@@ -203,11 +204,20 @@ def flow_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if not name:
         return toast_response(tone="error", title="Name required", body="Give the flow a name to create it.")
     folder = (request.POST.get("folder") or "").strip()[:_MAX_NAME]
-    flow = services.create_flow(workspace=request.workspace, name=name, folder=folder, user=request.user)
+    # The one caller that asks for a starter graph. Everything else that creates
+    # a flow — the importer, the broadcast composer — writes its own version 1
+    # immediately afterwards. See apps.flows.starter.
+    flow = services.create_flow(
+        workspace=request.workspace,
+        name=name,
+        folder=folder,
+        user=request.user,
+        graph=starter_graph(),
+    )
     return toast_response(
         tone="success",
         title="Flow created",
-        body=f"{flow.name} is ready to edit.",
+        body=f"{flow.name} starts with a first message — open it to edit.",
         events={"flowsChanged": True},
     )
 
