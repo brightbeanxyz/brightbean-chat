@@ -86,6 +86,16 @@ class NavItem:
     # archived, and a row linking into a workspace that is not there is worse
     # than no row.
     workspace_scoped: bool = False
+    # A permission key from apps.members.roles.PERMISSION_KEYS. Blank means the
+    # row is ungated. A gated row is dropped for a member who lacks the key,
+    # because the view behind it is decorated with the same key and would
+    # answer 403 — see apps/contacts/views.py's note that a control which
+    # renders for someone who cannot use it is worse than no control.
+    # TestNavStructure validates these against PERMISSION_KEYS; the check lives
+    # in a test rather than __post_init__ because these items are constructed at
+    # module import, which happens while the template engine is still being
+    # configured and the app registry may not be populated.
+    permission: str = ""
 
     def resolved(self, request: HttpRequest, badges: dict[str, int], workspace_id: Any = None) -> dict[str, Any]:
         matches = self.url_names or frozenset({self.url_name})
@@ -285,6 +295,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="General",
                 icon="settings",
                 url_name="workspaces:settings",
+                permission="manage_workspace_settings",
                 workspace_scoped=True,
             ),
             NavItem(
@@ -293,6 +304,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 icon="channels",
                 url_name="channels:list",
                 url_names=frozenset({"channels:list", "channels:create", "channels:detail"}),
+                permission="manage_channels",
                 workspace_scoped=True,
             ),
             # Renamed from "Channels" by issue #4, which took that name for the
@@ -303,6 +315,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Platform credentials",
                 icon="key",
                 url_name="credentials:list",
+                permission="manage_workspace_settings",
                 workspace_scoped=True,
             ),
             # Issue #24. Two rows rather than one "Inbox" page: they answer to
@@ -314,6 +327,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Labels",
                 icon="tag",
                 url_name="inbox:label_settings",
+                permission="reply_in_inbox",
                 workspace_scoped=True,
             ),
             NavItem(
@@ -321,6 +335,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Inbox rules",
                 icon="flows",
                 url_name="inbox:rule_settings",
+                permission="manage_workspace_settings",
                 workspace_scoped=True,
             ),
             # Issue #26. Workspace configuration rather than an analytics page:
@@ -331,6 +346,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Email tracking",
                 icon="analytics",
                 url_name="analytics:tracking_settings",
+                permission="manage_workspace_settings",
                 workspace_scoped=True,
             ),
             NavItem(
@@ -338,6 +354,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Fields",
                 icon="fields",
                 url_name="contacts:field_list",
+                permission="manage_crm",
                 workspace_scoped=True,
             ),
             NavItem(
@@ -345,6 +362,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Tags",
                 icon="tag",
                 url_name="contacts:tag_list",
+                permission="manage_crm",
                 workspace_scoped=True,
             ),
             # Outbound webhooks (issue #25). Workspace-scoped, unlike the
@@ -357,6 +375,7 @@ SETTINGS_NAV: list[NavGroup] = [
                 icon="channels",
                 url_name="api_webhooks:list",
                 url_names=frozenset({"api_webhooks:list", "api_webhooks:detail"}),
+                permission="manage_workspace_settings",
                 workspace_scoped=True,
             ),
         ),
@@ -381,15 +400,25 @@ def _subset(groups: list[NavGroup], labels: tuple[str, ...]) -> list[NavGroup]:
 def _render_nav(
     groups: list[NavGroup], request: HttpRequest, badges: dict[str, int], workspace_id: Any = None
 ) -> list[dict[str, Any]]:
-    """Render the groups, dropping rows that have nowhere to point.
+    """Render the groups, dropping rows the viewer cannot use.
 
-    A workspace-scoped row with no current workspace is omitted rather than
-    rendered dead: the user has no workspace to be in, so the section does not
-    exist for them yet.
+    Two reasons a row is omitted. A workspace-scoped row with no current
+    workspace has nowhere to point: the user has no workspace to be in, so the
+    section does not exist for them yet. A row carrying a ``permission`` the
+    member does not hold would 403 on arrival, so it is hidden rather than
+    rendered and refused.
+
+    ``effective_permissions`` is the only thing read for the second test, which
+    is the same protocol ``apps.members.decorators.require_permission`` uses —
+    keeping the nav and the decorator from ever disagreeing about a row.
     """
+    membership = getattr(request, "workspace_membership", None)
+    permissions: dict[str, bool] = membership.effective_permissions if membership is not None else {}
+
     rendered = []
     for group in groups:
-        items = [i.resolved(request, badges, workspace_id) for i in group.items]
+        allowed = [i for i in group.items if not i.permission or permissions.get(i.permission, False)]
+        items = [i.resolved(request, badges, workspace_id) for i in allowed]
         items = [i for i in items if i["url"] != "#"]
         if items:
             rendered.append({"label": group.label, "items": items})
@@ -487,14 +516,24 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     channel_connections: list[Any] = []
 
     workspace_id = workspace.id if workspace is not None else None
+    # Rendered once rather than twice: the switcher's way into the section is
+    # the first row of this very nav, so asking the nav is what keeps the link
+    # and the page it opens from disagreeing. An Editor holds manage_crm but
+    # not manage_workspace_settings, so their entry point is Fields, not the
+    # General page they would be refused.
+    workspace_settings_nav_groups = _render_nav(
+        _subset(SETTINGS_NAV, WORKSPACE_SETTINGS_GROUPS), request, badges, workspace_id
+    )
+    workspace_settings_url = next(
+        (item["url"] for group in workspace_settings_nav_groups for item in group["items"]), ""
+    )
+
     return {
         "nav_groups": _render_nav(MAIN_NAV, request, badges, workspace_id),
         "settings_nav_groups": _render_nav(
             _subset(SETTINGS_NAV, ACCOUNT_SETTINGS_GROUPS), request, badges, workspace_id
         ),
-        "workspace_settings_nav_groups": _render_nav(
-            _subset(SETTINGS_NAV, WORKSPACE_SETTINGS_GROUPS), request, badges, workspace_id
-        ),
+        "workspace_settings_nav_groups": workspace_settings_nav_groups,
         "sidebar_workspaces": sidebar_workspaces,
         "current_workspace": workspace,
         "can_create_workspace": can_create_workspace,
@@ -515,6 +554,12 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         )
         or "/",
         "create_workspace_url": reverse_cached("organizations:workspaces") or "#",
+        # The switcher's one way into the workspace-settings section, and empty
+        # for anyone with no row in it — the template hides the link on exactly
+        # that, so there is one source of truth instead of a boolean that can
+        # drift from the nav it guards. One row is enough of a target:
+        # layouts/workspace_settings.html carries the rest of the section.
+        "workspace_settings_url": workspace_settings_url,
         "logout_url": reverse_cached("account_logout"),
         # The shell renders its chrome when this is true. It tracks
         # authentication, and /ui/ overrides it (see navigation_context).
