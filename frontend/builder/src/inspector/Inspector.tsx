@@ -124,9 +124,13 @@ function ProblemList({ issues }: { issues: readonly { code: string; message: str
   return (
     <ul>
       {issues.map((issue, index) => (
-        <li key={index} className={`fb-problem fb-problem-${issue.severity}`}>
+        <li
+          key={index}
+          className={`fb-problem fb-problem-${issue.severity}`}
+          data-issue-code={issue.code}
+          title={issue.code}
+        >
           {issue.message}
-          <span className="fb-problem-code block">{issue.code}</span>
         </li>
       ))}
     </ul>
