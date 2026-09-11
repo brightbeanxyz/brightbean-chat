@@ -146,7 +146,7 @@ def connected_platforms(workspace: Any) -> set[str]:
 
 
 def _fingerprint(paths: list[Path], manifest: Path) -> tuple[Any, ...]:
-    entries = []
+    entries: list[tuple[Any, ...]] = []
     for path in [*paths, manifest]:
         try:
             stat = path.stat()
