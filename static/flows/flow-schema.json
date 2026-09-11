@@ -2116,16 +2116,24 @@
   "x-brightbean": {
     "groups": [
       {
-        "key": "content",
-        "label": "Content"
+        "key": "messages",
+        "label": "Messages"
       },
       {
         "key": "logic",
         "label": "Logic"
       },
       {
-        "key": "actions",
-        "label": "Actions"
+        "key": "contact",
+        "label": "Contact"
+      },
+      {
+        "key": "integrations",
+        "label": "Integrations"
+      },
+      {
+        "key": "canvas",
+        "label": "Canvas"
       },
       {
         "key": "other",
@@ -2153,7 +2161,7 @@
             "prefix": "qr"
           }
         ],
-        "group": "content",
+        "group": "messages",
         "handles": [
           "default",
           "timeout"
@@ -2166,11 +2174,11 @@
         "annotation": false,
         "description": "Tag someone, set a field, start or stop a sequence, hand the chat to a teammate.",
         "dynamic_handles": [],
-        "group": "actions",
+        "group": "contact",
         "handles": [
           "default"
         ],
-        "label": "Action",
+        "label": "Update contact",
         "terminal": false,
         "type": "action"
       },
@@ -2220,7 +2228,7 @@
         ],
         "group": "logic",
         "handles": [],
-        "label": "Randomizer",
+        "label": "A/B split",
         "terminal": false,
         "type": "randomizer"
       },
@@ -2228,7 +2236,7 @@
         "annotation": false,
         "description": "Call your own API and use what it sends back.",
         "dynamic_handles": [],
-        "group": "actions",
+        "group": "integrations",
         "handles": [
           "default",
           "error"
@@ -2241,12 +2249,12 @@
         "annotation": false,
         "description": "Ask for an email, a phone number or anything else, and check the answer before saving it.",
         "dynamic_handles": [],
-        "group": "content",
+        "group": "messages",
         "handles": [
           "default",
           "timeout"
         ],
-        "label": "Data Collection",
+        "label": "Ask a question",
         "terminal": false,
         "type": "data_collection"
       },
@@ -2254,7 +2262,7 @@
         "annotation": false,
         "description": "Send a text message. Needs an SMS channel and a phone number on file.",
         "dynamic_handles": [],
-        "group": "actions",
+        "group": "messages",
         "handles": [
           "default",
           "error"
@@ -2267,7 +2275,7 @@
         "annotation": false,
         "description": "Send an email. Needs an email channel and an address on file.",
         "dynamic_handles": [],
-        "group": "actions",
+        "group": "messages",
         "handles": [
           "default",
           "error"
@@ -2280,7 +2288,7 @@
         "annotation": true,
         "description": "A note for you and your team. Nobody in a chat ever sees it.",
         "dynamic_handles": [],
-        "group": "content",
+        "group": "canvas",
         "handles": [],
         "label": "Note",
         "terminal": false,

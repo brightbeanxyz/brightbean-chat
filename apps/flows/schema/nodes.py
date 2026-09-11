@@ -106,10 +106,17 @@ class NodeSpec:
 #: The palette drawers, in the order the builder shows them (issue #10). Both
 #: the order and the labels are exported, so the frontend reads one file rather
 #: than one file plus a hard-coded table.
+#:
+#: Grouped by what the node *is* to the person building, not by how it is
+#: implemented. Send SMS and Send Email are messages, whatever adapter carries
+#: them; a Note is furniture on the canvas and is never sent to anyone, so it
+#: does not belong beside things that are.
 GROUPS: tuple[tuple[str, str], ...] = (
-    ("content", "Content"),
+    ("messages", "Messages"),
     ("logic", "Logic"),
-    ("actions", "Actions"),
+    ("contact", "Contact"),
+    ("integrations", "Integrations"),
+    ("canvas", "Canvas"),
     ("other", "Other"),
 )
 
@@ -461,7 +468,7 @@ register_node_type(
         type="send_message",
         label="Send Message",
         description="Send a message. Waits for a reply when it offers buttons or quick replies.",
-        group="content",
+        group="messages",
         config=f.obj(
             {
                 "blocks": f.array(f.ref("message_block"), min_items=1, max_items=20),
@@ -487,9 +494,9 @@ register_node_type(
     NodeSpec(
         # SPEC §11.2.
         type="action",
-        label="Action",
+        label="Update contact",
         description="Tag someone, set a field, start or stop a sequence, hand the chat to a teammate.",
-        group="actions",
+        group="contact",
         # The verb union is built at export time from ACTION_VERBS, so a verb a
         # later issue registers appears without this line changing.
         config=f.obj({"actions": f.array(f.ref("action_step"), min_items=1, max_items=20)}, required=["actions"]),
@@ -545,7 +552,7 @@ register_node_type(
     NodeSpec(
         # SPEC §11.6. Splits by weight; sticky by default, remembered in variables.
         type="randomizer",
-        label="Randomizer",
+        label="A/B split",
         description="Split people between paths by percentage. The same person keeps their path.",
         group="logic",
         config=f.obj(
@@ -567,7 +574,7 @@ register_node_type(
         type="external_request",
         label="External Request",
         description="Call your own API and use what it sends back.",
-        group="actions",
+        group="integrations",
         config=f.obj(
             {
                 "method": f.enum("GET", "POST", "PUT", "PATCH", "DELETE"),
@@ -590,9 +597,9 @@ register_node_type(
         # SPEC §11.8. Validated reply capture; email and phone answers also
         # record consent.
         type="data_collection",
-        label="Data Collection",
+        label="Ask a question",
         description="Ask for an email, a phone number or anything else, and check the answer before saving it.",
-        group="content",
+        group="messages",
         config=f.obj(
             {
                 "question": f.string(min_length=1, max_length=4096),
@@ -629,7 +636,7 @@ register_node_type(
         type="send_sms",
         label="Send SMS",
         description="Send a text message. Needs an SMS channel and a phone number on file.",
-        group="actions",
+        group="messages",
         config=f.obj(
             {
                 "text": f.string(min_length=1, max_length=1600),
@@ -647,7 +654,7 @@ register_node_type(
         type="send_email",
         label="Send Email",
         description="Send an email. Needs an email channel and an address on file.",
-        group="actions",
+        group="messages",
         config=f.obj(
             {
                 "subject": f.string(min_length=1, max_length=300),
@@ -669,7 +676,7 @@ register_node_type(
         type="note",
         label="Note",
         description="A note for you and your team. Nobody in a chat ever sees it.",
-        group="content",
+        group="canvas",
         config=f.obj({"text": f.string(max_length=5000)}, required=["text"]),
         handles=(),
         annotation=True,
