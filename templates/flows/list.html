@@ -25,10 +25,15 @@ swap in styles.css meaningful.
     <div class="flex flex-wrap items-center gap-2">
         {% comment %}
           A page rather than a modal: the import is three steps and the middle
-          one can be long (issue #27).
+          one can be long (issue #27). Templates first — it is the one that
+          needs nothing from you — and Import keeps its narrower meaning, which
+          the title spells out because the two buttons otherwise look alike.
         {% endcomment %}
+        <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
+           class="btn-outline btn-inline">Browse templates</a>
         <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
-           class="btn-outline btn-inline">Import</a>
+           class="btn-outline btn-inline"
+           title="A flow template file you already have">Import</a>
         <form class="flex items-center gap-2"
               hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}"
               hx-swap="none"

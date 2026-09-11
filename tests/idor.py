@@ -121,6 +121,21 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # message_id resolver's job. Zero is as good as any — the route 404s for an
     # outsider at the conversation lookup, long before it looks at this.
     "index": 0,
+    # The flow template gallery's install route. A shipped template is the same
+    # file in every workspace — it is read off disk, never looked up — so the
+    # slug identifies no tenant's object and this route is neutral in the only
+    # kwarg it adds beyond workspace_id.
+    #
+    # Deliberately NOT spelled `template_id`: that kwarg already belongs to the
+    # WhatsApp template manager and resolves to a WhatsAppTemplate pk, so a
+    # route reusing the name would be handed a value of the wrong shape and
+    # would 404 because the template does not exist rather than because of
+    # tenancy — passing for exactly the reason this file keeps warning about.
+    #
+    # A REAL stem, for the same reason: the route must 404 on the workspace and
+    # not on a template that is not there. test_portability_gallery.py asserts
+    # this still names a shipped file.
+    "template_slug": "telegram-welcome-and-faq",
 }
 
 #: Why the inbound webhook routes cannot answer 404 and are therefore not

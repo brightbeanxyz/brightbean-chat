@@ -4,6 +4,32 @@ for every HTMX refresh — one renderer, so a filtered view and a post-mutation
 refresh can never disagree about what a row looks like.
 {% endcomment %}
 {% if not groups %}
+{% if template_cards %}
+{% comment %}
+The gallery, in the empty state. This is the exact moment somebody has nothing
+and no idea what to build, and what the page offered them was a naked text
+field. Only reached when there are no flows, no filters and the member may edit
+— apps/flows/views.py::_list_context computes the cards on that path alone, so
+the branch below is still the answer for everyone else.
+
+This partial is the only renderer of the rows, for the page and for every HTMX
+refresh, so the gallery lands in both without a second template to keep in step.
+{% endcomment %}
+<div class="rounded-xl border p-5 sm:p-6" style="border-color: var(--border); background: var(--surface-1);">
+    <p class="text-sm font-medium" style="color: var(--text-primary);">No flows here yet — start with a template</p>
+    <p class="text-sm mt-1 mb-4" style="color: var(--text-secondary);">
+        Each one installs as an unpublished draft with its triggers off, so you can read it
+        before anything runs. Create one above instead to start from a blank canvas.
+    </p>
+    {% include "flows/_template_cards.html" with cards=template_cards %}
+    {% if template_total > template_cards|length %}
+    <p class="text-sm mt-3" style="color: var(--text-tertiary);">
+        <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
+           class="btn-text-hover-primary">Browse all {{ template_total }} templates</a>
+    </p>
+    {% endif %}
+</div>
+{% else %}
 <div class="rounded-xl border p-8 text-center" style="border-color: var(--border); background: var(--surface-1);">
     <p class="text-sm font-medium" style="color: var(--text-primary);">No flows here yet</p>
     <p class="text-sm mt-1" style="color: var(--text-secondary);">
@@ -14,6 +40,7 @@ refresh can never disagree about what a row looks like.
         {% endif %}
     </p>
 </div>
+{% endif %}
 {% else %}
 {% for group in groups %}
 <section class="mb-6">

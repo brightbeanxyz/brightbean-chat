@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Start from a template · Flows · BrightBean Chat{% endblock %}
+
+{% comment %}
+A page, not a modal, for the reason flows/list.html already gives about Import:
+what it leads to is a three-step wizard whose middle step can be long, and this
+repo has no modal idiom anywhere in templates/.
+
+Installing one is not a second import path. It writes the same FlowImport row
+the upload does and redirects to the same review page, so "nothing is created
+before the confirm" keeps covering it with nothing new to keep honest.
+{% endcomment %}
+
+{% block page_header %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <div class="min-w-0">
+        <a href="{{ list_url }}" class="btn-link text-xs">← All flows</a>
+        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Start from a template</h1>
+        <p class="text-sm mt-1" style="color: var(--text-secondary); max-width: 62ch;">
+            Each one installs as an unpublished draft with its triggers switched off, so nothing
+            runs until you have read it and published it yourself.
+        </p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+{% if errors %}
+<div class="rounded-xl border p-4 mb-4"
+     style="border-color: var(--danger-500); background: rgba(var(--danger-500-rgb), 0.08);">
+    <p class="text-sm font-medium" style="color: var(--text-primary);">That template was not installed</p>
+    <ul class="mt-2 space-y-1">
+        {% for error in errors %}
+        <li class="text-sm" style="color: var(--text-secondary);">{{ error }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% for group in groups %}
+<section class="mb-6">
+    <h2 class="text-xs font-semibold uppercase tracking-wide mb-2" style="color: var(--text-tertiary);">
+        {{ group.label }}
+    </h2>
+    {% include "flows/_template_cards.html" with cards=group.cards %}
+</section>
+{% empty %}
+<div class="rounded-xl border p-6 text-center" style="border-color: var(--border); background: var(--surface-1);">
+    <p class="text-sm font-medium" style="color: var(--text-primary);">No templates ship with this installation.</p>
+</div>
+{% endfor %}
+
+<p class="text-sm mt-2" style="color: var(--text-tertiary);">
+    Have a file already? <a href="{{ import_url }}" class="btn-text-hover-primary">Import it</a>.
+</p>
+{% endblock %}

@@ -265,15 +265,40 @@ which is Django's own template directory.
 
 1. Build the flow in a workspace, then use **Export** on the flow list.
 2. Drop the file into `flow-templates/` with a descriptive kebab-case name.
-3. Run the validator:
+3. Add an entry to [`flow-templates/gallery.toml`](../flow-templates/gallery.toml)
+   with a one-line `summary` and a `category`. Without one the template still
+   appears in the gallery, titled after its own entry flow and with no
+   description — so this step costs you a sentence, not a listing.
+4. Run the validator:
 
    ```bash
    python manage.py validate_flow_templates
    ```
 
-4. Open a pull request. `apps/flows/tests/test_portability_library.py` validates
+   It should still report the same number of templates as there are `.json`
+   files. The manifest is TOML precisely so it stays out of that count: the
+   loader globs `*.json` and hands every match to the importer, so a JSON
+   sidecar would be validated as a flow template and rejected.
+
+5. Open a pull request. `apps/flows/tests/test_portability_library.py` validates
    every file in the directory and imports each one into a clean workspace, so a
-   template that stops working turns the build red.
+   template that stops working turns the build red, and
+   `apps/flows/tests/test_portability_gallery.py` fails if the manifest and the
+   directory disagree in either direction.
+
+### Why the gallery text is a sidecar
+
+The card's title, summary and category are not keys inside the document.
+`document_schema()` sets `additionalProperties: false`, and the round-trip test
+asserts that re-exporting an imported template reproduces the file *byte for
+byte* — so a new key inside the envelope would have to be re-emitted by the
+exporter, which would then need something to say for every flow anybody ever
+exports. That is a change to a shared interchange format in order to carry a
+marketing sentence.
+
+The `.json` files remain the authority for everything else. Requirements badges
+("Needs Instagram") come from walking the document, never from the manifest or
+from the document's own advisory `requirements` block.
 
 Keep a template free of anything specific to your workspace: no real customer
 names, no live URLs you do not control, no credentials. The export already

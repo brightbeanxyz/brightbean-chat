@@ -25,6 +25,7 @@ from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
 from apps.flows.models import Flow, FlowStatus
+from apps.flows.portability import gallery
 from apps.flows.starter import starter_graph
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
@@ -54,6 +55,11 @@ UNFILED_LABEL = "Unfiled"
 UNFILED_VALUE = "__unfiled__"
 
 _MAX_NAME = Flow._meta.get_field("name").max_length or 200
+
+#: How many template cards the flows empty state shows before deferring to the
+#: full gallery. Enough to suggest the range, few enough that the Create field
+#: above them is still the obvious alternative.
+EMPTY_STATE_TEMPLATES = 4
 
 
 def _visible_flows(request: WorkspaceRequest) -> Any:
@@ -107,9 +113,27 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     )
 
     folder_names = list(folders)
+    can_edit = request.workspace_membership.effective_permissions.get("edit_flows", False)
+    filtered = bool(request.GET.get("q") or request.GET.get("status") or request.GET.get("folder"))
+
+    # Templates in the empty state, and only there: this is the exact moment
+    # somebody has nothing and no idea what to build, and the page offered them
+    # a naked text field. Computed on that path alone, so a workspace that has
+    # flows never pays for the extra connections query — and stops paying the
+    # moment the first Create lands, since the HTMX refresh re-renders with
+    # groups.
+    template_cards: list[Any] = []
+    connected: set[str] = set()
+    if not groups and not filtered and can_edit:
+        template_cards = gallery.gallery()
+        connected = gallery.connected_platforms(request.workspace)
+
     return {
         "groups": groups,
         "flow_count": len(flows),
+        "template_cards": template_cards[:EMPTY_STATE_TEMPLATES],
+        "template_total": len(template_cards),
+        "connected_platforms": connected,
         # (value, label) pairs, which is what ui_select wants — and what keeps
         # the "Unfiled" row's value distinct from a folder of the same name.
         "folder_options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
@@ -117,7 +141,7 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         "query": request.GET.get("q", ""),
         "status": request.GET.get("status", ""),
         "folder": request.GET.get("folder", ""),
-        "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
+        "can_edit": can_edit,
         # Issue #26's per-flow stats page. Gated on its own key rather than on
         # edit_flows: reading numbers and changing a graph are different rights,
         # and every role holds this one today.
