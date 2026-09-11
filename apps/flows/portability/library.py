@@ -10,15 +10,72 @@ working is a red build rather than a download that fails for a stranger.
 (``config/settings/base.py``), and putting JSON documents inside the HTML
 template loader's search path would be a trap for the next person who wonders
 why their template name resolves to a flow.
+
+--------------------------------------------------------------------------
+Cards, and why the description is not in the file
+--------------------------------------------------------------------------
+
+The gallery needs a sentence of English and a category per template, and the
+envelope has a field for neither. It does not get one. ``f.obj`` sets
+``additionalProperties: false`` on every object it builds and offers no opt-out
+(``apps/flows/schema/fields.py``), so a document carrying a ``meta`` key is
+refused by **every installation running today's release** — and these files are
+downloaded from a repository and uploaded into other people's installs. It would
+also break the byte-exact export round trip, since ``export_document`` would
+never emit the key back.
+
+So :class:`TemplateCard` **derives** every fact from the validated document —
+the name from the entry flow, the platforms from the manifest's ``platform``
+keys, the other requirement kinds from the rest of it — and the only
+hand-written thing is :data:`TEMPLATE_COPY`, the one part no machine can infer.
+Nothing that could drift is duplicated: the name on a card *is* the document's
+name, and the badges *are* the manifest. Human copy in a module-level dict is
+the house pattern already (``_KIND_LABELS`` in ``apps/flows/views_portability.py``,
+``FILTER_ICONS`` in ``apps/common/templatetags/common_extras.py``).
+
+A file with no copy entry still gets a card with an empty summary, so a
+self-hoster's drop-in is never invisible; a test asserts the two sets match both
+ways so *ours* can never go missing.
 """
 
+import hashlib
+import logging
+import re
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-__all__ = ["LIBRARY_RELATIVE_PATH", "library_path", "read_template", "template_paths"]
+__all__ = [
+    "LIBRARY_RELATIVE_PATH",
+    "SLUG_PATTERN",
+    "TEMPLATE_COPY",
+    "TemplateCard",
+    "TemplateCopy",
+    "library_path",
+    "read_template",
+    "template_card",
+    "template_cards",
+    "template_for_slug",
+    "template_paths",
+]
+
+logger = logging.getLogger(__name__)
 
 #: Where the shipped templates live, relative to the repository root.
 LIBRARY_RELATIVE_PATH = Path("flow-templates")
+
+#: What a filename's stem has to look like to be addressable as a URL segment.
+#: Django's ``<slug:…>`` converter is the first gate and this is the second; a
+#: test asserts every shipped filename passes, so a file the URL could never
+#: reach is a red build rather than a card whose button 404s.
+#:
+#: ``\Z`` rather than ``$``: Python's ``$`` also matches immediately *before* a
+#: trailing newline, so ``$`` here would accept ``"some-template\n"``. The stem
+#: comparison in :func:`template_for_slug` would still refuse it, but a guard
+#: whose whole job is refusing what does not belong should not need the next
+#: check to cover for it.
+SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}\Z")
 
 
 def library_path() -> Path:
@@ -53,3 +110,238 @@ def read_template(path: Path) -> tuple[dict[str, Any] | None, list[Any]]:
     from apps.flows.portability.imports import parse_and_validate
 
     return parse_and_validate(path.read_bytes())
+
+
+@dataclass(frozen=True)
+class TemplateCopy:
+    """The two things about a template a machine cannot work out for itself."""
+
+    category: str
+    summary: str
+
+
+@dataclass(frozen=True)
+class TemplateCard:
+    """One shipped template, as the gallery shows it.
+
+    Everything but :attr:`summary` and :attr:`category` is read off the validated
+    document, so a card cannot disagree with the file it describes.
+    """
+
+    slug: str
+    filename: str
+    name: str
+    summary: str
+    category: str
+    platforms: tuple[str, ...]
+    needs: tuple[str, ...]
+    trigger_types: tuple[str, ...]
+    flow_count: int
+    step_count: int
+
+
+#: Keyed by filename stem. A template with no entry still gets a card; a stale
+#: entry and a missing one are both caught by a test that compares this against
+#: the directory in both directions.
+TEMPLATE_COPY: dict[str, TemplateCopy] = {
+    "instagram-comment-affiliate-picks": TemplateCopy(
+        category="Convert",
+        summary=(
+            "A comment on the post sends a swipeable gallery of your affiliate picks, each card linking straight out."
+        ),
+    ),
+    "instagram-comment-follow-to-unlock": TemplateCopy(
+        category="Grow",
+        summary=("Ask for the follow before you hand over the freebie, then tag whoever confirms."),
+    ),
+    "instagram-comment-link-in-dm": TemplateCopy(
+        category="Convert",
+        summary=("Someone comments, you reply publicly and DM them the link. The classic comment-to-DM."),
+    ),
+    "instagram-comment-product-gallery": TemplateCopy(
+        category="Convert",
+        summary=("Send the whole lineup as a gallery, then answer the two questions that stop a sale."),
+    ),
+    "instagram-comment-reel-to-product": TemplateCopy(
+        category="Convert",
+        summary=("A Reel got people asking. DM them the product and tag the interest."),
+    ),
+    "instagram-comment-rsvp": TemplateCopy(
+        category="Convert",
+        summary=(
+            "Turn \u201ccomment to join\u201d into a confirmed RSVP with a calendar link and a tag to broadcast to later."
+        ),
+    ),
+    "instagram-comment-to-dm-lead-magnet": TemplateCopy(
+        category="Starters",
+        summary=("Comment-triggered DM that delivers a guide and collects an email address."),
+    ),
+    "instagram-default-reply-autoresponder": TemplateCopy(
+        category="Engage",
+        summary=(
+            "Catch every DM nothing else answered, greet people by name and route them to buy, ask or reach a person."
+        ),
+    ),
+    "instagram-keyword-course-early-access": TemplateCopy(
+        category="Convert",
+        summary=("A keyword puts people on the launch waitlist and tags them for the broadcast on the day."),
+    ),
+    "instagram-keyword-dm-to-sms": TemplateCopy(
+        category="Grow",
+        summary=(
+            "Move the conversation to SMS before Instagram's 24-hour window closes, with a DM fallback if the text fails."
+        ),
+    ),
+    "instagram-keyword-email-capture": TemplateCopy(
+        category="Grow",
+        summary=("Trade a download for an email address. The answer records consent alongside it."),
+    ),
+    "instagram-keyword-faq-hub": TemplateCopy(
+        category="Engage",
+        summary=("One keyword, one hub, four answers, and a way through to a person."),
+    ),
+    "instagram-keyword-link-drop": TemplateCopy(
+        category="Engage",
+        summary=("The simplest one: a keyword in the DM, the link straight back."),
+    ),
+    "instagram-keyword-qualify-quiz": TemplateCopy(
+        category="Engage",
+        summary=("Two questions that tag people by where they are, then send each group a different offer."),
+    ),
+    "instagram-keyword-sms-list": TemplateCopy(
+        category="Grow",
+        summary=("Collect phone numbers with the consent wording the SMS rules expect."),
+    ),
+    "instagram-keyword-where-is-this-from": TemplateCopy(
+        category="Engage",
+        summary=("Answer \u201cwhere is this from?\u201d the moment it lands, with the product and a link."),
+    ),
+    "instagram-keyword-youtube-subscribe": TemplateCopy(
+        category="Grow",
+        summary=("Send your Instagram audience to the long version on YouTube."),
+    ),
+    "instagram-story-collab-requests": TemplateCopy(
+        category="Grow",
+        summary=("Sort collab replies into brands and creators, capture a brief and tag the request."),
+    ),
+    "instagram-story-limited-time-offer": TemplateCopy(
+        category="Convert",
+        summary=("Send the code from your Story, then nudge once before the window closes."),
+    ),
+    "sms-keyword-opt-in": TemplateCopy(
+        category="Starters",
+        summary=("Keyword opt-in over SMS that records consent and tags the subscriber."),
+    ),
+    "telegram-welcome-and-faq": TemplateCopy(
+        category="Starters",
+        summary=("Telegram welcome message with a three-way FAQ menu behind quick replies."),
+    ),
+}
+
+
+def template_for_slug(slug: str) -> Path | None:
+    """The shipped template a URL segment names, or ``None``.
+
+    **Never builds a path from the argument.** The candidate set comes from
+    :func:`template_paths`, and ``slug`` is only ever compared for equality
+    against a stem this module produced — so ``..``, an absolute path, a URL-
+    encoded separator and a symlink all have nothing to act on, rather than being
+    sanitised away and hoped about. Django's ``<slug:…>`` converter means most of
+    those never reach the view at all; :data:`SLUG_PATTERN` stops the rest before
+    the scan.
+    """
+    if not SLUG_PATTERN.match(slug or ""):
+        return None
+    return next((path for path in template_paths() if path.stem == slug), None)
+
+
+def template_card(path: Path) -> TemplateCard | None:
+    """One template as a card, or ``None`` if the file cannot be turned into one.
+
+    ``None`` rather than an exception, for **both** halves of "cannot": a file
+    that does not validate and a file that does not read. The gallery walks every
+    file in a directory a self-hoster can drop things into, so one bad drop-in
+    has to cost that template its card and nothing else — guarding only the parse
+    would still let a permission bit or a disk error take down the whole page. A
+    *shipped* file failing either way is our bug, which is why both are logged.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        logger.warning("flow template %s could not be read and has no card: %s", path.name, error)
+        return None
+    return _card(str(path), hashlib.blake2b(raw, digest_size=16).hexdigest())
+
+
+def template_cards() -> list[TemplateCard]:
+    """Every shipped template as a card, in :func:`template_paths` order."""
+    return [card for card in (template_card(path) for path in template_paths()) if card is not None]
+
+
+@lru_cache(maxsize=256)
+def _card(path_str: str, content_digest: str) -> TemplateCard | None:
+    """The parse behind :func:`template_card`, memoized on the file's *content*.
+
+    Twenty-odd ``parse_and_validate`` calls per page view is the kind of cost
+    that only shows up under load, so the result is cached until the file
+    changes. The key is a digest of the bytes rather than ``(mtime, size)``: an
+    edit that keeps a file the same length — swapping a placeholder URL for one
+    of equal length, fixing a typo — is invisible to mtime granularity on a
+    filesystem that rounds it, and a stale card would then outlive the file it
+    describes. Hashing costs microseconds against a full schema validation.
+
+    Keyed on the path *string* as well, so a test pointing ``settings.BASE_DIR``
+    at a ``tmp_path`` gets its own entries and needs no cache-clearing fixture.
+
+    The re-read here is the price of ``lru_cache`` keying on every argument —
+    passing the bytes in would cache up to ``MAX_DOCUMENT_BYTES`` per entry. It
+    happens on a miss only, and it is guarded because the file can vanish between
+    the digest and the parse.
+    """
+    path = Path(path_str)
+    try:
+        document, issues = read_template(path)
+    except OSError as error:
+        logger.warning("flow template %s could not be read and has no card: %s", path.name, error)
+        return None
+    if document is None:
+        logger.warning(
+            "flow template %s does not validate and has no card: %s",
+            path.name,
+            "; ".join(issue.message for issue in issues[:3]),
+        )
+        return None
+
+    flows = document["flows"]
+    entry = next((flow for flow in flows if flow["key"] == document["entry"]), flows[0])
+    requirements = document["requirements"]
+    copy = TEMPLATE_COPY.get(path.stem)
+
+    return TemplateCard(
+        slug=path.stem,
+        filename=path.name,
+        name=entry["name"],
+        summary=copy.summary if copy else "",
+        category=copy.category if copy else entry.get("folder", ""),
+        platforms=tuple(item["key"] for item in requirements.get("platform", [])),
+        # Sorted for a stable badge order; ``platform`` is dropped because it is
+        # already its own row on the card.
+        needs=tuple(sorted(kind for kind, items in requirements.items() if items and kind != "platform")),
+        trigger_types=tuple(dict.fromkeys(t["type"] for flow in flows for t in flow["triggers"])),
+        flow_count=len(flows),
+        step_count=sum(_steps_in(flow["graph"]) for flow in flows),
+    )
+
+
+def _steps_in(graph: dict[str, Any]) -> int:
+    """Nodes that actually run.
+
+    ``note`` nodes are ``annotation=True``: they take no part in routing and are
+    excluded from the entry-node count (``_routable`` in
+    ``apps/flows/schema/validation.py``). Counting them would tell somebody a
+    one-message template is two steps long, which is exactly the templates that
+    ship a note — all of them.
+    """
+    from apps.flows.schema import node_spec
+
+    return sum(1 for node in graph["nodes"] if not (spec := node_spec(node["type"])) or not spec.annotation)

@@ -1,0 +1,133 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Convert",
+      "graph": {
+        "edges": [
+          {
+            "id": "confirm-default-tag_rsvp",
+            "source": "confirm",
+            "sourceHandle": "default",
+            "target": "tag_rsvp"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are in, {{first_name}}. Here are the details.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Add it to your calendar.",
+                  "title": "Save your spot",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Add to calendar",
+                    "url": "https://example.com/rsvp"
+                  }
+                }
+              ]
+            },
+            "id": "confirm",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "RSVP yes",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_rsvp",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "The tag is the point: broadcast the reminder to everyone carrying 'RSVP yes' the day before. A per-person reminder cannot live in this flow — Instagram closes the messaging window 24 hours after their last message.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "reminders",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Comments into RSVPs",
+      "triggers": [
+        {
+          "config": {
+            "include_keywords": [
+              "in",
+              "join",
+              "rsvp"
+            ],
+            "like_comment": true,
+            "once_per_contact_per_post": true,
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "random",
+              "texts": [
+                "You are in!",
+                "Saved you a spot. Check your DMs."
+              ]
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "rsvp yes",
+        "name": "RSVP yes",
+        "used_by": [
+          "flow-1:tag_rsvp"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

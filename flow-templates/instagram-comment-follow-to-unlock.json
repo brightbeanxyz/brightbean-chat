@@ -1,0 +1,187 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Grow",
+      "graph": {
+        "edges": [
+          {
+            "id": "ask-qr-followed-deliver",
+            "source": "ask",
+            "sourceHandle": "qr:followed",
+            "target": "deliver"
+          },
+          {
+            "id": "ask-qr-later-later",
+            "source": "ask",
+            "sourceHandle": "qr:later",
+            "target": "later"
+          },
+          {
+            "id": "deliver-default-tag_follower",
+            "source": "deliver",
+            "sourceHandle": "default",
+            "target": "tag_follower"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hey {{first_name}}! Happy to send this over, and it goes out to followers first. Give the account a follow and tap below.",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "followed",
+                  "label": "Done, I followed"
+                },
+                {
+                  "id": "later",
+                  "label": "Maybe later"
+                }
+              ]
+            },
+            "id": "ask",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Amazing, here it is. Enjoy!",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Yours to keep.",
+                  "title": "The thing you asked for",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Open it",
+                    "url": "https://example.com/unlock"
+                  }
+                }
+              ]
+            },
+            "id": "deliver",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Follow unlock",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_follower",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "No problem. The link stays here whenever you want it.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "later",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "This asks people to confirm the follow rather than checking it. Instagram with Instagram Login publishes no follow webhook, so nothing can verify it — there is no 'is a follower' condition to branch on. The tag is what you segment on later.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "why_honour_system",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Follow to unlock",
+      "triggers": [
+        {
+          "config": {
+            "include_keywords": [
+              "unlock",
+              "want it",
+              "send it"
+            ],
+            "like_comment": true,
+            "once_per_contact_per_post": true,
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "random",
+              "texts": [
+                "Check your DMs!",
+                "Just sent it over."
+              ]
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "follow unlock",
+        "name": "Follow unlock",
+        "used_by": [
+          "flow-1:tag_follower"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

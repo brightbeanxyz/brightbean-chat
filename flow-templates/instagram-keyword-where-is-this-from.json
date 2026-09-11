@@ -1,0 +1,127 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Engage",
+      "graph": {
+        "edges": [
+          {
+            "id": "answer-default-tag_question",
+            "source": "answer",
+            "sourceHandle": "default",
+            "target": "tag_question"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Good eye. Here is the exact one.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Same colour, same size.",
+                  "title": "The one you spotted",
+                  "type": "card",
+                  "url_button": {
+                    "label": "See it",
+                    "url": "https://example.com/that-one"
+                  }
+                }
+              ]
+            },
+            "id": "answer",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Product question",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_question",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "ManyChat runs its version of this on Live comments. There is no live-comment trigger here, so this listens for the words in a DM instead. Say the keyword out loud during the Live and it does the same job.\n\n'where' matches as a whole word anywhere in the message, so 'where is this from?' and 'where did you get that' both land.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "not_live_comments",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Answer 'where is this from?'",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "where"
+              },
+              {
+                "mode": "any_word",
+                "text": "link"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "product question",
+        "name": "Product question",
+        "used_by": [
+          "flow-1:tag_question"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

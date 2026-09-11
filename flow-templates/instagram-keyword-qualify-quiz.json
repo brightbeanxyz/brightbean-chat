@@ -1,0 +1,428 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Engage",
+      "graph": {
+        "edges": [
+          {
+            "id": "intro-qr-start-stage",
+            "source": "intro",
+            "sourceHandle": "qr:start",
+            "target": "stage"
+          },
+          {
+            "id": "stage-qr-starting-tag_starting",
+            "source": "stage",
+            "sourceHandle": "qr:starting",
+            "target": "tag_starting"
+          },
+          {
+            "id": "stage-qr-growing-tag_growing",
+            "source": "stage",
+            "sourceHandle": "qr:growing",
+            "target": "tag_growing"
+          },
+          {
+            "id": "stage-qr-established-tag_established",
+            "source": "stage",
+            "sourceHandle": "qr:established",
+            "target": "tag_established"
+          },
+          {
+            "id": "tag_starting-default-offer_starting",
+            "source": "tag_starting",
+            "sourceHandle": "default",
+            "target": "offer_starting"
+          },
+          {
+            "id": "tag_growing-default-offer_growing",
+            "source": "tag_growing",
+            "sourceHandle": "default",
+            "target": "offer_growing"
+          },
+          {
+            "id": "tag_established-default-offer_established",
+            "source": "tag_established",
+            "sourceHandle": "default",
+            "target": "offer_established"
+          },
+          {
+            "id": "offer_starting-default-ask_email",
+            "source": "offer_starting",
+            "sourceHandle": "default",
+            "target": "ask_email"
+          },
+          {
+            "id": "offer_growing-default-ask_email",
+            "source": "offer_growing",
+            "sourceHandle": "default",
+            "target": "ask_email"
+          },
+          {
+            "id": "offer_established-default-ask_email",
+            "source": "offer_established",
+            "sourceHandle": "default",
+            "target": "ask_email"
+          },
+          {
+            "id": "ask_email-default-has_email",
+            "source": "ask_email",
+            "sourceHandle": "default",
+            "target": "has_email"
+          },
+          {
+            "id": "ask_email-timeout-no_email",
+            "source": "ask_email",
+            "sourceHandle": "timeout",
+            "target": "no_email"
+          },
+          {
+            "id": "has_email-cond-true-thanks",
+            "source": "has_email",
+            "sourceHandle": "cond:true",
+            "target": "thanks"
+          },
+          {
+            "id": "has_email-cond-false-no_email",
+            "source": "has_email",
+            "sourceHandle": "cond:false",
+            "target": "no_email"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Two questions and I will point you at the right thing.",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "start",
+                  "label": "Go on then"
+                }
+              ]
+            },
+            "id": "intro",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Where are you right now?",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "starting",
+                  "label": "Just starting"
+                },
+                {
+                  "id": "growing",
+                  "label": "Growing"
+                },
+                {
+                  "id": "established",
+                  "label": "Established"
+                }
+              ]
+            },
+            "id": "stage",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Quiz: starting out",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_starting",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Quiz: growing",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_growing",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Quiz: established",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_established",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Start here. It is the shortest path to a first result.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Built for day one.",
+                  "title": "The starter",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Take a look",
+                    "url": "https://example.com/starter"
+                  }
+                }
+              ]
+            },
+            "id": "offer_starting",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are past the basics. This is the one that scales with you.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "For when it is working.",
+                  "title": "The growth plan",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Take a look",
+                    "url": "https://example.com/growth"
+                  }
+                }
+              ]
+            },
+            "id": "offer_growing",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "At your size this is usually a conversation rather than a page.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Tell us what you need.",
+                  "title": "Talk to us",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Book a call",
+                    "url": "https://example.com/call"
+                  }
+                }
+              ]
+            },
+            "id": "offer_established",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "Want the full breakdown by email? Drop your address and I will send it.",
+              "reply_type": "email",
+              "retry": {
+                "invalid_text": "That does not look like an email address. Try once more?",
+                "max": 2
+              },
+              "target": {
+                "key": "email",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 6,
+                "enabled": true,
+                "unit": "hours"
+              }
+            },
+            "id": "ask_email",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "match": "all",
+              "rules": [
+                {
+                  "key": "email",
+                  "op": "has_value",
+                  "source": "system_field"
+                }
+              ]
+            },
+            "id": "has_email",
+            "position": {
+              "x": 1500,
+              "y": 0
+            },
+            "type": "condition"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "On its way. Thanks for playing along.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "thanks",
+            "position": {
+              "x": 1800,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "No bother. Everything above still stands.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "no_email",
+            "position": {
+              "x": 1800,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "The three tags are what this is for. Afterwards you can broadcast to one group without touching the other two, which is the whole reason to ask.\n\nThe condition reads a contact field, not a tag. Contact-field rules cost nothing at import time, while a tag rule has to be matched or created first. Either works; this one is the cheaper default.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "tags_are_the_point",
+            "position": {
+              "x": 2100,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Qualify with a quiz",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "QUIZ"
+              },
+              {
+                "mode": "exact",
+                "text": "HELPME"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "quiz: starting out",
+        "name": "Quiz: starting out",
+        "used_by": [
+          "flow-1:tag_starting"
+        ]
+      },
+      {
+        "key": "quiz: growing",
+        "name": "Quiz: growing",
+        "used_by": [
+          "flow-1:tag_growing"
+        ]
+      },
+      {
+        "key": "quiz: established",
+        "name": "Quiz: established",
+        "used_by": [
+          "flow-1:tag_established"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

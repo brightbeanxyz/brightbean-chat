@@ -1,0 +1,132 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Convert",
+      "graph": {
+        "edges": [
+          {
+            "id": "opener-btn-send-link",
+            "source": "opener",
+            "sourceHandle": "btn:send",
+            "target": "link"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi {{first_name}}, thanks for commenting! Tap below and I will send the link straight over.",
+                  "type": "text"
+                }
+              ],
+              "buttons": [
+                {
+                  "action": "postback",
+                  "id": "send",
+                  "label": "Send me the link"
+                }
+              ]
+            },
+            "id": "opener",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Here you go, straight to the page.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Everything is on this page.",
+                  "title": "What you asked about",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Open the link",
+                    "url": "https://example.com/link"
+                  }
+                }
+              ]
+            },
+            "id": "link",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "The first message exists to open the 24-hour messaging window — Instagram only lets you reply inside it, and a tap is what starts the clock. Sending the link straight away works too, but you lose the chance to follow up.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "opening_dm",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Auto-DM the link from comments",
+      "triggers": [
+        {
+          "config": {
+            "include_keywords": [
+              "link",
+              "send",
+              "info"
+            ],
+            "like_comment": true,
+            "once_per_contact_per_post": true,
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "random",
+              "texts": [
+                "Sent!",
+                "Check your DMs, it is there."
+              ]
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

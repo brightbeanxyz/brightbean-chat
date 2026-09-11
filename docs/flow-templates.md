@@ -264,21 +264,73 @@ Templates live in [`flow-templates/`](../flow-templates/) — not in `templates/
 which is Django's own template directory.
 
 1. Build the flow in a workspace, then use **Export** on the flow list.
-2. Drop the file into `flow-templates/` with a descriptive kebab-case name.
-3. Run the validator:
+2. Drop the file into `flow-templates/` with a descriptive kebab-case name. The
+   stem becomes the template's URL segment in the gallery, so it has to match
+   `^[a-z0-9][a-z0-9-]{0,63}$` — a test enforces that.
+3. Add an entry to `TEMPLATE_COPY` in
+   [`apps/flows/portability/library.py`](../apps/flows/portability/library.py),
+   keyed by that stem: a one-sentence summary and a category. A test compares
+   that dict against the directory **in both directions**, so a template with no
+   blurb and a blurb with no template are both a red build.
+4. Run the validator:
 
    ```bash
    python manage.py validate_flow_templates
    ```
 
-4. Open a pull request. `apps/flows/tests/test_portability_library.py` validates
+5. Open a pull request. `apps/flows/tests/test_portability_library.py` validates
    every file in the directory and imports each one into a clean workspace, so a
    template that stops working turns the build red.
 
 Keep a template free of anything specific to your workspace: no real customer
 names, no live URLs you do not control, no credentials. The export already
 removes the ones it can identify, but a message body is your own prose and it
-travels exactly as you wrote it.
+travels exactly as you wrote it. **Every link in a shipped template points at
+`example.com`** — RFC 2606 reserves it, so a placeholder left in by accident can
+never become an endorsement of whoever registers the domain next. A test asserts
+it.
+
+### Why the description is not in the file
+
+The gallery needs a sentence and a category per template, and the envelope has a
+field for neither — deliberately. Every object in this schema is closed
+(`additionalProperties: false`, with no opt-out — see
+[`apps/flows/schema/fields.py`](../apps/flows/schema/fields.py)), so a document
+carrying an extra `meta` key would be **refused by every installation running
+today's release**, and these files are downloaded from a repository and uploaded
+into other people's installs. It would also break the byte-exact round trip,
+because `export_document` would never emit the key back.
+
+So the card derives everything it can from the validated document — the name
+from the entry flow, the channels from the manifest's `platform` keys, the rest
+of the badges from the other requirement kinds — and only the English lives in
+`TEMPLATE_COPY`.
+
+### The templates this repository ships are generated
+
+The files under `flow-templates/` that ship with BrightBean Chat are **build
+artifacts**. Their readable form is
+[`apps/flows/tests/template_sources.py`](../apps/flows/tests/template_sources.py),
+and the JSON is what the real exporter makes of it:
+
+```bash
+BRIGHTBEAN_REGENERATE_TEMPLATES=1 pytest apps/flows/tests/test_template_library_sources.py
+```
+
+Without the flag the same test asserts instead of writing, so an edited JSON file
+and a stale definition are both caught — the arrangement
+`static/flows/flow-schema.json` has with `export_flow_schema --check`.
+
+The reason is the round-trip guarantee above. A hand-written envelope has to
+independently rediscover every convention in `export.py` — manifest entries in
+first-appearance walk order, an entry keyed by its ref when something addresses
+it by id and by its case-folded name otherwise, the `detail` a custom field
+carries, `folder` emitted even when empty, a comment trigger's `post_ids`
+emptied rather than removed. Generating it means the library cannot drift from
+the format the importer accepts.
+
+**A contributed template does not have to be generated.** Export from a
+workspace, as above; the validator and the library tests are the same either way.
 
 ---
 

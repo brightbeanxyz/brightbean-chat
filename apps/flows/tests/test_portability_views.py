@@ -39,6 +39,15 @@ def _record_for(tenancy: Any) -> FlowImport:
     return record
 
 
+def _real_library() -> Any:
+    """The shipped template directory, resolved before a test moves BASE_DIR."""
+    from django.conf import settings
+
+    from apps.flows.portability.library import LIBRARY_RELATIVE_PATH
+
+    return settings.BASE_DIR / LIBRARY_RELATIVE_PATH
+
+
 class TestExport:
     def test_an_editor_downloads_the_flow(self, tenancy: Any, client_for: Any) -> None:
         seeded = seed(tenancy)
@@ -431,3 +440,192 @@ class TestHousekeeping:
         discard_stale_imports()
 
         assert FlowImport.objects.for_workspace(tenancy.workspace).filter(pk=record.pk).exists()
+
+
+class TestTheTemplateGallery:
+    """Step zero: the shipped library, reachable without downloading a file."""
+
+    def test_it_lists_every_shipped_template(self, tenancy: Any, client_for: Any) -> None:
+        from django.utils.html import escape
+
+        from apps.flows.portability.library import template_cards
+
+        response = client_for(tenancy.owner).get(_url("template_gallery", tenancy))
+        assert response.status_code == 200
+        body = response.content.decode()
+        cards = template_cards()
+        assert cards, "the repository ships no templates"
+        for card in cards:
+            # ``escape`` because a name is author text and reaches the page
+            # escaped, which is the property the XSS test below asserts directly.
+            assert escape(card.name) in body
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_without_edit_flows_is_refused(self, tenancy: Any, client_for: Any, role: str) -> None:
+        assert client_for(tenancy.user_for(role)).get(_url("template_gallery", tenancy)).status_code == 403
+
+    def test_another_tenants_workspace_is_not_found(self, tenancy: Any, other_tenancy: Any, client_for: Any) -> None:
+        url = _url("template_gallery", tenancy)
+        assert client_for(other_tenancy.owner).get(url).status_code == 404
+
+    def test_it_survives_an_empty_library(self, tenancy: Any, client_for: Any, settings: Any, tmp_path: Any) -> None:
+        """A directory that is missing or empty is an empty state, not a 500.
+
+        Asserted on the context rather than on the empty state's wording: the
+        page renders and has nothing to offer is the behaviour, and the sentence
+        that says so is copy a restyle is free to rewrite.
+        """
+        settings.BASE_DIR = tmp_path
+        response = client_for(tenancy.owner).get(_url("template_gallery", tenancy))
+        assert response.status_code == 200
+        assert response.context["cards"] == []
+        assert response.context["categories"] == []
+
+    def test_template_text_reaches_the_page_escaped(
+        self, tenancy: Any, client_for: Any, settings: Any, tmp_path: Any
+    ) -> None:
+        """A shipped file is still author text, held to the same rule as an upload."""
+        library = tmp_path / "flow-templates"
+        library.mkdir()
+        document = json.loads((_real_library() / "telegram-welcome-and-faq.json").read_text())
+        document["flows"][0]["name"] = '<script>alert("xss")</script>'
+        (library / "nasty.json").write_text(json.dumps(document))
+        settings.BASE_DIR = tmp_path
+
+        body = client_for(tenancy.owner).get(_url("template_gallery", tenancy)).content.decode()
+        assert "&lt;script&gt;" in body
+        assert "<script>alert" not in body
+
+
+class TestStartingFromATemplate:
+    def test_it_creates_only_the_import_row(self, tenancy: Any, client_for: Any) -> None:
+        """The same promise the upload keeps: nothing but the FlowImport row."""
+        response = client_for(tenancy.owner).post(
+            _url("template_start", tenancy, template_slug="telegram-welcome-and-faq")
+        )
+
+        assert response.status_code == 302
+        assert not Flow.objects.for_workspace(tenancy.workspace).exists()
+        record = _record_for(tenancy)
+        assert record.status == FlowImportStatus.PENDING
+        assert record.original_filename == "telegram-welcome-and-faq.json"
+        assert response["Location"] == _url("import_review", tenancy, flow_import_id=record.pk)
+
+    def test_the_mapping_arrives_prefilled_exactly_as_an_uploads_does(self, tenancy: Any, client_for: Any) -> None:
+        """The point of ``_begin_import`` being one function.
+
+        Mirrors ``test_each_one_imports_into_an_empty_workspace``: a clean
+        workspace should have nothing left to answer but its channels.
+        """
+        client_for(tenancy.owner).post(_url("template_start", tenancy, template_slug="sms-keyword-opt-in"))
+        record = _record_for(tenancy)
+        plan = portability.plan_import(tenancy.workspace, record.document, record.mapping)
+        assert [answer.requirement.kind for answer in plan.unanswered] == ["platform"]
+
+    def test_the_review_page_renders_for_a_template_import(self, tenancy: Any, client_for: Any) -> None:
+        client = client_for(tenancy.owner)
+        client.post(_url("template_start", tenancy, template_slug="telegram-welcome-and-faq"))
+        response = client.get(_url("import_review", tenancy, flow_import_id=_record_for(tenancy).pk))
+        assert response.status_code == 200
+        assert "Telegram welcome and FAQ" in response.content.decode()
+
+    def test_confirming_creates_the_flow_as_a_draft_with_triggers_off(self, tenancy: Any, client_for: Any) -> None:
+        from apps.flows.models import Trigger
+        from apps.flows.tests.portability_support import answer_channels
+
+        client = client_for(tenancy.owner)
+        client.post(_url("template_start", tenancy, template_slug="telegram-welcome-and-faq"))
+        record = _record_for(tenancy)
+        record.mapping = answer_channels(record.document, record.mapping)
+        record.save(update_fields=["mapping"])
+
+        # 204 with a toast + ``flowsChanged`` event: the confirm answers HTMX,
+        # the same as it does for an uploaded import.
+        response = client.post(_url("import_confirm", tenancy, flow_import_id=record.pk))
+        assert response.status_code == 204
+
+        flows = Flow.objects.for_workspace(tenancy.workspace)
+        assert flows.exists()
+        assert all(flow.status == "draft" for flow in flows)
+        assert not Trigger.objects.for_workspace(tenancy.workspace).filter(enabled=True).exists()
+
+    def test_trigger_types_reach_the_page_as_labels_not_enum_values(self, tenancy: Any, client_for: Any) -> None:
+        """The gallery names a trigger the way the trigger panel does.
+
+        ``default_reply`` and ``story_reply`` are storage values; a card showing
+        one is the same feature speaking with two voices.
+        """
+        body = client_for(tenancy.owner).get(_url("template_gallery", tenancy)).content.decode()
+        assert "Default reply" in body
+        assert "Story reply" in body
+        assert "default_reply" not in body
+        assert "story_reply" not in body
+
+    def test_the_error_page_keeps_the_category_filters(
+        self, tenancy: Any, client_for: Any, settings: Any, tmp_path: Any
+    ) -> None:
+        """The 400 renders the same page, so it gets the same context.
+
+        It used to be built from a second copy of the dict that passed no
+        categories, which silently dropped the filter chips.
+        """
+        library = tmp_path / "flow-templates"
+        library.mkdir()
+        (library / "broken.json").write_text("{ not json")
+        (library / "fine.json").write_bytes((_real_library() / "sms-keyword-opt-in.json").read_bytes())
+        settings.BASE_DIR = tmp_path
+
+        response = client_for(tenancy.owner).post(_url("template_start", tenancy, template_slug="broken"))
+        assert response.status_code == 400
+        assert response.context["categories"] == ["Starters"]
+        assert [entry["card"].name for entry in response.context["cards"]] == ["SMS keyword opt-in"]
+        assert response.context["errors"]
+
+    @pytest.mark.parametrize(
+        "slug",
+        [
+            "no-such-template",
+            "..",
+            "../conftest",
+            "..%2F..%2Fconftest",
+            "telegram-welcome-and-faq.json",
+            "/etc/passwd",
+        ],
+    )
+    def test_an_unknown_or_traversing_slug_is_a_404_and_stores_nothing(
+        self, tenancy: Any, client_for: Any, slug: str
+    ) -> None:
+        """Most of these never reach the view — Django's ``<slug:…>`` converter
+        does not match them, so the URL does not resolve. The ones that do reach
+        it are refused by the whitelist. Either way the answer is 404 and the
+        table is untouched."""
+        response = client_for(tenancy.owner).post(f"/w/{tenancy.workspace.pk}/flows/templates/{slug}/start/")
+        assert response.status_code == 404
+        assert not FlowImport.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_get_cannot_start_an_import(self, tenancy: Any, client_for: Any) -> None:
+        response = client_for(tenancy.owner).get(
+            _url("template_start", tenancy, template_slug="telegram-welcome-and-faq")
+        )
+        assert response.status_code == 405
+        assert not FlowImport.objects.for_workspace(tenancy.workspace).exists()
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_without_edit_flows_is_refused(self, tenancy: Any, client_for: Any, role: str) -> None:
+        response = client_for(tenancy.user_for(role)).post(
+            _url("template_start", tenancy, template_slug="telegram-welcome-and-faq")
+        )
+        assert response.status_code == 403
+        assert not FlowImport.objects.for_workspace(tenancy.workspace).exists()
+
+    def test_a_template_that_does_not_validate_stores_nothing(
+        self, tenancy: Any, client_for: Any, settings: Any, tmp_path: Any
+    ) -> None:
+        library = tmp_path / "flow-templates"
+        library.mkdir()
+        (library / "broken.json").write_text("{ not json")
+        settings.BASE_DIR = tmp_path
+
+        response = client_for(tenancy.owner).post(_url("template_start", tenancy, template_slug="broken"))
+        assert response.status_code == 400
+        assert not FlowImport.objects.for_workspace(tenancy.workspace).exists()

@@ -1,0 +1,177 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Convert",
+      "graph": {
+        "edges": [
+          {
+            "id": "lineup-qr-sizing-sizing",
+            "source": "lineup",
+            "sourceHandle": "qr:sizing",
+            "target": "sizing"
+          },
+          {
+            "id": "lineup-qr-shipping-shipping",
+            "source": "lineup",
+            "sourceHandle": "qr:shipping",
+            "target": "shipping"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Here is the full lineup. Anything you want to know?",
+                  "type": "text"
+                },
+                {
+                  "cards": [
+                    {
+                      "subtitle": "Our bestseller.",
+                      "title": "The everyday one",
+                      "url_button": {
+                        "label": "View",
+                        "url": "https://example.com/everyday"
+                      }
+                    },
+                    {
+                      "subtitle": "More of everything.",
+                      "title": "The upgrade",
+                      "url_button": {
+                        "label": "View",
+                        "url": "https://example.com/upgrade"
+                      }
+                    },
+                    {
+                      "subtitle": "Both, for less.",
+                      "title": "The bundle",
+                      "url_button": {
+                        "label": "View",
+                        "url": "https://example.com/bundle"
+                      }
+                    }
+                  ],
+                  "type": "gallery"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "sizing",
+                  "label": "How do sizes run?"
+                },
+                {
+                  "id": "shipping",
+                  "label": "Shipping and returns"
+                }
+              ]
+            },
+            "id": "lineup",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "They run true to size. If you are between two, size up.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "sizing",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Free shipping over the threshold, and 30 days to change your mind.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "shipping",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "The two quick replies are the questions that actually stop a sale. Replace them with yours — read your own DMs for a week and use the two you answer most.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "two_questions",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Product lineup in DMs",
+      "triggers": [
+        {
+          "config": {
+            "include_keywords": [
+              "lineup",
+              "shop",
+              "products"
+            ],
+            "like_comment": true,
+            "once_per_contact_per_post": true,
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "random",
+              "texts": [
+                "Sent the lineup!",
+                "Check your DMs."
+              ]
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

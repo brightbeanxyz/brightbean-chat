@@ -1,0 +1,96 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Engage",
+      "graph": {
+        "edges": [],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Here it is, {{first_name}}. No more hunting through the bio.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Everything lives here.",
+                  "title": "The page you wanted",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Open it",
+                    "url": "https://example.com/link"
+                  }
+                }
+              ]
+            },
+            "id": "link",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "Put the keyword in the caption and the Story: 'DM me LINK'. One word people can type without thinking beats a sentence they have to remember.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "one_word",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Drop the link in DMs",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "LINK"
+              },
+              {
+                "mode": "exact",
+                "text": "SITE"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

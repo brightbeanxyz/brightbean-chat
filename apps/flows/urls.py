@@ -26,6 +26,16 @@ urlpatterns = [
     path("flows/<uuid:flow_id>/export/", views_portability.flow_export, name="export"),
     path("flows/<uuid:flow_id>/export/bundle/", views_portability.flow_export_bundle, name="export_bundle"),
     path("flows/import/", views_portability.import_start, name="import_start"),
+    # Step zero of the same wizard: pick one of the templates this
+    # installation ships instead of uploading a file. ``template_slug`` is a
+    # filename stem, identical for every tenant and resolved against a
+    # whitelist — see ``template_for_slug`` and ``tests/idor.py``.
+    path("flows/templates/", views_portability.template_gallery, name="template_gallery"),
+    path(
+        "flows/templates/<slug:template_slug>/start/",
+        views_portability.template_start,
+        name="template_start",
+    ),
     path(
         "flows/imports/<uuid:flow_import_id>/",
         views_portability.import_review,
