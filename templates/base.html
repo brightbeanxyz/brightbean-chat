@@ -144,14 +144,29 @@
                     <span class="sidebar-nav-label text-sm font-semibold truncate" style="color: var(--text-primary);">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
                     <svg class="sidebar-nav-label ml-auto flex-shrink-0" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-ghost);"><path d="M8 9l4-4 4 4"/><path d="M16 15l-4 4-4-4"/></svg>
                 </button>
+                {% comment %}min-width so the panel escapes the 60px rail when the
+                sidebar is collapsed. Without it every row wraps inside a 36px box
+                and the labels spill outside the panel. The expanded sidebar is
+                wider than this, so it only bites in the collapsed state.{% endcomment %}
                 <div x-show="wsOpen" x-cloak class="anim-collapse absolute left-0 right-0 mt-1 z-50 rounded-lg py-1"
-                     style="background: var(--surface-0); box-shadow: var(--shadow-lg); border: 1px solid var(--border);">
+                     style="min-width: 200px; background: var(--surface-0); box-shadow: var(--shadow-lg); border: 1px solid var(--border);">
                     {% for ws in sidebar_workspaces %}
                     <a href="{{ ws.url }}" class="block px-3 py-1.5 text-xs btn-surface-1"
                        style="color: {% if ws.is_current %}var(--brand-700){% else %}var(--text-secondary){% endif %};">{{ ws.name }}</a>
                     {% endfor %}
                     {% if can_create_workspace %}
                     <a href="{{ create_workspace_url }}" class="block px-3 py-1.5 text-xs btn-surface-1" style="color: var(--primary);">New workspace</a>
+                    {% endif %}
+                    {% comment %}Empty for a member with no row in the section at
+                    all, so the link and the nav it opens are guarded by the same
+                    fact.{% endcomment %}
+                    {% if workspace_settings_url %}
+                    <div class="mt-1 pt-1 border-t" style="border-color: var(--border);">
+                        <a href="{{ workspace_settings_url }}" class="flex items-center gap-2 px-3 py-1.5 text-xs btn-surface-1" style="color: var(--text-secondary);">
+                            {% include "partials/_nav_icon.html" with name="settings" icon_size=14 %}
+                            <span>Workspace settings</span>
+                        </a>
+                    </div>
                     {% endif %}
                 </div>
             </div>

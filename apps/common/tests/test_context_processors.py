@@ -14,18 +14,29 @@ from apps.common.context_processors import (
 )
 
 
-def _request(path="/", *, workspace=None, user=None, org_membership=None):
+def _request(path="/", *, workspace=None, user=None, org_membership=None, workspace_membership=None):
     """A request shaped like one RBACMiddleware has already handled.
 
     RequestFactory runs no URL resolution and no middleware, and both matter
     here: `resolver_match` is what the active flag is computed from, and
     `request.workspace` is what workspace-scoped rows reverse against.
+    `workspace_membership` is what the permission-gated controls read.
     """
     request = RequestFactory().get(path)
     request.resolver_match = resolve(path)
     request.workspace = workspace
     request.org_membership = org_membership
     request.user = user if user is not None else AnonymousUser()
+    # RBACMiddleware attaches the signed-in user's own membership whenever it
+    # resolves a workspace, so default to that rather than leaving it None: a
+    # caller passing only `workspace=` should still get a request the middleware
+    # could actually have built, or permission-gated nav rows vanish for reasons
+    # the test never meant to assert.
+    if workspace_membership is None and workspace is not None and user is not None:
+        from apps.members.models import WorkspaceMembership
+
+        workspace_membership = WorkspaceMembership.objects.filter(user=user, workspace=workspace).first()
+    request.workspace_membership = workspace_membership
     return request
 
 
@@ -235,6 +246,37 @@ class TestNavStructure:
 
         assert len(keys) == len(set(keys))
 
+    def test_every_permission_a_row_names_is_a_real_permission_key(self):
+        """A typo in NavItem.permission fails open in the worst direction: the
+        key is never in effective_permissions, so the row silently vanishes for
+        everyone and the page becomes unreachable again. The check lives here
+        rather than in __post_init__ because these items are built at module
+        import, before the app registry is guaranteed to be populated."""
+        from apps.members.roles import PERMISSION_KEYS
+
+        named = {i.permission for g in MAIN_NAV + SETTINGS_NAV for i in g.items if i.permission}
+
+        assert named <= set(PERMISSION_KEYS), f"not permission keys: {sorted(named - set(PERMISSION_KEYS))}"
+
+    def test_each_gated_row_names_the_permission_its_own_view_enforces(self):
+        """The nav and the decorator have to agree row by row. Drift either way
+        is a bug: too strict hides a page someone may open, too loose renders a
+        control that 403s."""
+        expected = {
+            "ws_general": "manage_workspace_settings",
+            "ws_channels": "manage_channels",
+            "ws_credentials": "manage_workspace_settings",
+            "ws_labels": "reply_in_inbox",
+            "ws_inbox_rules": "manage_workspace_settings",
+            "ws_email_tracking": "manage_workspace_settings",
+            "ws_fields": "manage_crm",
+            "ws_tags": "manage_crm",
+            "ws_webhooks": "manage_workspace_settings",
+        }
+        rows = {i.key: i.permission for g in SETTINGS_NAV for i in g.items if g.label == "Workspace"}
+
+        assert rows == expected
+
     def test_the_product_nav_is_the_one_the_issue_specifies(self):
         keys = [i.key for g in MAIN_NAV for i in g.items]
 
@@ -326,6 +368,95 @@ class TestTenancyIntegration:
 
         assert owner_ctx["can_create_workspace"] is True
         assert viewer_ctx["can_create_workspace"] is False
+
+    def _ws_context(self, tenancy, role):
+        return navigation_context(
+            _request(
+                f"/w/{tenancy.workspace.id}/",
+                workspace=tenancy.workspace,
+                user=tenancy.user_for(role),
+                workspace_membership=tenancy.membership_for(role),
+            )
+        )
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        ("role", "expected"),
+        [
+            # Every row, in SETTINGS_NAV order, for a workspace admin.
+            (
+                "admin",
+                [
+                    "General",
+                    "Channels",
+                    "Platform credentials",
+                    "Labels",
+                    "Inbox rules",
+                    "Email tracking",
+                    "Fields",
+                    "Tags",
+                    "Webhooks",
+                ],
+            ),
+            # Editor is admin minus the four admin-only keys, so what survives
+            # is exactly the manage_crm and reply_in_inbox rows.
+            ("editor", ["Labels", "Fields", "Tags"]),
+            ("agent", ["Labels"]),
+            # Viewer holds use_inbox and view_analytics, neither of which gates
+            # a row here — the whole section disappears.
+            ("viewer", []),
+        ],
+    )
+    def test_the_section_shows_a_role_only_the_pages_it_may_open(self, tenancy, role, expected):
+        """Each row carries the permission key its own view is decorated with.
+        A row that renders for someone who gets a 403 when they press it is
+        worse than no row (apps/contacts/views.py)."""
+        context = self._ws_context(tenancy, role)
+
+        labels = [item["label"] for group in context["workspace_settings_nav_groups"] for item in group["items"]]
+        assert labels == expected
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        ("role", "expected_suffix"),
+        [
+            ("admin", "settings/"),
+            # Not "settings/": an Editor cannot open General, so the switcher
+            # sends them to the first row they can.
+            ("editor", "inbox/settings/labels/"),
+            ("agent", "inbox/settings/labels/"),
+        ],
+    )
+    def test_the_switcher_enters_the_section_at_the_first_reachable_page(self, tenancy, role, expected_suffix):
+        context = self._ws_context(tenancy, role)
+
+        assert context["workspace_settings_url"] == f"/w/{tenancy.workspace.id}/{expected_suffix}"
+
+    @pytest.mark.django_db
+    def test_a_viewer_gets_no_way_in_because_there_is_nothing_to_open(self, tenancy):
+        """Empty rather than "#": the template hides the link on exactly this,
+        so the guard cannot drift from the nav it guards."""
+        context = self._ws_context(tenancy, "viewer")
+
+        assert context["workspace_settings_url"] == ""
+
+    @pytest.mark.django_db
+    def test_without_a_workspace_there_is_nothing_to_configure(self, tenancy):
+        """Pairs with test_workspace_scoped_rows_vanish_without_a_workspace: a
+        link into a workspace that is not there is worse than no link."""
+        context = navigation_context(_request("/organization/settings/", user=tenancy.owner))
+
+        assert context["workspace_settings_url"] == ""
+
+    @pytest.mark.django_db
+    def test_gating_a_row_does_not_gate_the_product_nav(self, tenancy):
+        """Only the workspace-settings rows carry a permission key. A Viewer
+        still gets the main nav, which is gated by the views themselves."""
+        context = self._ws_context(tenancy, "viewer")
+
+        keys = [item["key"] for group in context["nav_groups"] for item in group["items"]]
+        assert "dashboard" in keys
+        assert context["workspace_settings_nav_groups"] == []
 
     @pytest.mark.django_db
     def test_the_logout_control_is_wired_now_that_allauth_is_installed(self, tenancy):
