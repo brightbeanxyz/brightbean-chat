@@ -111,6 +111,21 @@ class SubscriberPage:
         return self.total > len(self.rows)
 
 
+def subscriber_count(sequence: Sequence) -> int:
+    """How many people are on this sequence in any state at all.
+
+    ``subscribers_for`` counts within the chosen filter, which is what the "N
+    active" line needs and exactly the wrong number for deciding whether an
+    empty panel means an empty sequence or an empty *view*. Called only when a
+    filter came back empty, so no page pays for it twice.
+    """
+    return (
+        SequenceEnrollment.objects.for_workspace(sequence.workspace_id)
+        .filter(sequence=sequence, contact__status=ContactStatus.ACTIVE)
+        .count()
+    )
+
+
 def subscribers_for(sequence: Sequence, *, status: str = EnrollmentStatus.ACTIVE) -> SubscriberPage:
     """The enrollment rows for the subscriber panel, newest first, plus the total.
 

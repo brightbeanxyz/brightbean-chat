@@ -133,6 +133,20 @@ class SequenceStep(WorkspaceScopedModel):
     def __str__(self) -> str:
         return f"{self.sequence_id} step {self.position}"
 
+    @property
+    def delay_label(self) -> str:
+        """The delay as a person would say it: "1 minute", "3 days".
+
+        DelayUnit's labels are plural because they name the unit in a <select>,
+        where "Minutes" is right and there is no number beside them. Rendering
+        that same label next to a value produced "Wait 1 minutes" on every step
+        anyone ever set to one. Built here rather than in the template so the
+        summary and anything else that words a delay agree.
+        """
+        singular = {DelayUnit.MINUTES: "minute", DelayUnit.HOURS: "hour", DelayUnit.DAYS: "day"}
+        unit = singular.get(DelayUnit(self.delay_unit), str(self.delay_unit))
+        return f"{self.delay_value} {unit}" if self.delay_value == 1 else f"{self.delay_value} {unit}s"
+
     def clean(self) -> None:
         """Refuse a step whose flow or sequence belongs to another tenant.
 
