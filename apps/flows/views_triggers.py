@@ -119,7 +119,31 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             "post_pickers": _post_pickers(spec, workspace_id),
         }
     )
+    context.update(_comment_text(trigger_type, config))
     return render(request, "flows/_trigger_form.html", context)
+
+
+def _comment_text(trigger_type: str, config: dict[str, Any] | None) -> dict[str, str]:
+    """The comment form's four list fields, pre-joined for their textareas.
+
+    The template cannot do this itself. ``join`` takes no raw newline on one
+    line, and the two-line spelling it used instead was never a tag at all —
+    Django's lexer does not match across a newline, so each one rendered as its
+    own source *inside* the textarea and was saved back as config on the next
+    submit. See :func:`apps.flows.triggers.forms.text_lines`.
+    """
+    if trigger_type != TriggerType.COMMENT:
+        return {}
+    config = config or {}
+    public_reply = config.get("public_reply")
+    if not isinstance(public_reply, dict):
+        public_reply = {}
+    return {
+        "post_ids_text": forms.text_lines(config.get("post_ids")),
+        "include_keywords_text": forms.text_lines(config.get("include_keywords")),
+        "exclude_keywords_text": forms.text_lines(config.get("exclude_keywords")),
+        "public_reply_texts_text": forms.text_lines(public_reply.get("texts")),
+    }
 
 
 def _post_pickers(spec: Any, workspace_id: str) -> list[dict[str, str]]:

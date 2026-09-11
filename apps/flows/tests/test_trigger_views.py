@@ -1,6 +1,7 @@
 """The Triggers panel: CRUD, role gating, refusals, and the QR endpoint."""
 
 import json
+from html.parser import HTMLParser
 
 import pytest
 import segno
@@ -33,6 +34,60 @@ def _trigger(flow, trigger_type=TriggerType.KEYWORD, config=None, *, connection=
     )
     trigger.save()
     return trigger
+
+
+def _form_values(html):
+    """The submittable fields of a rendered trigger form, as a POST dict.
+
+    Parsed rather than hand-written so the test exercises what the *template*
+    produced. A hand-written POST dict would have passed happily while the
+    boxes on screen held template source.
+    """
+    parser = _FormReader()
+    parser.feed(html)
+    return parser.values
+
+
+class _FormReader(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.values = {}
+        self._textarea = None
+        self._select = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        # An <option> carries no name of its own -- it belongs to the <select>
+        # still open around it -- so it has to be read before the name check.
+        if tag == "option":
+            if self._select is not None and "selected" in attrs:
+                self.values[self._select] = attrs.get("value", "")
+            return
+        name = attrs.get("name")
+        if not name:
+            return
+        if tag == "textarea":
+            self._textarea = name
+            self.values[name] = ""
+        elif tag == "select":
+            self._select = name
+            # A <select> with nothing marked selected submits its first option.
+            self.values.setdefault(name, "")
+        elif tag == "input":
+            kind = attrs.get("type", "text")
+            if kind in {"checkbox", "radio"} and "checked" not in attrs:
+                return
+            self.values[name] = attrs.get("value", "on")
+
+    def handle_data(self, data):
+        if self._textarea is not None:
+            self.values[self._textarea] += data
+
+    def handle_endtag(self, tag):
+        if tag == "textarea":
+            self._textarea = None
+        elif tag == "select":
+            self._select = None
 
 
 def _events(response):
@@ -160,6 +215,70 @@ class TestTheForm:
         response = client_for(tenancy.owner).get(_url("flows:trigger_form", tenancy, flow) + "?trigger=not-a-uuid")
 
         assert response.status_code == 404
+
+    def test_the_edit_form_does_not_leak_its_own_template_source(self, tenancy, client_for, flow):
+        """Four textareas here once held an unparseable ``{{ …|join:"…" }}``.
+
+        Django's lexer does not match a tag across a newline, so each one was
+        emitted verbatim as the textarea's *content* and saved back as config on
+        the next submit. The old test asserted only that a ``<form`` was
+        present, which that bug satisfied perfectly.
+        """
+        config = {
+            "post_scope": "specific",
+            "post_ids": ["17900000000000000"],
+            "include_keywords": ["PRICE"],
+            "exclude_keywords": ["refund"],
+            "top_level_only": True,
+            "public_reply": {"mode": "static", "texts": ["Just sent you a DM!"]},
+            "like_comment": False,
+            "once_per_contact_per_post": True,
+        }
+        trigger = _trigger(flow, TriggerType.COMMENT, config)
+
+        response = client_for(tenancy.owner).get(_url("flows:trigger_form", tenancy, flow) + f"?trigger={trigger.pk}")
+
+        assert response.status_code == 200
+        body = response.content
+        assert b"|join:" not in body
+        assert b"{{" not in body
+        # The values themselves still reach their boxes.
+        assert b"PRICE" in body
+        assert b"Just sent you a DM!" in body
+
+    def test_a_stored_comment_config_survives_a_save_that_changes_nothing(self, tenancy, client_for, flow):
+        """Open the form, press Save, and get back exactly what was stored.
+
+        This is the round trip the bug broke: the template source rendered into
+        the boxes parsed as two perfectly valid keywords, so the schema accepted
+        it and ``include_keywords`` silently became junk that matched no comment
+        at all.
+        """
+        config = {
+            "post_scope": "specific",
+            "post_ids": ["17900000000000000", "17900000000000001"],
+            "include_keywords": ["PRICE", "cost"],
+            "exclude_keywords": ["refund"],
+            "top_level_only": True,
+            "public_reply": {"mode": "static", "texts": ["Just sent you a DM!"]},
+            "like_comment": False,
+            "once_per_contact_per_post": True,
+        }
+        trigger = _trigger(flow, TriggerType.COMMENT, config)
+        client = client_for(tenancy.owner)
+
+        rendered = client.get(_url("flows:trigger_form", tenancy, flow) + f"?trigger={trigger.pk}")
+        post = _form_values(rendered.content.decode())
+
+        saved = client.post(
+            _url("flows:trigger_update", tenancy, flow, trigger_id=trigger.pk),
+            post,
+        )
+
+        assert saved.status_code == 204
+        assert _events(saved).get("triggersChanged")
+        trigger.refresh_from_db()
+        assert trigger.config_json == config
 
 
 @pytest.mark.django_db
