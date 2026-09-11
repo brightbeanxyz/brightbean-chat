@@ -59,6 +59,19 @@ class TestTheCommittedArtefact:
         """Order and copy are data too, so the builder needs no second table."""
         assert json_schema()["x-brightbean"]["groups"] == [{"key": key, "label": label} for key, label in GROUPS]
 
+    def test_no_node_type_explains_itself_by_citing_the_spec(self):
+        """Descriptions are the palette's tooltips, rendered verbatim.
+
+        Every one of them used to open with a §-number — "SPEC §11.8.
+        Validated reply capture…" — which nobody outside this repository can
+        look up. The reference is still in nodes.py, as a comment beside the
+        type, where it is useful to the only people who can act on it.
+        """
+        for entry in json_schema()["x-brightbean"]["node_types"]:
+            description = entry["description"]
+            for leak in ("SPEC", "§", "SECURITY-BASELINE", "Runtime is L"):
+                assert leak not in description, f"{entry['type']} tooltip leaks {leak!r}: {description!r}"
+
     def test_every_group_but_the_fallback_has_a_node_type_in_it(self):
         """`other` is the default a later issue's node type falls into, so it is
         allowed to be empty. A named drawer that is empty is a typo."""
