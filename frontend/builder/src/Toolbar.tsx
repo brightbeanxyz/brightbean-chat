@@ -7,6 +7,12 @@
  * draft is allowed to be half-wired. And Publish stays enabled with known
  * errors: what the builder knows is only as of the last save, so disabling it
  * would be a claim it cannot support.
+ *
+ * The one case where Publish *is* disabled is not that policy loosening. It is
+ * the server having told us this exact version is published and nothing having
+ * been edited since, which the builder can support: any edit bumps `revision`,
+ * which moves save.state to dirty, which re-enables the button. See
+ * publishState.ts.
  */
 import { useState } from "react";
 
@@ -14,17 +20,10 @@ import { ApiError } from "./api/client";
 import { TestOnTelegram } from "./TestOnTelegram";
 import type { ValidationPayload } from "./schema/types";
 import { publishFlow } from "./api/flows";
+import { publishView } from "./publishState";
+import { showToast } from "./toast";
 import type { Autosave } from "./persistence/autosave";
 import { useBuilder, useBuilderStore } from "./store/context";
-
-const SAVE_COPY: Record<string, string> = {
-  clean: "No changes",
-  dirty: "Unsaved changes",
-  saving: "Saving…",
-  saved: "Saved",
-  rejected: "Not saved",
-  error: "Save failed",
-};
 
 export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const store = useBuilderStore();
@@ -37,7 +36,9 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const errorCount = useBuilder((state) => state.validation.errors.length);
   const warningCount = useBuilder((state) => state.validation.warnings.length);
   const triggerCount = useBuilder((state) => state.triggers.length);
+  const flowStatus = useBuilder((state) => state.flow?.status);
   const loaded = useBuilder((state) => state.loaded);
+  const view = publishView(save, flowStatus);
   const [publishing, setPublishing] = useState(false);
 
   const publish = async () => {
@@ -60,6 +61,13 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         publishedVersion: result.version,
         message: null,
         issues: [],
+      });
+      // The header now reads "Live", but a header is not where someone is
+      // looking when they press a button. Say it once, out loud.
+      showToast({
+        tone: "success",
+        title: "Flow published",
+        body: `Version ${result.version.version} is live.`,
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 422) {
@@ -126,13 +134,19 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
             <span className="fb-badge fb-badge-warning">No triggers</span>
           )
         ) : null}
-        <span data-save-state={save.state}>
-          {SAVE_COPY[save.state] ?? save.state}
-          {save.version ? ` · Draft v${save.version.version}` : ""}
+        {view.liveChip ? <span className="fb-badge fb-badge-success">{view.liveChip}</span> : null}
+        <span data-save-state={save.state} data-publish-tone={view.tone}>
+          {view.label}
         </span>
         {canEdit ? (
-          <button type="button" className="btn-primary-sm" disabled={publishing} onClick={() => void publish()}>
-            {publishing ? "Publishing…" : "Publish"}
+          <button
+            type="button"
+            className="btn-primary-sm"
+            disabled={publishing || view.publishDisabled}
+            title={view.publishHint ?? undefined}
+            onClick={() => void publish()}
+          >
+            {publishing ? "Publishing…" : view.publishLabel}
           </button>
         ) : null}
       </span>

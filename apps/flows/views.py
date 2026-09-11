@@ -158,14 +158,15 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
     finds no cookie.
     """
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
-    version = services.latest_version(flow)
+    # No version is fetched for the page. The header cannot re-render, so
+    # anything it said about draft-versus-live went stale the moment the user
+    # published; the island reads both from the flow API instead.
     keys = {"workspace_id": workspace_id, "flow_id": flow.pk}
     return render(
         request,
         "flows/edit.html",
         {
             "flow": flow,
-            "version": version,
             "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
             "api_detail_url": reverse("flows:api_detail", kwargs=keys),
             "api_publish_url": reverse("flows:api_publish", kwargs=keys),

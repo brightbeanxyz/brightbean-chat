@@ -89,6 +89,11 @@ function Shell() {
    *
    * Both paths re-apply the trigger list as well as the validation, because
    * they change together and for the same reason.
+   *
+   * Version and flow meta ride along for the same reason again: a publish in
+   * another tab, or an admin archiving the flow, changes what the toolbar must
+   * say and nothing else on this page would ever hear about it. The guard above
+   * means this only runs over a clean store, so none of it can clobber an edit.
    */
   useEffect(() => {
     if (!loaded) {
@@ -105,6 +110,8 @@ function Shell() {
         .then((detail) => {
           store.getState().applyValidation(detail.validation, store.getState().revision);
           store.getState().setTriggers(detail.triggers);
+          store.getState().setFlow(detail.flow);
+          store.getState().setSave({ version: detail.version, publishedVersion: detail.published_version });
         })
         .catch(() => {});
     };

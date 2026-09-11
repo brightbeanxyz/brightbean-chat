@@ -1665,6 +1665,13 @@ span.flatpickr-weekday {
 }
 .fb-badge-error   { background: var(--error-50);   color: var(--error-700); }
 .fb-badge-warning { background: var(--warning-50); color: var(--warning-700); }
+.fb-badge-success { background: var(--success-50); color: var(--success-700); }
+
+/* The toolbar's status word. "Live" is the one state worth colouring: it is
+   the answer to the question people were pressing Publish twice to get. Same
+   tokens as the flows list Active pill, so the two pages agree. */
+[data-publish-tone="success"] { color: var(--success-700); font-weight: 600; }
+[data-publish-tone="warning"] { color: var(--warning-700); font-weight: 600; }
 
 /* ── Inspector ───────────────────────────────────────────────── */
 

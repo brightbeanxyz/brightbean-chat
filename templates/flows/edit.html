@@ -35,7 +35,15 @@ guaranteed flash of an unstyled canvas.
         <h1 class="text-lg font-semibold truncate" style="color: var(--text-primary);">{{ flow.name }}</h1>
     </div>
     <div class="flex items-center gap-2 text-xs" style="color: var(--text-tertiary);">
-        {% if version %}<span>Draft v{{ version.version }}</span>{% endif %}
+        {% comment %}
+        No version or status here. This block is rendered once and cannot
+        re-render, so it spent a release saying "Draft v1" at a flow that had
+        just been published — and kept saying it through a reload, because the
+        server had no way to tell it otherwise. The toolbar inside the island
+        owns both: it re-reads them from the flow API on load and after every
+        publish. "Read-only" stays, because a permission is not a status and
+        does not change under the user's feet.
+        {% endcomment %}
         {% if not can_edit %}<span>Read-only</span>{% endif %}
         {% comment %}
         The header and the drawer live in different template blocks, so one
