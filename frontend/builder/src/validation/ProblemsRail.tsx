@@ -6,7 +6,12 @@
  * otherwise repeat one sentence three times.
  *
  * A code this bundle has never seen still renders. Layer 4 and Layer 5 add
- * codes, and "an error I cannot classify" must never become "no error".
+ * codes, and "an error I cannot classify" must never become "no error" — so the
+ * message is what is shown, and the code is never needed to display an issue.
+ *
+ * The code is carried, not printed. `no_entry_node` under a perfectly good
+ * sentence is a machine key shown to a person who has no way to look it up; it
+ * stays on the element for support to read from devtools or a hover.
  */
 import { useBuilder, useBuilderStore } from "../store/context";
 import { railIssues } from "./normalize";
@@ -33,6 +38,8 @@ export function ProblemsRail() {
           key={index_}
           type="button"
           className={`fb-problem fb-problem-${issue.severity}`}
+          data-issue-code={issue.code}
+          title={issue.code}
           onClick={() =>
             issue.node_id
               ? store.getState().setSelection({ nodes: [issue.node_id], edges: [] })
@@ -42,7 +49,6 @@ export function ProblemsRail() {
           }
         >
           {issue.message}
-          <span className="fb-problem-code block">{issue.code}</span>
         </button>
       ))}
     </section>

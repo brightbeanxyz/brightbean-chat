@@ -17,9 +17,11 @@ easier to reason about than two.
 The wizard, and the promise it keeps
 --------------------------------------------------------------------------
 
-``upload`` → ``review`` → ``confirm``. The upload validates and stores; the
-review asks the mapping questions and shows the dry run; only the confirm
-writes. **Nothing but the ``FlowImport`` row exists before the confirm**, which
+(``upload`` *or* ``pick a template``) → ``review`` → ``confirm``. The upload
+validates and stores; the review asks the mapping questions and shows the dry
+run; only the confirm writes. A shipped template is just a pre-loaded import —
+it writes the same ``FlowImport`` row and hands off to the same review page, so
+the promise below covers it without a second wizard to keep honest. **Nothing but the ``FlowImport`` row exists before the confirm**, which
 is the issue's "no object creation before dry-run confirm" and is asserted
 directly in ``apps/flows/tests/test_portability_import.py``.
 
@@ -35,7 +37,7 @@ import logging
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -48,6 +50,7 @@ from apps.flows import portability
 from apps.flows.compat import installed_model
 from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.picklists import picklists
+from apps.flows.portability import gallery, library
 from apps.flows.portability.envelope import MAX_DOCUMENT_BYTES
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
@@ -59,6 +62,8 @@ __all__ = [
     "import_discard",
     "import_review",
     "import_start",
+    "template_gallery",
+    "template_install",
 ]
 
 logger = logging.getLogger(__name__)
@@ -147,6 +152,88 @@ def import_start(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     )
     record.save()
     return _redirect_to_review(workspace_id, record)
+
+
+# ---------------------------------------------------------------------------
+# Import, step zero: the templates that ship with the app
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("edit_flows")
+@require_GET
+def template_gallery(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """The shipped templates, with what each one needs before you install it.
+
+    ``edit_flows`` like the rest of this module, so a Viewer never reaches a
+    page of buttons they cannot press. Browsing templates is the first half of
+    an authoring action; the module docstring argues the one-gate position for
+    export and it holds here for the same reason.
+    """
+    cards = gallery.gallery()
+    return render(
+        request,
+        "flows/templates.html",
+        {
+            "groups": gallery.by_category(cards),
+            "template_total": len(cards),
+            "connected_platforms": gallery.connected_platforms(request.workspace),
+            "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
+            "import_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
+        },
+    )
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def template_install(request: WorkspaceRequest, workspace_id: str, template_slug: str) -> HttpResponse:
+    """Load a shipped template into the review page. Creates nothing else.
+
+    POST because it writes a ``FlowImport`` row; a GET would be a link any page
+    could fire. The file is re-read and re-validated here rather than trusting
+    the card the gallery cached, so a file that changed on disk since this
+    process booted cannot slip past the front door an upload goes through.
+    """
+    path = gallery.template_for_slug(template_slug)
+    if path is None:
+        raise Http404("No such template.")
+
+    document, issues = library.read_template(path)
+    if document is None:
+        logger.error("Shipped template %s failed to validate at install time.", path.name)
+        return _install_failed(request, workspace_id, [issue.message for issue in issues])
+
+    record = FlowImport(
+        workspace=request.workspace,
+        document=document,
+        mapping=portability.default_mapping(request.workspace, document, user=request.user),
+        # The template's own filename, which is what this column documents
+        # itself as holding and what tells the review page which one you picked.
+        original_filename=path.name[:255],
+        created_by=request.user,
+    )
+    record.save()
+    logger.info("Workspace %s started an import from template %r.", request.workspace.pk, path.name)
+    return _redirect_to_review(workspace_id, record)
+
+
+def _install_failed(request: WorkspaceRequest, workspace_id: str, errors: list[str]) -> HttpResponse:
+    """Re-render the gallery with what was wrong. Nothing was stored."""
+    cards = gallery.gallery()
+    return render(
+        request,
+        "flows/templates.html",
+        {
+            "groups": gallery.by_category(cards),
+            "template_total": len(cards),
+            "connected_platforms": gallery.connected_platforms(request.workspace),
+            "errors": errors[:20],
+            "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
+            "import_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
+        },
+        status=400,
+    )
 
 
 def _upload_failed(request: WorkspaceRequest, workspace_id: str, errors: list[str]) -> HttpResponse:

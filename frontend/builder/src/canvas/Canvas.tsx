@@ -26,24 +26,38 @@ import {
 } from "@xyflow/react";
 import { useCallback, useMemo, useRef } from "react";
 
-import { groupOf, nodeSpec } from "../schema/artifact";
+import { GROUPS, groupOf, nodeSpec } from "../schema/artifact";
 import type { Position } from "../schema/types";
 import { useBuilder, useBuilderStore } from "../store/context";
 import { selectRfEdges, selectRfNodes, type CardData, type CardNode } from "../store/selectors";
+import { selectTriggerEdges, selectTriggerNodes } from "./triggerNodes";
 import { edgeTypes, nodeTypes } from "./types";
 import { useKeyboard } from "./useKeyboard";
 
-const GROUP_COLOR: Record<string, string> = {
-  content: "var(--flow-group-content)",
-  logic: "var(--flow-group-logic)",
-  actions: "var(--flow-group-actions)",
-  other: "var(--flow-group-other)",
-};
+/**
+ * Minimap dot colours, one per palette group.
+ *
+ * Derived from GROUPS rather than listed, because this was a third hand-written
+ * copy of the group keys — after nodes.py and the .fb-node-<group> rules in
+ * styles.css — and a group renamed in one of them silently greyed out its nodes
+ * in the others. Two copies remain and cannot be merged (CSS cannot read the
+ * artefact), which is what the test in test_export.py is for.
+ */
+const GROUP_COLOR: Record<string, string> = Object.fromEntries(
+  GROUPS.map((group) => [group.key, `var(--flow-group-${group.key})`]),
+);
 
 export function Canvas() {
   const store = useBuilderStore();
-  const nodes = useBuilder(selectRfNodes);
-  const edges = useBuilder(selectRfEdges);
+  const graphNodes = useBuilder(selectRfNodes);
+  const graphEdges = useBuilder(selectRfEdges);
+  // Trigger cards are kept out of selectRfNodes/selectRfEdges and concatenated
+  // here, so those two keep meaning "the persisted graph" for everything that
+  // reads them. See canvas/triggerNodes.ts for why the cards are synthetic.
+  const triggerNodes = useBuilder(selectTriggerNodes);
+  const triggerEdges = useBuilder(selectTriggerEdges);
+  const nodes = useMemo(() => [...triggerNodes, ...graphNodes], [triggerNodes, graphNodes]);
+  const edges = useMemo(() => [...triggerEdges, ...graphEdges], [triggerEdges, graphEdges]);
   const canEdit = useBuilder((state) => state.env.canEdit);
   const { screenToFlowPosition } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
@@ -220,6 +234,16 @@ export function Canvas() {
         selectionKeyCode="Shift"
         multiSelectionKeyCode={["Meta", "Control"]}
         fitView
+        // maxZoom because the smallest interesting flow is now one node and one
+        // trigger card, and the default (2) would fill the pane with them.
+        //
+        // The fit runs when React Flow first has dimensions for its nodes, and
+        // it takes declared ones — which is why the trigger cards state their
+        // own size (canvas/triggerNodes.ts). Without that the cards had no
+        // bounds at fit time and the opening view framed the graph with the
+        // trigger stack just off the left edge: the one thing the flow most
+        // needs to show, outside the pane.
+        fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
         proOptions={{ hideAttribution: false }}
       >
         <Background />

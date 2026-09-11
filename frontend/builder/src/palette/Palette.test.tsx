@@ -27,16 +27,21 @@ describe("the palette", () => {
     expect(headings).toEqual(expected);
   });
 
-  it("files the issue's three groups where the issue says", () => {
+  it("files each node under what it is to the author, not how it is built", () => {
     const { container } = renderWith(makeStore(makeDetail(makeSampleGraph())), <Palette />);
     const drawer = (label: string) =>
       [...container.querySelectorAll("div")]
         .filter((node) => node.querySelector(".fb-palette-group-label")?.textContent === label)
         .map((node) => [...within(node).getAllByRole("button")].map((button) => button.textContent))[0];
 
-    expect(drawer("Content")).toEqual(["Send Message", "Data Collection", "Note"]);
-    expect(drawer("Logic")).toEqual(["Start Flow", "Condition", "Smart Delay", "Randomizer"]);
-    expect(drawer("Actions")).toEqual(["Action", "External Request", "Send SMS", "Send Email"]);
+    // Send SMS and Send Email are messages whatever adapter carries them; they
+    // were filed under Actions. A Note is furniture on the canvas that nobody
+    // in a chat ever sees; it was filed beside things that are sent.
+    expect(drawer("Messages")).toEqual(["Send Message", "Ask a question", "Send SMS", "Send Email"]);
+    expect(drawer("Logic")).toEqual(["Start Flow", "Condition", "Smart Delay", "A/B split"]);
+    expect(drawer("Contact")).toEqual(["Update contact"]);
+    expect(drawer("Integrations")).toEqual(["External Request"]);
+    expect(drawer("Canvas")).toEqual(["Note"]);
   });
 
   it("carries the node type on the drag payload the canvas reads", () => {

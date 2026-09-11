@@ -1,0 +1,77 @@
+{% load common_extras %}
+{% comment %}
+One card per shipped template. Dumb: everything on it is computed in
+apps/flows/portability/gallery.py, including whether its platform requirement is
+already satisfied.
+
+Badges reuse the inline-styled pill idiom from flows/_list_rows.html rather than
+introducing a class, which sidesteps ground rule 9's cascade trap entirely —
+there is no design-system class here whose properties a utility could fail to
+override.
+
+An unsatisfied requirement *warns*; it does not block. The review page is where
+the channel question is actually answered, "leave it unbound" is a legal answer
+there, and the flow arrives as an unpublished draft either way. A disabled
+button would be the card second-guessing a decision the wizard handles properly.
+{% endcomment %}
+<div class="grid gap-3 sm:grid-cols-2">
+  {% for card in cards %}
+    <div class="rounded-xl border p-4 flex flex-col gap-2" style="border-color: var(--border); background: var(--surface-1);">
+      <div>
+        <p class="text-sm font-medium" style="color: var(--text-primary);">{{ card.title }}</p>
+        {% if card.summary %}
+          <p class="text-sm mt-1" style="color: var(--text-secondary);">{{ card.summary }}</p>
+        {% endif %}
+      </div>
+
+      <p class="text-xs" style="color: var(--text-tertiary);">
+        {{ card.node_count }} step{{ card.node_count|pluralize }} ·
+        {{ card.trigger_count }} trigger{{ card.trigger_count|pluralize }}
+        {% if card.folder %} · arrives in {{ card.folder }}{% endif %}
+      </p>
+
+      <div class="flex flex-wrap items-center gap-1.5">
+        {% for platform in card.platforms %}
+          {% if platform.key in connected_platforms %}
+            <span class="rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1"
+                  style="background: var(--surface-2); color: var(--text-secondary);">
+              {% include "partials/_platform_icon.html" with platform=platform.key size="sm" %}
+              {{ platform.label }}
+            </span>
+          {% else %}
+            <span class="rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1"
+                  style="background: rgba(var(--warning-500-rgb), 0.12); color: var(--warning-700);">
+              {% include "partials/_platform_icon.html" with platform=platform.key size="sm" %}
+              Needs {{ platform.label }}
+            </span>
+          {% endif %}
+        {% endfor %}
+        {% if card.calls_out %}
+          <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                style="background: rgba(var(--warning-500-rgb), 0.12); color: var(--warning-700);">
+            Calls out to the internet
+          </span>
+        {% endif %}
+      </div>
+
+      {% if card.creates or card.must_already_have %}
+        <p class="text-xs" style="color: var(--text-tertiary);">
+          {% if card.creates %}Adds {{ card.creates|join:", " }} to your workspace.{% endif %}
+          {% if card.must_already_have %}Needs {{ card.must_already_have|join:", " }} you already have.{% endif %}
+        </p>
+      {% endif %}
+
+      {% comment %}
+      A plain form, deliberately not htmx: the view answers 302 and htmx would
+      follow it and swap the whole review page into this card. Same reasoning the
+      export links carry in flows/_list_rows.html.
+      {% endcomment %}
+      <form method="post"
+            action="{% url 'flows:template_install' workspace_id=request.workspace.id template_slug=card.slug %}"
+            class="mt-auto pt-1">
+        {% csrf_token %}
+        <button type="submit" class="btn-brand btn-inline">Use this template</button>
+      </form>
+    </div>
+  {% endfor %}
+</div>

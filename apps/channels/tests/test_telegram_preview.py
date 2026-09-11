@@ -281,7 +281,7 @@ class TestTheHandleIsNotStoredReadably:
 class TestMintEndpoint:
     def url(self, tenancy: Tenancy, flow: Any) -> str:
         return reverse(
-            "channels:telegram_preview",
+            "channels:flow_preview",
             kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk},
         )
 
@@ -292,7 +292,8 @@ class TestMintEndpoint:
         payload = client.post(self.url(tenancy, drafted_flow)).json()
 
         assert payload["ok"] is True
-        assert payload["bot"] == "@acme_bot"
+        # Renamed from "bot" when the preview stopped being Telegram-only.
+        assert payload["account"] == "@acme_bot"
         assert payload["deep_link"].startswith("https://t.me/acme_bot?start=preview-")
         assert payload["expires_in"] == 900
         assert FlowPreviewLink.objects.for_workspace(tenancy.workspace).count() == 1
@@ -365,7 +366,7 @@ class TestConnectionsMadeByHand:
 
     def url(self, tenancy: Tenancy, flow: Any) -> str:
         return reverse(
-            "channels:telegram_preview",
+            "channels:flow_preview",
             kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk},
         )
 
@@ -410,7 +411,8 @@ class TestConnectionsMadeByHand:
         client = client_for(tenancy.user_for(WorkspaceRole.EDITOR))
         payload = client.post(self.url(tenancy, drafted_flow)).json()
         assert payload["ok"] is True
-        assert payload["bot"] == "@acme_bot"
+        # Renamed from "bot" when the preview stopped being Telegram-only.
+        assert payload["account"] == "@acme_bot"
 
 
 class TestAlongsideRouting:

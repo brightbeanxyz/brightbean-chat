@@ -190,6 +190,22 @@ class TestTheBuilderPage:
         assert 'data-can-edit="false"' in body
         assert "Read-only" in body
 
+    def test_the_header_leaves_the_version_to_the_builder(self, tenancy, client_for):
+        """The page header says nothing about draft-versus-live.
+
+        It is rendered once and cannot re-render, so a version printed here
+        survived a publish unchanged — and survived a reload unchanged, because
+        the server had already moved on and the header had not. The island reads
+        both from the flow API instead. Named for the intent, so the negative
+        assertion does not read as arbitrary.
+        """
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+
+        body = client_for(tenancy.owner).get(action_url("flows:edit", tenancy, flow)).content.decode()
+
+        assert "Draft v" not in body
+        assert 'id="flow-builder"' in body
+
     def test_another_workspaces_flow_is_a_404_here_too(self, tenancy, other_tenancy, client_for):
         victim = create_flow(workspace=tenancy.workspace, name="Victim")
         url = reverse("flows:edit", kwargs={"workspace_id": other_tenancy.workspace.pk, "flow_id": victim.pk})

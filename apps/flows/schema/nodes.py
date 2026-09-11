@@ -51,6 +51,12 @@ class NodeSpec:
 
     type: str
     label: str
+
+    #: One sentence, shown to the author as the palette item's tooltip. It is
+    #: exported and rendered verbatim, so it is user-facing copy: no §-numbers,
+    #: no layer names, nothing that can only be looked up inside this repo. The
+    #: spec reference for a node belongs in a comment beside its ``type``, where
+    #: whoever is reading this file will see it and nobody else has to.
     description: str
     config: dict[str, Any]
 
@@ -100,10 +106,17 @@ class NodeSpec:
 #: The palette drawers, in the order the builder shows them (issue #10). Both
 #: the order and the labels are exported, so the frontend reads one file rather
 #: than one file plus a hard-coded table.
+#:
+#: Grouped by what the node *is* to the person building, not by how it is
+#: implemented. Send SMS and Send Email are messages, whatever adapter carries
+#: them; a Note is furniture on the canvas and is never sent to anyone, so it
+#: does not belong beside things that are.
 GROUPS: tuple[tuple[str, str], ...] = (
-    ("content", "Content"),
+    ("messages", "Messages"),
     ("logic", "Logic"),
-    ("actions", "Actions"),
+    ("contact", "Contact"),
+    ("integrations", "Integrations"),
+    ("canvas", "Canvas"),
     ("other", "Other"),
 )
 
@@ -451,10 +464,11 @@ for _verb_name, _verb_schema in (
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.1.
         type="send_message",
         label="Send Message",
-        description="SPEC §11.1. Waits when buttons or quick replies are present, otherwise continues.",
-        group="content",
+        description="Send a message. Waits for a reply when it offers buttons or quick replies.",
+        group="messages",
         config=f.obj(
             {
                 "blocks": f.array(f.ref("message_block"), min_items=1, max_items=20),
@@ -478,10 +492,11 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.2.
         type="action",
-        label="Action",
-        description="SPEC §11.2. Runs its verbs in order and always continues.",
-        group="actions",
+        label="Update contact",
+        description="Tag someone, set a field, start or stop a sequence, hand the chat to a teammate.",
+        group="contact",
         # The verb union is built at export time from ACTION_VERBS, so a verb a
         # later issue registers appears without this line changing.
         config=f.obj({"actions": f.array(f.ref("action_step"), min_items=1, max_items=20)}, required=["actions"]),
@@ -491,9 +506,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.3. Terminal in-graph: ends this execution, starts the target.
         type="start_flow",
         label="Start Flow",
-        description="SPEC §11.3. Terminal in-graph: it ends this execution and starts the target flow.",
+        description="Hand over to another flow. This one stops here.",
         group="logic",
         config=f.obj({"flow_id": f.string(min_length=1, max_length=64)}, required=["flow_id"]),
         handles=(),
@@ -503,9 +519,11 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded here
+        # rather than re-declared.
         type="condition",
         label="Condition",
-        description="SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded, not re-declared.",
+        description="Send people down different paths based on what you know about them.",
         group="logic",
         config=f.ref("condition_filter"),
         handles=("cond:true", "cond:false"),
@@ -514,9 +532,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.5. Schedules a resume, adjusted into the next allowed window.
         type="smart_delay",
         label="Smart Delay",
-        description="SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
+        description="Wait before carrying on, and only continue inside the hours you allow.",
         group="logic",
         # Discriminated on `mode` rather than a flat object with everything
         # optional. With only `mode` required, {"mode": "duration"} published
@@ -531,9 +550,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.6. Splits by weight; sticky by default, remembered in variables.
         type="randomizer",
-        label="Randomizer",
-        description="SPEC §11.6. Splits by weight; sticky by default, remembered in variables.",
+        label="A/B split",
+        description="Split people between paths by percentage. The same person keeps their path.",
         group="logic",
         config=f.obj(
             {
@@ -549,13 +569,12 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard
+        # (SECURITY-BASELINE §6); nothing in this app fetches the URL.
         type="external_request",
         label="External Request",
-        description=(
-            "SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard "
-            "(SECURITY-BASELINE §6); nothing in this app fetches the URL."
-        ),
-        group="actions",
+        description="Call your own API and use what it sends back.",
+        group="integrations",
         config=f.obj(
             {
                 "method": f.enum("GET", "POST", "PUT", "PATCH", "DELETE"),
@@ -575,10 +594,12 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.8. Validated reply capture; email and phone answers also
+        # record consent.
         type="data_collection",
-        label="Data Collection",
-        description="SPEC §11.8. Validated reply capture; email/phone answers also record consent.",
-        group="content",
+        label="Ask a question",
+        description="Ask for an email, a phone number or anything else, and check the answer before saving it.",
+        group="messages",
         config=f.obj(
             {
                 "question": f.string(min_length=1, max_length=4096),
@@ -611,10 +632,11 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.9. Runtime is L5-D.
         type="send_sms",
         label="Send SMS",
-        description="SPEC §11.9. Runtime is L5-D. Needs an SMS connection and a phone identity.",
-        group="actions",
+        description="Send a text message. Needs an SMS channel and a phone number on file.",
+        group="messages",
         config=f.obj(
             {
                 "text": f.string(min_length=1, max_length=1600),
@@ -628,10 +650,11 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.10. Runtime is L5-E.
         type="send_email",
         label="Send Email",
-        description="SPEC §11.10. Runtime is L5-E. Needs an email connection and an email identity.",
-        group="actions",
+        description="Send an email. Needs an email channel and an address on file.",
+        group="messages",
         config=f.obj(
             {
                 "subject": f.string(min_length=1, max_length=300),
@@ -648,10 +671,12 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
+        # SPEC §11.11. Builder-only annotation, ignored at runtime and never
+        # an edge endpoint.
         type="note",
         label="Note",
-        description="SPEC §11.11. Builder-only annotation, ignored at runtime and never connected.",
-        group="content",
+        description="A note for you and your team. Nobody in a chat ever sees it.",
+        group="canvas",
         config=f.obj({"text": f.string(max_length=5000)}, required=["text"]),
         handles=(),
         annotation=True,

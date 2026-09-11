@@ -1,0 +1,42 @@
+# What the Browse-templates cards say, and the order they say it in.
+#
+# TOML, not JSON, and the extension is the whole point. Its sibling
+# apps/flows/portability/library.py globs `flow-templates/*.json` and hands every
+# match to the importer, so a JSON sidecar here would be validated as a flow
+# template and rejected. Staying out of that glob keeps one invariant literally
+# true: every .json file in this directory is a flow template. tomllib is in the
+# standard library on Python 3.12, so this costs no dependency.
+#
+# It is also not a key inside the documents themselves. document_schema() sets
+# additionalProperties: false, and apps/flows/tests/test_portability_library.py
+# asserts the exported bytes of an imported template match the file byte for
+# byte — so a new key inside the envelope would have to be re-emitted by the
+# exporter, and then the exporter would need something to say for every flow
+# anyone ever exports. That is a format change to an interchange file in order
+# to carry a marketing sentence.
+#
+# Nothing here is authority. The .json files are: a template with no entry below
+# still appears, titled after its own entry flow; an entry naming a file that is
+# not here is ignored and logged. `title` is optional and defaults to the entry
+# flow's name, so a card cannot drift from the flow it installs — rename the
+# flow inside the file and the card follows.
+#
+# Adding a template means three edits: the file, EXPECTED in
+# test_portability_library.py, and an entry here. The first two are load-bearing
+# and the third is not — a missing entry costs you a description, not a listing.
+# apps/flows/tests/test_portability_gallery.py fails if the two lists disagree.
+
+[[template]]
+file = "telegram-welcome-and-faq.json"
+category = "Get started"
+summary = "Greets everyone who starts your bot, answers your three most common questions with quick replies, and flags anyone who asks for a person."
+
+[[template]]
+file = "instagram-comment-to-dm-lead-magnet.json"
+category = "Lead capture"
+summary = "A comment with your keyword gets a public reply and a DM with the guide, then asks for an email and tags them."
+
+[[template]]
+file = "sms-keyword-opt-in.json"
+category = "Lead capture"
+summary = "Texting your keyword opts someone in, records where they came from, and confirms it."
