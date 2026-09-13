@@ -17,8 +17,7 @@
  */
 import { useMemo } from "react";
 
-import { configSchema, nodeSpec } from "../schema/artifact";
-import { plainKind } from "../schema/plain";
+import { configSchema } from "../schema/artifact";
 import { FieldProvider, type FieldContextValue } from "../inspector/FieldContext";
 import { SchemaField } from "../inspector/SchemaField";
 import type { ConfigPath } from "../store/paths";
@@ -105,14 +104,26 @@ export function StepEditor() {
 
         {nodeId && nodeType && context ? (
           <section className="fb-editor-section">
-            <header className="fb-step-head">
-              <span className="fb-step-number" aria-hidden="true">
-                {index >= 0 ? index + 1 : "·"}
+            {/* Captioned, ruled off, and pinned.
+                
+                This header used to repeat the selected row's own number,
+                eyebrow and title, in the same components, eight pixels beneath
+                it — so the editor read as a seventh row that started counting
+                again at one. "Editing step 4" is the whole fix: the number
+                stops being a duplicate the moment something says it is the same
+                step. The orange circle and the eyebrow go with it, because the
+                caption now carries the identity and the row above still carries
+                the kind.
+
+                Sticky because the list answers "what am I editing?" only while
+                the list is on screen, and a send_message form scrolls well past
+                it. The title wraps rather than truncating: it is the thing
+                being worked on, and it was being cut twice at two widths. */}
+            <header className="fb-edit-head">
+              <span className="fb-edit-caption">
+                {index >= 0 ? `Editing step ${index + 1}` : "Editing this step"}
               </span>
-              <span className="min-w-0">
-                <span className="fb-step-eyebrow block">{plainKind(nodeSpec(nodeType), nodeType)}</span>
-                <span className="fb-step-title block">{titleOf(nodeType, config)}</span>
-              </span>
+              <span className="fb-edit-title">{titleOf(nodeType, config)}</span>
             </header>
 
             <StepProblems issues={issues ?? []} />

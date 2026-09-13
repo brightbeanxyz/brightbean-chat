@@ -117,8 +117,80 @@ export const VARIANT_LABELS: Record<string, string> = {
 };
 
 export function variantLabel(tag: string): string {
-  return VARIANT_LABELS[tag] ?? humanize(tag);
+  return VARIANT_LABELS[tag] ?? ENUM_LABELS[tag] ?? humanize(tag);
 }
+
+/**
+ * Enum values, as a reader should see them.
+ *
+ * Every `enum` in the artefact used to render its options verbatim, so a select
+ * offered `system_field`, `has_no_value`, `any_word` and `in_app`. Those are
+ * wire values; the schema is the contract and these are the words.
+ *
+ * Deliberately not merged into VARIANT_LABELS: that table names the branches of
+ * a tagged union, which a reader picks a *shape* from ("Wait a fixed time"),
+ * and this one names a value inside a field. Several keys would collide with
+ * different right answers — `date` is "Wait until a date" as a delay's mode and
+ * "A date" as an expected reply.
+ *
+ * Anything missing still falls through to `humanize`, which gives "System
+ * field" rather than `system_field` — serviceable, and the reason this is
+ * polish rather than a correctness fix.
+ */
+export const ENUM_LABELS: Record<string, string> = {
+  // What a question saves into, and what it will accept.
+  system_field: "A field every contact has",
+  variable: "A value for this run only",
+  text: "Any text",
+  number: "A number",
+  url: "A link",
+
+  // Comparisons, in a condition.
+  has: "has",
+  has_not: "does not have",
+  has_value: "has any value",
+  no_value: "is empty",
+  is: "is",
+  is_not: "is not",
+  in: "is one of",
+  not_in: "is not one of",
+  not: "is not",
+  contains: "contains",
+  before: "is before",
+  after: "is after",
+  on: "is on",
+  subscribed: "is subscribed to",
+  inside: "is open",
+  outside: "is closed",
+
+  // How many, and how long.
+  all: "all of them",
+  any: "any of them",
+  minutes: "minutes",
+  hours: "hours",
+  days: "days",
+
+  // Where a notification goes.
+  in_app: "In the app",
+
+  // Days of the week, so a sending window reads as one.
+  mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun",
+
+  // Contact fields, by the names the CRM uses for them.
+  first_name: "First name",
+  last_name: "Last name",
+  created_at: "Added on",
+  last_interaction_at: "Last heard from",
+  locale: "Language",
+  timezone: "Timezone",
+
+  // Platforms, spelled the way their owners spell them.
+  instagram: "Instagram",
+  messenger: "Facebook Messenger",
+  whatsapp: "WhatsApp",
+  telegram: "Telegram",
+  sms: "SMS",
+};
 
 
 /**

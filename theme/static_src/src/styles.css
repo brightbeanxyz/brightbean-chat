@@ -2345,15 +2345,45 @@ span.flatpickr-weekday {
   font-weight: 600;
 }
 
-.fb-step-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.625rem;
-  padding-bottom: 0.75rem;
-  margin-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border-inner);
+/* The header of the step being edited.
+   
+   Replaces .fb-step-head, which repeated the selected list row's number,
+   eyebrow and title in the same components a few pixels beneath it — so the
+   editor read as one more row that started counting again at one.
+
+   Sticky, so the answer to "what am I editing?" survives scrolling: the list
+   above gives that answer today only while it is on screen, and a send_message
+   form runs well past it. Pinned, the border reads as the edge of a pane rather
+   than a divider, which is the rule's whole job here. */
+.fb-edit-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0.875rem 0 0.75rem;
+  border-top: 1px solid var(--border-inner);
+  /* Opaque, or the list scrolls through it. */
+  background: var(--surface-0);
 }
-.fb-step-title { font-size: var(--fs-body-lg); font-weight: 700; color: var(--text-primary); }
+
+.fb-edit-caption {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-ghost);
+}
+
+/* Wraps rather than truncating. It is the thing being worked on, and it was
+   being cut twice — once in the list row, once here, at two different widths. */
+.fb-edit-title {
+  display: block;
+  font-size: var(--fs-body-lg);
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
 
 /* What is wrong with this step, at the top of it rather than behind a tab. */
 .fb-step-problems { margin-bottom: 0.75rem; }

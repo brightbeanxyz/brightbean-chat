@@ -72,7 +72,7 @@ describe("the generic renderer alone", () => {
     // registry label appearing: the step editor titles a step by its own
     // content (editor/title.ts), because a flow with four sends was four rows
     // reading "Send Message".
-    expect(view.container.querySelector(".fb-step-head")).not.toBeNull();
+    expect(view.container.querySelector(".fb-edit-head")).not.toBeNull();
     expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
   });
 
@@ -352,6 +352,26 @@ describe("a member id the workspace no longer has", () => {
     fireEvent.click(ghost);
     const actions = (store.getState().config["n1"] as { actions: { member_ids: string[] }[] }).actions;
     expect(actions[0]?.member_ids).toEqual([]);
+  });
+});
+
+describe("enum options", () => {
+  it("show a label rather than the schema's wire value", () => {
+    // Every enum rendered its options verbatim, so a question's "Save into"
+    // offered `system_field` and a condition offered `has_no_value`.
+    withoutOverrides();
+    const { view } = openNode("data_collection");
+
+    expect(view.container.textContent).not.toContain("system_field");
+    expect(screen.getByText("A field every contact has")).toBeInTheDocument();
+  });
+
+  it("still submits the wire value, not the label", () => {
+    // The label is what the reader picks; the schema is still the contract.
+    withoutOverrides();
+    const { store, id } = openNode("data_collection");
+
+    expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
   });
 });
 

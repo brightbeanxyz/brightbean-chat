@@ -107,6 +107,46 @@ describe("the step list", () => {
   });
 });
 
+describe("the seam between the list and the editor", () => {
+  function selectStep() {
+    const store = makeStore(oneStep([trigger()]));
+    store.getState().setSelection({ nodes: ["n1"], edges: [] });
+    return renderWith(store, <StepEditor />);
+  }
+
+  it("captions the editor, so its number is not read as one more row", () => {
+    // The header repeated the selected row's own number, eyebrow and title in
+    // the same components a few pixels beneath it, so the editor read as a
+    // seventh row that started counting again at one.
+    selectStep();
+
+    expect(screen.getByText("Editing step 1")).toBeInTheDocument();
+  });
+
+  it("does not repeat the row's number or its kind", () => {
+    const { container } = selectStep();
+
+    // Scoped to the header, not the panel: the list row keeps its circle and
+    // its eyebrow, and the trigger card above has an eyebrow of its own. What
+    // must not happen is the header saying either of them a second time.
+    const head = container.querySelector(".fb-edit-head");
+    expect(head).not.toBeNull();
+    expect(head?.querySelector(".fb-step-number")).toBeNull();
+    expect(head?.querySelector(".fb-step-eyebrow")).toBeNull();
+    expect(head?.textContent).not.toContain("Then send");
+  });
+
+  it("lets the title wrap instead of truncating it a second time", () => {
+    // It is the thing being worked on, and the same sentence was being cut at
+    // two different widths — once in the row, once in the header.
+    const { container } = selectStep();
+
+    const title = container.querySelector(".fb-edit-title");
+    expect(title).not.toBeNull();
+    expect(title?.className).not.toContain("truncate");
+  });
+});
+
 describe("a step's problems", () => {
   it("are shown with the fields that fix them, and carry no error code", () => {
     const detail = makeDetail(
