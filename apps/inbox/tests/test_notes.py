@@ -80,7 +80,7 @@ class TestANote:
         body = agent_client.get(url_for("messages", conversation_id=conversation.pk)).content.decode()
 
         assert "ib-bubble-note" in body
-        assert "Internal note — never sent" in body
+        assert "Internal note: never sent" in body
 
     def test_it_never_marks_the_conversation_unread(
         self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Conversation, identity: Any

@@ -1,0 +1,200 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "already-cond-true-known",
+            "source": "already",
+            "sourceHandle": "cond:true",
+            "target": "known"
+          },
+          {
+            "id": "already-cond-false-ask_email",
+            "source": "already",
+            "sourceHandle": "cond:false",
+            "target": "ask_email"
+          },
+          {
+            "id": "ask_email-default-subscribe",
+            "source": "ask_email",
+            "sourceHandle": "default",
+            "target": "subscribe"
+          },
+          {
+            "id": "subscribe-default-welcome",
+            "source": "subscribe",
+            "sourceHandle": "default",
+            "target": "welcome"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "match": "all",
+              "rules": [
+                {
+                  "key": "email",
+                  "op": "has_value",
+                  "source": "system_field"
+                }
+              ]
+            },
+            "id": "already",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "condition"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are already on the list with {{email}} - nothing to do.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "known",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "What is the best email address for you?",
+              "reply_type": "email",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "email",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_email",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Newsletter",
+                  "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "Chat",
+                  "verb": "set_field"
+                }
+              ]
+            },
+            "id": "subscribe",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are on the list. One useful email a month, no more.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "welcome",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Ask for an email address",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "newsletter"
+              },
+              {
+                "mode": "any_word",
+                "text": "subscribe"
+              },
+              {
+                "mode": "any_word",
+                "text": "list"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:subscribe"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "newsletter",
+        "name": "Newsletter",
+        "used_by": [
+          "flow-1:subscribe"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

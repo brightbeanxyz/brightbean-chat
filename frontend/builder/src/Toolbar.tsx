@@ -26,6 +26,24 @@ const SAVE_COPY: Record<string, string> = {
   error: "Save failed",
 };
 
+/**
+ * Is this flow live, and is there newer work than what is live?
+ *
+ * This replaced "Draft v12 · published v11". Three numbers answered a question
+ * nobody was asking; the two a reader actually has are "is it running" and "has
+ * anyone seen my changes", and the second is the one `v12 · v11` was encoding
+ * badly. Version numbers remain in the Versions view for people who work in
+ * them.
+ *
+ * Correct without a server change: `services.latest_version` returns the
+ * published row itself when nothing has changed since publish, and `publish()`
+ * below sets both fields to the same version.
+ */
+function publishLabel(save: { version?: { id: string } | null; publishedVersion?: { id: string } | null }): string | null {
+  if (!save.publishedVersion) return null;
+  return save.version && save.version.id !== save.publishedVersion.id ? "Live · edited" : "Live";
+}
+
 export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const store = useBuilderStore();
   const save = useBuilder((state) => state.save);
@@ -48,7 +66,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       // success, which is worse than doing nothing.
       if (autosave && !(await autosave.flush())) {
         store.getState().setSave({
-          message: "Publish stopped: your latest changes could not be saved. Fix the problems below and try again.",
+          message: "Not set live: your latest changes could not be saved. Fix the problems below and try again.",
         });
         return;
       }
@@ -67,7 +85,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         if (payload?.validation) {
           store.getState().applyValidation(payload.validation, store.getState().revision);
         }
-        store.getState().setSave({ message: "Publish blocked — fix the errors below." });
+        store.getState().setSave({ message: "Not set live: fix the problems below and try again." });
       } else if (error instanceof ApiError) {
         store.getState().setSave({ message: error.message });
       }
@@ -126,13 +144,12 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
             <span className="fb-badge fb-badge-warning">No triggers</span>
           )
         ) : null}
-        <span data-save-state={save.state}>
-          {SAVE_COPY[save.state] ?? save.state}
-          {save.version ? ` · Draft v${save.version.version}` : ""}
-        </span>
+        {/* No version numbers and no ids — see publishLabel. */}
+        <span data-save-state={save.state}>{SAVE_COPY[save.state] ?? save.state}</span>
+        {publishLabel(save) ? <span className="fb-badge">{publishLabel(save)}</span> : null}
         {canEdit ? (
           <button type="button" className="btn-primary-sm" disabled={publishing} onClick={() => void publish()}>
-            {publishing ? "Publishing…" : "Publish"}
+            {publishing ? "Setting live…" : "Set live"}
           </button>
         ) : null}
       </span>

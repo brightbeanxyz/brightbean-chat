@@ -1,0 +1,160 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "settle-default-ask",
+            "source": "settle",
+            "sourceHandle": "default",
+            "target": "ask"
+          },
+          {
+            "id": "ask-default-flag",
+            "source": "ask",
+            "sourceHandle": "default",
+            "target": "flag"
+          },
+          {
+            "id": "flag-default-chase",
+            "source": "flag",
+            "sourceHandle": "default",
+            "target": "chase"
+          },
+          {
+            "id": "chase-default-nudge",
+            "source": "chase",
+            "sourceHandle": "default",
+            "target": "nudge"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "duration": {
+                "unit": "days",
+                "value": 2
+              },
+              "mode": "duration"
+            },
+            "id": "settle",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi {{first_name}}, how did we do? A one-line review really helps us.",
+                  "type": "text"
+                }
+              ],
+              "buttons": [
+                {
+                  "action": "url",
+                  "id": "review",
+                  "label": "Leave a review",
+                  "url": "https://example.com/review"
+                }
+              ]
+            },
+            "id": "ask",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Review requested",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "flag",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "duration": {
+                "unit": "days",
+                "value": 5
+              },
+              "mode": "duration"
+            },
+            "id": "chase",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "No pressure at all - if you have a minute, the link is still open.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "nudge",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Ask for a review",
+      "triggers": [
+        {
+          "config": {},
+          "platform": null,
+          "type": "api"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "review requested",
+        "name": "Review requested",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

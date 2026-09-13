@@ -1,0 +1,152 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "hello-default-tag_new",
+            "source": "hello",
+            "sourceHandle": "default",
+            "target": "tag_new"
+          },
+          {
+            "id": "tag_new-default-hold",
+            "source": "tag_new",
+            "sourceHandle": "default",
+            "target": "hold"
+          },
+          {
+            "id": "hold-default-offer",
+            "source": "hold",
+            "sourceHandle": "default",
+            "target": "offer"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi {{first_name}} - good to meet you.\nI am the quick way to reach us here.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "hello",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "New contact",
+                  "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "Chat",
+                  "verb": "set_field"
+                }
+              ]
+            },
+            "id": "tag_new",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "duration": {
+                "unit": "hours",
+                "value": 3
+              },
+              "mode": "duration"
+            },
+            "id": "hold",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Anything you want to know, just ask. A person reads everything here too.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "offer",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Welcome someone new",
+      "triggers": [
+        {
+          "config": {},
+          "platform": "telegram",
+          "type": "welcome"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:tag_new"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "telegram",
+        "name": "telegram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "new contact",
+        "name": "New contact",
+        "used_by": [
+          "flow-1:tag_new"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

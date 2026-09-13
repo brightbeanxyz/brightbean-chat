@@ -6,15 +6,15 @@
   <p class="muted">
     BrightBean Chat sends SMS through your own Twilio account, so the messages,
     the number and the bill are all yours. The Auth Token is the whole
-    credential — anyone holding it can send as your number and read your
-    messages — so it is stored encrypted and never shown again.
+    credential: anyone holding it can send as your number and read your
+    messages, so it is stored encrypted and never shown again.
   </p>
 
   <h2>Before you paste</h2>
   <ol>
     <li>Open the <a href="https://console.twilio.com/" rel="noopener noreferrer" target="_blank">Twilio console</a> and copy the Account SID and Auth Token from the dashboard.</li>
     <li>Copy either a phone number you own, in E.164 form (<code>+15551234567</code>), or a Messaging Service SID (<code>MG…</code>) if you send through one.</li>
-    <li>US traffic also needs A2P 10DLC registration, which happens in Twilio and not here — there is a checklist on the SMS settings page.</li>
+    <li>US traffic also needs A2P 10DLC registration, which happens in Twilio and not here. There is a checklist on the SMS settings page.</li>
   </ol>
 
   {% if error %}
@@ -34,7 +34,7 @@
       {% comment %}
       autocomplete="off" and a password input: this value is a live credential
       and must not end up in the browser's saved form data. It is also never
-      rendered back — a failed submit clears it deliberately.
+      rendered back. A failed submit clears it deliberately.
       {% endcomment %}
       <input type="password" id="auth_token" name="auth_token" autocomplete="off"
              spellcheck="false" required />

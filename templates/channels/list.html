@@ -1,115 +1,175 @@
 {% extends "layouts/workspace_settings.html" %}
 {% load common_extras %}
+{% comment %}
+Channels, as cards rather than as a table.
+
+Three things the redesign changed, in order of how much they matter.
+
+**Health is a sentence.** "Needs reauth" in a status column beside a separate
+"2 days ago" cell made a reader assemble the meaning themselves. It now reads
+"Needs reconnecting · nothing received for 2 days" — the two facts already
+joined, with a dot carrying the colour. Webhook health is genuinely two facts
+(a bot pointed at the wrong URL looks exactly like a bot nobody has messaged),
+which is why both are in the line.
+
+**A broken channel gets a banner.** It is the most consequential thing this
+page can say, and it used to be one word in a cell halfway down a table.
+
+**The webhook URL and the platform account id are gone from the list.** They
+are machine strings a person needs once, during setup, and printing them on
+every row made the page look like a configuration dump. They live on the
+connection's own page now, which is where somebody pasting one into a console
+is already standing. (The redesign's fifth principle: no ids in the UI.)
+{% endcomment %}
 {% block title %}Channels · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Channels</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    A channel connects one bot, page, number or sending domain to this workspace.
-    Inbound events arrive at the channel's webhook URL and are verified against
-    its secret before anything else happens.
-  </p>
+<div class="max-w-[1060px] w-full">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">Channels</h1>
+            <p class="page-lede mt-1.5">
+                Each channel is one bot, page, number or sending address. Messages arrive and go out through it.
+            </p>
+        </div>
+        <a class="btn-pill-primary flex-shrink-0" href="{% url 'channels:create' workspace_id=request.workspace.id %}">
+            {% include "partials/_nav_icon.html" with name="channels" size=16 %} Connect a channel
+        </a>
+    </div>
 
-  {% if rows %}
-    <table>
-      <thead>
-        <tr><th></th><th>Name</th><th>Account</th><th>Status</th><th>Last event</th><th>Webhook URL</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for row in rows %}
-          <tr>
-            <td>
-              <span class="pi-chip {{ row.connection.platform|platform_class }} w-8 h-8">
-                {% include "partials/_platform_icon.html" with platform=row.connection.platform size="md" %}
-              </span>
-            </td>
-            <td>
-              <a href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}">
-                {{ row.connection.display_name }}
-              </a><br />
-              <span class="muted">{{ row.label }}</span>
-            </td>
-            <td><code>{{ row.connection.external_id }}</code></td>
-            <td>
-              <span class="status-pill status-pill-{{ row.connection.status }}">
-                {{ row.connection.get_status_display }}
-              </span>
-              {% if not row.adapter_ready %}
-                <br /><span class="muted">Adapter ships with {{ row.connect_flow_issue }}</span>
-              {% endif %}
-            </td>
-            {% comment %}
-            Webhook health. "Nothing yet" and "nothing since Tuesday" are the two
-            ways a misconfigured webhook shows itself, and neither is visible
-            from the row's own status — a bot pointed at the wrong URL looks
-            exactly like a bot nobody has messaged.
-            {% endcomment %}
-            <td>
-              {% if row.last_event_at %}
-                <span title="{{ row.last_event_at|date:"c" }}">{{ row.last_event_at|timesince }} ago</span>
-              {% else %}
-                <span class="muted">Nothing received yet</span>
-              {% endif %}
-            </td>
-            <td><code>{{ row.webhook_url }}</code></td>
-            <td>
-              <form method="post"
-                    action="{% url 'channels:set_status' workspace_id=request.workspace.id connection_id=row.connection.id %}">
-                {% csrf_token %}
-                {% if row.connection.status == "disabled" %}
-                  <input type="hidden" name="status" value="active" />
-                  <button type="submit">Enable</button>
-                {% else %}
-                  <input type="hidden" name="status" value="disabled" />
-                  <button type="submit">Disable</button>
-                {% endif %}
-              </form>
-              <form method="post"
-                    action="{% url 'channels:delete' workspace_id=request.workspace.id connection_id=row.connection.id %}">
-                {% csrf_token %}
-                <button type="submit">Disconnect</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>No channels connected yet.</p>
-  {% endif %}
-
-  <p><a href="{% url 'channels:create' workspace_id=request.workspace.id %}">Add a channel</a></p>
-
-  {% comment %}
-  The placeholder connect panels the issue asks for. Each platform's real flow —
-  a BotFather token, a Meta OAuth round trip, Twilio credentials — belongs to
-  that platform's own issue, so what this says is which issue, rather than
-  pretending six different flows are one form.
-  {% endcomment %}
-  <h2>Platforms</h2>
-  <ul>
-    {% for platform in platforms %}
-      <li>
-        <span class="pi-chip {{ platform.value|platform_class }} w-6 h-6">
-          {% include "partials/_platform_icon.html" with platform=platform.value size="sm" %}
+    {% for row in broken %}
+    <div class="flex flex-wrap items-center gap-4 rounded-[14px] p-4 mb-4"
+         style="background: var(--error-50);" role="alert">
+        <span class="flex-shrink-0" style="color: var(--error-700);">
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
         </span>
-        {{ platform.label }} —
-        {% if platform.connect_url %}
-          <a href="{{ platform.connect_url }}">set it up</a> — {{ platform.connect_hint }}
-        {% elif platform.adapter_ready %}
-          adapter installed.
-        {% else %}
-          guided setup arrives with {{ platform.issue }}. A connection added now holds its
-          webhook URL and secret, and starts working when the adapter ships.
-        {% endif %}
-        {% if platform.extra_links %}
-          <ul>
-            {% for link in platform.extra_links %}
-              <li><a href="{{ link.url }}">{{ link.label }}</a></li>
-            {% endfor %}
-          </ul>
-        {% endif %}
-      </li>
+        <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold" style="color: var(--error-700);">
+                {{ row.connection.display_name }} stopped receiving messages
+            </div>
+            <div class="text-[13px]" style="color: var(--error-700);">
+                {{ row.label }} revoked the connection. Reconnect to start receiving again.
+            </div>
+        </div>
+        <a class="btn-pill-sm flex-shrink-0 inline-flex items-center rounded-full font-semibold"
+           style="background: var(--error-700); color: var(--text-inverse); padding: 0 18px; height: 36px;"
+           href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}">Reconnect</a>
+    </div>
     {% endfor %}
-  </ul>
+
+    <div class="grid gap-4 md:grid-cols-2 mb-9">
+        {% for row in rows %}
+        <div class="card p-5" {% if row.health.tone == "bad" %}style="border-color: var(--error-500);"{% endif %}>
+            <div class="flex items-start gap-3 mb-3.5">
+                <span class="pi-chip {{ row.connection.platform|platform_class }} w-11 h-11 rounded-xl flex-shrink-0">
+                    {% include "partials/_platform_icon.html" with platform=row.connection.platform size="md" %}
+                </span>
+                <div class="flex-1 min-w-0">
+                    <a class="block text-[15px] font-bold truncate btn-text-hover-primary" style="color: var(--text-primary);"
+                       href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}">{{ row.connection.display_name }}</a>
+                    <div class="text-[13px]" style="color: var(--text-tertiary);">{{ row.label }}</div>
+                </div>
+                {% if row.settings_url %}
+                <a class="btn-icon-round flex-shrink-0" href="{{ row.settings_url }}" aria-label="Settings for {{ row.connection.display_name }}">
+                    {% include "partials/_nav_icon.html" with name="settings" size=16 %}
+                </a>
+                {% endif %}
+            </div>
+
+            <div class="health health-{{ row.health.tone }}">
+                <span class="health-dot"></span>{{ row.health.text }}
+            </div>
+
+            {% if not row.adapter_ready %}
+            <p class="text-xs mt-2" style="color: var(--text-ghost);">
+                Guided setup for {{ row.label }} is still on the way. The connection holds its
+                webhook URL and secret, and starts working when the adapter ships.
+            </p>
+            {% endif %}
+
+            <div class="flex flex-wrap items-center gap-2 mt-4">
+                <form method="post"
+                      action="{% url 'channels:set_status' workspace_id=request.workspace.id connection_id=row.connection.id %}">
+                    {% csrf_token %}
+                    {% if row.connection.status == "disabled" %}
+                    <input type="hidden" name="status" value="active">
+                    <button type="submit" class="btn-pill-secondary btn-pill-sm">Turn on</button>
+                    {% else %}
+                    <input type="hidden" name="status" value="disabled">
+                    <button type="submit" class="btn-pill-secondary btn-pill-sm">Turn off</button>
+                    {% endif %}
+                </form>
+                <form method="post"
+                      action="{% url 'channels:delete' workspace_id=request.workspace.id connection_id=row.connection.id %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn-pill-secondary btn-pill-sm" style="color: var(--error-700);">Disconnect</button>
+                </form>
+            </div>
+        </div>
+        {% empty %}
+        <div class="empty-state md:col-span-2">
+            <p class="empty-state-title">No channels connected yet</p>
+            <p class="empty-state-body">
+                Connect the first one and messages start arriving in your inbox.
+            </p>
+            <a class="btn-pill-primary mt-4" href="{% url 'channels:create' workspace_id=request.workspace.id %}">Connect a channel</a>
+        </div>
+        {% endfor %}
+
+        {% if rows %}
+        <a class="card p-5 flex items-center gap-3.5" style="border-style: dashed; border-color: var(--neutral-300);"
+           href="{% url 'channels:create' workspace_id=request.workspace.id %}">
+            <span class="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style="background: var(--surface-page); color: var(--text-tertiary);">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            </span>
+            <span>
+                <span class="block text-[15px] font-bold" style="color: var(--text-primary);">Add another channel</span>
+                <span class="block text-[13px]" style="color: var(--text-tertiary);">WhatsApp, Messenger or email</span>
+            </span>
+        </a>
+        {% endif %}
+    </div>
+
+    <h2 class="section-title">Available to connect</h2>
+    <p class="text-sm mt-1 mb-4" style="color: var(--text-tertiary);">
+        Each one takes a few minutes and we walk you through it.
+    </p>
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {% for platform in platforms %}
+        <div class="card p-4 flex items-center gap-3">
+            <span class="pi-chip {{ platform.value|platform_class }} w-9 h-9 rounded-[10px] flex-shrink-0">
+                {% include "partials/_platform_icon.html" with platform=platform.value size="sm" %}
+            </span>
+            <span class="flex-1 min-w-0">
+                <span class="block text-sm font-semibold truncate" style="color: var(--text-primary);">{{ platform.label }}</span>
+                {% if platform.connect_hint %}
+                <span class="block text-xs truncate" style="color: var(--text-ghost);">{{ platform.connect_hint }}</span>
+                {% endif %}
+            </span>
+            {% if platform.connect_url %}
+            <a class="text-[13px] font-semibold flex-shrink-0" style="color: var(--brand-700);" href="{{ platform.connect_url }}">Set up</a>
+            {% else %}
+            <span class="text-[13px] flex-shrink-0" style="color: var(--text-ghost);">Soon</span>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+
+    {% comment %}
+      A platform's own settings pages — WhatsApp's message templates and cost
+      estimates, today. Below the grid rather than in it: they are not channels
+      to connect, and rendering them as cards alongside Telegram and SMS made
+      the grid claim there were eight platforms.
+    {% endcomment %}
+    {% for platform in platforms %}{% if platform.extra_links %}
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-4 text-[13px]">
+        <span style="color: var(--text-ghost);">{{ platform.label }}:</span>
+        {% for link in platform.extra_links %}
+        <a class="font-semibold" style="color: var(--brand-700);" href="{{ link.url }}">{{ link.label }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}{% endfor %}
+</div>
 {% endblock %}

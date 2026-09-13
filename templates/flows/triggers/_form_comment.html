@@ -1,4 +1,4 @@
-{% comment %}
+{% load common_extras %}{% comment %}
 A comment trigger. Everything here is platform-agnostic: L4-A shipped the config,
 the matcher and the once-per-commenter guard, and each adapter registers what its
 own API can do (apps/flows/triggers/comments.py). Nothing below names a platform.
@@ -29,8 +29,7 @@ Two things are driven by that registry rather than by markup:
     <option value="specific" {% if config.post_scope == "specific" %}selected{% endif %}>Only these posts</option>
 </select>
 <textarea name="post_ids" rows="2" class="form-input-styled mb-2" x-ref="postIds"
-          placeholder="One post id per line">{{ config.post_ids|join:"
-" }}</textarea>
+          placeholder="One post id per line">{{ config.post_ids|lines }}</textarea>
 {% if post_pickers %}
 <div class="flex items-center gap-2 mb-1">
     {% for picker in post_pickers %}
@@ -45,12 +44,10 @@ Two things are driven by that registry rather than by markup:
 
 <label class="block text-xs font-medium mb-1" for="trigger-include" style="color: var(--text-primary);">Only when the comment contains</label>
 <textarea id="trigger-include" name="include_keywords" rows="2" class="form-input-styled mb-3"
-          placeholder="One word or phrase per line. Blank matches every comment.">{{ config.include_keywords|join:"
-" }}</textarea>
+          placeholder="One word or phrase per line. Blank matches every comment.">{{ config.include_keywords|lines }}</textarea>
 
 <label class="block text-xs font-medium mb-1" for="trigger-exclude" style="color: var(--text-primary);">Never when it contains</label>
-<textarea id="trigger-exclude" name="exclude_keywords" rows="2" class="form-input-styled mb-3">{{ config.exclude_keywords|join:"
-" }}</textarea>
+<textarea id="trigger-exclude" name="exclude_keywords" rows="2" class="form-input-styled mb-3">{{ config.exclude_keywords|lines }}</textarea>
 
 <label class="flex items-center gap-2 text-xs mb-1.5" style="color: var(--text-primary);">
     <input type="checkbox" name="top_level_only" {% if config.top_level_only %}checked{% endif %}>
@@ -82,8 +79,7 @@ can honour it is a fact that changes when an adapter ships.
     <option value="random" {% if config.public_reply.mode == "random" %}selected{% endif %}>One of these, at random</option>
 </select>
 <textarea name="public_reply_texts" rows="2" class="form-input-styled"
-          placeholder="One reply per line">{{ config.public_reply.texts|join:"
-" }}</textarea>
+          placeholder="One reply per line">{{ config.public_reply.texts|lines }}</textarea>
 <p class="text-xs mt-1" style="color: var(--text-tertiary);">
     The public reply goes out first; the flow's first message follows as a private
     reply, once per comment and within seven days of it.

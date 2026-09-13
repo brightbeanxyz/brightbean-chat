@@ -184,6 +184,18 @@ def _rows_context(request: WorkspaceRequest) -> dict[str, Any]:
     return {
         "page": page,
         "query": query,
+        # The lede's number: everyone in the workspace, not the filtered page.
+        # `page.paginator.count` answers "how many match this filter", which is
+        # a different sentence and already on the pager.
+        #
+        # ACTIVE only, matching both `contacts_for` — which filters to it for
+        # the list underneath — and `dashboard_kpis`, which counts the same way
+        # for Home's contacts figure. Counting every row instead made the lede
+        # include erased contacts, so the two headline numbers for one workspace
+        # disagreed on two pages a click apart.
+        "total_contacts": (
+            Contact.objects.for_workspace(request.workspace).filter(status=ContactStatus.ACTIVE).count()
+        ),
         # For the select-this-page checkbox. Strings, because that is what the
         # per-row checkbox values are and the comparison in Alpine is ===.
         "page_ids": [str(contact.pk) for contact in page.object_list],
@@ -1369,7 +1381,7 @@ def _report_rows(run: ContactImport) -> Any:
             yield [error.get(key, "") for key in ("row", "column", "message")]
         if run.errors_truncated:
             hidden = run.error_count - len(run.errors)
-            yield ["", "", f"{hidden} further row error(s) were not stored."]
+            yield ["", "", f"{hidden} more row{'' if hidden == 1 else 's'} had errors that were not kept."]
 
     return export.csv_stream(records())
 

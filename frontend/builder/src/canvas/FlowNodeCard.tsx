@@ -14,6 +14,7 @@ import {
 } from "@xyflow/react";
 import { memo, useEffect, useMemo } from "react";
 
+import { plainKind } from "../schema/plain";
 import { groupOf, nodeSpec } from "../schema/artifact";
 import { handleLabel, sourceHandles } from "../schema/handles";
 import { chipValues } from "../stats/chip";
@@ -98,12 +99,23 @@ function FlowNodeCardInner({
           handles — which is also what stops `note_node_connected`. */}
       {!isNote ? <Handle type="target" position={HandlePosition.Left} /> : null}
 
+      {/* Two lines, not one. The eyebrow says what KIND of step this is in the
+          reader's words — "Then send", "Then decide" — and the title says
+          which step. The registry's own label names the mechanism, which is the
+          right register for the API and the wrong one for a canvas somebody is
+          reading to work out what their flow does. See schema/plain.ts. */}
       <div className="fb-node-header">
-        <span className="truncate">{spec?.label ?? type}</span>
+        {!isNote ? (
+          <span className="fb-node-kind">
+            <span className="fb-node-dot" aria-hidden="true" />
+            {plainKind(spec, type)}
+          </span>
+        ) : null}
         {isEntry && !isNote ? (
-          <span className="fb-entry-flag ml-auto">START</span>
+          <span className="fb-entry-flag ml-auto">Starts here</span>
         ) : null}
       </div>
+      <div className="fb-node-title truncate">{spec?.label ?? type}</div>
 
       <div className="fb-node-body">
         <NodePreview type={type} config={config} picklists={picklists} />

@@ -1,115 +1,176 @@
 {% extends "base.html" %}
 {% comment %}
-The workspace landing page.
+Home — the workspace landing page.
 
-The KPI cards are issue #26's, and they are the first thing on the page because
-they are the reason somebody opens it. Each one links to the section that can
-explain it — a number with no way to ask "which ones?" is a number nobody
-trusts.
+The redesign turned this from a wall of equal-weight numbers into a page with
+an order of importance: what still needs setting up, what you could start from,
+how last week went, and what is waiting on a person. One primary action.
 
-`kpis` is None in a deployment with no analytics app, and the cards are simply
-absent then rather than rendering as zeros.
+`kpis` is None in a deployment with no analytics app, and on a page for someone
+without `view_analytics`. The figures section is simply absent then rather than
+rendering as zeros — the same contract the KPI cards had before.
+
+The workspace switcher used to live at the bottom of this page. It is in the
+header now, on every page, which is where somebody looking for it actually
+goes.
 {% endcomment %}
 
 {% block title %}{{ request.workspace.name }} · BrightBean Chat{% endblock %}
 
-{% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
-        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ request.workspace.name }}</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
-            Signed in as {{ request.user.display_name }} —
-            {{ request.workspace_membership.get_workspace_role_display }} in this workspace.
-        </p>
-    </div>
-    {% if kpis and can_view_analytics %}
-    <a class="btn-outline btn-inline" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}">Analytics</a>
-    {% endif %}
-</div>
-{% endblock %}
-
 {% block content %}
-{% if kpis %}
-<div class="an-cards">
-    <a class="an-card" href="{% url 'contacts:list' workspace_id=request.workspace.id %}">
-        <div class="an-card-figure">{{ kpis.contacts_total }}</div>
-        <div class="an-card-label">Contacts</div>
-        <div class="an-card-note">{{ kpis.contacts_new }} new in the last 7 days</div>
-    </a>
-    <a class="an-card" href="{% url 'inbox:list' workspace_id=request.workspace.id %}">
-        <div class="an-card-figure">{{ kpis.messages_in }}</div>
-        <div class="an-card-label">Messages in</div>
-        <div class="an-card-note">Last 7 days</div>
-    </a>
+<div class="max-w-[1060px] w-full">
+
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-7">
+        <div>
+            <h1 class="page-title">{{ greeting }}, {{ request.user.display_name }}</h1>
+            <p class="page-lede mt-1.5">{{ request.workspace.name }}. Your role here: {{ request.workspace_membership.get_workspace_role_display|lower }}.</p>
+        </div>
+        {% if can_edit_flows %}
+        <a class="btn-pill-primary flex-shrink-0" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
+            {% include "partials/_nav_icon.html" with name="flows" size=16 %} New flow
+        </a>
+        {% endif %}
+    </div>
+
     {% comment %}
-      The one card whose destination is not open to every role: `view_analytics`
-      is held by all four today, but the link is gated on the key rather than on
-      that happening to be true (apps/members/roles.py).
+      The setup checklist. Present only while something is unfinished — a
+      permanent "you have done everything" panel is furniture, and this is the
+      one part of the page that should disappear for good.
     {% endcomment %}
-    {% if can_view_analytics %}
-    <a class="an-card" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}?days=7">
-        <div class="an-card-figure">{{ kpis.messages_out }}</div>
-        <div class="an-card-label">Messages out</div>
-        <div class="an-card-note">Last 7 days</div>
-    </a>
-    {% else %}
-    <div class="an-card">
-        <div class="an-card-figure">{{ kpis.messages_out }}</div>
-        <div class="an-card-label">Messages out</div>
-        <div class="an-card-note">Last 7 days</div>
-    </div>
-    {% endif %}
-    <a class="an-card" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
-        <div class="an-card-figure">{{ kpis.active_flows }}</div>
-        <div class="an-card-label">Active flows</div>
-        <div class="an-card-note">Published and running</div>
-    </a>
-</div>
-
-{% if can_send_broadcasts %}
-<div class="an-panel">
-    <div class="an-panel-head">
-        <span class="an-panel-title">Recent broadcasts</span>
-        <a class="an-hint" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">All broadcasts</a>
-    </div>
-    {% if kpis.recent_broadcasts %}
-    <table class="an-table">
-        <tbody>
-            {% for broadcast in kpis.recent_broadcasts %}
-            <tr>
-                <td>
-                    <a href="{% url 'broadcasts:detail' workspace_id=request.workspace.id broadcast_id=broadcast.id %}">{{ broadcast.name }}</a>
-                </td>
-                <td class="an-muted">{{ broadcast.channel_connection.display_name }}</td>
-                <td><span class="status-pill status-pill-{{ broadcast.status }}">{{ broadcast.get_status_display }}</span></td>
-                <td class="an-num an-muted">{{ broadcast.created_at|date:"j M Y" }}</td>
-            </tr>
+    {% if setup_incomplete %}
+    <section class="card p-6 mb-5">
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div>
+                <h2 class="section-title">Finish setting up</h2>
+                <p class="text-[13px] mt-1" style="color: var(--text-tertiary);">
+                    {{ setup_remaining }} step{{ setup_remaining|pluralize }} left. About five minutes.
+                </p>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="w-[180px] h-1.5 rounded-full overflow-hidden" style="background: var(--surface-2);">
+                    <div class="h-full" style="width: {{ setup_percent }}%; background: var(--primary);"></div>
+                </div>
+                <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{{ setup_done }} of {{ setup_steps|length }}</span>
+            </div>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {% for step in setup_steps %}
+            <div class="{% if step.current %}tile-selected{% else %}tile{% endif %} p-[18px]">
+                <div class="flex items-center gap-2.5 mb-2.5">
+                    {% if step.done %}
+                    <span class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                          style="background: var(--success-500); color: var(--text-inverse);">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                    <span class="text-sm font-semibold line-through" style="color: var(--text-tertiary);">{{ step.title }}</span>
+                    {% else %}
+                    <span class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
+                          style="background: {% if step.current %}var(--primary-tint); color: var(--brand-700){% else %}var(--surface-2); color: var(--text-tertiary){% endif %};">{{ step.number }}</span>
+                    <span class="text-sm {% if step.current %}font-bold{% else %}font-semibold{% endif %}" style="color: var(--text-primary);">{{ step.title }}</span>
+                    {% endif %}
+                </div>
+                <p class="text-[13px] leading-relaxed" style="color: {% if step.done %}var(--text-ghost){% else %}var(--text-secondary){% endif %};">
+                    {% if step.done %}{{ step.done_body }}{% else %}{{ step.body }}{% endif %}
+                </p>
+                {% if not step.done %}
+                <a class="{% if step.current %}btn-pill-primary{% else %}btn-pill-secondary{% endif %} btn-pill-sm mt-3.5" href="{{ step.url }}">{{ step.cta }}</a>
+                {% endif %}
+            </div>
             {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="an-hint">Nothing sent yet.</p>
+        </div>
+    </section>
     {% endif %}
-</div>
-{% endif %}
-{% endif %}
 
-<div class="an-panel">
-    <div class="an-panel-head">
-        <span class="an-panel-title">Switch workspace</span>
+    {% if flow_templates and can_edit_flows %}
+    <section class="card p-[22px] mb-5">
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div>
+                <h2 class="section-title">Start from a template</h2>
+                <p class="text-[13px] mt-1" style="color: var(--text-tertiary);">
+                    {{ flow_template_total }} ready-made flow{{ flow_template_total|pluralize }}. Pick one and change the words to suit you.
+                </p>
+            </div>
+            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'flows:templates' workspace_id=request.workspace.id %}">Browse all {{ flow_template_total }}</a>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {% comment %}
+              A form, not a link: picking a template writes a FlowImport row,
+              and a state-changing GET is both CSRF-exposed and prefetchable.
+              It lands on the same review-and-dry-run step an uploaded file
+              does — a shipped template gets no shortcut past validation.
+            {% endcomment %}
+            {% for template in flow_templates %}
+            {% include "flows/_template_tile.html" %}
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <div class="grid gap-5 lg:grid-cols-[1.55fr_1fr] items-start">
+        {% if kpis %}
+        <section class="card p-6">
+            <div class="flex items-baseline justify-between mb-4">
+                <h2 class="section-title">Last 7 days</h2>
+                {% if can_view_analytics %}
+                <a class="text-[13px] font-semibold" style="color: var(--brand-700);"
+                   href="{% url 'analytics:overview' workspace_id=request.workspace.id %}?days=7">See insights</a>
+                {% endif %}
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-5">
+                <div>
+                    <div class="figure">{{ kpis.messages_in }}</div>
+                    <div class="figure-label mt-1">Messages in</div>
+                </div>
+                <div>
+                    <div class="figure">{{ kpis.messages_out }}</div>
+                    <div class="figure-label mt-1">Messages out</div>
+                </div>
+                <div>
+                    <div class="figure">{{ kpis.contacts_new }}</div>
+                    <div class="figure-label mt-1">New contacts</div>
+                </div>
+                <div>
+                    <div class="figure">{{ kpis.active_flows }}</div>
+                    <div class="figure-label mt-1">Live flows</div>
+                </div>
+            </div>
+            {% comment %}
+              Bar heights are computed in the view — the template language has
+              no arithmetic, and widthratio's rounding is not worth explaining.
+              A zero week renders flat bars rather than nothing, because "quiet"
+              and "broken" should not look the same.
+            {% endcomment %}
+            <div class="flex items-end gap-2 h-[110px] mt-6" role="img"
+                 aria-label="Messages received per day over the last seven days">
+                {% for day in kpis.daily_messages %}
+                <div class="flex-1 rounded-t-md" style="height: {{ day.height }}%; min-height: 3px; background: var(--primary-muted);"
+                     title="{{ day.date|date:'D j M' }}: {{ day.messages_in }}"></div>
+                {% endfor %}
+            </div>
+            <div class="flex justify-between mt-2 text-[11px]" style="color: var(--text-ghost);">
+                {% for day in kpis.daily_messages %}<span>{{ day.date|date:"D" }}</span>{% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        <section class="card p-6">
+            <h2 class="section-title mb-4">Needs you</h2>
+            {% for item in needs_you %}
+            <a class="flex gap-3 py-3.5 no-underline {% if not forloop.last %}border-b{% endif %}"
+               style="border-color: var(--divider);" href="{{ item.url }}">
+                <span class="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
+                      style="background: {% if item.tone == 'bad' %}var(--error-50); color: var(--error-700){% elif item.tone == 'warn' %}var(--primary-tint); color: var(--brand-700){% else %}var(--surface-page); color: var(--text-secondary){% endif %};">
+                    {% include "partials/_nav_icon.html" with name="bell" size=15 %}
+                </span>
+                <span class="min-w-0">
+                    <span class="block text-sm font-semibold" style="color: var(--text-primary);">{{ item.title }}</span>
+                    <span class="block text-[13px] mt-0.5" style="color: var(--text-tertiary);">{{ item.body }}</span>
+                </span>
+            </a>
+            {% empty %}
+            <p class="text-[13px]" style="color: var(--text-tertiary);">Nothing is waiting on you.</p>
+            {% endfor %}
+        </section>
     </div>
-    <ul>
-        {% for membership in switchable_memberships %}
-        <li>
-            <form method="post" action="{% url 'workspaces:switch' workspace_id=membership.workspace_id %}">
-                {% csrf_token %}
-                <button type="submit" class="btn-outline btn-inline">
-                    {{ membership.workspace.icon }} {{ membership.workspace.name }}
-                    ({{ membership.get_workspace_role_display }})
-                </button>
-            </form>
-        </li>
-        {% endfor %}
-    </ul>
 </div>
 {% endblock %}

@@ -1,0 +1,132 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "hello-default-tag_bio",
+            "source": "hello",
+            "sourceHandle": "default",
+            "target": "tag_bio"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi! You came from my bio link.\nWhat are you after today?",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "info",
+                  "label": "Just looking"
+                },
+                {
+                  "id": "buy",
+                  "label": "Ready to buy"
+                }
+              ]
+            },
+            "id": "hello",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Came from bio link",
+                  "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "Instagram bio",
+                  "verb": "set_field"
+                }
+              ]
+            },
+            "id": "tag_bio",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "The reference on this trigger is `bio`. Put the link it gives you in your Instagram profile."
+            },
+            "id": "advice",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Link in bio opens a chat",
+      "triggers": [
+        {
+          "config": {
+            "ref": "bio"
+          },
+          "platform": "instagram",
+          "type": "ref_url"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:tag_bio"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "came from bio link",
+        "name": "Came from bio link",
+        "used_by": [
+          "flow-1:tag_bio"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

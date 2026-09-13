@@ -5,13 +5,17 @@ and ``RBACMiddleware`` resolves it (see that module's docstring on the
 assumption and what changes if multi-org ever arrives).
 """
 
+from datetime import date
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.channels.models import ChannelConnection
 from apps.members.decorators import require_org_role
 from apps.members.models import WorkspaceMembership
 from apps.members.requests import OrgRequest
@@ -114,3 +118,79 @@ def set_workspace_archived(request: OrgRequest, target_id: str) -> HttpResponse:
     workspace.save(update_fields=["is_archived", "updated_at"])
     messages.success(request, f"{'Archived' if workspace.is_archived else 'Restored'} {workspace.name}.")
     return redirect(reverse("organizations:workspaces"))
+
+
+def _first_of_next_month(day: date) -> date:
+    """The first of the month after ``day``, in plain dates.
+
+    Whole-date arithmetic rather than timedelta on an aware datetime: the only
+    thing that varies between months is their length, and December has to roll
+    the year. No clock, so no DST and no offset to get wrong.
+    """
+    return date(day.year + (day.month == 12), (day.month % 12) + 1, 1)
+
+
+@login_required
+@require_org_role("member")
+@require_GET
+def billing_view(request: OrgRequest) -> HttpResponse:
+    """Plan and billing.
+
+    **There is no billing app.** No plan model, no subscription, no Stripe
+    customer — nothing in this repository charges anybody. So the page is
+    honest about that: the usage figures are real, read from the same models
+    everything else reads, and the plan comparison is marked on its face as not
+    yet connected.
+
+    The alternative was to leave the route stubbed behind "coming soon". That
+    is worse: the numbers a workspace wants first — how many people you talked
+    to, how many seats are in use, how many channels are connected — all exist
+    today, and hiding them behind an unbuilt payment integration means nobody
+    can answer "am I near a limit" until billing ships.
+
+    Usage is counted across the organisation's workspaces rather than the
+    current one: a plan is bought by an organisation, and a per-workspace number
+    on a page headed "Plan" would be the wrong denominator.
+    """
+    from apps.contacts.models import Contact
+    from apps.messaging.models import Conversation
+
+    workspaces = Workspace.objects.filter(organization=request.org, is_archived=False)
+    month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    return render(
+        request,
+        "organizations/billing.html",
+        {
+            "can_manage": _can_manage(request),
+            # "Talked to", not "has" — the figure a usage-based plan would bill
+            # on is people you had a conversation with this month, and a total
+            # contact count would be a much larger number meaning something
+            # else entirely.
+            # .unscoped(), with the reason CONTRIBUTING.md asks for: a plan is
+            # bought by an ORGANISATION, so its usage is the sum across that
+            # organisation's workspaces and a single-workspace figure would be
+            # the wrong denominator on a page headed "Plan". Every query is
+            # still bounded by `workspace__in=workspaces`, which is this org's
+            # own list — this crosses workspaces, never tenants.
+            "contacts_talked_to": (
+                Conversation.objects.unscoped()
+                .filter(workspace__in=workspaces, last_message_at__gte=month_start)
+                .values("contact_id")
+                .distinct()
+                .count()
+            ),
+            "contacts_total": Contact.objects.unscoped().filter(workspace__in=workspaces).count(),
+            "seats_in_use": (
+                WorkspaceMembership.objects.filter(workspace__in=workspaces).values("user_id").distinct().count()
+            ),
+            "channels_connected": ChannelConnection.objects.unscoped().filter(workspace__in=workspaces).count(),
+            # A date, not a datetime. Adding a timedelta to an aware datetime
+            # and calling .replace(day=1) does naive arithmetic and keeps this
+            # month's UTC offset, so across a DST boundary the result is an
+            # hour off and carries the wrong tzinfo. Nothing but `|date` reads
+            # it today, but a wrong instant that happens to render right is a
+            # trap for whoever compares or stores it next.
+            "renews_on": _first_of_next_month(month_start.date()),
+        },
+    )

@@ -65,7 +65,7 @@ function SendMessagePreview({ config }: PreviewProps) {
           {blocks.length > 1 ? ` +${blocks.length - 1}` : ""}
         </Empty>
       ) : (
-        <Empty>No blocks yet</Empty>
+        <Empty>Nothing to send yet</Empty>
       )}
       <Pills items={list(isRecord(config) ? config["buttons"] : undefined).map((b) => String(b["label"] ?? ""))} />
       <Pills
@@ -100,7 +100,7 @@ function ConditionPreview({ config }: PreviewProps) {
   const rules = list(isRecord(config) ? config["rules"] : undefined);
   const match = isRecord(config) && config["match"] === "any" ? "Any of" : "All of";
   if (rules.length === 0) {
-    return <Empty>No rules yet</Empty>;
+    return <Empty>Nothing to check yet</Empty>;
   }
   return (
     <>
@@ -122,7 +122,7 @@ function RandomizerPreview({ config }: PreviewProps) {
   const paths = list(isRecord(config) ? config["paths"] : undefined);
   const total = paths.reduce((sum, path) => sum + (typeof path["weight"] === "number" ? path["weight"] : 0), 0);
   if (paths.length === 0) {
-    return <Empty>No paths yet</Empty>;
+    return <Empty>No paths to split down yet</Empty>;
   }
   return (
     <>
@@ -159,7 +159,7 @@ const VERB_COPY: Record<string, string> = {
 function ActionPreview({ config }: PreviewProps) {
   const actions = list(isRecord(config) ? config["actions"] : undefined);
   if (actions.length === 0) {
-    return <Empty>No actions yet</Empty>;
+    return <Empty>Nothing to do yet</Empty>;
   }
   return (
     <Pills
@@ -174,7 +174,7 @@ function ActionPreview({ config }: PreviewProps) {
 
 function SmartDelayPreview({ config }: PreviewProps) {
   if (!isRecord(config)) {
-    return <Empty>Not configured</Empty>;
+    return <Empty>Nothing set yet</Empty>;
   }
   if (config["mode"] === "date" && isRecord(config["date"])) {
     const date = config["date"];
@@ -188,12 +188,12 @@ function SmartDelayPreview({ config }: PreviewProps) {
       </p>
     );
   }
-  return <Empty>Not configured</Empty>;
+  return <Empty>Nothing set yet</Empty>;
 }
 
 function DataCollectionPreview({ config }: PreviewProps) {
   if (!isRecord(config)) {
-    return <Empty>Not configured</Empty>;
+    return <Empty>Nothing set yet</Empty>;
   }
   const target = isRecord(config["target"]) ? String(config["target"]["key"] ?? "") : "";
   return (
@@ -206,7 +206,7 @@ function DataCollectionPreview({ config }: PreviewProps) {
 
 function ExternalRequestPreview({ config }: PreviewProps) {
   if (!isRecord(config)) {
-    return <Empty>Not configured</Empty>;
+    return <Empty>Nothing set yet</Empty>;
   }
   const url = String(config["url"] ?? "");
   let shown = url;
@@ -228,7 +228,7 @@ function StartFlowPreview({ config, picklists }: PreviewProps) {
   const id = isRecord(config) ? String(config["flow_id"] ?? "") : "";
   const target = picklists.flows.find((flow) => flow.id === id);
   if (!id) {
-    return <Empty>No flow chosen</Empty>;
+    return <Empty>No flow picked yet</Empty>;
   }
   return target ? <p>{target.label}</p> : <Empty>Unknown flow ({truncate(id, 20)})</Empty>;
 }
@@ -248,11 +248,11 @@ function TextFieldPreview(key: string) {
 export function DefaultPreview({ config, type }: PreviewProps & { type: string }) {
   const schema = deref(configSchema(type));
   if (!isRecord(config)) {
-    return <Empty>Not configured</Empty>;
+    return <Empty>Nothing set yet</Empty>;
   }
   if (isTaggedUnion(schema)) {
     const tag = schema?.discriminator ? config[schema.discriminator.propertyName] : undefined;
-    return tag ? <span className="fb-pill">{String(tag)}</span> : <Empty>Not configured</Empty>;
+    return tag ? <span className="fb-pill">{String(tag)}</span> : <Empty>Nothing set yet</Empty>;
   }
 
   const scalar = (property: JsonSchema | undefined) => {
@@ -265,7 +265,7 @@ export function DefaultPreview({ config, type }: PreviewProps & { type: string }
     .slice(0, 3)
     .map((key) => `${key}: ${String(config[key] ?? "")}`);
 
-  return shown.length > 0 ? <Pills items={shown} /> : <Empty>Configured</Empty>;
+  return shown.length > 0 ? <Pills items={shown} /> : <Empty>Ready</Empty>;
 }
 
 const PREVIEWS: Record<string, (props: PreviewProps) => ReactNode> = {

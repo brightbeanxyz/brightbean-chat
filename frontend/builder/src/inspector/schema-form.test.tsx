@@ -15,7 +15,7 @@ import { makeDetail, makeSampleGraph } from "../test/fixtures";
 import { makeStore, renderWith } from "../test/render";
 import { sampleConfig } from "../schema/sample";
 import { toGraph } from "../store/serialize";
-import { Inspector } from "./Inspector";
+import { StepEditor } from "../editor/StepEditor";
 import { OVERRIDES } from "./overrides";
 
 let saved: Record<string, unknown>;
@@ -47,7 +47,7 @@ function openMinimal(type: string) {
     }),
   );
   store.getState().setSelection({ nodes: ["n1"], edges: [] });
-  renderWith(store, <Inspector />);
+  renderWith(store, <StepEditor />);
   return { store, id: "n1" };
 }
 
@@ -55,19 +55,24 @@ function openNode(type: string) {
   const store = makeStore(makeDetail(makeSampleGraph({ optional: true })));
   const id = store.getState().nodeOrder.find((entry) => store.getState().nodeType[entry] === type) as string;
   store.getState().setSelection({ nodes: [id], edges: [] });
-  const view = renderWith(store, <Inspector />);
+  const view = renderWith(store, <StepEditor />);
   return { store, id, view };
 }
 
 describe("the generic renderer alone", () => {
   it.each(NODE_TYPES.map((spec) => spec.type))("renders a form for %s without any override", (type) => {
     withoutOverrides();
-    const { store, id } = openNode(type);
+    const { store, id, view } = openNode(type);
 
     // condition's config is a bare $ref and smart_delay's is a bare tagged
     // union — two of eleven with no `config.properties` at all. Both go
     // through the same dispatcher as any nested value, which is why they work.
-    expect(screen.getByText(NODE_TYPES.find((spec) => spec.type === type)?.label as string)).toBeInTheDocument();
+    //
+    // The assertion is on the editor having opened for this step, not on the
+    // registry label appearing: the step editor titles a step by its own
+    // content (editor/title.ts), because a flow with four sends was four rows
+    // reading "Send Message".
+    expect(view.container.querySelector(".fb-edit-head")).not.toBeNull();
     expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
   });
 
@@ -234,7 +239,7 @@ describe("the condition panel, against contract 8's real schema", () => {
       ),
     );
     store.getState().setSelection({ nodes: ["n1"], edges: [] });
-    renderWith(store, <Inspector />);
+    renderWith(store, <StepEditor />);
     fireEvent.click(screen.getByRole("button", { name: "Add to Rules" }));
 
     const key = screen.getByLabelText("Key") as HTMLSelectElement;
@@ -339,7 +344,7 @@ describe("a member id the workspace no longer has", () => {
       }),
     );
     store.getState().setSelection({ nodes: ["n1"], edges: [] });
-    renderWith(store, <Inspector />);
+    renderWith(store, <StepEditor />);
 
     const ghost = screen.getByLabelText(/who-is-this/);
     expect(ghost).toBeChecked();
@@ -347,5 +352,100 @@ describe("a member id the workspace no longer has", () => {
     fireEvent.click(ghost);
     const actions = (store.getState().config["n1"] as { actions: { member_ids: string[] }[] }).actions;
     expect(actions[0]?.member_ids).toEqual([]);
+  });
+});
+
+describe("enum options", () => {
+  it("show a label rather than the schema's wire value", () => {
+    // Every enum rendered its options verbatim, so a question's "Save into"
+    // offered `system_field` and a condition offered `has_no_value`.
+    withoutOverrides();
+    const { view } = openNode("data_collection");
+
+    expect(view.container.textContent).not.toContain("system_field");
+    expect(screen.getByText("A field every contact has")).toBeInTheDocument();
+  });
+
+  it("still submits the wire value, not the label", () => {
+    // The label is what the reader picks; the schema is still the contract.
+    withoutOverrides();
+    const { store, id } = openNode("data_collection");
+
+    expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
+  });
+});
+
+describe("adding a section to a step", () => {
+  /**
+   * A send_message with only what the schema requires.
+   *
+   * `openNode` builds from `makeSampleGraph({ optional: true })`, which fills
+   * every optional property — so nothing is absent and there is nothing to add.
+   * These tests are about what a step does *not* have yet.
+   */
+  function bareSendMessage() {
+    const store = makeStore(
+      makeDetail({
+        schema: 1,
+        nodes: [
+          {
+            id: "n1",
+            type: "send_message",
+            position: { x: 0, y: 0 },
+            config: { blocks: [{ type: "text", text: "Hello" }] },
+          },
+        ],
+        edges: [],
+      }),
+    );
+    store.getState().setSelection({ nodes: ["n1"], edges: [] });
+    const view = renderWith(store, <StepEditor />);
+    return { store, view, id: "n1" };
+  }
+
+  it("offers the ones it does not have as chips, under what they are for", () => {
+    // They used to be `+ Label` text links in schema order, stacked at the
+    // bottom of the form: the same size, weight and colour as prose, with a
+    // plus sign at 12px the only thing marking them as controls.
+    withoutOverrides();
+    bareSendMessage();
+
+    const chips = screen.getAllByRole("button", { name: /^\+ / });
+    expect(chips.length).toBeGreaterThan(0);
+    for (const chip of chips) {
+      expect(chip.className).toContain("fb-add-chip");
+    }
+    expect(screen.getByText("Add to this step")).toBeInTheDocument();
+    expect(screen.getByText("If they go quiet")).toBeInTheDocument();
+  });
+
+  it("names what a list adder adds, in the same words its accessible name uses", () => {
+    // The visible label was "Add", full stop, while the accessible name has
+    // always been "Add to Message blocks" — so a screen reader was told what it
+    // added and a reader was not.
+    withoutOverrides();
+    bareSendMessage();
+
+    const adder = screen.getByRole("button", { name: "Add to Message blocks" });
+    expect(adder.textContent).toContain("Add a message part");
+    expect(adder.className).toContain("fb-add-wide");
+  });
+
+  it("spells WhatsApp the way WhatsApp does", () => {
+    withoutOverrides();
+    const { view } = bareSendMessage();
+
+    expect(view.container.textContent).toContain("WhatsApp template");
+    expect(view.container.textContent).not.toContain("Whatsapp");
+  });
+
+  it("moves a chip into the form when it is picked, and leaves the group behind", () => {
+    withoutOverrides();
+    const { store, id } = bareSendMessage();
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Quick replies" }));
+
+    expect(store.getState().config[id]).toHaveProperty("quick_replies");
+    expect(screen.queryByRole("button", { name: "+ Quick replies" })).toBeNull();
   });
 });

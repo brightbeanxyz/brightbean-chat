@@ -1,11 +1,18 @@
 {% comment %}
-Feather-style 18px nav glyph. `name` comes from a NavItem.icon in
+Feather-style nav glyph. `name` comes from a NavItem.icon in
 apps.common.context_processors; an unknown name renders a neutral dot rather
 than nothing, so a mistyped key is visible instead of silently collapsing the
 row's layout.
+
+`size` is the pixel box, defaulting to 18. The rail passes 20: its glyph is the
+whole affordance with only a 10px label under it, where a settings row has a
+15px label beside it doing most of the work.
 {% endcomment %}{% spaceless %}
-<svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-{% if name == "dashboard" %}<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>
+{% with px=size|default:18 %}
+<svg class="flex-shrink-0" width="{{ px }}" height="{{ px }}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{% if name == "home" %}<path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5"/>
+{% elif name == "billing" %}<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
+{% elif name == "dashboard" %}<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>
 {% elif name == "inbox" %}<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/>
 {% elif name == "contacts" %}<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
 {% elif name == "flows" %}<rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="16" width="7" height="5" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/><path d="M6.5 8v5a2 2 0 002 2h9a2 2 0 002-2V8"/>
@@ -28,4 +35,5 @@ row's layout.
 {% else %}<circle cx="12" cy="12" r="3"/>
 {% endif %}
 </svg>
+{% endwith %}
 {% endspaceless %}

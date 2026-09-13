@@ -149,7 +149,7 @@
           "type": "string"
         },
         "value": {
-          "description": "May carry {{placeholders}} (SECURITY-BASELINE §3).",
+          "description": "Can include {{placeholders}}, filled in when the message is sent.",
           "maxLength": 4096,
           "type": "string"
         },
@@ -375,7 +375,7 @@
       "$id": "https://brightbean.chat/schemas/condition-filter.json",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "description": "SPEC §11.4. Dates are day-granular and resolve in the workspace's timezone, never the contact's — §11.5's use_contact_timezone flag is deliberately absent here.",
+      "description": "Dates are whole days, in this workspace's timezone rather than the contact's.",
       "properties": {
         "match": {
           "default": "all",
@@ -993,7 +993,7 @@
     },
     "followup": {
       "additionalProperties": false,
-      "description": "Routes to the `timeout` handle when the wait expires (SPEC §11.1).",
+      "description": "Where the flow goes if nobody answers in time.",
       "properties": {
         "delay": {
           "maximum": 10000,
@@ -1224,7 +1224,7 @@
     },
     "node_action": {
       "additionalProperties": false,
-      "description": "SPEC §11.2. Runs its verbs in order and always continues.",
+      "description": "Tags a contact, saves a detail, assigns the conversation. Several at once, in order.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1267,7 +1267,7 @@
     },
     "node_condition": {
       "additionalProperties": false,
-      "description": "SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded, not re-declared.",
+      "description": "Splits the flow in two, on what you know about the contact.",
       "properties": {
         "config": {
           "$ref": "#/$defs/condition_filter"
@@ -1296,7 +1296,7 @@
     },
     "node_data_collection": {
       "additionalProperties": false,
-      "description": "SPEC §11.8. Validated reply capture; email/phone answers also record consent.",
+      "description": "Asks a question and saves the answer on the contact. Checks emails and phone numbers look real.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1411,7 +1411,7 @@
     },
     "node_external_request": {
       "additionalProperties": false,
-      "description": "SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard (SECURITY-BASELINE §6); nothing in this app fetches the URL.",
+      "description": "Calls another system and can save what it sends back.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1487,7 +1487,7 @@
     },
     "node_note": {
       "additionalProperties": false,
-      "description": "SPEC §11.11. Builder-only annotation, ignored at runtime and never connected.",
+      "description": "A note to yourself on the canvas. It never runs and never connects to anything.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1526,7 +1526,7 @@
     },
     "node_randomizer": {
       "additionalProperties": false,
-      "description": "SPEC §11.6. Splits by weight; sticky by default, remembered in variables.",
+      "description": "Splits people down different paths, to compare two versions. Each person keeps the path they got.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1540,7 +1540,7 @@
               "type": "array"
             },
             "sticky": {
-              "description": "Default true (SPEC §11.6).",
+              "description": "On by default, so somebody who comes back takes the path they had before.",
               "type": "boolean"
             }
           },
@@ -1573,7 +1573,7 @@
     },
     "node_send_email": {
       "additionalProperties": false,
-      "description": "SPEC §11.10. Runtime is L5-E. Needs an email connection and an email identity.",
+      "description": "Sends an email. Needs an email account connected and an address for the contact.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1623,7 +1623,7 @@
     },
     "node_send_message": {
       "additionalProperties": false,
-      "description": "SPEC §11.1. Waits when buttons or quick replies are present, otherwise continues.",
+      "description": "Sends a message. If it offers buttons or quick replies, the flow waits for an answer.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1689,7 +1689,7 @@
     },
     "node_send_sms": {
       "additionalProperties": false,
-      "description": "SPEC §11.9. Runtime is L5-D. Needs an SMS connection and a phone identity.",
+      "description": "Sends a text message. Needs an SMS account connected and a phone number for the contact.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1734,7 +1734,7 @@
     },
     "node_smart_delay": {
       "additionalProperties": false,
-      "description": "SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
+      "description": "Waits, then carries on. Picks up at the next hour you allow sending.",
       "properties": {
         "config": {
           "discriminator": {
@@ -1778,7 +1778,7 @@
     },
     "node_start_flow": {
       "additionalProperties": false,
-      "description": "SPEC §11.3. Terminal in-graph: it ends this execution and starts the target flow.",
+      "description": "Hands over to another flow. This one stops here.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -2142,7 +2142,7 @@
     "node_types": [
       {
         "annotation": false,
-        "description": "SPEC §11.1. Waits when buttons or quick replies are present, otherwise continues.",
+        "description": "Sends a message. If it offers buttons or quick replies, the flow waits for an answer.",
         "dynamic_handles": [
           {
             "config_key": "buttons",
@@ -2158,60 +2158,60 @@
           "default",
           "timeout"
         ],
-        "label": "Send Message",
+        "label": "Send a message",
         "terminal": false,
         "type": "send_message"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.2. Runs its verbs in order and always continues.",
+        "description": "Tags a contact, saves a detail, assigns the conversation. Several at once, in order.",
         "dynamic_handles": [],
         "group": "actions",
         "handles": [
           "default"
         ],
-        "label": "Action",
+        "label": "Tag, save or assign",
         "terminal": false,
         "type": "action"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.3. Terminal in-graph: it ends this execution and starts the target flow.",
+        "description": "Hands over to another flow. This one stops here.",
         "dynamic_handles": [],
         "group": "logic",
         "handles": [],
-        "label": "Start Flow",
+        "label": "Hand over to another flow",
         "terminal": true,
         "type": "start_flow"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded, not re-declared.",
+        "description": "Splits the flow in two, on what you know about the contact.",
         "dynamic_handles": [],
         "group": "logic",
         "handles": [
           "cond:true",
           "cond:false"
         ],
-        "label": "Condition",
+        "label": "Branch on a condition",
         "terminal": false,
         "type": "condition"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
+        "description": "Waits, then carries on. Picks up at the next hour you allow sending.",
         "dynamic_handles": [],
         "group": "logic",
         "handles": [
           "default"
         ],
-        "label": "Smart Delay",
+        "label": "Wait",
         "terminal": false,
         "type": "smart_delay"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.6. Splits by weight; sticky by default, remembered in variables.",
+        "description": "Splits people down different paths, to compare two versions. Each person keeps the path they got.",
         "dynamic_handles": [
           {
             "config_key": "paths",
@@ -2220,69 +2220,69 @@
         ],
         "group": "logic",
         "handles": [],
-        "label": "Randomizer",
+        "label": "Split the traffic",
         "terminal": false,
         "type": "randomizer"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard (SECURITY-BASELINE §6); nothing in this app fetches the URL.",
+        "description": "Calls another system and can save what it sends back.",
         "dynamic_handles": [],
         "group": "actions",
         "handles": [
           "default",
           "error"
         ],
-        "label": "External Request",
+        "label": "Call another system",
         "terminal": false,
         "type": "external_request"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.8. Validated reply capture; email/phone answers also record consent.",
+        "description": "Asks a question and saves the answer on the contact. Checks emails and phone numbers look real.",
         "dynamic_handles": [],
         "group": "content",
         "handles": [
           "default",
           "timeout"
         ],
-        "label": "Data Collection",
+        "label": "Ask a question",
         "terminal": false,
         "type": "data_collection"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.9. Runtime is L5-D. Needs an SMS connection and a phone identity.",
+        "description": "Sends a text message. Needs an SMS account connected and a phone number for the contact.",
         "dynamic_handles": [],
         "group": "actions",
         "handles": [
           "default",
           "error"
         ],
-        "label": "Send SMS",
+        "label": "Send a text",
         "terminal": false,
         "type": "send_sms"
       },
       {
         "annotation": false,
-        "description": "SPEC §11.10. Runtime is L5-E. Needs an email connection and an email identity.",
+        "description": "Sends an email. Needs an email account connected and an address for the contact.",
         "dynamic_handles": [],
         "group": "actions",
         "handles": [
           "default",
           "error"
         ],
-        "label": "Send Email",
+        "label": "Send an email",
         "terminal": false,
         "type": "send_email"
       },
       {
         "annotation": true,
-        "description": "SPEC §11.11. Builder-only annotation, ignored at runtime and never connected.",
+        "description": "A note to yourself on the canvas. It never runs and never connects to anything.",
         "dynamic_handles": [],
         "group": "content",
         "handles": [],
-        "label": "Note",
+        "label": "Note to yourself",
         "terminal": false,
         "type": "note"
       }

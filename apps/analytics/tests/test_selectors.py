@@ -251,3 +251,31 @@ class TestDashboardKpis:
 
         assert kpis["contacts_total"] == 0
         assert kpis["active_flows"] == 0
+
+    def test_the_figures_and_the_bar_chart_cover_the_same_window(
+        self, tenancy: Any, contact: Any, connection: Any, identity: Any, flow: Any
+    ) -> None:
+        """They sit in one card and are read as one statement.
+
+        The figures were counted over a rolling `now - 7 days` while the bars
+        were grouped by calendar day, so "Messages in" took in part of an eighth
+        day the chart never drew and the bars never summed to the number printed
+        above them. Both read `dashboard_window` now; this pins that they keep
+        doing so.
+        """
+        from apps.messaging.models import Conversation, Message, MessageDirection
+
+        conversation = Conversation.objects.create(
+            workspace=tenancy.workspace, contact=contact, channel_connection=connection
+        )
+        Message.objects.create(conversation=conversation, direction=MessageDirection.IN)
+
+        kpis = selectors.dashboard_kpis(tenancy.workspace)
+        series = selectors.dashboard_daily_messages(tenancy.workspace)
+
+        assert len(series) == selectors.DASHBOARD_DAYS
+        assert sum(day["messages_in"] for day in series) == kpis["messages_in"]
+        # And the series starts where the figures' window does.
+        start_date, _ = selectors.dashboard_window()
+        assert series[0]["date"] == start_date
+        assert kpis["messages_in"] == 1

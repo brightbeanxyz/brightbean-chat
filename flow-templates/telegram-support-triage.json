@@ -1,0 +1,221 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "ask-qr-order-order",
+            "source": "ask",
+            "sourceHandle": "qr:order",
+            "target": "order"
+          },
+          {
+            "id": "ask-qr-account-account",
+            "source": "ask",
+            "sourceHandle": "qr:account",
+            "target": "account"
+          },
+          {
+            "id": "ask-qr-other-other",
+            "source": "ask",
+            "sourceHandle": "qr:other",
+            "target": "other"
+          },
+          {
+            "id": "order-default-wait",
+            "source": "order",
+            "sourceHandle": "default",
+            "target": "wait"
+          },
+          {
+            "id": "account-default-wait",
+            "source": "account",
+            "sourceHandle": "default",
+            "target": "wait"
+          },
+          {
+            "id": "other-default-wait",
+            "source": "other",
+            "sourceHandle": "default",
+            "target": "wait"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Sorry that is not working. Which is closest?",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "order",
+                  "label": "An order"
+                },
+                {
+                  "id": "account",
+                  "label": "My account"
+                },
+                {
+                  "id": "other",
+                  "label": "Something else"
+                }
+              ]
+            },
+            "id": "ask",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Support: order",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "order",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Support: account",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "account",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Support: other",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "other",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks. Someone who handles that will pick this up here.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "wait",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Sort support messages",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "problem"
+              },
+              {
+                "mode": "any_word",
+                "text": "broken"
+              },
+              {
+                "mode": "any_word",
+                "text": "not working"
+              },
+              {
+                "mode": "any_word",
+                "text": "issue"
+              }
+            ]
+          },
+          "platform": "telegram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "telegram",
+        "name": "telegram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "support: order",
+        "name": "Support: order",
+        "used_by": [
+          "flow-1:order"
+        ]
+      },
+      {
+        "key": "support: account",
+        "name": "Support: account",
+        "used_by": [
+          "flow-1:account"
+        ]
+      },
+      {
+        "key": "support: other",
+        "name": "Support: other",
+        "used_by": [
+          "flow-1:other"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

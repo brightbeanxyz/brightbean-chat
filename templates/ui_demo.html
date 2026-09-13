@@ -13,7 +13,7 @@ nothing but a form posting to a toast_response view.
 {% block title %}Design system — BrightBean Chat{% endblock %}
 
 {% block page_header %}
-<h1 class="text-lg font-semibold" style="color: var(--text-primary);">Design system</h1>
+<h1 class="page-title">Design system</h1>
 <p class="text-sm mb-6" style="color: var(--text-secondary);">
     The tokens, components and helpers every later UI issue renders into.
 </p>
@@ -39,7 +39,7 @@ nothing but a form posting to a toast_response view.
     <section>
         <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Select</h2>
         <p class="text-xs mb-3" style="color: var(--text-tertiary);">
-            <code>{% templatetag openblock %} ui_select {% templatetag closeblock %}</code> — single and multi,
+            <code>{% templatetag openblock %} ui_select {% templatetag closeblock %}</code>: single and multi,
             with a panel that escapes the toolbar's overflow.
         </p>
         <div class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-1"
@@ -82,7 +82,7 @@ nothing but a form posting to a toast_response view.
         <div class="space-y-2">
             <div class="alert-success">Saved. Every tone has a matching toast.</div>
             <div class="alert-info">Informational, for context a user did not ask for.</div>
-            <div class="alert-warning">Warning — the fourth tone, which Studio's stylesheet is missing.</div>
+            <div class="alert-warning">Warning, the fourth tone, which Studio's stylesheet is missing.</div>
             <div class="alert-error">Something went wrong.</div>
         </div>
     </section>
@@ -105,6 +105,169 @@ nothing but a form posting to a toast_response view.
         </div>
     </section>
 
+
+    {% comment %}
+      Everything below arrived with the redesign. The point of this page is that
+      a component nobody can look at is a component nobody reviews, so the
+      shared pieces go here the day they are written — not the per-surface
+      .ib-* / .crm-* / .fb-* families, which only make sense in place.
+    {% endcomment %}
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Type scale</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            <code>--fs-*</code>, not <code>--text-*</code>: that prefix already holds the text
+            <em>colours</em>, and it is Tailwind v4's <code>@theme</code> namespace.
+        </p>
+        <div class="card p-5 space-y-2">
+            <div class="page-title">Page title · 28</div>
+            <div class="section-title">Section heading · 17</div>
+            <div class="page-lede">Lede and body copy · 15</div>
+            <div style="font-size: var(--fs-body); color: var(--text-tertiary);">Meta and table text · 13</div>
+            <div class="section-eyebrow">Eyebrow · 12 uppercase</div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Surfaces</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            <code>.card</code> sets background, border and radius and nothing else: no padding, no
+            display. This file is unlayered, so any property it set would be one no utility at the
+            call site could ever override.
+        </p>
+        <div class="grid gap-3 sm:grid-cols-3">
+            <div class="card p-4">
+                <div class="section-eyebrow mb-1">Card</div>
+                <p class="text-[13px]" style="color: var(--text-tertiary);">The white surface everything sits on.</p>
+            </div>
+            <div class="tile p-4">
+                <div class="section-eyebrow mb-1">Tile</div>
+                <p class="text-[13px]" style="color: var(--text-tertiary);">Sunken, for pickers and options.</p>
+            </div>
+            <div class="tile tile-selected p-4">
+                <div class="section-eyebrow mb-1">Tile, chosen</div>
+                <p class="text-[13px]" style="color: var(--text-secondary);">The one they picked.</p>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Buttons and chips</h2>
+        <div class="card p-5">
+            <div class="flex flex-wrap items-center gap-2 mb-4">
+                <button type="button" class="btn-pill-primary">One primary action</button>
+                <button type="button" class="btn-pill-secondary">Secondary</button>
+                <button type="button" class="btn-pill-primary btn-pill-sm">Primary, small</button>
+                <button type="button" class="btn-pill-secondary btn-pill-sm">Secondary, small</button>
+                <button type="button" class="btn-pill-primary" disabled>Disabled</button>
+                <button type="button" class="btn-icon-round" aria-label="More">
+                    <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+                </button>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="chip-filter active">All <span style="opacity:.65;">9</span></span>
+                <span class="chip-filter">Live <span style="opacity:.65;">7</span></span>
+                <span class="chip-filter">Draft</span>
+                <span class="chip-filter chip-filter-add">+ Filter</span>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">State, in words</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            The dot carries the colour and the text carries the meaning. Bean green is
+            ~2.8:1 on white, so it is a fill and never a label. <code>--success-700</code> is the
+            readable weight.
+        </p>
+        {% comment %}
+          Each on its own line: .health is inline-flex, because in a table cell
+          or beside a channel name it has to sit in the run of text. A wrapper
+          is the right way to stack them, not a display override that would
+          break every real call site.
+        {% endcomment %}
+        <div class="card p-5 space-y-2.5">
+            <div><span class="health health-ok"><span class="health-dot"></span>Healthy · last message 4 minutes ago</span></div>
+            <div><span class="health health-bad"><span class="health-dot"></span>Needs reconnecting · nothing received for 2 days</span></div>
+            <div><span class="health health-warn"><span class="health-dot"></span>Connected, but nothing has arrived yet</span></div>
+            <div><span class="health health-off"><span class="health-dot"></span>Turned off · no messages sent or received</span></div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Avatars</h2>
+        <div class="card p-5 flex items-center gap-3">
+            <span class="avatar avatar-xs">M</span>
+            <span class="avatar avatar-sm">MK</span>
+            <span class="avatar">MK</span>
+            <span class="avatar avatar-lg">MK</span>
+            <span class="avatar avatar-brand">MK</span>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Empty state</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            One, where every list used to hand-roll its own.
+        </p>
+        <div class="empty-state">
+            <p class="empty-state-title">No flows here yet</p>
+            <p class="empty-state-body">
+                A flow replies for you when something happens: a comment, a keyword, a reply to your story.
+            </p>
+            <button type="button" class="btn-pill-primary mt-4">New flow</button>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">List row</h2>
+        <div class="card overflow-hidden">
+            <div class="list-row">
+                <span class="list-row-icon list-row-icon-live">{% include "partials/_nav_icon.html" with name="flows" size=19 %}</span>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2.5">
+                        <span class="list-row-title">Instagram comment → DM</span>
+                        <span class="status-pill status-pill-active inline-flex items-center gap-1.5"><span class="status-pill-dot"></span>Live</span>
+                    </div>
+                    <div class="list-row-meta">When someone comments “price” · edited 2 hours ago</div>
+                </div>
+                <span class="btn-pill-secondary btn-pill-sm">Open</span>
+                <span class="btn-icon-round">
+                    <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+                </span>
+            </div>
+            <div class="list-row">
+                <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="flows" size=19 %}</span>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2.5">
+                        <span class="list-row-title">Lead magnet, PDF delivery</span>
+                        <span class="status-pill status-pill-draft">Draft</span>
+                    </div>
+                    <div class="list-row-meta">No trigger yet, so it will not run until you add one</div>
+                </div>
+                <span class="btn-pill-secondary btn-pill-sm">Continue</span>
+                <span class="btn-icon-round">
+                    <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+                </span>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Progress</h2>
+        <div class="card p-5">
+            <div class="bc-rail" style="margin-bottom: 0;">
+                <span class="bc-step bc-step-done"><span class="bc-step-index"><svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span><span>Channel</span></span>
+                <span class="bc-step-link bc-step-link-done"></span>
+                <span class="bc-step bc-step-done"><span class="bc-step-index"><svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span><span>Audience</span></span>
+                <span class="bc-step-link"></span>
+                <span class="bc-step bc-step-current"><span class="bc-step-index">3</span><span>Message</span></span>
+                <span class="bc-step-link"></span>
+                <span class="bc-step"><span class="bc-step-index">4</span><span>Schedule</span></span>
+            </div>
+        </div>
+    </section>
+
     <section>
         <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Brand ramp</h2>
         <div class="flex flex-wrap gap-1">
@@ -118,6 +281,17 @@ nothing but a form posting to a toast_response view.
             <div class="w-12 h-10 rounded" style="background: var(--brand-700);"></div>
             <div class="w-12 h-10 rounded" style="background: var(--brand-800);"></div>
             <div class="w-12 h-10 rounded" style="background: var(--brand-900);"></div>
+        </div>
+        <p class="text-xs mt-3 mb-1" style="color: var(--text-tertiary);">
+            Bean green, the product's "good" colour since the redesign. 500 is a fill, 700 is text.
+        </p>
+        <div class="flex flex-wrap gap-1">
+            <div class="w-12 h-10 rounded" style="background: var(--brand-green-50);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-green-100);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-green-200);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-green-500);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-green-600);"></div>
+            <div class="w-12 h-10 rounded" style="background: var(--brand-green-700);"></div>
         </div>
     </section>
 

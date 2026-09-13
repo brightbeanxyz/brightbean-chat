@@ -227,6 +227,7 @@ def summaries(flow: Flow) -> list[dict[str, Any]]:
     and shipping the raw config would make the React store a second place a
     trigger's configuration lives — with the panel as the first.
     """
+    from apps.flows.triggers.phrasing import describe_trigger, sentence_case
     from apps.flows.triggers.platforms import platforms_for_trigger
 
     connected = set(_connected(flow))
@@ -241,6 +242,12 @@ def summaries(flow: Flow) -> list[dict[str, Any]]:
                 "enabled": trigger.enabled,
                 "priority": trigger.priority,
                 "summary": describe(trigger),
+                # The same sentence the flow list uses, so the canvas card can
+                # say "When someone sends “quote”" instead of stacking a type
+                # name and a config line into "Keyword / quote, estimate".
+                # `describe` stays: the drawer lists triggers under their type
+                # headings, where the configuration alone is the right detail.
+                "plain": sentence_case(describe_trigger(trigger)),
                 "connection": (
                     None
                     if connection is None

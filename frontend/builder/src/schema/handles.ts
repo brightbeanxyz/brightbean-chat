@@ -69,6 +69,14 @@ export function handleLabel(handle: string, config: unknown): string {
       return "Yes";
     case "cond:false":
       return "No";
+    // The trigger card's one edge. Unlabelled: the card it leaves already says
+    // "When", and the step it reaches is badged "Starts here", so a word on the
+    // line between them would be the third telling. Not a graph handle — see
+    // canvas/TriggerCard.tsx — but it reaches the same edge component, and
+    // without this it fell through to the raw-handle fallback and drew
+    // "starts" in lower case.
+    case "starts":
+      return "";
   }
 
   const separator = handle.indexOf(":");

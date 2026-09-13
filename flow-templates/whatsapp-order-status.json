@@ -1,0 +1,166 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "ask_order-default-flag",
+            "source": "ask_order",
+            "sourceHandle": "default",
+            "target": "flag"
+          },
+          {
+            "id": "flag-default-checking",
+            "source": "flag",
+            "sourceHandle": "default",
+            "target": "checking"
+          },
+          {
+            "id": "ask_order-timeout-flag",
+            "source": "ask_order",
+            "sourceHandle": "timeout",
+            "target": "flag"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "question": "Sure - what is the order number?",
+              "reply_type": "text",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "Order number",
+                "type": "custom_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_order",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Order query",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "flag",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks. Someone is checking that now and will reply here.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "checking",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "Connect your shop with an External request step to answer this automatically instead of by hand."
+            },
+            "id": "advice",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Check an order",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "order"
+              },
+              {
+                "mode": "any_word",
+                "text": "where is"
+              },
+              {
+                "mode": "any_word",
+                "text": "tracking"
+              }
+            ]
+          },
+          "platform": "whatsapp",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "order number",
+        "name": "Order number",
+        "used_by": [
+          "flow-1:ask_order"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "whatsapp",
+        "name": "whatsapp",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "order query",
+        "name": "Order query",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

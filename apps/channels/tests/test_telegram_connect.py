@@ -175,7 +175,13 @@ class TestWebhookHealth:
             external_id="777002",
         )
         url = reverse("channels:list", kwargs={"workspace_id": tenancy.workspace.pk})
-        assert "Nothing received yet" in as_admin(client, tenancy).get(url).content.decode()
+        body = as_admin(client, tenancy).get(url).content.decode()
+
+        # The distinction that matters is between "connected but silent" and
+        # "was working and stopped" — a bot pointed at the wrong URL looks
+        # exactly like a bot nobody has messaged, and only the elapsed time
+        # tells them apart. The list says which in words now.
+        assert "Connected, but nothing has arrived yet" in body
 
     def test_the_detail_page_shows_the_last_event(self, client: Client, tenancy: Tenancy) -> None:
         connection = ChannelConnection.objects.create(

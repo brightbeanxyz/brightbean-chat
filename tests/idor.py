@@ -121,6 +121,13 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # message_id resolver's job. Zero is as good as any — the route 404s for an
     # outsider at the conversation lookup, long before it looks at this.
     "index": 0,
+    # Which of the templates this REPOSITORY ships to start a flow from
+    # (flows:import_template). It names a file in flow-templates/, identical for
+    # every workspace and owned by none of them, so it identifies no tenant's
+    # object and cannot leak one across the boundary. The route's tenancy comes
+    # entirely from its workspace_id, which the sweep does vary; an unknown slug
+    # 404s for everybody alike.
+    "slug": "telegram-welcome-and-faq",
 }
 
 #: Why the inbound webhook routes cannot answer 404 and are therefore not

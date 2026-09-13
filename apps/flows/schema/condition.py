@@ -28,10 +28,11 @@ __all__ = ["CONDITION_SCHEMA", "CONDITION_SCHEMA_IS_VENDORED"]
 _SPEC_11_4_SCHEMA: dict[str, Any] = {
     "type": "object",
     "title": "Condition filter",
-    "description": (
-        "SPEC §11.4. Vendored form, in force only until apps.contacts.conditions "
-        "(issue #3) is importable; see apps/flows/schema/condition.py."
-    ),
+    # Kept in step with the real one in apps.contacts.conditions, which this
+    # stands in for when that app is absent. Reader-facing for the same reason:
+    # the builder renders it, and which copy it came from is not the reader's
+    # business. Why this file exists at all is in the module docstring.
+    "description": "Dates are whole days, in this workspace's timezone rather than the contact's.",
     "additionalProperties": False,
     "required": ["match", "rules"],
     "properties": {

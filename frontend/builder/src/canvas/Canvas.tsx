@@ -30,8 +30,26 @@ import { groupOf, nodeSpec } from "../schema/artifact";
 import type { Position } from "../schema/types";
 import { useBuilder, useBuilderStore } from "../store/context";
 import { selectRfEdges, selectRfNodes, type CardData, type CardNode } from "../store/selectors";
+import { AddStep } from "./AddStep";
+import { TRIGGER_NODE_ID } from "./TriggerCard";
 import { edgeTypes, nodeTypes } from "./types";
 import { useKeyboard } from "./useKeyboard";
+
+/**
+ * How big the minimap is, in pixels.
+ *
+ * React Flow's default is 200x150, which on a three-step flow is a white
+ * rectangle taking a corner of the canvas to show three dots. It cannot be
+ * sized from CSS: `MiniMap` reads `style.width` and `style.height` as **numbers**
+ * and divides the graph's bounding box by them, so a `.react-flow__minimap`
+ * rule (which the conventions forbid anyway — React Flow's own stylesheet is
+ * unlayered and loads after ours) would resize the box and leave the viewport
+ * mask computed against the old one.
+ *
+ * Numbers, therefore, and not "120px": the arithmetic gives NaN on a string and
+ * the mask silently disappears.
+ */
+const MINIMAP = { width: 132, height: 92 } as const;
 
 const GROUP_COLOR: Record<string, string> = {
   content: "var(--flow-group-content)",
@@ -55,11 +73,23 @@ export function Canvas() {
       const state = store.getState();
       let selection: string[] | null = null;
       const moves: { id: string; position: Position }[] = [];
+      const sized: { id: string; width: number; height: number }[] = [];
       const removed: string[] = [];
       let dragEnded = false;
       let dragging = false;
 
       for (const change of changes) {
+        // The trigger card is drawn on the canvas and is not in the graph, so
+        // a move, a selection or a removal of it names something the store does
+        // not have: `deleteNodes(["__trigger__"])` is a silent no-op today and a
+        // corrupted map the day deleteNodes stops checking.
+        //
+        // Its *measurement* is the exception, and has to be, because `measured`
+        // is what puts a node inside Fit's bounds — dropping it here is what
+        // left the card off screen after pressing Fit.
+        if ("id" in change && change.id === TRIGGER_NODE_ID && change.type !== "dimensions") {
+          continue;
+        }
         switch (change.type) {
           case "position": {
             if (change.position) {
@@ -83,14 +113,27 @@ export function Canvas() {
             removed.push(change.id);
             break;
           }
+          case "dimensions": {
+            // Kept, in a view-only slice. These used to be discarded along with
+            // `replace` and `add`, on the grounds that they are not ours and the
+            // server rejects them — both true, and it cost more than it saved:
+            // React Flow computes every node box from `measured`, so without it
+            // Fit found no bounds and did nothing, and the minimap drew nothing.
+            // `setMeasured` touches neither `revision` nor history.
+            if (change.dimensions) {
+              sized.push({ id: change.id, ...change.dimensions });
+            }
+            break;
+          }
           default:
-            // `dimensions`, `replace`, `add` — measurement and internals we do
-            // not own. Discarded, because they are exactly the keys the server
-            // rejects and there is no reason to carry them.
+            // `replace` and `add` — internals we do not own and have no use for.
             break;
         }
       }
 
+      if (sized.length > 0) {
+        state.setMeasured(sized);
+      }
       if (moves.length > 0) {
         // On the first frame that actually moves something, not on drag start:
         // a click-and-hold that never moves would otherwise leave a no-op step
@@ -124,6 +167,9 @@ export function Canvas() {
       let selection: string[] | null = null;
 
       for (const change of changes) {
+        if ("id" in change && change.id.startsWith(`${TRIGGER_NODE_ID}-`)) {
+          continue;
+        }
         if (change.type === "remove") {
           removed.push(change.id);
         } else if (change.type === "select") {
@@ -162,6 +208,11 @@ export function Canvas() {
    */
   const isValidConnection = useCallback<IsValidConnection>(
     (connection) => {
+      // Nothing connects to or from the trigger card. Its one edge is drawn by
+      // the projection, and a second would imply a second entry step.
+      if (connection.source === TRIGGER_NODE_ID || connection.target === TRIGGER_NODE_ID) {
+        return false;
+      }
       const state = store.getState();
       const sourceType = connection.source ? state.nodeType[connection.source] : undefined;
       const targetType = connection.target ? state.nodeType[connection.target] : undefined;
@@ -200,7 +251,12 @@ export function Canvas() {
   );
 
   return (
-    <div ref={wrapper} className="flex-1 min-h-0" onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
+    <div
+      ref={wrapper}
+      className="fb-canvas flex-1 min-h-0 relative"
+      onDrop={onDrop}
+      onDragOver={(event) => event.preventDefault()}
+    >
       <ReactFlow<CardNode>
         nodes={nodes}
         edges={edges}
@@ -223,9 +279,18 @@ export function Canvas() {
         proOptions={{ hideAttribution: false }}
       >
         <Background />
-        <Controls showInteractive={false} />
-        <MiniMap<CardNode> pannable zoomable nodeColor={minimapColor} />
+        <Controls showInteractive={false} position="bottom-right" />
+        <MiniMap<CardNode>
+          pannable
+          zoomable
+          nodeColor={minimapColor}
+          position="top-right"
+          style={{ ...MINIMAP, borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
+        />
       </ReactFlow>
+      {/* Outside <ReactFlow> so it is not pan/zoom transformed, and after it so
+          it stacks above the pane without a z-index fight. */}
+      <AddStep />
     </div>
   );
 }

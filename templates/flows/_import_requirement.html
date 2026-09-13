@@ -6,26 +6,42 @@ drops any that do not name a requirement this document actually raises, so a
 hand-posted field cannot introduce one.
 {% endcomment %}
 {% with requirement=resolution.requirement %}
-<div class="rounded-lg border p-3" style="border-color: var(--border);">
+{% comment %}
+  `.is-unanswered` is the whole point of this card's styling. The footer counts
+  what is still missing, and before this there was nothing on the page
+  connecting that count to a control: a workspace with no Instagram account saw
+  "1 answer still needed", an untouched dropdown, and no way to tell which of
+  eight questions it meant. The id is what the footer links to.
+{% endcomment %}
+<div id="ask-{{ kind }}-{{ requirement.key|slugify }}"
+     class="import-ask rounded-lg border p-3{% if resolution.problem %} is-unanswered{% endif %}">
     <div class="flex flex-wrap items-baseline justify-between gap-2">
         <p class="text-sm font-medium" style="color: var(--text-primary);">
+            {% if resolution.problem %}<span class="import-ask-flag">Needs an answer</span>{% endif %}
             {% if requirement.name %}{{ requirement.name }}{% else %}<span style="color: var(--text-tertiary);">Unnamed {{ kind }}</span>{% endif %}
             {% if requirement.detail and kind != "custom_field" %}
             <span class="text-xs font-normal" style="color: var(--text-tertiary);">({{ requirement.detail }})</span>
             {% endif %}
         </p>
-        <p class="text-xs" style="color: var(--text-tertiary);">Used by {{ requirement.used_by|join:", " }}</p>
+        {% comment %}
+          Blank for a single-flow file, and flow names rather than the
+          importer's internal coordinates otherwise — see _needed_by in
+          apps/flows/views_portability.py.
+        {% endcomment %}
+        {% if needed_by %}
+        <p class="text-xs" style="color: var(--text-tertiary);">Needed by {{ needed_by }}</p>
+        {% endif %}
     </div>
 
     {% if requirement.in_document %}
     <p class="text-sm mt-2" style="color: var(--text-secondary);">
-        Included in this file — it resolves to the copy about to be created.
+        Included in this file. It resolves to the copy about to be created.
     </p>
 
     {% elif kind == "whatsapp_template" %}
     <p class="text-sm mt-2" style="color: var(--text-secondary);">
         This flow sends the approved template <span class="font-mono">{{ requirement.name }}</span>.
-        Nothing to answer here — make sure your WhatsApp account has it.
+        Nothing to answer here. Make sure your WhatsApp account has it.
     </p>
 
     {% elif kind == "request_header" or kind == "link_handle" or kind == "from_override" or kind == "comment_posts" %}
@@ -42,7 +58,7 @@ hand-posted field cannot introduce one.
              as matching nothing — switching the scope to "all" on the user's
              behalf would silently widen what a stranger's trigger watches.
            {% endcomment %}
-           placeholder="{% if kind == 'comment_posts' %}Post ids, comma separated — blank matches no posts{% else %}Leave blank to omit{% endif %}"
+           placeholder="{% if kind == 'comment_posts' %}Post ids, comma separated. Blank matches no posts{% else %}Leave blank to omit{% endif %}"
            aria-label="Value for {{ requirement.name|default:kind }}">
 
     {% elif kind == "platform" %}
@@ -50,31 +66,65 @@ hand-posted field cannot introduce one.
       One control, deliberately. The generic action select plus a connection
       dropdown had two ways to say "unbound" and one of them — "use an existing
       one" with nothing picked — was reachable by not finishing the form. An
-      unbound trigger listens on every platform its type supports (SPEC §5), so
-      that had to stop being the accidental answer.
+      unbound trigger listens on every platform its type supports, so that had
+      to stop being the accidental answer.
     {% endcomment %}
     <select name="{{ kind }}|{{ requirement.key }}|id" class="form-input-styled w-full mt-2"
-            aria-label="Connection for the {{ requirement.key }} trigger(s)">
+            aria-label="Account for the {{ requirement.name|default:requirement.key }} trigger(s)">
         <option value="">Choose…</option>
         {% for option in options %}
         <option value="{{ option.id }}" {% if resolution.target_id == option.id %}selected{% endif %}>{{ option.label }}</option>
         {% endfor %}
         <option value="any" {% if resolution.action == "blank" %}selected{% endif %}>
-            Any connection this trigger type supports
+            Every account this kind of trigger works on
         </option>
     </select>
-    {% if resolution.action == "blank" %}
-    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-        This trigger will listen on every platform its type supports, not only {{ requirement.key }}.
+
+    {% comment %}
+      With nothing connected the dropdown holds one real answer and no accounts,
+      which reads as a broken form rather than as a step that has not been done
+      yet. Saying so is not optional politeness: the wide option is still
+      offered, so somebody who does not know an account is missing picks it and
+      imports a trigger far broader than the one the template described.
+    {% endcomment %}
+    {% if not options %}
+    <p class="text-xs mt-1.5" style="color: var(--text-tertiary);">
+        No {{ requirement.name|default:requirement.key }} account is connected yet. You can
+        <a href="{{ connect_url }}" class="btn-text-hover-primary" style="text-decoration: underline;">connect one</a>
+        and come back, or import now and pick the account later.
     </p>
     {% endif %}
+    {% if resolution.action == "blank" %}
+    <p class="text-xs mt-1" style="color: var(--text-tertiary);">
+        This trigger will listen on every platform its kind works on, not only {{ requirement.name|default:requirement.key }}.
+    </p>
+    {% endif %}
+    {% comment %}
+      Always shown. An earlier cut hid this when the picker had no options, to
+      avoid repeating the "no account is connected yet" note above — and that
+      note is grey, informational, and says nothing about being the thing
+      blocking the import. The two say different things now: the note explains
+      the empty dropdown, this says the question is unanswered.
+    {% endcomment %}
     {% if resolution.problem %}
-    <p class="text-xs mt-2" style="color: var(--danger-500);">{{ resolution.problem }}</p>
+    <p class="import-ask-problem">{{ resolution.problem }}</p>
     {% endif %}
 
     {% else %}
-    <div class="mt-2 flex flex-wrap items-center gap-2">
+    {% comment %}
+      Only the control the chosen answer needs. All three used to show at once —
+      the action, a name box and an existing-thing picker — so every question
+      read as three questions, two of which did nothing. Picking "Create it"
+      left a "Pick one…" dropdown sitting beside it looking unanswered.
+
+      `x-show`, not a server round trip: the answer is not saved until Save
+      answers, and hiding on the client keeps the field posted (a hidden input
+      still submits) so switching back and forth loses nothing typed.
+    {% endcomment %}
+    <div class="mt-2 flex flex-wrap items-center gap-2"
+         x-data="{ how: '{{ resolution.action|escapejs }}' }">
         <select name="{{ kind }}|{{ requirement.key }}|action" class="form-input-styled" style="width: 11rem;"
+                x-model="how"
                 aria-label="What to do with {{ requirement.name|default:kind }}">
             <option value="">Choose…</option>
             {% if requirement.creatable %}
@@ -88,13 +138,15 @@ hand-posted field cannot introduce one.
 
         {% if requirement.creatable %}
         <input type="text" name="{{ kind }}|{{ requirement.key }}|name" value="{{ resolution.name|default:requirement.name }}"
-               maxlength="100" placeholder="New name" class="form-input-styled" style="width: 12rem;"
+               x-show="how === 'create'" x-cloak
+               maxlength="100" placeholder="Call it…" class="form-input-styled" style="width: 12rem;"
                aria-label="Name for the new {{ kind }}">
         {% endif %}
 
         {% if kind == "custom_field" %}
         <select name="{{ kind }}|{{ requirement.key }}|field_type" class="form-input-styled" style="width: 9rem;"
-                aria-label="Field type">
+                x-show="how === 'create'" x-cloak
+                aria-label="What this field holds">
             {% for value, label in field_types %}
             <option value="{{ value }}" {% if resolution.literal == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -114,7 +166,8 @@ hand-posted field cannot introduce one.
                aria-label="Media URL">
         {% else %}
         <select name="{{ kind }}|{{ requirement.key }}|id" class="form-input-styled" style="width: 14rem;"
-                aria-label="Existing {{ kind }}">
+                x-show="how === 'map'" x-cloak
+                aria-label="Which existing one">
             <option value="">Pick one…</option>
             {% for option in options %}
             <option value="{{ option.id }}" {% if resolution.target_id == option.id %}selected{% endif %}>{{ option.label }}</option>
@@ -124,7 +177,7 @@ hand-posted field cannot introduce one.
     </div>
 
     {% if resolution.problem %}
-    <p class="text-xs mt-2" style="color: var(--danger-500);">{{ resolution.problem }}</p>
+    <p class="import-ask-problem">{{ resolution.problem }}</p>
     {% endif %}
     {% endif %}
 </div>

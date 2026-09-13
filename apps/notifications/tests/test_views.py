@@ -109,7 +109,9 @@ class TestTheBadge:
         body = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.id}/").content.decode()
 
         assert "notif-dot" in body
-        assert 'href="/notifications/"' in body
+        # The history page is reached from inside the bell's panel now, which is
+        # fetched on open — the shell carries the bell, not the link.
+        assert reverse("notifications:bell") in body
 
 
 @pytest.mark.django_db
@@ -523,21 +525,27 @@ class TestTheRefreshKeepsTheReadersPlace:
 
 
 @pytest.mark.django_db
-class TestTheMobileIndicator:
-    def test_the_shell_gives_it_its_own_swap_target(self, tenancy, client_for):
+class TestOneIndicatorOnEveryViewport:
+    """The mobile bar had its own dot because the shell had no header and its
+    sidebar was off-canvas on a phone, so a phone reader could see neither the
+    footer bell nor the nav row. The redesign's header renders at every width —
+    the rail is what changes shape, becoming a bottom tab bar — so there is one
+    bell, one id, and nothing to keep in step with anything else.
+    """
+
+    def test_the_shell_carries_exactly_one_indicator(self, tenancy, client_for):
         make_notification(tenancy.owner)
 
         body = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.id}/").content.decode()
 
-        assert body.count('id="notification-badge-mobile"') == 1
+        assert body.count('id="notification-badge"') == 1
+        assert 'id="notification-badge-mobile"' not in body
 
-    def test_marking_read_clears_it_too(self, tenancy, client_for):
-        """It sits outside both desktop targets, so it would otherwise keep
-        showing a dot after the last notification was read."""
+    def test_marking_read_clears_it(self, tenancy, client_for):
         make_notification(tenancy.owner)
 
         body = client_for(tenancy.owner).post(reverse("notifications:mark_all_read"), headers=HTMX).content.decode()
 
-        assert 'id="notification-badge-mobile"' in body
-        assert body.count("hx-swap-oob") == 3
+        assert 'id="notification-badge"' in body
+        assert body.count("hx-swap-oob") == 1
         assert "notif-dot" not in body

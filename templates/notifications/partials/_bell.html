@@ -1,16 +1,16 @@
 {% comment %}
-The notification bell, mounted in base.html's sidebar footer.
+The notification bell, mounted in the app header (partials/_app_header.html).
 
-**Why the footer and not a topbar:** there is no desktop topbar in this shell —
-templates/base.html is an <aside> plus a <main>, and its only header is
-mobile-only. Studio's bell has nowhere else to go.
+**Why the header now:** the redesign gave the shell a real 60px top bar, and
+the bell is the only unread indicator in the product. It used to live in the
+sidebar footer because there was nowhere else; it used to have a second copy in
+the mobile top bar for the same reason. Both of those are gone, and so is the
+Notifications row in the nav — the header renders on every page including
+settings, so one bell now covers every archetype.
 
-**Why expanded-only:** it sits inside `.sidebar-org-expanded`, so the collapsed
-60px rail does not show it — exactly as that rail already hides the sign-out
-control. Notifications stay reachable there through the nav row, which is
-icon-only when collapsed. Putting a second copy in the collapsed half would mean
-two elements sharing the badge's id, and an out-of-band swap only ever finds the
-first.
+That is why notifications/partials/_badge.html swaps ONE id rather than three.
+Adding a second copy of this bell anywhere would put two elements on the same
+id, and an out-of-band swap only ever finds the first.
 
 **Why no `{% block alpine_components %}` and no inline script:** `x-data` on a
 wrapper is the workspace switcher's pattern (base.html:140) — there is no
@@ -29,8 +29,7 @@ config/settings/base.py already grants for exactly this reason.
             hx-get="{% url 'notifications:bell' %}"
             hx-target="#notification-panel-body"
             hx-swap="innerHTML"
-            class="btn-icon-hover relative w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer"
-            style="color: var(--text-tertiary);"
+            class="appbar-bell"
             title="Notifications"
             aria-haspopup="true"
             :aria-expanded="bellOpen ? 'true' : 'false'">
@@ -42,9 +41,10 @@ config/settings/base.py already grants for exactly this reason.
     </button>
 
     {% comment %}
-      `bottom-full` rather than the switcher's `mt-1`: this dropdown hangs off
-      the bottom of the sidebar, so it opens upward. The <aside> sets no
-      overflow, so a panel wider than the 240px rail is not clipped.
+      Opens downward (`top-full`), and right-aligned. The bell sits at the
+      top-right of the header now, not at the bottom of a sidebar — a panel
+      opening upward from here would run off the top of the window, and one
+      left-aligned would run off the right edge.
 
       A separate polling element rather than `hx-trigger="every 60s"` on the
       button: the button's own request fills the panel, and one element cannot
@@ -56,7 +56,7 @@ config/settings/base.py already grants for exactly this reason.
     <div hx-get="{% url 'notifications:badge' %}" hx-trigger="every 60s" hx-swap="none"></div>
 
     <div x-show="bellOpen" x-cloak
-         class="bb-select-panel anim-collapse absolute bottom-full left-0 mb-2 z-50 w-80 py-1">
+         class="bb-select-panel anim-collapse absolute top-full right-0 mt-2 z-50 w-80 py-1">
         {% comment %}
           Two triggers, one target: the button's hx-get fills this on open, and
           `notificationsChanged from:body` refills it after anything is marked

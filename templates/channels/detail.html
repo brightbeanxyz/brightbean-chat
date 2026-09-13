@@ -34,7 +34,7 @@
 
   {% comment %}
   Read from the static tables in apps.channels.capabilities / .policy, not from
-  the adapter — ROADMAP contract 4 — so this panel is complete for a platform
+  the adapter (ROADMAP contract 4), so this panel is complete for a platform
   whose adapter has not shipped.
   {% endcomment %}
   <h2>What this platform carries</h2>
@@ -43,12 +43,12 @@
     <li>
       Buttons:
       {% if capabilities.max_buttons %}up to {{ capabilities.max_buttons }}
-      {% else %}not supported — buttons become numbered replies{% endif %}
+      {% else %}not supported: buttons become numbered replies{% endif %}
     </li>
     <li>
       Quick replies:
       {% if capabilities.max_quick_replies %}up to {{ capabilities.max_quick_replies }}
-      {% else %}not supported — quick replies become numbered replies{% endif %}
+      {% else %}not supported: quick replies become numbered replies{% endif %}
     </li>
     <li>Carousels: {% if capabilities.gallery %}supported{% else %}sent as sequential messages{% endif %}</li>
     <li>
@@ -62,14 +62,14 @@
   {% if connection.platform == "email" %}
     {% comment %}
     Issue #21. The test posts to a JSON endpoint that answers 200 even when the
-    send fails — the request succeeded; what it reports is the state of somebody
+    send fails. The request succeeded; what it reports is the state of somebody
     else's mail configuration. Rendered as a plain form so it works without
     JavaScript; the response is a small JSON document the browser shows.
     {% endcomment %}
     <h2>Bounce handling</h2>
     <p class="muted">
       Both of these can only be set after the channel exists, because the webhook
-      URL above contains its id — you create the endpoint in your provider first,
+      URL above contains its id, so you create the endpoint in your provider first,
       then paste back what it gives you. Until the relevant one is set, bounce and
       complaint notifications are ignored rather than trusted.
     </p>
@@ -95,7 +95,7 @@
     <p class="muted">
       Sends one real email to your own account address, through this connection,
       carrying the same <code>List-Unsubscribe</code> headers and footer every
-      other send does — so a provider that strips them shows up here rather than
+      other send does, so a provider that strips them shows up here rather than
       after a campaign.
     </p>
     <form method="post"
@@ -109,8 +109,8 @@
   <p class="muted">
     Stored encrypted and never displayed again. Rotating issues a new secret
     immediately, so deliveries carrying the old one are rejected until the
-    platform has the new one. Where the platform accepts it over its own API —
-    Telegram does — that happens as part of rotating, and the next page says so.
+    platform has the new one. Where the platform accepts it over its own API, as
+    Telegram does, that happens as part of rotating, and the next page says so.
   </p>
   <form method="post"
         action="{% url 'channels:rotate_secret' workspace_id=request.workspace.id connection_id=connection.id %}">

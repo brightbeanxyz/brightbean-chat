@@ -37,22 +37,22 @@ for free.
     <template x-if="rules.length">
       <button type="button" @click="clearRules()">Clear</button>
     </template>
-    <span class="muted text-xs" x-show="!rules.length">No filter — showing everyone.</span>
+    <span class="muted text-xs" x-show="!rules.length">No filter: showing everyone.</span>
   </div>
 
   <template x-for="(rule, index) in rules" :key="index">
     <div class="crm-rule">
-      {# Source #}
-      <label class="sr-only" :for="`rule-source-${index}`">Source</label>
+      {# What kind of thing this rule looks at #}
+      <label class="sr-only" :for="`rule-source-${index}`">Look at</label>
       <select :id="`rule-source-${index}`" class="w-40" x-model="rule.source" @change="onSourceChange(rule)">
         <template x-for="source in config.sources" :key="source.name">
           <option :value="source.name" :disabled="!source.evaluable"
-                  x-text="source.evaluable ? source.label : `${source.label} — ${source.owner}`"></option>
+                  x-text="source.evaluable ? source.label : `${source.label} · ${source.owner}`"></option>
         </template>
       </select>
 
       {# Key: whichever picker this source's key kind calls for #}
-      <label class="sr-only" :for="`rule-key-${index}`">Field</label>
+      <label class="sr-only" :for="`rule-key-${index}`">Which one</label>
       <select :id="`rule-key-${index}`" class="w-52" x-model="rule.key" @change="onKeyChange(rule)">
         <option value="">Choose…</option>
         <template x-for="option in keyOptions(rule)" :key="option.value">
@@ -60,8 +60,8 @@ for free.
         </template>
       </select>
 
-      {# Operator #}
-      <label class="sr-only" :for="`rule-op-${index}`">Operator</label>
+      {# How to compare it — "is", "contains", "has a value" #}
+      <label class="sr-only" :for="`rule-op-${index}`">Condition</label>
       <select :id="`rule-op-${index}`" class="w-44" x-model="rule.op" @change="touch()">
         <template x-for="op in opOptions(rule)" :key="op">
           <option :value="op" x-text="opLabel(op)"></option>
@@ -79,8 +79,9 @@ for free.
 
           <template x-if="valueType(rule) === 'boolean'">
             <select :id="`rule-value-${index}`" class="w-32" x-model="rule.value" @change="touch()">
-              <option value="true">true</option>
-              <option value="false">false</option>
+              {# Not "true"/"false": these sit in a sentence a person reads. #}
+              <option value="true">Yes</option>
+              <option value="false">No</option>
             </select>
           </template>
 
@@ -92,8 +93,8 @@ for free.
           <template x-if="isDate(rule)">
             <div class="flex items-center gap-2">
               <select class="w-36" x-model="rule.mode" @change="touch()">
-                <option value="on">a date</option>
-                <option value="relative">days ago / ahead</option>
+                <option value="on">on a date</option>
+                <option value="relative">a number of days away</option>
               </select>
               <template x-if="rule.mode !== 'relative'">
                 {% comment %}

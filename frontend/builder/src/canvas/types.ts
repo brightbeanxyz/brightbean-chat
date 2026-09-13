@@ -14,9 +14,13 @@ import type { EdgeTypes, NodeTypes } from "@xyflow/react";
 import { NODE_TYPES } from "../schema/artifact";
 import { FlowNodeCard } from "./FlowNodeCard";
 import { HandleLabelEdge } from "./HandleLabelEdge";
+import { TRIGGER_CARD_TYPE, TriggerCard } from "./TriggerCard";
 
-export const nodeTypes: NodeTypes = Object.freeze(
-  Object.fromEntries(NODE_TYPES.map((spec) => [spec.type, FlowNodeCard])),
-);
+export const nodeTypes: NodeTypes = Object.freeze({
+  ...Object.fromEntries(NODE_TYPES.map((spec) => [spec.type, FlowNodeCard])),
+  // Not from the artefact, because it is not a node type: the trigger is a
+  // Trigger row drawn on the canvas. See canvas/TriggerCard.tsx.
+  [TRIGGER_CARD_TYPE]: TriggerCard,
+});
 
 export const edgeTypes: EdgeTypes = Object.freeze({ handleLabel: HandleLabelEdge });

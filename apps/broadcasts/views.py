@@ -93,6 +93,16 @@ __all__ = [
 #: built from a request parameter is a template-injection hole.
 STEPS: tuple[str, ...] = ("channel", "audience", "content", "schedule")
 
+#: What each step is called on screen. The names above are the wire format and
+#: pick a template; these are the reader's words, and "content" is the one that
+#: differs — nobody composing a broadcast thinks of it as content.
+STEP_LABELS: dict[str, str] = {
+    "channel": "Channel",
+    "audience": "Audience",
+    "content": "Message",
+    "schedule": "Schedule",
+}
+
 #: How many broadcasts the list shows at once. The search and status filters
 #: narrow within the whole set, so the cap bites only on the unfiltered view —
 #: and the page says when it has.
@@ -212,11 +222,30 @@ def _requested_step(request: WorkspaceRequest, broadcast: Broadcast) -> str:
 
 def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, **extra: Any) -> dict[str, Any]:
     connection = broadcast.channel_connection
+    reached = _step_for(broadcast)
+    # The rail's rows, already answered: which step is this, what is it called,
+    # and is it behind the furthest one reached. `reached` has been in this
+    # context all along and the template never rendered it, so the rail showed
+    # where you are but not how far along.
+    #
+    # STEP_LABELS rather than the stored names: the third step is `content` on
+    # the wire and "Message" to a reader.
+    reached_index = STEPS.index(reached) if reached in STEPS else 0
     context: dict[str, Any] = {
         "broadcast": broadcast,
         "step": step,
         "steps": STEPS,
-        "reached": _step_for(broadcast),
+        "step_rows": [
+            {
+                "name": name,
+                "label": STEP_LABELS.get(name, name.title()),
+                "index": index + 1,
+                "done": index < reached_index,
+                "current": name == step,
+            }
+            for index, name in enumerate(STEPS)
+        ],
+        "reached": reached,
         "composer": composer_module.composer_config(request.workspace, connection),
         "connections": composer_module.broadcastable_connections(request.workspace),
     }

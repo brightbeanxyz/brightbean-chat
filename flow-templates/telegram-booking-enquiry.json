@@ -1,0 +1,255 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "intro-default-ask_name",
+            "source": "intro",
+            "sourceHandle": "default",
+            "target": "ask_name"
+          },
+          {
+            "id": "ask_name-default-ask_when",
+            "source": "ask_name",
+            "sourceHandle": "default",
+            "target": "ask_when"
+          },
+          {
+            "id": "ask_when-default-ask_phone",
+            "source": "ask_when",
+            "sourceHandle": "default",
+            "target": "ask_phone"
+          },
+          {
+            "id": "ask_phone-default-flag",
+            "source": "ask_phone",
+            "sourceHandle": "default",
+            "target": "flag"
+          },
+          {
+            "id": "flag-default-done",
+            "source": "flag",
+            "sourceHandle": "default",
+            "target": "done"
+          },
+          {
+            "id": "ask_when-timeout-flag",
+            "source": "ask_when",
+            "sourceHandle": "timeout",
+            "target": "flag"
+          },
+          {
+            "id": "ask_phone-timeout-flag",
+            "source": "ask_phone",
+            "sourceHandle": "timeout",
+            "target": "flag"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Happy to book you in. Three quick questions.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "intro",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "What name is the booking under?",
+              "reply_type": "text",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "first_name",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_name",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "question": "What day and rough time suits you?",
+              "reply_type": "text",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "Preferred time",
+                "type": "custom_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_when",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "question": "What is the best number to reach you on?",
+              "reply_type": "phone",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "phone",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_phone",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Booking enquiry",
+                  "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "Telegram",
+                  "verb": "set_field"
+                }
+              ]
+            },
+            "id": "flag",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks {{first_name}}. We will confirm the slot here shortly.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "done",
+            "position": {
+              "x": 0,
+              "y": 200
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Take a booking enquiry",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "book"
+              },
+              {
+                "mode": "any_word",
+                "text": "booking"
+              },
+              {
+                "mode": "any_word",
+                "text": "appointment"
+              }
+            ]
+          },
+          "platform": "telegram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "preferred time",
+        "name": "Preferred time",
+        "used_by": [
+          "flow-1:ask_when"
+        ]
+      },
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "telegram",
+        "name": "telegram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "booking enquiry",
+        "name": "Booking enquiry",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

@@ -40,22 +40,25 @@ inert — a button that looks fine and does nothing.
 {% endblock %}
 
 {% block page_header %}
-  <div class="flex items-start justify-between gap-4 mb-4">
+  <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
     <div>
-      <h1>Contacts</h1>
-      <p class="muted">Everyone who has messaged this workspace, plus anyone you have imported.</p>
+      <h1 class="page-title">Contacts</h1>
+      <p class="page-lede mt-1.5">
+        {% if total_contacts %}{{ total_contacts }} {{ total_contacts|pluralize:"person has,people have" }}{% else %}Everyone who has{% endif %}
+        messaged you or been imported.
+      </p>
     </div>
     {% if can_manage_crm %}
       <div class="flex items-center gap-2 flex-shrink-0">
-        <a class="media-pill" href="{% url 'contacts:import_list' workspace_id=request.workspace.id %}">Import CSV</a>
         {% comment %}
           A plain link, and it carries the toolbar's canonical querystring, which
           is what makes "export what you are looking at" true rather than
           approximately true. It is regenerated on every rows render, so it
           follows the filter.
         {% endcomment %}
-        <a class="media-pill" id="contact-export"
-           href="{% url 'contacts:export' workspace_id=request.workspace.id %}{% if querystring %}?{{ querystring }}{% endif %}">Export CSV</a>
+        <a class="btn-pill-secondary" id="contact-export"
+           href="{% url 'contacts:export' workspace_id=request.workspace.id %}{% if querystring %}?{{ querystring }}{% endif %}">Export</a>
+        <a class="btn-pill-primary" href="{% url 'contacts:import_list' workspace_id=request.workspace.id %}">Import a CSV</a>
       </div>
     {% endif %}
   </div>
@@ -75,23 +78,24 @@ inert — a button that looks fine and does nothing.
 {% endcomment %}
 <div x-data="contactSelection()" x-on:contacts-changed.camel.window="clear()">
 
-  <div class="crm-toolbar">
-    <form class="flex-shrink-0 mb-0" method="get"
-          action="{% url 'contacts:list' workspace_id=request.workspace.id %}">
-      <label for="contact-segment" class="sr-only">Segment</label>
-      {% comment %}
-        x-on, never onchange: the CSP has no 'unsafe-inline' in script-src, so an
-        inline handler attribute is silently inert. This element is inside the
-        wrapper's x-data tree, which is what makes the Alpine directive run.
-      {% endcomment %}
-      <select id="contact-segment" name="segment" class="w-56" x-on:change="$el.form.requestSubmit()">
-        <option value="">Everyone</option>
-        {% for segment in filter_config.segments %}
-          <option value="{{ segment.value }}" {% if filter_config.segmentId == segment.value %}selected{% endif %}>{{ segment.label }}</option>
-        {% endfor %}
-      </select>
-      <noscript><button type="submit">Load</button></noscript>
-    </form>
+  {% comment %}
+    Saved views, as chips rather than as a dropdown.
+
+    A segment is the answer to "who am I looking at", and the redesign puts the
+    two or three a workspace actually uses in front of the reader instead of
+    behind a select they have to open to discover. Real links, not htmx: picking
+    a saved filter changes the rule editor as well as the rows, and the server is
+    the only thing holding the segment's stored document — shipping every
+    segment's rules to the browser so the client could hydrate one would put a
+    workspace's whole filter library in every page load.
+  {% endcomment %}
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    <a class="chip-filter{% if not filter_config.segmentId %} active{% endif %}"
+       href="{% url 'contacts:list' workspace_id=request.workspace.id %}">Everyone</a>
+    {% for segment in filter_config.segments %}
+      <a class="chip-filter{% if filter_config.segmentId == segment.value %} active{% endif %}"
+         href="{% url 'contacts:list' workspace_id=request.workspace.id %}?segment={{ segment.value }}">{{ segment.label }}</a>
+    {% endfor %}
   </div>
 
   {% comment %}
@@ -111,8 +115,22 @@ inert — a button that looks fine and does nothing.
       <div class="flex-1 min-w-48">
         <label for="contact-search" class="sr-only">Search contacts</label>
         <input type="search" id="contact-search" name="q" value="{{ query.search_term }}"
-               placeholder="Search name, email or phone" maxlength="200">
+               placeholder="Search by name, email or phone" maxlength="200">
       </div>
+      {% comment %}
+        The rule builder is a powerful thing most readers do not want on most
+        visits — it is how a segment gets made, not how a list gets read. It
+        starts closed behind this chip, and opens already open when the current
+        view has rules in it, so nobody is shown a filtered list with no visible
+        reason for it.
+      {% endcomment %}
+      <button type="button" class="chip-filter chip-filter-add flex-shrink-0"
+              :class="rules.length && 'active'"
+              @click="showBuilder = !showBuilder"
+              :aria-expanded="showBuilder ? 'true' : 'false'">
+        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18"/><path d="M6 12h12"/><path d="M10 19h4"/></svg>
+        Filter<span x-show="rules.length" x-text="rules.length" x-cloak></span>
+      </button>
       <div class="flex-shrink-0">
         <label for="contact-sort" class="sr-only">Sort</label>
         <select id="contact-sort" name="sort" class="w-48">
@@ -123,7 +141,9 @@ inert — a button that looks fine and does nothing.
       </div>
     </div>
 
-    {% include "contacts/_filter_bar.html" %}
+    <div x-show="showBuilder" x-cloak>
+      {% include "contacts/_filter_bar.html" %}
+    </div>
   </form>
 
   {% comment %}

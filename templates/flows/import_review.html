@@ -18,10 +18,14 @@ from visiting a stranger's address.
 
 {% block page_header %}
 <div class="mb-6">
-    <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Review this import</h1>
+    <h1 class="page-title">Review this import</h1>
     <p class="text-sm" style="color: var(--text-secondary);">
-        From {{ record.original_filename|default:"an uploaded file" }}.
-        Nothing has been created yet.
+        {% comment %}
+          A shipped template is named the way its tile named it, not by its
+          slug — see _source_label in apps/flows/views_portability.py.
+        {% endcomment %}
+        {{ source_label }} Nothing has been created yet. Answer what it asks for below,
+        then import.
     </p>
 </div>
 {% endblock %}
@@ -36,7 +40,11 @@ from visiting a stranger's address.
             {% for flow in plan.document.flows %}
             <li class="text-sm" style="color: var(--text-secondary);">
                 <span style="color: var(--text-primary);">{{ flow.name }}</span>
-                — {{ flow.graph.nodes|length }} node{{ flow.graph.nodes|length|pluralize }},
+                {% comment %}
+                  "Steps", the word the template gallery tile used to get
+                  somebody here. "Nodes" is the graph's word for the same thing.
+                {% endcomment %}
+                · {{ flow.graph.nodes|length }} step{{ flow.graph.nodes|length|pluralize }},
                 {{ flow.triggers|length }} trigger{{ flow.triggers|length|pluralize }}
                 {% if flow.key == plan.document.entry %}
                 <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ml-1"
@@ -45,8 +53,16 @@ from visiting a stranger's address.
             </li>
             {% endfor %}
         </ul>
+        {% comment %}
+          "Unpublished drafts, triggers switched off" was accurate and left the
+          reader nowhere: it names the state the flows land in without naming
+          the three things that get them out of it. Somebody importing their
+          first template asked, reasonably, how they were supposed to test it.
+        {% endcomment %}
         <p class="text-xs mt-3" style="color: var(--text-tertiary);">
-            They will be created as unpublished drafts. Their triggers arrive switched off.
+            Nothing goes live on its own. Each arrives as a draft with its trigger switched
+            off, so after importing you open it, check the messages read the way you want,
+            switch the trigger on and set the flow live.
         </p>
     </section>
 
@@ -62,8 +78,14 @@ from visiting a stranger's address.
             {% for call in plan.outbound_requests %}
             <li class="text-sm font-mono break-all" style="color: var(--text-secondary);">
                 {{ call.method }} {{ call.url }}
+                {% comment %}
+                  The flow it is in, not the step's internal id: nothing has
+                  been created yet, so there is no step for the reader to go
+                  and look at, and `node ext_req_2` is a name only the file
+                  knows.
+                {% endcomment %}
                 <span class="font-sans text-xs" style="color: var(--text-tertiary);">
-                    ({{ call.flow_name }}, node {{ call.node_id }})
+                    (in {{ call.flow_name }})
                 </span>
             </li>
             {% endfor %}
@@ -93,7 +115,7 @@ from visiting a stranger's address.
             {% endif %}
             <div class="space-y-3">
                 {% for question in group.questions %}
-                {% include "flows/_import_requirement.html" with resolution=question.resolution options=question.options kind=group.kind field_types=group.field_types %}
+                {% include "flows/_import_requirement.html" with resolution=question.resolution options=question.options kind=group.kind field_types=group.field_types needed_by=question.needed_by connect_url=question.connect_url %}
                 {% endfor %}
             </div>
         </section>
@@ -103,8 +125,8 @@ from visiting a stranger's address.
         <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-1);">
             <h2 class="text-sm font-semibold" style="color: var(--text-primary);">Triggers</h2>
             <p class="text-xs mt-0.5 mb-3" style="color: var(--text-tertiary);">
-                What starts each flow. Every one arrives <strong>switched off</strong> whichever you keep —
-                the choice is between "off and ready to enable" and "not imported at all".
+                What starts each flow. Keeping one imports it switched off, ready for you to turn
+                on once you have read the flow. Skipping one leaves it out of the import entirely.
             </p>
             <div class="space-y-3">
                 {% for choice in plan.triggers %}
@@ -127,30 +149,42 @@ from visiting a stranger's address.
         </section>
         {% endif %}
 
+        {% comment %}
+          Import is a submit button on this form, carrying `then=import`, and it
+          is never disabled.
+
+          Both of those are the fix for the same bug. It used to POST straight
+          to the confirm endpoint, so it acted on the answers the *server* last
+          stored rather than the ones on screen — and it was disabled whenever
+          that stored plan was incomplete. Change a dropdown and the button
+          stayed dead from the previous render: no error, no toast, nothing.
+          With `.btn-brand` carrying no disabled styling either, it looked
+          perfectly clickable.
+
+          So: the form saves and imports in one request, and an incomplete plan
+          comes back to this page with the missing questions flagged rather than
+          being refused by a control that will not depress.
+        {% endcomment %}
         <div class="flex flex-wrap items-center gap-2">
-            <button type="submit" class="btn-outline btn-inline">Save answers</button>
-            {% comment %}
-              A refusal answers 2xx as well — htmx drops HX-Trigger on anything
-              else, so a 4xx would show no toast at all (see
-              apps/flows/views_triggers.py). So navigation keys off the event in
-              the header rather than off event.detail.successful, the same way
-              contacts/import_list.html reads importCreated.
-            {% endcomment %}
-            <button type="button" class="btn-brand btn-inline"
-                    hx-post="{{ confirm_url }}" hx-swap="none"
-                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportApplied) window.location = '{{ list_url|escapejs }}';"
-                    {% if not plan.can_apply or applied %}disabled{% endif %}>
+            <button type="submit" name="then" value="import" class="btn-pill-primary">
                 Import {{ plan.document.flows|length }} flow{{ plan.document.flows|length|pluralize }}
             </button>
-            <button type="button" class="btn-outline btn-inline btn-danger-soft"
+            <button type="submit" class="btn-pill-secondary">Save and come back later</button>
+            <button type="button" class="btn-pill-secondary btn-danger-soft"
                     hx-post="{{ discard_url }}" hx-swap="none"
                     hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">Discard</button>
-            <a href="{{ list_url }}" class="btn-outline btn-inline">Back to flows</a>
+            <a href="{{ list_url }}" class="btn-pill-secondary">Back to flows</a>
         </div>
+        {% comment %}
+          Names them, and links to them. A bare count is only useful to somebody
+          who already knows which question is blank, and the reader who needs
+          this line is exactly the reader who does not.
+        {% endcomment %}
         {% if not plan.can_apply %}
-        <p class="text-xs mt-2" style="color: var(--text-tertiary);">
-            {{ plan.unanswered|length }} answer{{ plan.unanswered|length|pluralize }} still needed before this can be
-            imported. Save your answers to re-check.
+        <p class="import-todo">
+            Importing now will bring you back here. Still to answer:
+            {% for item in unanswered %}<a href="#{{ item.anchor }}">{{ item.label }}: {{ item.name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}.
+            Save your answers to re-check.
         </p>
         {% endif %}
     </form>

@@ -7,28 +7,28 @@
       "graph": {
         "edges": [
           {
-            "id": "greet-qr-pricing-pricing",
-            "source": "greet",
+            "id": "menu-qr-pricing-pricing",
+            "source": "menu",
             "sourceHandle": "qr:pricing",
             "target": "pricing"
           },
           {
-            "id": "greet-qr-hours-hours",
-            "source": "greet",
+            "id": "menu-qr-hours-hours",
+            "source": "menu",
             "sourceHandle": "qr:hours",
             "target": "hours"
           },
           {
-            "id": "greet-qr-human-tag_human",
-            "source": "greet",
+            "id": "menu-qr-human-flag",
+            "source": "menu",
             "sourceHandle": "qr:human",
-            "target": "tag_human"
+            "target": "flag"
           },
           {
-            "id": "tag_human-default-handover",
-            "source": "tag_human",
+            "id": "flag-default-human",
+            "source": "flag",
             "sourceHandle": "default",
-            "target": "handover"
+            "target": "human"
           }
         ],
         "nodes": [
@@ -60,7 +60,7 @@
                 "text": "Sorry, I did not catch that. Pick one of the options above."
               }
             },
-            "id": "greet",
+            "id": "menu",
             "position": {
               "x": 0,
               "y": 0
@@ -102,7 +102,7 @@
             },
             "id": "hours",
             "position": {
-              "x": 300,
+              "x": 600,
               "y": 0
             },
             "type": "send_message"
@@ -116,9 +116,9 @@
                 }
               ]
             },
-            "id": "tag_human",
+            "id": "flag",
             "position": {
-              "x": 300,
+              "x": 900,
               "y": 0
             },
             "type": "action"
@@ -132,21 +132,21 @@
                 }
               ]
             },
-            "id": "handover",
+            "id": "human",
             "position": {
-              "x": 600,
+              "x": 1200,
               "y": 0
             },
             "type": "send_message"
           },
           {
             "config": {
-              "text": "Edit the three answers to match your business, then publish."
+              "text": "Edit the three answers to match your business, then set it live."
             },
-            "id": "note",
+            "id": "advice",
             "position": {
               "x": 0,
-              "y": 0
+              "y": 200
             },
             "type": "note"
           }
@@ -211,7 +211,7 @@
         "key": "needs a person",
         "name": "Needs a person",
         "used_by": [
-          "flow-1:tag_human"
+          "flow-1:flag"
         ]
       }
     ],
