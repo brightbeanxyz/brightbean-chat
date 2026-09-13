@@ -165,17 +165,27 @@ def _workspaces(organization: Any) -> list[Any]:
     return list(Workspace.objects.for_org(organization.pk))
 
 
-def count_channels(organization: Any) -> int:
+def _resolved(organization: Any, workspaces: list[Any] | None) -> list[Any]:
+    """The caller's workspace list, or one fetched now.
+
+    Every counter takes the list as an optional argument so ``usage_for`` can
+    resolve it once and hand it round; on its own each would query the workspace
+    table again for the same rows.
+    """
+    return _workspaces(organization) if workspaces is None else workspaces
+
+
+def count_channels(organization: Any, *, workspaces: list[Any] | None = None) -> int:
     """Connections that are not disabled, across the organization."""
     from apps.channels.models import ChannelConnection, ConnectionStatus
 
     return sum(
         ChannelConnection.objects.for_workspace(workspace).exclude(status=ConnectionStatus.DISABLED).count()
-        for workspace in _workspaces(organization)
+        for workspace in _resolved(organization, workspaces)
     )
 
 
-def count_active_automations(organization: Any) -> int:
+def count_active_automations(organization: Any, *, workspaces: list[Any] | None = None) -> int:
     """Published flows, active sequences and enabled inbox rules, added up.
 
     One number rather than three, because "four active automations" is one
@@ -194,19 +204,23 @@ def count_active_automations(organization: Any) -> int:
     from apps.inbox.models import InboxRule
 
     total = 0
-    for workspace in _workspaces(organization):
+    for workspace in _resolved(organization, workspaces):
         total += Flow.objects.for_workspace(workspace).filter(status=FlowStatus.ACTIVE, broadcasts__isnull=True).count()
         total += Sequence.objects.for_workspace(workspace).filter(status=SequenceStatus.ACTIVE).count()
         total += InboxRule.objects.for_workspace(workspace).filter(enabled=True).count()
     return total
 
 
-def count_seats(organization: Any) -> int:
+def count_seats(organization: Any, *, excluding_invitation: Any = None) -> int:
     """Accepted members plus invitations that are still live.
 
     Pending invitations count. Otherwise an organization at its seat limit sends
     ten invitations, every one of them passes the check at the moment it is
     created, and the limit is decided by who clicks first.
+
+    ``excluding_invitation`` leaves one out, for the caller that is turning that
+    invitation into a membership: counting both would charge one person two
+    seats. See ``apps.members.services._check_plan_allows_seat``.
     """
     from django.utils import timezone
 
@@ -219,14 +233,23 @@ def count_seats(organization: Any) -> int:
         organization=organization,
         accepted_at__isnull=True,
         expires_at__gt=timezone.now(),
-    ).count()
-    return members + pending
+    )
+    if excluding_invitation is not None:
+        pending = pending.exclude(pk=excluding_invitation)
+    return members + pending.count()
 
 
-def count_workspaces(organization: Any) -> int:
-    """Workspaces that are not archived. See :func:`_workspaces` on the asymmetry."""
+def count_workspaces(organization: Any, *, workspaces: list[Any] | None = None) -> int:
+    """Workspaces that are not archived. See :func:`_workspaces` on the asymmetry.
+
+    Takes an already-resolved list when the caller has one — ``usage_for`` has,
+    twice over, and would otherwise issue a third query for a number it can
+    count in Python.
+    """
     from apps.workspaces.models import Workspace
 
+    if workspaces is not None:
+        return sum(1 for workspace in workspaces if not workspace.is_archived)
     return Workspace.objects.for_org(organization.pk).filter(is_archived=False).count()
 
 
@@ -266,10 +289,10 @@ def check_can_activate_automation(organization: Any) -> None:
     )
 
 
-def check_can_add_seat(organization: Any) -> None:
+def check_can_add_seat(organization: Any, *, excluding_invitation: Any = None) -> None:
     """Refuse a new invitation, and refuse accepting one issued before a downgrade."""
     limit = limits_for(organization).seats
-    if limit is None or count_seats(organization) < limit:
+    if limit is None or count_seats(organization, excluding_invitation=excluding_invitation) < limit:
         return
     _refuse(
         f"Your plan includes {limit} user{'' if limit == 1 else 's'}. Upgrade to add more.",
@@ -327,16 +350,19 @@ def usage_for(organization: Any) -> Usage:
     from apps.billing.metering import active_contact_count, current_period
 
     limits = limits_for(organization)
+    # Resolved once and passed down: the three counters below would otherwise
+    # each query the workspace table for the same rows.
+    workspaces = _workspaces(organization)
     return Usage(
         plan=plan_key(organization),
         active_contacts=active_contact_count(organization, period=current_period(organization)),
         active_contacts_limit=limits.active_contacts_per_month,
-        channels=count_channels(organization),
+        channels=count_channels(organization, workspaces=workspaces),
         channels_limit=limits.channels,
-        automations=count_active_automations(organization),
+        automations=count_active_automations(organization, workspaces=workspaces),
         automations_limit=limits.active_automations,
         seats=count_seats(organization),
         seats_limit=limits.seats,
-        workspaces=count_workspaces(organization),
+        workspaces=count_workspaces(organization, workspaces=workspaces),
         workspaces_limit=limits.workspaces,
     )

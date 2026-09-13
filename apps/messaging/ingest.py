@@ -945,6 +945,13 @@ def _mark_contact_active(contact: Any) -> None:
     A late import for the reason ``apps/messaging/services.py`` gives: billing
     reads this app's models, and an unconfigured deployment should never load it.
     """
+    from apps.billing.entitlements import billing_enabled
     from apps.billing.metering import meter
 
+    if not billing_enabled():
+        # Checked before `contact.workspace.organization`, which is two FK
+        # traversals and therefore two queries. Every inbound message on every
+        # self-hosted deployment would otherwise pay them to fetch an
+        # organization the meter immediately discards.
+        return
     meter(contact.workspace.organization, contact)

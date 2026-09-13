@@ -73,26 +73,41 @@ def billing_page_url() -> str:
 def get_or_create_customer(organization: Any, *, email: str, name: str) -> BillingCustomer:
     """The organization's ``BillingCustomer``, creating the Stripe customer once.
 
-    The row is locked for the whole call, so two tabs cannot both decide there is
-    no customer and both create one. The deterministic ``Idempotency-Key`` in
-    ``stripe_client.create_customer`` is the second belt: if the lock is ever
-    lost to a process boundary, Stripe still returns the first customer rather
-    than minting a second.
+    **The Stripe call happens outside any transaction**, and that is the whole
+    shape of this function. Holding one open across it would pin a pooled
+    database connection for up to thirteen seconds whenever Stripe is slow —
+    ``apps/channels/views_messenger.py`` documents avoiding exactly that for
+    Meta's API, for exactly that reason.
+
+    **The race is settled by the unique constraint, not by a lock.**
+    ``select_for_update`` was the obvious guard and it does not work here: the
+    row it would lock is the one that does not exist yet, so two first-time
+    checkouts both see nothing, both proceed, and the loser's ``save()`` hits the
+    one-to-one constraint and 500s. ``get_or_create`` handles that collision
+    properly — the loser re-reads the winner's row — and the deterministic
+    ``Idempotency-Key`` on the Stripe call means both requests were handed the
+    *same* customer anyway, so whichever row survives is correct.
     """
+    row = BillingCustomer.objects.filter(organization=organization).first()
+    if row is not None and row.stripe_customer_id:
+        return row
+
+    customer = stripe_client.create_customer(organization_id=organization.pk, email=email, name=name)
+    customer_id = str(getattr(customer, "id", "") or "")
+    if not customer_id:
+        raise BillingError("We could not start checkout. Try again in a minute.")
+
     with transaction.atomic():
-        row = BillingCustomer.objects.select_for_update().filter(organization=organization).first()
-        if row is not None and row.stripe_customer_id:
-            return row
-
-        customer = stripe_client.create_customer(organization_id=organization.pk, email=email, name=name)
-        customer_id = str(getattr(customer, "id", "") or "")
-        if not customer_id:
-            raise BillingError("We could not start checkout. Try again in a minute.")
-
-        if row is None:
-            row = BillingCustomer(organization=organization)
-        row.stripe_customer_id = customer_id
-        row.save()
+        row, created = BillingCustomer.objects.get_or_create(
+            organization=organization,
+            defaults={"stripe_customer_id": customer_id},
+        )
+        if not created and not row.stripe_customer_id:
+            # A row existed without a customer id — a checkout that failed
+            # part-way through a previous attempt. Fill it in rather than
+            # leaving the organization with a row it can never bill against.
+            row.stripe_customer_id = customer_id
+            row.save(update_fields=["stripe_customer_id", "updated_at"])
         return row
 
 

@@ -13,30 +13,46 @@ decrement. Membership is asserted with an idempotent
 than stored; and deleting a contact cascades its row away, which is not drift but
 exactly the "remove extras" half of the plan's semantics.
 
+**Gate and mark are separate, and the order matters.**
+:func:`allows_reaching` decides, before anything is sent, whether a contact may
+be reached. :func:`mark_reached` records that one was, and runs only once the
+send has actually been accepted by the platform. Marking at the gate was simpler
+and wrong: a provider rejection would then spend one of twenty-five monthly
+slots on a message that never left the building, and a free organization with a
+misconfigured channel could burn its whole allowance on failures.
+
+The cost of that split is a bounded over-admission: two concurrent sends to two
+new contacts can both pass the gate at 24 and both mark, leaving 26. That is
+deliberate and it is the cheaper error. Closing it needs a lock held across the
+platform call, which would serialise an entire broadcast fanout onto one
+organization row, and the money at stake is zero — the plan it bounds is free.
+The unique constraint still guarantees no *person* is counted twice, which is
+the property the limit is actually about.
+
 **Inbound is metered and never gated.** You cannot refuse a message somebody has
 already sent, and ManyChat's own definition counts both directions. The
 consequence is worth stating rather than discovering: inbound traffic a free
 organization does not control can push it to its limit, and the refusal then
-lands on the one thing it does control, which is sending.
+lands on the one thing it does control, which is starting new conversations.
 
-**This module must not fail open, and that is the opposite of its neighbour.**
-``apps.analytics.counters`` swallows every ``DatabaseError`` under a savepoint
-because "a counter must never cost a message" — losing a count there is a
-reporting bug. Losing a mark here means a free organization's twenty-sixth
-contact is free forever. So the mark rides inside the caller's transaction: if it
-fails, the send decision rolls back with it and the message stays queued for a
-retry that will mark it properly. There is deliberately no
-``except DatabaseError: pass`` anywhere in this file, and adding one would be a
-correctness regression rather than the hardening it looks like.
+**Nothing here may raise into the send path.** ``apps.messaging.services``
+promises, twice in its own docstrings, that ``send_outbound`` never raises — the
+flow engine follows a ``default`` edge from a ``FAILED`` row rather than
+catching anything. So :func:`mark_reached` contains its database work in a
+savepoint and turns a failure into a logged, bounded under-count. That is a
+reversal of an earlier decision in this module, and the reasoning is worth
+keeping: losing a mark gives one contact away free, while breaking contract 1
+takes down every caller written against it.
 """
 
 import logging
 from typing import Any
 
-from django.db import connection, transaction
+from django.db import DatabaseError, transaction
+from django.db import connection as db_connection
 from django.utils import timezone
 
-from apps.billing.entitlements import PlanLimitError, limits_for
+from apps.billing.entitlements import billing_enabled, limits_for
 from apps.billing.models import ActiveContactMonth
 from apps.common.uuid7 import uuid7
 
@@ -44,16 +60,14 @@ logger = logging.getLogger(__name__)
 
 _TABLE = ActiveContactMonth._meta.db_table
 
-#: Insert if this contact is not already marked for this period, and report
-#: whether it inserted. ``RETURNING id`` is what makes the row lock in
-#: :func:`mark_contact_active` affordable — see the comment there.
+#: Insert unless this contact is already marked for this period. The conflict
+#: target is the columns of ``activecontactmonth_unique_period``.
 _MARK_SQL = (
     # noqa is on this line because it is the expression ruff flags: the table
     # name is a module constant read off the model, and every value is bound.
     f"INSERT INTO {_TABLE} (id, workspace_id, organization_id, contact_id, period, created_at, updated_at) "  # noqa: S608
     f"VALUES (%s, %s, %s, %s, %s, %s, %s) "
-    f"ON CONFLICT (contact_id, period) DO NOTHING "
-    f"RETURNING id"
+    f"ON CONFLICT (contact_id, period) DO NOTHING"
 )
 
 
@@ -95,135 +109,114 @@ def is_contact_active(contact: Any, *, period: str) -> bool:
     return ActiveContactMonth.objects.unscoped().filter(contact=contact, period=period).exists()
 
 
-def check_can_reach_contact(organization: Any, contact: Any, *, period: str) -> None:
-    """Refuse reaching a *new* contact once the month's allowance is spent.
+def allows_reaching(organization: Any, contact: Any, *, limit: int | None, period: str) -> bool:
+    """Whether this contact may be reached now. Reads only; writes nothing.
 
     A contact already counted this month passes, always. Only a new one is
     refused, so an in-flight conversation is never cut off half-way through —
     which is both the humane behaviour and the one that keeps a refusal
     explainable ("you have talked to 25 people this month").
+
+    ``limit`` and ``period`` are arguments rather than being resolved here so a
+    caller that already has them does not pay for them twice; ``limits_for``
+    reaches a database query whenever billing is configured.
     """
-    limit = limits_for(organization).active_contacts_per_month
     if limit is None:
-        return
+        return True
     if is_contact_active(contact, period=period):
-        return
-    if active_contact_count(organization, period=period) < limit:
-        return
-    raise PlanLimitError(
-        f"Your plan includes {limit} contacts a month, and you have reached that many. "
-        "Upgrade to keep starting new conversations.",
-        code="plan_active_contacts",
-    )
+        return True
+    return active_contact_count(organization, period=period) < limit
 
 
-def mark_contact_active(contact: Any, *, period: str, organization_id: Any = None) -> bool:
+def mark_reached(organization: Any, contact: Any, *, period: str | None = None) -> bool:
     """Record that this contact was reached. Returns whether it was newly marked.
+
+    **Never raises**, per the module docstring: the statement runs in its own
+    savepoint so a database failure rolls back the mark alone and leaves the
+    caller's transaction usable. A lost mark is a logged under-count of at most
+    one contact; an exception here would break ``send_outbound``'s contract.
 
     Both ``workspace_id`` and ``organization_id`` are written explicitly. The
     model's ``save()`` derives them too, but this statement never reaches it, and
     a derivation only one of the two paths performs is a column that is correct
     in tests and null in production.
-
-    **On concurrency.** Two simultaneous sends to two new contacts at 24 would
-    both pass :func:`check_can_reach_contact` and land the organization at 26.
-    The obvious fix — ``media_library``'s row lock — would serialise an entire
-    broadcast fanout onto one organization row, which is far worse than the
-    problem. What makes a lock affordable is that it is only needed when the
-    insert actually *created* something, and ``RETURNING id`` says so: the caller
-    re-checks under the lock on a real insert only, which for a free
-    organization is at most twenty-five times a month and for everybody else is
-    never.
     """
-    now = timezone.now()
-    params = [
-        uuid7(),
-        contact.workspace_id,
-        organization_id or contact.workspace.organization_id,
-        contact.pk,
-        period,
-        now,
-        now,
-    ]
-    # No savepoint and no swallowed DatabaseError: this rides in the caller's
-    # transaction on purpose. See the module docstring.
-    with connection.cursor() as cursor:
-        cursor.execute(_MARK_SQL, params)
-        return cursor.fetchone() is not None
+    if not billing_enabled():
+        return False
+
+    # The guard covers the plan read as well as the insert. Reading the plan is
+    # itself a query, and an earlier version left it outside — so a database in
+    # trouble still broke the send path through the one line this function
+    # exists to keep out of it.
+    try:
+        if limits_for(organization).active_contacts_per_month is None:
+            # Unlimited: nothing to count, and no row is written. A test asserts
+            # this table stays empty on a deployment with no billing.
+            return False
+
+        now = timezone.now()
+        params = [
+            uuid7(),
+            contact.workspace_id,
+            organization.pk,
+            contact.pk,
+            period or current_period(organization),
+            now,
+            now,
+        ]
+        # Its own savepoint, so a failure here cannot poison the surrounding
+        # transaction — the send that is mid-flight has to be able to commit.
+        with transaction.atomic(), db_connection.cursor() as cursor:
+            cursor.execute(_MARK_SQL, params)
+            return cursor.rowcount > 0
+    except DatabaseError:
+        logger.exception(
+            "Could not record contact %s as active for organization %s; the month is under-counted by one",
+            contact.pk,
+            organization.pk,
+        )
+        return False
 
 
 def meter(organization: Any, contact: Any) -> bool:
-    """Mark a contact active for the current period, rolling back an overshoot.
+    """Mark a contact active for the current period. The inbound path's entry.
 
-    The whole write path in one call, for the two sites that use it. Returns
-    whether the contact was newly counted.
-
-    The row lock is taken only when the insert created a row, which is the
-    arrangement :func:`mark_contact_active` explains. Re-counting under it is
-    what turns "two concurrent sends both saw 24" into a refusal for the second
-    one.
+    Inbound is metered and never gated, so this is :func:`mark_reached` with no
+    decision in front of it.
     """
-    period = current_period(organization)
-    limit = limits_for(organization).active_contacts_per_month
-    if limit is None:
-        # Unlimited: no row is written at all. A self-hosted install is not
-        # metered, and a test asserts this table stays empty there.
-        return False
-
-    with transaction.atomic():
-        created = mark_contact_active(contact, period=period, organization_id=organization.pk)
-        if not created:
-            return False
-        _lock_organization(organization.pk)
-        if active_contact_count(organization, period=period) > limit:
-            # Somebody else took the last slot between the check and the insert.
-            # Undo this mark rather than admitting an extra contact.
-            ActiveContactMonth.objects.unscoped().filter(contact=contact, period=period).delete()
-            raise PlanLimitError(
-                f"Your plan includes {limit} contacts a month, and you have reached that many.",
-                code="plan_active_contacts",
-            )
-    return True
-
-
-def _lock_organization(organization_id: Any) -> None:
-    """Take the organization row lock, so the re-count above is serialised."""
-    from apps.organizations.models import Organization
-
-    Organization.objects.filter(pk=organization_id).select_for_update().only("id").first()
+    return mark_reached(organization, contact)
 
 
 def reach(workspace: Any, contact: Any) -> bool:
-    """Gate and mark in one call. ``False`` means the send must not go.
+    """Whether the plan permits reaching this contact. ``False`` means refuse.
 
-    The single entry point ``apps.messaging`` uses, so the send path carries one
-    import and one branch rather than the plan's whole vocabulary.
+    The single entry point ``apps.messaging`` gates on, so the send path carries
+    one import and one branch rather than the plan's whole vocabulary. Writes
+    nothing — :func:`mark_reached` is called after the send is accepted.
 
-    **Never raises.** ``send_outbound`` promises never to raise, and a billing
-    concern is not the thing to break that with: a refusal comes back as
-    ``False`` and becomes a ``FAILED`` message row carrying
-    ``Limit.ACTIVE_CONTACTS``, which is the same shape every compliance refusal
-    already has, so the flow engine follows its ``default`` edge with no new
-    branch anywhere.
-
-    Returns ``True`` unchanged on an unlimited plan — including every
-    organization on a deployment with no Stripe — after doing no work and
-    writing no row.
+    **Never raises**, and costs nothing when billing is unconfigured: the
+    settings read comes first, before the organization is resolved, so a
+    self-hosted deployment pays no query at all.
     """
-    organization = workspace.organization
-    if limits_for(organization).active_contacts_per_month is None:
+    if not billing_enabled():
         return True
 
-    period = current_period(organization)
+    organization = None
     try:
-        check_can_reach_contact(organization, contact, period=period)
-    except PlanLimitError:
-        return False
-
-    try:
-        meter(organization, contact)
-    except PlanLimitError:
-        # Somebody took the last slot between the check and the insert. The mark
-        # has already been rolled back inside meter().
-        return False
-    return True
+        # Inside the guard from the first query onwards: resolving the
+        # organization and reading the plan are both queries, and both were
+        # outside it in an earlier version.
+        organization = workspace.organization
+        limit = limits_for(organization).active_contacts_per_month
+        if limit is None:
+            return True
+        return allows_reaching(organization, contact, limit=limit, period=current_period(organization))
+    except DatabaseError:
+        # Contract 1 again: a billing read must not take a send down. Failing
+        # open here gives at most one contact away, and only while the database
+        # is already in trouble.
+        logger.exception(
+            "Could not read the contact allowance for organization %s; allowing the send",
+            getattr(organization, "pk", "unknown"),
+        )
+        return True

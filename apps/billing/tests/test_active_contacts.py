@@ -19,7 +19,14 @@ from typing import Any
 
 import pytest
 
-from apps.billing.metering import active_contact_count, current_period, is_contact_active, meter, reach
+from apps.billing.metering import (
+    active_contact_count,
+    current_period,
+    is_contact_active,
+    mark_reached,
+    meter,
+    reach,
+)
 from apps.billing.models import ActiveContactMonth
 from apps.billing.plans import FREE_LIMITS
 from apps.billing.tests.stripe_support import SECRET_KEY
@@ -55,9 +62,11 @@ def contact(workspace: Any, name: str) -> Any:
 
 
 def fill_to_limit(tenancy: Any) -> list[Any]:
+    """Reach the month's whole allowance, gate then mark, as a send does."""
     people = [contact(tenancy.workspace, f"person {i}") for i in range(FREE_CONTACTS)]
     for person in people:
         assert reach(tenancy.workspace, person) is True
+        mark_reached(tenancy.organization, person)
     return people
 
 
@@ -68,7 +77,7 @@ class TestItIsASetNotACounter:
         person = contact(tenancy.workspace, "Ada")
 
         for _ in range(10):
-            reach(tenancy.workspace, person)
+            mark_reached(tenancy.organization, person)
 
         assert ActiveContactMonth.objects.unscoped().filter(contact=person).count() == 1
         assert active_contact_count(tenancy.organization, period=current_period(tenancy.organization)) == 1
@@ -89,7 +98,7 @@ class TestItIsASetNotACounter:
         performs would be a column that is right in tests and null in
         production."""
         person = contact(tenancy.workspace, "Ada")
-        reach(tenancy.workspace, person)
+        mark_reached(tenancy.organization, person)
 
         row = ActiveContactMonth.objects.unscoped().get()
         assert row.workspace_id == tenancy.workspace.pk
@@ -114,7 +123,7 @@ class TestTheLimit:
         fill_to_limit(tenancy)
         newcomer = contact(tenancy.workspace, "Grace")
 
-        reach(tenancy.workspace, newcomer)
+        assert reach(tenancy.workspace, newcomer) is False
 
         assert is_contact_active(newcomer, period=current_period(tenancy.organization)) is False
 
@@ -128,7 +137,9 @@ class TestTheLimit:
         )
 
         for index in range(FREE_CONTACTS + 5):
-            assert reach(tenancy.workspace, contact(tenancy.workspace, f"p{index}")) is True
+            person = contact(tenancy.workspace, f"p{index}")
+            assert reach(tenancy.workspace, person) is True
+            assert mark_reached(tenancy.organization, person) is False
 
         assert ActiveContactMonth.objects.unscoped().count() == 0
 
@@ -217,6 +228,123 @@ class TestTheSendPath:
 
         assert "send_outbound" not in called
         assert "plan_allows_reaching" not in called
+
+
+class TestAFailedSendDoesNotBurnASlot:
+    """The meter marks after the platform accepts, never at the gate.
+
+    Marking at the gate spent one of twenty-five monthly slots on a message that
+    never left the building, so a workspace with a misconfigured channel could
+    burn its whole allowance on provider rejections.
+    """
+
+    def test_a_provider_rejection_leaves_the_contact_uncounted(self, tenancy: Any, monkeypatch: Any) -> None:
+        from apps.channels.events import OutboundMessage, TextBlock
+        from apps.messaging import services
+        from apps.messaging.models import MessageStatus
+        from tests.support import email_identity
+
+        connection = _email_connection(tenancy)
+        identity = email_identity(tenancy.workspace, connection, "nope@example.test")
+
+        def refuse(*args: Any, **kwargs: Any) -> Any:
+            from apps.channels.providers.base import APIError
+
+            raise APIError("the provider said no")
+
+        monkeypatch.setattr("apps.channels.providers.email_backends.deliver", refuse)
+
+        message = services.send_outbound(
+            workspace=tenancy.workspace,
+            contact=identity.contact,
+            connection=connection,
+            outbound=OutboundMessage(blocks=(TextBlock(text="hello"),), subject="Hi"),
+            source="automation",
+            idempotency_key="burns-nothing-1",
+        )
+
+        # A provider error schedules a retry, so the row stays QUEUED rather
+        # than FAILED. Either way nothing reached anybody, which is the point.
+        assert message.status in (MessageStatus.QUEUED, MessageStatus.FAILED)
+        assert is_contact_active(identity.contact, period=current_period(tenancy.organization)) is False
+
+    def test_an_accepted_send_does_count_the_contact(self, tenancy: Any, monkeypatch: Any) -> None:
+        """The other half — otherwise the test above passes on a meter that
+        never marks at all."""
+        from apps.channels.events import OutboundMessage, TextBlock
+        from apps.channels.providers import email_backends
+        from apps.messaging import services
+        from apps.messaging.models import MessageStatus
+        from tests.support import email_identity
+
+        connection = _email_connection(tenancy)
+        identity = email_identity(tenancy.workspace, connection, "yes@example.test")
+        monkeypatch.setattr(email_backends, "deliver", lambda *a, **k: "accepted-1")
+
+        message = services.send_outbound(
+            workspace=tenancy.workspace,
+            contact=identity.contact,
+            connection=connection,
+            outbound=OutboundMessage(blocks=(TextBlock(text="hello"),), subject="Hi"),
+            source="automation",
+            idempotency_key="counts-1",
+        )
+
+        assert message.status == MessageStatus.SENT
+        assert is_contact_active(identity.contact, period=current_period(tenancy.organization)) is True
+
+
+class TestItNeverRaisesIntoTheSendPath:
+    """Contract 1: ``send_outbound`` never raises. Billing does not get to.
+
+    A raw INSERT can fail for reasons ``ON CONFLICT DO NOTHING`` does not cover —
+    a contact deleted concurrently, a statement timeout — and before this the
+    DatabaseError propagated out of ``send_outbound`` into every caller written
+    against a promise that it would not.
+    """
+
+    def test_a_database_failure_while_marking_is_swallowed(self, tenancy: Any, monkeypatch: Any) -> None:
+        from django.db import DatabaseError
+
+        from apps.billing import metering
+
+        def explode(*args: Any, **kwargs: Any) -> Any:
+            raise DatabaseError("the meter table is on fire")
+
+        person = contact(tenancy.workspace, "Ada")
+        # Patched after the contact exists: creating one needs a cursor too.
+        monkeypatch.setattr(metering.db_connection, "cursor", explode)
+
+        assert metering.mark_reached(tenancy.organization, person) is False
+
+    def test_a_database_failure_while_gating_allows_the_send(self, tenancy: Any, monkeypatch: Any) -> None:
+        """Fails open, deliberately: a billing read must not take a send down,
+        and the cost is at most one contact while the database is already in
+        trouble."""
+        from django.db import DatabaseError
+
+        from apps.billing import metering
+
+        def explode(*args: Any, **kwargs: Any) -> Any:
+            raise DatabaseError("the meter table is still on fire")
+
+        person = contact(tenancy.workspace, "Ada")
+        monkeypatch.setattr(metering, "allows_reaching", explode)
+
+        assert metering.reach(tenancy.workspace, person) is True
+
+
+class TestUnconfiguredBillingTouchesNothing:
+    def test_the_gate_resolves_no_organization(
+        self, tenancy: Any, settings: Any, django_assert_num_queries: Any
+    ) -> None:
+        """`workspace.organization` is a query, and a self-hosted deployment must
+        not pay it on every send."""
+        settings.STRIPE_ENABLED = False
+        person = contact(tenancy.workspace, "Ada")
+
+        with django_assert_num_queries(0):
+            assert reach(tenancy.workspace, person) is True
 
 
 def _email_connection(tenancy: Any) -> Any:

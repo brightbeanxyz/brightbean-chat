@@ -19,6 +19,7 @@ failed webhook, in the one log line that could have explained it.
 """
 
 import logging
+from typing import Any
 
 from apps.billing.tests.stripe_support import SECRET_KEY, WEBHOOK_SECRET
 from apps.common.logging import REDACTED, scrub
@@ -36,14 +37,14 @@ class TestTheKeysAreRedacted:
         assert WEBHOOK_SECRET not in scrub(f"verifying against {WEBHOOK_SECRET}")
         assert REDACTED in scrub(WEBHOOK_SECRET)
 
-    def test_a_key_inside_an_exception_message_is_redacted(self, caplog: object) -> None:
+    def test_a_key_inside_an_exception_message_is_redacted(self, caplog: Any) -> None:
         """The shape a leak actually takes. An SDK exception quotes the request
         that produced it, and this project logs exceptions."""
         logger = logging.getLogger("apps.billing.tests")
-        with caplog.at_level(logging.WARNING):  # type: ignore[attr-defined]
+        with caplog.at_level(logging.WARNING):
             logger.warning("stripe rejected the call: %s", f"key={SECRET_KEY}")
 
-        captured = "\n".join(record.getMessage() for record in caplog.records)  # type: ignore[attr-defined]
+        captured = "\n".join(record.getMessage() for record in caplog.records)
         assert SECRET_KEY not in captured
 
 

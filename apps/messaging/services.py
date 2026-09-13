@@ -468,7 +468,20 @@ def send_outbound(
         # "on unique violation, skip the call".
         return message
 
-    return _dispatch(message, connection, identity, on_the_wire, blocking=blocking)
+    sent = _dispatch(message, connection, identity, on_the_wire, blocking=blocking)
+    # The contact is counted only once the platform has actually taken the
+    # message, never at the gate above. Marking at the gate spends one of the
+    # plan's monthly slots on a provider rejection, and a workspace with a
+    # misconfigured channel could burn its whole allowance on sends that never
+    # left the building.
+    #
+    # QUEUED is excluded as deliberately as FAILED: it means a retry is pending
+    # and nothing has reached anybody yet. The retry runs through this same
+    # function and marks then, and the mark is idempotent, so the contact is
+    # counted exactly once however many attempts it takes.
+    if sent.status not in (MessageStatus.FAILED, MessageStatus.QUEUED):
+        _mark_plan_contact_reached(workspace, contact)
+    return sent
 
 
 def send_as_agent(
@@ -1008,6 +1021,8 @@ def _cancel_retry(message: Message) -> int:
 def plan_allows_reaching(workspace: Any, contact: Any) -> bool:
     """Whether the organization's plan permits reaching this contact now.
 
+    Reads only. The mark is :func:`_mark_plan_contact_reached`, after the send.
+
     A late import, the shape ``apps/flows/analytics.py`` uses for the same
     reason: ``apps.billing`` reads this app's models, so importing it at module
     scope here would close the loop. It also keeps the send path from loading
@@ -1016,3 +1031,19 @@ def plan_allows_reaching(workspace: Any, contact: Any) -> bool:
     from apps.billing.metering import reach
 
     return reach(workspace, contact)
+
+
+def _mark_plan_contact_reached(workspace: Any, contact: Any) -> None:
+    """Count this contact towards the organization's month, after a real send.
+
+    Neither this nor :func:`plan_allows_reaching` may raise — contract 1 says
+    ``send_outbound`` never does, and the billing module holds itself to that.
+    """
+    from apps.billing.entitlements import billing_enabled
+    from apps.billing.metering import mark_reached
+
+    if not billing_enabled():
+        # Before resolving the organization, which is a query: a deployment with
+        # no billing must pay nothing on the send path.
+        return
+    mark_reached(workspace.organization, contact)

@@ -222,7 +222,14 @@ def _complete(request: Any, workspace: Any, code: str) -> str:
 
     # The organization's channel limit. See apps/channels/plan.py on why this
     # is called here in all six adapters rather than in one shared service.
-    refusal = plan_refusal(request.workspace)
+    #
+    # `workspace`, not `request.workspace`: this is the OAuth callback, mounted
+    # at /channels/instagram/callback/ rather than under /w/<workspace_id>/, so
+    # RBACMiddleware never resolves a workspace from the URL and
+    # request.workspace is None or whichever one the user last visited. The
+    # workspace travels in the signed `state` and arrives as this argument,
+    # which is what every other line in this function uses.
+    refusal = plan_refusal(workspace)
     if refusal:
         return refusal
 

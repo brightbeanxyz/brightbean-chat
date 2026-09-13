@@ -79,12 +79,12 @@
                 {% csrf_token %}
                 <fieldset class="plan-pricing">
                   <legend class="sr-only">Billing interval</legend>
-                  <input type="radio" name="interval" id="interval-monthly" value="monthly" checked />
-                  <input type="radio" name="interval" id="interval-yearly" value="yearly" />
+                  <input type="radio" name="interval" id="interval-monthly-{{ card.key }}" value="monthly" checked />
+                  <input type="radio" name="interval" id="interval-yearly-{{ card.key }}" value="yearly" />
 
                   <div class="plan-interval">
-                    <label for="interval-monthly">Monthly</label>
-                    <label for="interval-yearly">
+                    <label for="interval-monthly-{{ card.key }}">Monthly</label>
+                    <label for="interval-yearly-{{ card.key }}">
                       Yearly <span class="plan-save">{{ yearly_saving }}</span>
                     </label>
                   </div>

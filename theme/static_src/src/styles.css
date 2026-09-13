@@ -3188,8 +3188,8 @@ a.an-card:hover { border-color: var(--border-hover); }
 }
 
 /* The active segment. */
-.plan-pricing input[value="monthly"]:checked ~ .plan-interval label[for="interval-monthly"],
-.plan-pricing input[value="yearly"]:checked ~ .plan-interval label[for="interval-yearly"] {
+.plan-pricing input[value="monthly"]:checked ~ .plan-interval label[for^="interval-monthly"],
+.plan-pricing input[value="yearly"]:checked ~ .plan-interval label[for^="interval-yearly"] {
   background: var(--surface-0);
   color: var(--text-primary);
   box-shadow: var(--shadow-xs);

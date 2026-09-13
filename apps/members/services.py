@@ -251,8 +251,15 @@ def create_invitation(
 
 
 @transaction.atomic
-def _check_plan_allows_seat(org: Any) -> None:
+def _check_plan_allows_seat(org: Any, *, excluding_invitation: Any = None) -> None:
     """Refuse a seat the organization's plan does not include.
+
+    ``excluding_invitation`` is the invitation being *consumed*, and leaving it
+    out is not an optimisation. A seat is a member or a live invitation, so at
+    acceptance the same person is counted twice — once as the pending invite and
+    once as the membership they are about to become. On a two-seat plan an
+    organization with one member and one pending invitation would refuse that
+    invitation, even though accepting it lands exactly on the limit.
 
     Re-raised as ``MembershipError`` so it reaches the ``except`` clause the
     members views already have.
@@ -260,7 +267,7 @@ def _check_plan_allows_seat(org: Any) -> None:
     from apps.billing.entitlements import PlanLimitError, check_can_add_seat
 
     try:
-        check_can_add_seat(org)
+        check_can_add_seat(org, excluding_invitation=excluding_invitation)
     except PlanLimitError as exc:
         raise MembershipError(str(exc)) from exc
 
@@ -300,7 +307,7 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
     # downgrade, and this route is reached unauthenticated — so the person who
     # hits this refusal is not the person who can fix it, which is why it needs
     # its own message rather than sharing one.
-    _check_plan_allows_seat(invitation.organization)
+    _check_plan_allows_seat(invitation.organization, excluding_invitation=invitation.pk)
 
     # v1 routes org-scoped pages from a single OrgMembership (see
     # RBACMiddleware). A second one would leave request.org and
