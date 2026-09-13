@@ -34,6 +34,10 @@ def billing_context(organization: Any, *, checkout: str = "") -> dict[str, Any]:
         "stripe_enabled": billing_enabled(),
         "plan": plan_key(organization),
         "plans": plans.PLAN_COPY,
+        # The paid column's two prices, so the template can render both and let
+        # the interval toggle swap them in CSS rather than on the server.
+        "paid_prices": plans.PAID_PRICES,
+        "yearly_saving": plans.YEARLY_SAVING,
         "usage": usage,
         "usage_rows": _usage_rows(usage),
         "subscription": row,

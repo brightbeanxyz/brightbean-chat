@@ -310,6 +310,74 @@ class TestTheIcons:
         assert text.count("plan-card-features") >= 2
 
 
+@pytest.mark.usefixtures("stripe_on")
+class TestThePricing:
+    """What the page quotes, and whether the discount it claims is true."""
+
+    def test_both_prices_are_in_the_html(self, client_for: Any, tenancy: Any) -> None:
+        """Both are rendered and the toggle swaps them in CSS, so the switch
+        costs no request and no script — which is what keeps this page working
+        under a CSP of 'self' with no inline handler."""
+        text = body(client_for(tenancy.owner).get(URL))
+
+        assert "$15" in text
+        assert "$12" in text
+
+    def test_monthly_is_the_one_shown_first(self, client_for: Any, tenancy: Any) -> None:
+        text = body(client_for(tenancy.owner).get(URL))
+        monthly = text.index('value="monthly"')
+
+        assert "checked" in text[monthly : monthly + 60]
+
+    def test_the_free_column_quotes_zero(self, client_for: Any, tenancy: Any) -> None:
+        text = body(client_for(tenancy.owner).get(URL))
+
+        assert "$0" in text
+        assert "Free forever" in text
+
+    def test_the_paid_plan_is_named_pro_chat(self, client_for: Any, tenancy: Any) -> None:
+        assert "Pro Chat" in body(client_for(tenancy.owner).get(URL))
+
+    def test_the_saving_claim_matches_the_two_prices(self) -> None:
+        """The one number on this page that is *derived* rather than chosen.
+
+        Somebody changing a price and leaving the badge alone would have the
+        page advertising a discount it does not give — the kind of wrong that
+        reaches a customer's card rather than a log. So the claim is checked
+        against the arithmetic instead of being trusted.
+        """
+        from apps.billing.plans import PAID_PRICES, YEARLY_SAVING
+
+        monthly = int(PAID_PRICES["monthly"].amount.lstrip("$"))
+        yearly = int(PAID_PRICES["yearly"].amount.lstrip("$"))
+        actual = round((1 - yearly / monthly) * 100)
+
+        assert f"Save {actual}%" == YEARLY_SAVING, (
+            f"the page claims {YEARLY_SAVING!r} but ${yearly}/mo against ${monthly}/mo is {actual}%"
+        )
+
+    def test_the_yearly_note_states_the_real_annual_total(self) -> None:
+        """ "$12/month, billed yearly" is only honest if the total is 12x it."""
+        from apps.billing.plans import PAID_PRICES
+
+        yearly = int(PAID_PRICES["yearly"].amount.lstrip("$"))
+
+        assert f"${yearly * 12}" in PAID_PRICES["yearly"].note
+
+    def test_the_prices_are_display_copy_and_never_reach_stripe(self) -> None:
+        """The amounts here are quoted to a reader; Stripe charges whatever the
+        configured price id says. If a future change made one of these an input
+        to checkout, the two could disagree silently — so the seam is pinned."""
+        import inspect
+
+        from apps.billing import services
+
+        source = inspect.getsource(services)
+
+        assert "PAID_PRICES" not in source
+        assert "plans." not in source
+
+
 class TestTheNavRow:
     def test_the_settings_nav_reaches_the_page(self, client_for: Any, tenancy: Any) -> None:
         """A page nobody can click to is not a feature."""

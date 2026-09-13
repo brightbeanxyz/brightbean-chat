@@ -93,6 +93,41 @@ LIMITS_BY_PLAN: dict[str, Limits] = {
 
 
 @dataclass(frozen=True)
+class Price:
+    """What one billing interval costs, as the reader sees it.
+
+    **These amounts are display copy and Stripe is what actually charges.**
+    Nothing here reaches a Checkout session — the view maps an interval onto a
+    configured price id and Stripe bills whatever that price says. So an
+    operator who changes an amount in the Stripe dashboard has to change it here
+    too, or the page quotes one number and the card is charged another. Reading
+    the live amount from Stripe would close that gap and costs an API call on
+    every page load; ``docs/billing.md`` carries the warning instead.
+    """
+
+    amount: str
+    cadence: str
+    note: str
+
+
+#: Free. One price, and it never changes.
+FREE_PRICE = Price(amount="$0", cadence="", note="Free forever")
+
+#: Paid, per interval. Yearly is quoted *per month* so the comparison is like
+#: for like — a reader seeing "$144" next to "$15" has to do arithmetic before
+#: they can tell whether it is cheaper.
+PAID_PRICES: dict[str, Price] = {
+    "monthly": Price(amount="$15", cadence="/month", note="Billed monthly"),
+    "yearly": Price(amount="$12", cadence="/month", note="Billed yearly, $144 up front"),
+}
+
+#: $180 a year against $144. Exact, so it is stated as a number rather than as
+#: "two months free", which would be 2.4 and is the kind of rounding a reader
+#: checks.
+YEARLY_SAVING = "Save 20%"
+
+
+@dataclass(frozen=True)
 class Feature:
     """One bullet, and the glyph that stands for it.
 
@@ -118,28 +153,32 @@ class PlanCopy:
     key: str
     name: str
     tagline: str
-    price_note: str
     features: tuple[Feature, ...]
-    # The Pro column carries the product mark. Only one plan is being sold, and
-    # the emblem is what makes the column read as the thing on offer rather than
-    # as the right-hand half of a table.
+    #: One price, or None when the column carries an interval toggle instead.
+    price: Price | None = None
+    #: The Pro column carries the product mark. Only one plan is being sold, and
+    #: the emblem is what makes the column read as the thing on offer rather
+    #: than as the right-hand half of a table.
     show_logo: bool = False
+
+    @property
+    def has_interval_choice(self) -> bool:
+        return self.price is None
 
 
 #: The feature bullets, in the same order in both columns so a reader can scan
 #: across. Written from the limits above rather than beside them, because a
 #: bullet that disagrees with the constant it describes is the failure mode this
-#: page has — and ``apps/billing/tests/test_plans.py`` asserts every number that
-#: appears in a free bullet is the number the free limit actually carries.
+#: page has.
 PLAN_COPY: tuple[PlanCopy, ...] = (
     PlanCopy(
         key=PlanKey.FREE,
         name="Free",
-        tagline="Everything you need to try it properly.",
-        price_note="Free forever",
+        tagline="Enough to prove it works.",
+        price=FREE_PRICE,
         features=(
             Feature("contacts", "25 contacts a month"),
-            Feature("channels", "Connect 2 channels"),
+            Feature("channels", "2 channels"),
             Feature("flows", "4 active automations"),
             Feature("user", "1 user"),
             Feature("inbox", "Shared inbox, labels and reminders"),
@@ -148,9 +187,8 @@ PLAN_COPY: tuple[PlanCopy, ...] = (
     ),
     PlanCopy(
         key=PlanKey.PAID,
-        name="Pro",
+        name="Pro Chat",
         tagline="Everything, with nothing counted.",
-        price_note="Billed monthly or yearly",
         features=(
             Feature("contacts", "Unlimited contacts"),
             Feature("channels", "Every channel"),

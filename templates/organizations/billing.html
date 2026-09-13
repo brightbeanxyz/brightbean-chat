@@ -28,7 +28,13 @@
             {% endif %}
           </div>
           <p class="plan-card-tagline">{{ card.tagline }}</p>
-          <p class="plan-card-price">{{ card.price_note }}</p>
+
+          {% if card.price %}
+            <p class="plan-price">
+              <span class="plan-price-amount">{{ card.price.amount }}</span>
+              <span class="plan-price-note">{{ card.price.note }}</span>
+            </p>
+          {% endif %}
 
           {% comment %}
             The call to action sits above the feature list. Somebody who already
@@ -37,7 +43,7 @@
             whatever each one offers.
 
             Rendered only when there is something to put in it: Django leaves
-            the whitespace inside a block like this, so an empty div is not
+            the whitespace inside a template block, so an empty div is not
             `:empty` and a CSS rule could not collapse the gap.
           {% endcomment %}
           {% if card.key == plan and can_manage_billing and can_manage %}
@@ -55,19 +61,41 @@
           {% elif card.key == "paid" and card.key != plan and can_manage %}
             <div class="plan-card-actions">
               {% comment %}
-                One call to action. The interval is a segmented control rather
-                than a second button: its value posts with the form and the view
-                validates it against the same two-element allowlist it always
-                did, so this is presentation and not a new input to trust.
+                One call to action, and a toggle that swaps the price beside it.
+
+                The swap is CSS, not JavaScript: the two radios precede both
+                price blocks, so `input:checked ~ .plan-price` picks the one to
+                show. That keeps the page working with no script at all, which
+                matters here because the CSP is 'self' with a per-request nonce
+                and an inline handler would be refused outright.
+
+                The radios are moved off-screen rather than display:none — a
+                hidden input is not focusable, and the control would stop working
+                for anybody on a keyboard. Their value posts with the form and
+                the view validates it against the same two-element allowlist it
+                always did, so this is presentation and not a new input to trust.
               {% endcomment %}
               <form method="post" action="{% url 'billing:checkout' %}">
                 {% csrf_token %}
-                <fieldset class="plan-interval">
+                <fieldset class="plan-pricing">
                   <legend class="sr-only">Billing interval</legend>
                   <input type="radio" name="interval" id="interval-monthly" value="monthly" checked />
-                  <label for="interval-monthly">Monthly</label>
                   <input type="radio" name="interval" id="interval-yearly" value="yearly" />
-                  <label for="interval-yearly">Yearly</label>
+
+                  <div class="plan-interval">
+                    <label for="interval-monthly">Monthly</label>
+                    <label for="interval-yearly">
+                      Yearly <span class="plan-save">{{ yearly_saving }}</span>
+                    </label>
+                  </div>
+
+                  {% for key, price in paid_prices.items %}
+                    <p class="plan-price" data-interval="{{ key }}">
+                      <span class="plan-price-amount">{{ price.amount }}</span>
+                      <span class="plan-price-cadence">{{ price.cadence }}</span>
+                      <span class="plan-price-note">{{ price.note }}</span>
+                    </p>
+                  {% endfor %}
                 </fieldset>
                 <button type="submit" class="btn-brand">Subscribe</button>
               </form>

@@ -3009,12 +3009,32 @@ a.an-card:hover { border-color: var(--border-hover); }
   margin-bottom: 0.25rem;
 }
 
-.plan-card-price {
-  font-size: 0.6875rem;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--text-ghost);
-  margin-bottom: 0.875rem;
+/* The price. Large enough to be the second thing read after the plan name —
+   that is what somebody is here for — with the cadence and the billing note
+   stepping down from it rather than competing. */
+.plan-price {
+  margin: 0 0 0.875rem;
+  line-height: 1.2;
+}
+
+.plan-price-amount {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.plan-price-cadence {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.plan-price-note {
+  display: block;
+  margin-top: 0.1875rem;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
 }
 
 .plan-card-features {
@@ -3112,25 +3132,21 @@ a.an-card:hover { border-color: var(--border-hover); }
   outline-offset: 2px;
 }
 
-/* The monthly/yearly choice, as a segmented control.
+/* The monthly/yearly choice, and the price swap behind it.
 
-   Two radios and two labels, no JavaScript: the value posts with the form and
-   the server validates it against the same two-element allowlist it always did,
-   so this is a presentation change with no new input to trust. The radios are
-   moved off-screen rather than `display: none`, because a hidden input is not
-   focusable and the control would stop working for anybody using a keyboard. */
-.plan-interval {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.25rem;
-  margin: 0 0 0.625rem;
-  padding: 0.25rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
+   Both are CSS. The two radios are the first children of the fieldset, so every
+   label and both price blocks are their following siblings and `:checked ~` can
+   reach all of them — which is what lets the price change with the toggle
+   without a line of JavaScript. That is not cleverness for its own sake: the CSP
+   here is 'self' with a per-request nonce, so an inline handler would be refused
+   and a script file would be a new asset for one interaction. */
+.plan-pricing {
+  margin: 0 0 0.875rem;
+  padding: 0;
+  border: 0;
 }
 
-.plan-interval input {
+.plan-pricing input {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -3141,8 +3157,23 @@ a.an-card:hover { border-color: var(--border-hover); }
   white-space: nowrap;
 }
 
+.plan-interval {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  padding: 0.1875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
 .plan-interval label {
-  padding: 0.3125rem 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3125rem;
+  padding: 0.3125rem 0.375rem;
   border-radius: calc(var(--radius-md) - 0.125rem);
   color: var(--text-secondary);
   font-size: 0.75rem;
@@ -3156,24 +3187,55 @@ a.an-card:hover { border-color: var(--border-hover); }
   color: var(--text-primary);
 }
 
-.plan-interval input:checked + label {
+/* The active segment. */
+.plan-pricing input[value="monthly"]:checked ~ .plan-interval label[for="interval-monthly"],
+.plan-pricing input[value="yearly"]:checked ~ .plan-interval label[for="interval-yearly"] {
   background: var(--surface-0);
   color: var(--text-primary);
   box-shadow: var(--shadow-xs);
 }
 
-.plan-interval input:focus-visible + label {
+.plan-pricing input:focus-visible ~ .plan-interval label {
   outline: 2px solid var(--primary-ring);
   outline-offset: 1px;
+}
+
+/* The discount, on the segment it applies to. Quiet until that segment is
+   chosen, so it reads as an offer rather than as a badge shouting from a
+   control nobody has touched. */
+.plan-save {
+  padding: 0.0625rem 0.3125rem;
+  border-radius: 9999px;
+  background: var(--success-50);
+  color: var(--success-700);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* One price shown at a time, chosen by whichever radio is checked. Both are in
+   the HTML so the swap costs no request and no script. */
+.plan-pricing .plan-price {
+  display: none;
+  margin-bottom: 0;
+}
+
+.plan-pricing input[value="monthly"]:checked ~ .plan-price[data-interval="monthly"],
+.plan-pricing input[value="yearly"]:checked ~ .plan-price[data-interval="yearly"] {
+  display: block;
+}
+
+/* Everything below the plan cards. Tied to the same measure as the grid above,
+   so the page reads as one column of content rather than a slim thing over a
+   wide one. */
+.plan-panel {
+  max-width: 40rem;
 }
 
 /* The usage table. Its own class rather than .app-content's bare-table styling
    because the figure column is numeric and wants tabular figures, and because
    the glyph column has to stay a fixed width however long the labels get. */
-.plan-panel {
-  max-width: 40rem;
-}
-
 .plan-usage {
   width: 100%;
   border-collapse: collapse;

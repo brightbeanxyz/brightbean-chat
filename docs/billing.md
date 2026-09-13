@@ -27,6 +27,15 @@ and its status.
 
 The numbers live in `apps/billing/plans.py` and are the only place to change them.
 
+**The amounts on the page are display copy; Stripe is what charges.** The page
+quotes $15 a month, or $12 a month billed yearly, from constants in that file.
+Nothing in it reaches a Checkout session — the view maps the interval a customer
+picked onto a configured price id, and Stripe bills whatever that price says. So
+if you change an amount in the Stripe dashboard, change it in `plans.py` too, or
+the page quotes one number and the card is charged another. A test checks the
+"Save 20%" badge against the two amounts, so at least the discount cannot drift
+from the prices it describes.
+
 **"Contacts reached" is a monthly set, not a running total.** A person counts
 once in a calendar month, however many messages pass, and counts whether they
 wrote to you or you wrote to them. Deleting a contact frees their slot. Two
