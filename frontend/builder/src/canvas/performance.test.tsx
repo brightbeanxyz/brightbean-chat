@@ -16,6 +16,7 @@ import { makeStore, renderWith } from "../test/render";
 import { toGraph } from "../store/serialize";
 import { useBuilder } from "../store/context";
 import { selectRfNodes } from "../store/selectors";
+import { TRIGGER_NODE_ID } from "./TriggerCard";
 import { StepEditor } from "../editor/StepEditor";
 
 function hundredNodes(): FlowGraph {
@@ -100,9 +101,21 @@ describe("dragging one node in a hundred", () => {
     store.getState().endDrag();
 
     const after = selectRfNodes(store.getState());
-    expect(after[0]).not.toBe(before[0]);
-    for (let index = 1; index < before.length; index += 1) {
-      expect(after[index]).toBe(before[index]);
+    const byId = (nodes: ReturnType<typeof selectRfNodes>) => new Map(nodes.map((node) => [node.id, node]));
+    const [was, now] = [byId(before), byId(after)];
+
+    expect(now.get("n0")).not.toBe(was.get("n0"));
+    for (const [id, node] of was) {
+      if (id === "n0") {
+        continue;
+      }
+      // The trigger card is pinned to the step the flow starts at (see
+      // triggerPosition), so dragging that step moves it too and it is
+      // legitimately a new object. Every *step* must still be identical.
+      if (id === TRIGGER_NODE_ID) {
+        continue;
+      }
+      expect({ id, same: now.get(id) === node }).toEqual({ id, same: true });
     }
   });
 });

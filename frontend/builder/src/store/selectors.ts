@@ -13,6 +13,7 @@ import type { Edge, Node } from "@xyflow/react";
 
 import type { DomainEdge } from "../schema/types";
 
+import { TRIGGER_NODE_ID } from "../canvas/TriggerCard";
 import { nodeSpec } from "../schema/artifact";
 import { entryNodeIds } from "../schema/entry";
 import type { BuilderState } from "./store";
@@ -40,12 +41,30 @@ function cacheFor(state: BuilderState): Map<string, CacheEntry> {
   return cache;
 }
 
+/**
+ * Where the trigger card sits: one column left of the step the flow starts at.
+ *
+ * Derived from the entry node rather than stored, because it has nowhere to be
+ * stored — the trigger is not in the graph (see canvas/TriggerCard.tsx), so
+ * there is no `position[id]` for it and no save that could carry one. Moving
+ * the entry node moves this with it, which is the behaviour somebody expects
+ * from a card that is pinned to it.
+ */
+const TRIGGER_OFFSET = 340;
+
+function triggerPosition(state: BuilderState): { x: number; y: number } {
+  const entries = selectEntryIds(state);
+  const first = state.nodeOrder.find((id) => entries.has(id));
+  const anchor = first ? state.position[first] : undefined;
+  return anchor ? { x: anchor.x - TRIGGER_OFFSET, y: anchor.y } : { x: -TRIGGER_OFFSET, y: 0 };
+}
+
 export function selectRfNodes(state: BuilderState): CardNode[] {
   const cache = cacheFor(state);
   const selected = new Set(state.selection.nodes);
   const draggable = state.env.canEdit;
 
-  return state.nodeOrder.map((id) => {
+  const nodes = state.nodeOrder.map((id) => {
     const type = state.nodeType[id] as string;
     const position = state.position[id] ?? { x: 0, y: 0 };
     const isSelected = selected.has(id);
@@ -69,11 +88,70 @@ export function selectRfNodes(state: BuilderState): CardNode[] {
     cache.set(id, { key, node });
     return node;
   });
+
+  return [triggerNode(state, cache), ...nodes];
+}
+
+/**
+ * The trigger card, cached like every other node.
+ *
+ * Rebuilding it per call would hand React Flow a new object identity on every
+ * store read, which remounts the card — the exact mistake canvas/types.ts warns
+ * about for the type maps, and the one performance.test.tsx pins for nodes.
+ * Keyed on its position, because that is the only input that can change it; the
+ * trigger *list* is read by the component through its own subscription, so a
+ * trigger edit re-renders the card without needing a new node object.
+ *
+ * Injected here and nowhere else. `toGraph()` serializes `nodeOrder`,
+ * `nodeType`, `config` and `position`, and this node is in none of them — so no
+ * save can carry it, by construction rather than by a filter somebody has to
+ * remember.
+ */
+function triggerNode(state: BuilderState, cache: Map<string, CacheEntry>): CardNode {
+  const position = triggerPosition(state);
+  const key = `${position.x},${position.y}`;
+  const hit = cache.get(TRIGGER_NODE_ID);
+  if (hit && hit.key === key) {
+    return hit.node;
+  }
+  const node: CardNode = {
+    id: TRIGGER_NODE_ID,
+    type: TRIGGER_NODE_ID,
+    position,
+    data: { nodeId: TRIGGER_NODE_ID },
+    draggable: false,
+    connectable: false,
+    deletable: false,
+    selectable: false,
+  };
+  cache.set(TRIGGER_NODE_ID, { key, node });
+  return node;
 }
 
 export function selectRfEdges(state: BuilderState): Edge[] {
   const selected = new Set(state.selection.edges);
-  return state.edgeOrder.flatMap((id) => {
+
+  // The trigger's edge into the step the flow starts at. Only drawn when there
+  // is exactly one such step: with none, or with several, there is no single
+  // honest answer and validation is already saying so.
+  const entries = selectEntryIds(state);
+  const entry = entries.size === 1 ? state.nodeOrder.find((id) => entries.has(id)) : undefined;
+  const fromTrigger: Edge[] = entry
+    ? [
+        {
+          id: `${TRIGGER_NODE_ID}-starts-${entry}`,
+          source: TRIGGER_NODE_ID,
+          sourceHandle: "starts",
+          target: entry,
+          type: "handleLabel",
+          selectable: false,
+          deletable: false,
+          focusable: false,
+        } satisfies Edge,
+      ]
+    : [];
+
+  return fromTrigger.concat(state.edgeOrder.flatMap((id) => {
     const edge = state.edge[id];
     if (!edge) {
       return [];
@@ -89,7 +167,7 @@ export function selectRfEdges(state: BuilderState): Edge[] {
         deletable: state.env.canEdit,
       } satisfies Edge,
     ];
-  });
+  }));
 }
 
 /**

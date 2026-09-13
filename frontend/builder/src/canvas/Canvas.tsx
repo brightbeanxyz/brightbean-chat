@@ -31,6 +31,7 @@ import type { Position } from "../schema/types";
 import { useBuilder, useBuilderStore } from "../store/context";
 import { selectRfEdges, selectRfNodes, type CardData, type CardNode } from "../store/selectors";
 import { AddStep } from "./AddStep";
+import { TRIGGER_NODE_ID } from "./TriggerCard";
 import { edgeTypes, nodeTypes } from "./types";
 import { useKeyboard } from "./useKeyboard";
 
@@ -77,6 +78,14 @@ export function Canvas() {
       let dragging = false;
 
       for (const change of changes) {
+        // The trigger card is drawn on the canvas and is not in the graph, so
+        // every change React Flow reports about it is about something the store
+        // does not have. Dropping them here rather than filtering per case:
+        // `deleteNodes(["__trigger__"])` would be a silent no-op today and a
+        // corrupted map the day deleteNodes stops checking.
+        if ("id" in change && change.id === TRIGGER_NODE_ID) {
+          continue;
+        }
         switch (change.type) {
           case "position": {
             if (change.position) {
@@ -141,6 +150,9 @@ export function Canvas() {
       let selection: string[] | null = null;
 
       for (const change of changes) {
+        if ("id" in change && change.id.startsWith(`${TRIGGER_NODE_ID}-`)) {
+          continue;
+        }
         if (change.type === "remove") {
           removed.push(change.id);
         } else if (change.type === "select") {
@@ -179,6 +191,11 @@ export function Canvas() {
    */
   const isValidConnection = useCallback<IsValidConnection>(
     (connection) => {
+      // Nothing connects to or from the trigger card. Its one edge is drawn by
+      // the projection, and a second would imply a second entry step.
+      if (connection.source === TRIGGER_NODE_ID || connection.target === TRIGGER_NODE_ID) {
+        return false;
+      }
       const state = store.getState();
       const sourceType = connection.source ? state.nodeType[connection.source] : undefined;
       const targetType = connection.target ? state.nodeType[connection.target] : undefined;

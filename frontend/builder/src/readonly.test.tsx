@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AddStep } from "./canvas/AddStep";
 import { Canvas } from "./canvas/Canvas";
+import { TRIGGER_NODE_ID } from "./canvas/TriggerCard";
 import { StepEditor } from "./editor/StepEditor";
 import { installAutosave } from "./persistence/autosave";
 import { makeDetail, makeSampleGraph } from "./test/fixtures";
@@ -66,9 +67,13 @@ describe("a read-only canvas", () => {
 
   it("marks them all draggable again for a member who can edit", () => {
     // The negative above would pass against a projection that hard-coded false.
+    // The trigger card is excluded: it is pinned to the step the flow starts at
+    // and is never draggable for anybody, because it is not in the graph.
     const nodes = selectRfNodes(makeStore(makeDetail(makeSampleGraph())).getState());
+    const steps = nodes.filter((node) => node.id !== TRIGGER_NODE_ID);
 
-    expect(nodes.every((node) => node.draggable)).toBe(true);
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.every((node) => node.draggable)).toBe(true);
   });
 
   it("leaves every edge undeletable too", () => {
