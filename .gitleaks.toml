@@ -35,15 +35,24 @@ paths = [
 # a webhook signing secret shaped like the real things, because the scrubbing
 # patterns in apps/common/logging.py are written for `sk_(live|test)_...` and
 # `whsec_...` — a fixture spelled "secret" would leave those rules asserting
-# nothing. stripe_support.py holds the fake API's two credentials; the client
-# and webhook tests use them. Literals in test files, read from no environment,
-# granting access to nothing.
+# nothing. Literals in test files, read from no environment, granting access to
+# nothing: Stripe's test-mode keys cannot move money, and these are not even
+# that, they are strings shaped like them.
+#
+# stripe_support.py is the one module that holds them; every other billing test
+# imports from it, the way apps/channels/tests/telegram_support.py holds
+# BOT_TOKEN. The three test_* files below are listed because earlier commits on
+# this branch carried their own copies before that deduplication, and this scan
+# runs over full history — they no longer contain a literal at HEAD.
 [[allowlists]]
 description = "Synthetic Stripe test fixtures"
 targetRules = ["generic-api-key", "stripe-access-token"]
 paths = [
     '''apps/billing/tests/stripe_support\.py''',
     '''apps/billing/tests/test_stripe_client\.py''',
+    '''apps/billing/tests/test_checkout_flow\.py''',
+    '''apps/billing/tests/test_reconcile\.py''',
+    '''apps/billing/tests/test_self_hosted_is_unlimited\.py''',
 ]
 
 # Credential-shaped fixtures for the platform-credential store: fake client ids

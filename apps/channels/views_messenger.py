@@ -60,6 +60,7 @@ from django.views.decorators.http import require_http_methods
 from apps.channels import messenger_oauth
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.models import ChannelConnection, ConnectionStatus
+from apps.channels.plan import plan_refusal
 from apps.channels.providers import messenger as messenger_adapter
 from apps.channels.providers.exceptions import APIError
 from apps.common.encryption import decrypt_value, encrypt_value
@@ -314,6 +315,12 @@ def _connect_page(request: WorkspaceRequest, page: messenger_oauth.MetaPage) -> 
     connection, and one left in the list looking connected while nothing ever
     arrives is the worse outcome.
     """
+    # The organization's channel limit. See apps/channels/plan.py on why this
+    # is called here in all six adapters rather than in one shared service.
+    refusal = plan_refusal(request.workspace)
+    if refusal:
+        return refusal
+
     connection = ChannelConnection(
         workspace=request.workspace,
         platform=Platform.MESSENGER.value,

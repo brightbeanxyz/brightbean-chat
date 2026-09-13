@@ -74,7 +74,7 @@ from apps.channels.providers.exceptions import APIError, RateLimitError
 from apps.channels.registry import adapter_for
 from apps.contacts.models import ContactStatus
 from apps.messaging import analytics, buckets
-from apps.messaging.codes import Denial, Failure
+from apps.messaging.codes import Denial, Failure, Limit
 from apps.messaging.compliance import Allowed, can_send
 
 # The single write site for `opted_out_at` (ROADMAP contract 3). No cycle:
@@ -444,6 +444,22 @@ def send_outbound(
         # Never silently dropped: the flow engine needs a row to follow its
         # `default` edge from, and an operator needs to know what was refused.
         return _failed(conversation, outbound, source, idempotency_key, decision.code)
+
+    # The organization's own plan, and the contact meter behind it. Deliberately
+    # **after** compliance rather than before: if a contact is opted out *and*
+    # the plan is spent, "they opted out" is the more useful and more important
+    # thing to record on the row, and no message goes out either way. Nothing is
+    # metered for a send compliance was going to refuse anyway.
+    #
+    # Costs nothing on an unlimited plan — which is every organization on a
+    # deployment with no billing configured — and writes no row there either.
+    #
+    # `send_compliance_reply` does not reach this, and not by a flag: it is a
+    # separate function that never calls send_outbound. SPEC §6.6 requires an
+    # SMS STOP to be answered, and refusing a carrier obligation because a card
+    # expired would be a compliance failure dressed up as a billing decision.
+    if not plan_allows_reaching(workspace, contact):
+        return _failed(conversation, outbound, source, idempotency_key, Limit.ACTIVE_CONTACTS.value)
 
     on_the_wire = decision.apply(outbound)
     message, created = _record(conversation, on_the_wire, source, idempotency_key)
@@ -987,3 +1003,16 @@ def _cancel_retry(message: Message) -> int:
     from apps.messaging.handlers import cancel_send_retry
 
     return cancel_send_retry(message)
+
+
+def plan_allows_reaching(workspace: Any, contact: Any) -> bool:
+    """Whether the organization's plan permits reaching this contact now.
+
+    A late import, the shape ``apps/flows/analytics.py`` uses for the same
+    reason: ``apps.billing`` reads this app's models, so importing it at module
+    scope here would close the loop. It also keeps the send path from loading
+    billing at all on a deployment that has none.
+    """
+    from apps.billing.metering import reach
+
+    return reach(workspace, contact)

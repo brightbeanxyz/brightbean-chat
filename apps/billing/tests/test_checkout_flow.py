@@ -11,7 +11,7 @@ import pytest
 from django.urls import reverse
 
 from apps.billing.models import BillingCustomer
-from apps.billing.tests.stripe_support import fake_stripe
+from apps.billing.tests.stripe_support import SECRET_KEY, fake_stripe
 
 pytestmark = pytest.mark.django_db
 
@@ -24,7 +24,7 @@ STRIPE_PORTAL = "https://billing.stripe.com/p/session/live_456"
 @pytest.fixture(autouse=True)
 def _configured(settings: Any) -> None:
     settings.STRIPE_ENABLED = True
-    settings.STRIPE_SECRET_KEY = "sk_test_configured"  # noqa: S105 - a fake credential for tests
+    settings.STRIPE_SECRET_KEY = SECRET_KEY
     settings.STRIPE_PRICE_ID_MONTHLY = "price_configured_monthly"
     settings.STRIPE_PRICE_ID_YEARLY = "price_configured_yearly"
     settings.STRIPE_PORTAL_CONFIGURATION_ID = "bpc_custom"

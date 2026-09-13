@@ -93,6 +93,23 @@ def _validated_scopes(scopes: Any, issuer_permissions: dict[str, bool]) -> list[
 
 
 @transaction.atomic
+def _check_plan_allows_api(workspace: Any) -> None:
+    """Refuse issuing new API credentials on a plan without API access.
+
+    **Issuance only.** Keys already issued keep working after a downgrade,
+    forever. Revoking a credential because a card expired is the hazard
+    ``apps.api.auth``'s ``SCOPE_PERMISSIONS`` docstring describes, seen from the
+    other side: an integration that worked yesterday starts answering 403 and
+    nothing the operator can see explains why.
+    """
+    from apps.billing.entitlements import PlanLimitError, check_api_access
+
+    try:
+        check_api_access(workspace.organization)
+    except PlanLimitError as exc:
+        raise ApiKeysError(str(exc)) from exc
+
+
 def issue_api_key(*, workspace: Any, issuer: Any, name: str, scopes: Any) -> ApiKey:
     """Mint a key. The returned object carries ``raw_token`` — show it once.
 
@@ -108,6 +125,8 @@ def issue_api_key(*, workspace: Any, issuer: Any, name: str, scopes: Any) -> Api
     _issuer_may_manage(issuer, workspace)
     membership = WorkspaceMembership.objects.get(user=issuer, workspace=workspace)
     validated = _validated_scopes(scopes, membership.effective_permissions)
+
+    _check_plan_allows_api(workspace)
 
     live = ApiKey.objects.for_workspace(workspace).filter(revoked_at__isnull=True).count()
     if live >= MAX_KEYS_PER_WORKSPACE:
@@ -199,6 +218,8 @@ def create_webhook(*, workspace: Any, url: str, events: Any) -> OutboundWebhook:
     same value in their own verifier, and "rotate and reconfigure" is not an
     acceptable answer to "I lost it" for something a third party depends on.
     """
+    _check_plan_allows_api(workspace)
+
     existing = OutboundWebhook.objects.for_workspace(workspace).count()
     if existing >= MAX_WEBHOOKS_PER_WORKSPACE:
         raise ApiKeysError(f"This workspace already has {MAX_WEBHOOKS_PER_WORKSPACE} endpoints.")

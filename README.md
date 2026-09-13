@@ -41,8 +41,14 @@ in the middle.
 | **Multi-tenancy** | Organizations and workspaces with two membership tiers and a real permission matrix. Cross-tenant access answers 404, and a fuzz suite in CI proves it. |
 | **Secure by default** | Encrypted credentials at rest, an SSRF guard on every user-supplied URL, CSP with per-request nonces, and a deployment that refuses to boot on a placeholder secret. |
 
-Deliberately **not** in v1: TikTok, website chat widgets, e-commerce catalogues,
-AI reply generation and billing ([`docs/SPEC.md`](docs/SPEC.md) §1.1).
+Deliberately **not** in v1: TikTok, website chat widgets, e-commerce catalogues
+and AI reply generation ([`docs/SPEC.md`](docs/SPEC.md) §1.1).
+
+**You do not need a payment provider to run this.** There is one tier and every
+feature is in it. The optional Stripe integration exists for operators running
+BrightBean Chat as a paid service; leave its settings empty — the default — and
+there is no billing page to find, no limit counted and no plan to be on
+([`docs/billing.md`](docs/billing.md)).
 
 ## Screens
 

@@ -15,7 +15,7 @@ from django.utils import timezone
 from apps.billing.entitlements import is_paid
 from apps.billing.housekeeping import PENDING_CHECKOUT_MINUTES, prune_stripe_event_log, reconcile_pending_checkouts
 from apps.billing.models import STATUS_NONE, BillingCustomer, StripeEventLog
-from apps.billing.tests.stripe_support import fake_stripe
+from apps.billing.tests.stripe_support import SECRET_KEY, fake_stripe
 
 pytestmark = pytest.mark.django_db
 
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture(autouse=True)
 def _configured(settings: Any) -> None:
     settings.STRIPE_ENABLED = True
-    settings.STRIPE_SECRET_KEY = "sk_test_configured"  # noqa: S105 - a fake credential for tests
+    settings.STRIPE_SECRET_KEY = SECRET_KEY
     settings.STRIPE_PRICE_ID_MONTHLY = "price_m"
     settings.STRIPE_PRICE_ID_YEARLY = "price_y"
 

@@ -202,6 +202,11 @@ def create_invitation(
     email = (email or "").strip().lower()
     if not email:
         raise MembershipError("An email address is required.")
+    # Seats are counted as accepted members plus live invitations, so this is
+    # checked at creation rather than only at acceptance: otherwise an
+    # organization at its limit sends ten invitations, every one of them passes,
+    # and who gets the seat is decided by who clicks first.
+    _check_plan_allows_seat(org)
 
     if OrgMembership.objects.filter(organization=org, user__email__iexact=email).exists():
         raise MembershipError("This person is already a member of your organization.")
@@ -246,6 +251,20 @@ def create_invitation(
 
 
 @transaction.atomic
+def _check_plan_allows_seat(org: Any) -> None:
+    """Refuse a seat the organization's plan does not include.
+
+    Re-raised as ``MembershipError`` so it reaches the ``except`` clause the
+    members views already have.
+    """
+    from apps.billing.entitlements import PlanLimitError, check_can_add_seat
+
+    try:
+        check_can_add_seat(org)
+    except PlanLimitError as exc:
+        raise MembershipError(str(exc)) from exc
+
+
 def accept_invitation(invitation: Invitation, user: Any, *, require_email_match: bool = True) -> None:
     """Turn a pending invitation into memberships.
 
@@ -276,6 +295,12 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
         raise MembershipError("This invitation has expired.")
     if require_email_match and (user.email or "").strip().lower() != invitation.email.strip().lower():
         raise MembershipError("This invitation was sent to a different email address.")
+    # Not redundant with the check in create_invitation. An invitation issued
+    # while the organization was on the paid plan can be accepted after a
+    # downgrade, and this route is reached unauthenticated — so the person who
+    # hits this refusal is not the person who can fix it, which is why it needs
+    # its own message rather than sharing one.
+    _check_plan_allows_seat(invitation.organization)
 
     # v1 routes org-scoped pages from a single OrgMembership (see
     # RBACMiddleware). A second one would leave request.org and

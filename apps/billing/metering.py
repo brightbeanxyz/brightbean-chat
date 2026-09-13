@@ -38,6 +38,7 @@ from django.utils import timezone
 
 from apps.billing.entitlements import PlanLimitError, limits_for
 from apps.billing.models import ActiveContactMonth
+from apps.common.uuid7 import uuid7
 
 logger = logging.getLogger(__name__)
 
@@ -134,8 +135,6 @@ def mark_contact_active(contact: Any, *, period: str, organization_id: Any = Non
     organization is at most twenty-five times a month and for everybody else is
     never.
     """
-    from uuid6 import uuid7
-
     now = timezone.now()
     params = [
         uuid7(),
@@ -192,3 +191,39 @@ def _lock_organization(organization_id: Any) -> None:
     from apps.organizations.models import Organization
 
     Organization.objects.filter(pk=organization_id).select_for_update().only("id").first()
+
+
+def reach(workspace: Any, contact: Any) -> bool:
+    """Gate and mark in one call. ``False`` means the send must not go.
+
+    The single entry point ``apps.messaging`` uses, so the send path carries one
+    import and one branch rather than the plan's whole vocabulary.
+
+    **Never raises.** ``send_outbound`` promises never to raise, and a billing
+    concern is not the thing to break that with: a refusal comes back as
+    ``False`` and becomes a ``FAILED`` message row carrying
+    ``Limit.ACTIVE_CONTACTS``, which is the same shape every compliance refusal
+    already has, so the flow engine follows its ``default`` edge with no new
+    branch anywhere.
+
+    Returns ``True`` unchanged on an unlimited plan — including every
+    organization on a deployment with no Stripe — after doing no work and
+    writing no row.
+    """
+    organization = workspace.organization
+    if limits_for(organization).active_contacts_per_month is None:
+        return True
+
+    period = current_period(organization)
+    try:
+        check_can_reach_contact(organization, contact, period=period)
+    except PlanLimitError:
+        return False
+
+    try:
+        meter(organization, contact)
+    except PlanLimitError:
+        # Somebody took the last slot between the check and the insert. The mark
+        # has already been rolled back inside meter().
+        return False
+    return True

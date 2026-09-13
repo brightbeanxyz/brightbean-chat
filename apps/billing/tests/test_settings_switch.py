@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from apps.billing.tests.stripe_support import SECRET_KEY
+
 BASE_DIR = Path(__file__).resolve().parents[3]
 
 _STRIPE_VARS = (
@@ -57,7 +59,7 @@ def _derive(**overrides: str) -> str:
 
 
 _COMPLETE = {
-    "STRIPE_SECRET_KEY": "sk_test_complete",
+    "STRIPE_SECRET_KEY": SECRET_KEY,
     "STRIPE_PRICE_ID_MONTHLY": "price_m",
     "STRIPE_PRICE_ID_YEARLY": "price_y",
 }

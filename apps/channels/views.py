@@ -37,6 +37,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.channels.capabilities import capabilities_for
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR, ChannelConnectionForm
 from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEventLog
+from apps.channels.plan import plan_refusal
 from apps.channels.policy import policy_for
 from apps.channels.providers import email_backends
 from apps.channels.providers.base import Adapter
@@ -281,6 +282,17 @@ def connection_create(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
         if form.is_valid():
             connection = form.save(commit=False)
             connection.workspace = request.workspace
+            refusal = plan_refusal(request.workspace)
+            if refusal:
+                # A form error rather than a message, so it lands beside the
+                # control the reader was using — the same place the duplicate
+                # check below puts its refusal.
+                form.add_error(None, refusal)
+                return render(
+                    request,
+                    "channels/new.html",
+                    {"form": form, "platforms": Platform.choices, "connect_flow_issues": CONNECT_FLOW_ISSUES},
+                )
             secret = connection.rotate_webhook_secret()
             try:
                 with transaction.atomic():
@@ -331,8 +343,16 @@ def connection_set_status(request: WorkspaceRequest, workspace_id: str, connecti
     """
     connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
     status = request.POST.get("status", "")
+    # Re-enabling a disabled connection has the same effect on the count as
+    # connecting one, so it takes the same check. Without it an organization
+    # over its limit disables three channels and switches them back on one at a
+    # time — the shape every half-enforced limit bug takes.
+    turning_on = status != ConnectionStatus.DISABLED and connection.status == ConnectionStatus.DISABLED
+    refusal = plan_refusal(request.workspace) if turning_on else ""
     if status not in SETTABLE_STATUSES:
         messages.error(request, "That is not a status you can set by hand.")
+    elif refusal:
+        messages.error(request, refusal)
     else:
         connection.status = status
         connection.save(update_fields=["status", "updated_at"])

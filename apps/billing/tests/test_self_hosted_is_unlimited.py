@@ -38,6 +38,7 @@ import pytest
 from apps.billing import entitlements
 from apps.billing.models import ActiveContactMonth, BillingCustomer
 from apps.billing.plans import UNLIMITED, PlanKey
+from apps.billing.tests.stripe_support import SECRET_KEY
 
 pytestmark = pytest.mark.django_db
 
@@ -123,7 +124,7 @@ class TestStripeConfigured:
     @pytest.fixture(autouse=True)
     def _stripe_on(self, settings: Any) -> None:
         settings.STRIPE_ENABLED = True
-        settings.STRIPE_SECRET_KEY = "sk_test_notarealkey"  # noqa: S105 - shapes the switch, grants nothing
+        settings.STRIPE_SECRET_KEY = SECRET_KEY
         settings.STRIPE_PRICE_ID_MONTHLY = "price_monthly"
         settings.STRIPE_PRICE_ID_YEARLY = "price_yearly"
 

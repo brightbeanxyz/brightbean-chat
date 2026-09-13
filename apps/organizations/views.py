@@ -5,6 +5,8 @@ and ``RBACMiddleware`` resolves it (see that module's docstring on the
 assumption and what changes if multi-org ever arrives).
 """
 
+from typing import Any
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
@@ -85,6 +87,10 @@ def create_workspace(request: OrgRequest) -> HttpResponse:
     if Workspace.objects.for_org(request.org.pk).filter(name=name).exists():
         messages.error(request, "A workspace with that name already exists.")
         return redirect(reverse("organizations:workspaces"))
+    refusal = _plan_refusal(request.org)
+    if refusal is not None:
+        messages.error(request, refusal)
+        return redirect(reverse("organizations:workspaces"))
 
     workspace = Workspace.objects.create(organization=request.org, name=name)
     # The creator becomes its admin, or nobody can configure the thing they
@@ -110,7 +116,38 @@ def set_workspace_archived(request: OrgRequest, target_id: str) -> HttpResponse:
     if workspace is None:
         raise Http404("No such workspace.")
 
-    workspace.is_archived = request.POST.get("archived") == "1"
+    archiving = request.POST.get("archived") == "1"
+    if not archiving and workspace.is_archived:
+        # Restoring is the same lever as creating. Without this an organization
+        # at its workspace limit archives one, creates another, and restores the
+        # first — which is the shape every "half-enforced limit" bug takes.
+        refusal = _plan_refusal(request.org)
+        if refusal is not None:
+            messages.error(request, refusal)
+            return redirect(reverse("organizations:workspaces"))
+
+    workspace.is_archived = archiving
     workspace.save(update_fields=["is_archived", "updated_at"])
     messages.success(request, f"{'Archived' if workspace.is_archived else 'Restored'} {workspace.name}.")
     return redirect(reverse("organizations:workspaces"))
+
+
+def _plan_refusal(org: Any) -> str | None:
+    """The organization's workspace limit, as a message or None.
+
+    Returns rather than raises: both call sites are POST-redirect-GET views that
+    answer a refusal with ``messages.error`` and a redirect, which is what every
+    other refusal in this module already does.
+
+    A free plan is capped at one workspace, and that cap is what makes every
+    other limit affordable to enforce — the counts in
+    ``apps.billing.entitlements`` sum across an organization's workspaces, and
+    for an organization that has never paid that sum has one term.
+    """
+    from apps.billing.entitlements import PlanLimitError, check_can_add_workspace
+
+    try:
+        check_can_add_workspace(org)
+    except PlanLimitError as exc:
+        return str(exc)
+    return None

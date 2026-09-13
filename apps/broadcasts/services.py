@@ -470,6 +470,14 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
     if counts.eligible == 0:
         raise BroadcastError("Nobody in this audience can be messaged on this channel right now.")
 
+    # The organization's monthly contact allowance, refused here rather than one
+    # message at a time. `send_outbound` is the backstop that cannot be
+    # bypassed, but on its own it turns "this broadcast needs more contacts than
+    # your plan allows" into 380 silently failed rows an operator has to read a
+    # status column to discover. Counted against the audience as it is now, for
+    # the same reason the eligibility numbers above are.
+    _refuse_over_plan(broadcast, counts)
+
     when = when or broadcast.scheduled_at or timezone.now()
     with transaction.atomic():
         locked = Broadcast.objects.for_workspace(broadcast.workspace_id).select_for_update().get(pk=broadcast.pk)
@@ -961,3 +969,35 @@ def _announce(broadcast: Broadcast, current: Counters) -> None:
         )
     except Exception:  # noqa: BLE001 - a bell that will not ring is not a failed send
         logger.exception("Could not notify %s that broadcast %s finished", broadcast.created_by_id, broadcast.pk)
+
+
+def _refuse_over_plan(broadcast: Broadcast, counts: Any) -> None:
+    """Refuse a broadcast that would need more new contacts than the plan allows.
+
+    Silent on an unlimited plan, which is every organization on a deployment
+    with no billing configured.
+
+    The figure compared is the audience's *eligible* count against the room
+    left this month. It is deliberately approximate in one direction: some of
+    those people will already have been reached this month and so cost nothing,
+    which this does not subtract. Getting that exact would mean resolving the
+    whole audience against the meter here, on a path that already counts the
+    audience twice — and being approximate costs an operator an upgrade prompt
+    they could have squeaked past, not a broadcast that silently half-sends.
+    """
+    from apps.billing.entitlements import limits_for
+    from apps.billing.metering import active_contact_count, current_period
+
+    organization = broadcast.workspace.organization
+    limit = limits_for(organization).active_contacts_per_month
+    if limit is None:
+        return
+
+    used = active_contact_count(organization, period=current_period(organization))
+    remaining = max(limit - used, 0)
+    if counts.eligible <= remaining:
+        return
+    raise BroadcastError(
+        f"This broadcast reaches {counts.eligible} people and your plan has room for {remaining} more "
+        f"this month. Upgrade to send it."
+    )

@@ -1,11 +1,18 @@
 """Size limits, per file and per workspace (SECURITY-BASELINE §9).
 
 Studio resolves a per-*organization* cap through subscription tiers and an
-override row in a settings table. None of that machinery exists here and none of
-it is wanted: this is a self-hostable product, so the limits are environment
+override row in a settings table. None of that machinery is here and none of it
+is wanted: this is a self-hostable product, so the limits are environment
 variables with defaults that fit a small box, and the tenant boundary they are
 counted against is the workspace — the same boundary everything else in the app
 is scoped to.
+
+**Storage is deliberately not an entitlement**, and that survived the arrival of
+:mod:`apps.billing`. Disk is the operator's own cost on their own box, so it
+belongs to whoever pays for the box rather than to a plan — a self-hoster tuning
+``MEDIA_WORKSPACE_QUOTA_BYTES`` is configuring their hardware, not buying
+something. The free plan's limits are the four things a reader can see on the
+billing page: contacts reached, channels, automations and seats.
 
 Two independent limits, because they stop different things. The per-file cap
 (by kind, since a video is legitimately larger than an avatar) bounds what a

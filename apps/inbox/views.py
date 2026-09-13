@@ -1599,6 +1599,16 @@ def rule_save(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     except (rules_engine.RuleValidationError, ConditionValidationError) as exc:
         return toast_response(tone="error", title="Not saved", body=str(exc))
 
+    # An enabled inbox rule is an active automation and spends the same budget a
+    # published flow does — it is "when this arrives, do that", which is what an
+    # automation is. Only a rule that is not already enabled spends a slot, so
+    # editing a live rule is never refused.
+    enabling = bool(request.POST.get("enabled")) and not (rule is not None and rule.enabled)
+    if enabling:
+        refusal = _plan_refusal(request)
+        if refusal is not None:
+            return toast_response(tone="warn", title="Not saved", body=refusal)
+
     if rule is None:
         rule = InboxRule(workspace=request.workspace, priority=_next_priority(request))
     rule.name = name[:120]
@@ -1614,6 +1624,11 @@ def rule_save(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 @require_POST
 def rule_toggle(request: WorkspaceRequest, workspace_id: str, rule_id: str) -> HttpResponse:
     rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=rule_id)
+    if not rule.enabled:
+        # Switching one back on is the same lever as saving it enabled.
+        refusal = _plan_refusal(request)
+        if refusal is not None:
+            return toast_response(tone="warn", title="Not enabled", body=refusal)
     rule.enabled = not rule.enabled
     rule.save(update_fields=["enabled", "updated_at"])
     title = "Rule enabled" if rule.enabled else "Rule disabled"
@@ -1749,3 +1764,23 @@ def _posted_json(raw: Any) -> Any:
         return json.loads(raw)
     except ValueError:
         return {}
+
+
+def _plan_refusal(request: WorkspaceRequest) -> str | None:
+    """The organization's automation limit, as a message or None.
+
+    Returned rather than raised because both call sites answer htmx, and an
+    htmx mutation has to reply 2xx even when it refuses — htmx drops
+    ``HX-Trigger`` on a non-2xx, so a 4xx here would mean no toast at all.
+    ``toast_response`` already answers 204.
+
+    ``warn`` rather than ``error``: this is a refusal the reader can act on, not
+    a fault.
+    """
+    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation
+
+    try:
+        check_can_activate_automation(request.org)
+    except PlanLimitError as exc:
+        return str(exc)
+    return None

@@ -42,6 +42,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.channels import segments
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.models import ChannelConnection, SmsSettings
+from apps.channels.plan import plan_refusal
 from apps.channels.providers import sms
 from apps.channels.providers.exceptions import APIError
 from apps.common.platforms import Platform
@@ -189,6 +190,12 @@ def _connect(
     except APIError:
         logger.info("SMS connect: the sender was not on the account for workspace %s.", request.workspace.pk)
         return SENDER_MESSAGE
+
+    # The organization's channel limit. See apps/channels/plan.py on why this
+    # is called here in all six adapters rather than in one shared service.
+    refusal = plan_refusal(request.workspace)
+    if refusal:
+        return refusal
 
     connection = ChannelConnection(
         workspace=request.workspace,
