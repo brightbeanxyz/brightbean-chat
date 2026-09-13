@@ -75,3 +75,22 @@ segno==1.6.6
 # schema layer, and it is what enforces `extra="forbid"` on every request body
 # (SECURITY-BASELINE §7's mass-assignment guard).
 django-ninja==1.6.3
+
+# Stripe, for the optional hosted billing integration (apps/billing). Inert
+# unless STRIPE_SECRET_KEY and both price ids are set, which is never true on a
+# self-hosted install — the package is imported lazily, inside the one module
+# that talks to Stripe, so an unconfigured deployment never loads it.
+#
+# The only vendor SDK in a tree where six chat platforms all speak raw httpx, so
+# it needs an argument. It is `stripe.Webhook.construct_event`: verifying the
+# `t=,v1=` signature scheme by hand is custom crypto on the one endpoint where
+# getting it wrong means a forged "they paid" is indistinguishable from a real
+# one, and this is the implementation Stripe tests. The rest of the surface we
+# use is four REST calls that httpx would have handled fine.
+#
+# It brings `requests`, which botocore already pins into the lock, so there is no
+# second HTTP stack here. It does mean this is egress the SSRF sweep in
+# tests/test_ssrf_call_sites.py cannot see — that scan is httpx-only — so
+# apps/billing/stripe_client.py is registered in its NON_HTTP_EGRESS map and in
+# docs/security-audit.md, the way email_backends.py's boto3 and SMTP are.
+stripe==15.6.1

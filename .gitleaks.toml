@@ -31,6 +31,21 @@ paths = [
     '''apps/common/tests/test_checks\.py''',
 ]
 
+# Stripe-shaped fixtures for the optional billing integration. A secret key and
+# a webhook signing secret shaped like the real things, because the scrubbing
+# patterns in apps/common/logging.py are written for `sk_(live|test)_...` and
+# `whsec_...` — a fixture spelled "secret" would leave those rules asserting
+# nothing. stripe_support.py holds the fake API's two credentials; the client
+# and webhook tests use them. Literals in test files, read from no environment,
+# granting access to nothing.
+[[allowlists]]
+description = "Synthetic Stripe test fixtures"
+targetRules = ["generic-api-key", "stripe-access-token"]
+paths = [
+    '''apps/billing/tests/stripe_support\.py''',
+    '''apps/billing/tests/test_stripe_client\.py''',
+]
+
 # Credential-shaped fixtures for the platform-credential store: fake client ids
 # and secrets used to prove the encryption round trip, the masking helper, the
 # admin-form corruption regression and the three-level resolution chain. All are

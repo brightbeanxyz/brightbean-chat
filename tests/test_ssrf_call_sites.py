@@ -47,6 +47,15 @@ ISSUANCE_SITES = {
 #: with what constrains it instead. Named rather than skipped — "it is not
 #: httpx" is not the same as "it is safe", and the audit says so out loud.
 NON_HTTP_EGRESS = {
+    "billing/stripe_client.py": (
+        "The Stripe SDK, which speaks `requests`. The scan below only recognises httpx, so this "
+        "module would have passed it by being invisible rather than by being safe — which is the "
+        "one outcome an exhaustive audit must not allow. What constrains it instead: the base URL "
+        "is the SDK's own constant, every value interpolated into a request is an id this "
+        "deployment stored or a setting an operator wrote, and no user-supplied URL reaches "
+        "Stripe — the success_url and return_url are built from settings.APP_URL and a reversed "
+        "route. Recorded PARTIAL against §6.1 in docs/security-audit.md alongside boto3 and SMTP."
+    ),
     "channels/providers/email_backends.py": (
         "boto3 to SES, and Django's SMTP backend to a workspace-configured host. Neither goes "
         "through httpx, so neither passes the guard. SMTP at least shares the guard's address "
