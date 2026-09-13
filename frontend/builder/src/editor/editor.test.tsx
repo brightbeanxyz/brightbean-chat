@@ -29,6 +29,7 @@ function trigger(overrides: Partial<TriggerSummary> = {}): TriggerSummary {
     enabled: true,
     priority: 10,
     summary: "Comments on any post",
+    plain: "When someone comments on a post",
     connection: null,
     platforms: ["instagram"],
     ...overrides,

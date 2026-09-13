@@ -25,7 +25,7 @@ from typing import Any
 
 from apps.flows.triggers.types import TriggerType
 
-__all__ = ["CAVEATS", "MAX_QUOTED_KEYWORDS", "describe_trigger", "describe_triggers"]
+__all__ = ["CAVEATS", "MAX_QUOTED_KEYWORDS", "describe_trigger", "describe_triggers", "sentence_case"]
 
 #: How many keywords a sentence quotes before it gives up and counts.
 #: Three is the point at which "a, b or c" stops reading as a phrase and starts
@@ -111,7 +111,7 @@ def describe_trigger(trigger: Any) -> str:
     return phrase
 
 
-def _sentence_case(phrase: str) -> str:
+def sentence_case(phrase: str) -> str:
     """Upper-case the first letter and touch nothing else.
 
     Not ``str.capitalize()``, which lower-cases the whole remainder: a keyword
@@ -136,11 +136,11 @@ def describe_triggers(triggers: list[Any]) -> str:
     if not enabled:
         return "No trigger yet, so it will not run until you add one"
     if len(enabled) == 1:
-        sentence = _sentence_case(describe_trigger(enabled[0]))
+        sentence = sentence_case(describe_trigger(enabled[0]))
     elif len(enabled) == 2:
-        sentence = f"{_sentence_case(describe_trigger(enabled[0]))}, or {describe_trigger(enabled[1])}"
+        sentence = f"{sentence_case(describe_trigger(enabled[0]))}, or {describe_trigger(enabled[1])}"
     else:
-        sentence = f"{_sentence_case(describe_trigger(enabled[0]))}, and {len(enabled) - 1} other triggers"
+        sentence = f"{sentence_case(describe_trigger(enabled[0]))}, and {len(enabled) - 1} other triggers"
 
     # Appended once, however many triggers there are, and de-duplicated: two
     # trigger types blocked for the same reason should say it once.

@@ -68,7 +68,8 @@ export function selectRfNodes(state: BuilderState): CardNode[] {
     const type = state.nodeType[id] as string;
     const position = state.position[id] ?? { x: 0, y: 0 };
     const isSelected = selected.has(id);
-    const key = `${type}|${position.x},${position.y}|${isSelected ? 1 : 0}|${draggable ? 1 : 0}`;
+    const size = state.measured[id];
+    const key = `${type}|${position.x},${position.y}|${isSelected ? 1 : 0}|${draggable ? 1 : 0}|${size ? `${size.width}x${size.height}` : ""}`;
 
     const hit = cache.get(id);
     if (hit && hit.key === key) {
@@ -79,6 +80,10 @@ export function selectRfNodes(state: BuilderState): CardNode[] {
       id,
       type,
       position,
+      // Handed straight back to React Flow, which is the only consumer: Fit,
+      // the minimap and every bounds calculation read it. See the `measured`
+      // slice in store.ts for why it stopped being dropped.
+      ...(size ? { measured: size } : {}),
       data: { nodeId: id },
       selected: isSelected,
       draggable,
@@ -109,7 +114,8 @@ export function selectRfNodes(state: BuilderState): CardNode[] {
  */
 function triggerNode(state: BuilderState, cache: Map<string, CacheEntry>): CardNode {
   const position = triggerPosition(state);
-  const key = `${position.x},${position.y}`;
+  const size = state.measured[TRIGGER_NODE_ID];
+  const key = `${position.x},${position.y}|${size ? `${size.width}x${size.height}` : ""}`;
   const hit = cache.get(TRIGGER_NODE_ID);
   if (hit && hit.key === key) {
     return hit.node;
@@ -118,11 +124,19 @@ function triggerNode(state: BuilderState, cache: Map<string, CacheEntry>): CardN
     id: TRIGGER_NODE_ID,
     type: TRIGGER_NODE_ID,
     position,
+    // Measured like any other card, which is what puts it inside Fit's bounds.
+    ...(size ? { measured: size } : {}),
     data: { nodeId: TRIGGER_NODE_ID },
     draggable: false,
     connectable: false,
     deletable: false,
-    selectable: false,
+    // Selectable, or React Flow gives the wrapper `pointer-events: none` and
+    // the card cannot be clicked at all — it computes that from
+    // `isSelectable || isDraggable || <a handler it was passed>`, and this node
+    // is neither. Safe, because Canvas.tsx drops every change carrying this id
+    // before the switch, so React Flow's own selection never reaches the store;
+    // `selectTrigger()` on the card owns it instead.
+    selectable: true,
   };
   cache.set(TRIGGER_NODE_ID, { key, node });
   return node;

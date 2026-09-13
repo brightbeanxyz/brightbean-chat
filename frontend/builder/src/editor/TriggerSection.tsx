@@ -26,10 +26,13 @@ function openDrawer() {
 export function TriggerSection() {
   const triggers = useBuilder((state) => state.triggers);
   const canEdit = useBuilder((state) => state.env.canEdit);
+  const selected = useBuilder((state) => state.triggerSelected);
   const enabled = triggers.filter((trigger) => trigger.enabled);
 
   return (
-    <section className="fb-trigger-section">
+    // Highlighted when the canvas card is selected, the same way a step's row
+    // highlights — so clicking either one shows you which is which.
+    <section className={selected ? "fb-trigger-section is-selected" : "fb-trigger-section"}>
       <p className="fb-step-eyebrow">{TRIGGER_PHRASE}</p>
 
       {triggers.length === 0 ? (

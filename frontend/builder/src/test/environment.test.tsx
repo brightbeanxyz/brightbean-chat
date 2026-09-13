@@ -25,7 +25,7 @@ describe("the jsdom environment", () => {
     // One per node type, plus the trigger card — which is drawn on the canvas
     // and is not a node type (canvas/TriggerCard.tsx).
     expect(container.querySelectorAll(".react-flow__node").length).toBe(NODE_TYPES.length + 1);
-    expect(container.querySelectorAll(".fb-trigger-card").length).toBe(1);
+    expect(container.querySelectorAll(".fb-node-trigger").length).toBe(1);
   });
 
   it("draws every node type from the artefact, by label", () => {

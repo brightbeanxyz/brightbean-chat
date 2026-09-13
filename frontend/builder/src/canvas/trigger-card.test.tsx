@@ -28,6 +28,7 @@ function trigger(overrides: Partial<TriggerSummary> = {}): TriggerSummary {
     enabled: true,
     priority: 10,
     summary: "Comments on any post",
+    plain: "When someone comments on a post",
     connection: null,
     platforms: ["instagram"],
     ...overrides,
@@ -48,13 +49,26 @@ const ONE_STEP = {
 };
 
 describe("it is drawn on the canvas", () => {
-  it("shows what starts the flow, beside the step that starts it", () => {
+  it("says when the flow runs as a sentence, not as a type name and a config line", () => {
+    // "Keyword" over "quote, estimate, how much" read as one mashed line.
     const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
 
     renderWith(store, <Canvas />);
 
-    expect(screen.getByText("Comment")).toBeInTheDocument();
-    expect(screen.getByText("Comments on any post")).toBeInTheDocument();
+    expect(screen.getByText("When someone comments on a post")).toBeInTheDocument();
+  });
+
+  it("wears the same chrome as a step card", () => {
+    // Its own width, padding and border said "not a step", which reads as "not
+    // part of the flow" — the opposite of why it is on the canvas.
+    const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
+
+    const { container } = renderWith(store, <Canvas />);
+    const card = container.querySelector(".fb-node-trigger");
+
+    expect(card).not.toBeNull();
+    expect(card?.classList.contains("fb-node")).toBe(true);
+    expect(card?.querySelector(".fb-node-title")).not.toBeNull();
   });
 
   it("says so when nothing starts the flow, rather than not being there", () => {
@@ -96,15 +110,41 @@ describe("it is drawn on the canvas", () => {
     expect(selectRfEdges(store.getState()).filter((edge) => edge.source === TRIGGER_NODE_ID)).toEqual([]);
   });
 
-  it("opens the drawer that edits triggers rather than editing them itself", () => {
+  it("selects on click, the way a step card does", () => {
     const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
-    renderWith(store, <Canvas />);
-    let opened = 0;
-    window.addEventListener("toggle-triggers", () => (opened += 1));
+    const { container } = renderWith(store, <Canvas />);
 
-    fireEvent.click(screen.getByText("Comment").closest(".fb-trigger-card") as HTMLElement);
+    fireEvent.click(container.querySelector(".fb-node-trigger") as HTMLElement);
 
-    expect(opened).toBe(1);
+    expect(store.getState().triggerSelected).toBe(true);
+  });
+
+  it("and selecting it clears any selected step, so only one thing is highlighted", () => {
+    const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
+    store.getState().setSelection({ nodes: ["n1"], edges: [] });
+    const { container } = renderWith(store, <Canvas />);
+
+    fireEvent.click(container.querySelector(".fb-node-trigger") as HTMLElement);
+
+    expect(store.getState().selection.nodes).toEqual([]);
+  });
+
+  it("and selecting a step clears it back", () => {
+    const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
+    store.getState().selectTrigger();
+
+    store.getState().setSelection({ nodes: ["n1"], edges: [] });
+
+    expect(store.getState().triggerSelected).toBe(false);
+  });
+
+  it("is never written to the graph by being selected", () => {
+    const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
+    const before = store.getState().revision;
+
+    store.getState().selectTrigger();
+
+    expect(store.getState().revision).toBe(before);
   });
 });
 
@@ -121,7 +161,7 @@ describe("it is not in the graph", () => {
     expect(graph.edges.some((edge) => edge.source === TRIGGER_NODE_ID)).toBe(false);
   });
 
-  it("is not draggable, deletable, connectable or selectable", () => {
+  it("is not draggable, deletable or connectable", () => {
     const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
 
     const card = selectRfNodes(store.getState()).find((node) => node.id === TRIGGER_NODE_ID);
@@ -130,8 +170,20 @@ describe("it is not in the graph", () => {
       draggable: card?.draggable,
       deletable: card?.deletable,
       connectable: card?.connectable,
-      selectable: card?.selectable,
-    }).toEqual({ draggable: false, deletable: false, connectable: false, selectable: false });
+    }).toEqual({ draggable: false, deletable: false, connectable: false });
+  });
+
+  it("is selectable, because React Flow gives an unselectable node no pointer events", () => {
+    // `hasPointerEvents = isSelectable || isDraggable || <a handler it was
+    // passed>`, and this node is neither — so `selectable: false` made the card
+    // literally unclickable. Safe: Canvas.tsx drops React Flow's own selection
+    // changes for this id, so nothing reaches the store but `selectTrigger()`.
+    const store = makeStore(makeDetail(ONE_STEP, { triggers: [trigger()] }));
+
+    const card = selectRfNodes(store.getState()).find((node) => node.id === TRIGGER_NODE_ID);
+
+    expect(card?.selectable).toBe(true);
+    expect(store.getState().selection.nodes).toEqual([]);
   });
 
   it("keeps the same object across reads, so React Flow does not remount it", () => {

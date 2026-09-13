@@ -2381,60 +2381,37 @@ span.flatpickr-weekday {
 
 /* ── The trigger card on the canvas ──────────────────────────── */
 
-/* Deliberately not `.fb-node`: this is not a step, and giving it the step card's
-   chrome would say it is. Green rather than the group accents, because it is
-   the one card on the canvas that is not part of the graph. */
-.fb-trigger-card {
-  width: 15rem;
-  padding: 0.875rem 1rem;
-  border: 1px solid var(--brand-green-500);
-  border-radius: var(--radius-tile);
-  background: var(--brand-green-50);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-xs);
+/* `.fb-node` plus an accent, and nothing else. An earlier cut gave this its own
+   width, padding, radius and border, which said "not a step" when what it
+   needed to say is "the first thing that happens". Sharing the step card's
+   chrome also means it cannot drift from it. */
+.fb-node-trigger {
+  --flow-accent: var(--brand-green-500);
+  --flow-accent-soft: var(--brand-green-50);
   cursor: pointer;
-  text-align: left;
-}
-.fb-trigger-card:hover { box-shadow: var(--shadow-md); }
-.fb-trigger-card:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
-
-/* Nothing starts the flow. Dashed, because it reads as a slot to fill rather
-   than a thing that is already there. */
-.fb-trigger-card.is-empty {
-  border-style: dashed;
-  background: var(--surface-0);
 }
 
-.fb-trigger-card-eyebrow {
+/* Nothing starts the flow yet: a slot to fill rather than a thing that is
+   already there. */
+.fb-node-trigger .fb-node-title:only-child,
+.fb-node-trigger.is-empty { border-style: dashed; }
+
+/* Every trigger switched off. Dimmed rather than tinted red — it is a state
+   somebody chose, not a mistake, and the rail already warns about it. */
+.fb-node-trigger.is-quiet .fb-node-title { color: var(--text-secondary); }
+
+.fb-node-warn {
+  display: block;
+  margin-top: 0.25rem;
   font-size: var(--fs-2xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--brand-green-700);
-  margin-bottom: 0.375rem;
-}
-
-.fb-trigger-card-row { margin-bottom: 0.375rem; }
-.fb-trigger-card-row:last-child { margin-bottom: 0; }
-.fb-trigger-card-row.is-off { opacity: 0.65; }
-.fb-trigger-card-name { font-size: var(--fs-body); font-weight: 600; }
-.fb-trigger-card-off {
-  margin-left: 0.375rem;
-  font-size: var(--fs-2xs);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--warning-700);
 }
-.fb-trigger-card-detail {
-  display: block;
-  font-size: var(--fs-sm);
-  line-height: 1.4;
-  color: var(--text-tertiary);
-  overflow-wrap: anywhere;
-}
-.fb-trigger-card-empty {
-  font-size: var(--fs-sm);
-  line-height: 1.45;
-  color: var(--text-tertiary);
+
+/* The left column's matching panel, highlighted when the canvas card is. */
+.fb-trigger-section.is-selected {
+  border-color: var(--brand-green-500);
+  background: var(--brand-green-50);
 }
 
 /* ── Add a step ──────────────────────────────────────────────── */

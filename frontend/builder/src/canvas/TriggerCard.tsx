@@ -1,81 +1,83 @@
 /**
  * What starts the flow, as the first card on the canvas.
  *
- * A flow reads as one thing — this happens, then this, then that — and the
- * canvas used to start halfway through that sentence. The trigger lived only in
- * the left column, so the card marked "Starts here" was a step that answers
- * something, with no sign of what.
+ * A flow reads as one sentence — this happens, then this — and the canvas used
+ * to start halfway through it: the card badged "Starts here" was a step that
+ * answers something, with no sign of what.
  *
- * **It is not a node, and it must never become one.** Triggers are `Trigger`
- * rows, not graph nodes: they carry a platform binding, a priority that is
- * workspace-wide, and an enabled flag, none of which a graph node has, and the
- * engine matches them long before it walks a graph. So this card is injected
- * into the *projection* in store/selectors.ts and never into `nodeType` /
- * `nodeOrder`, which is what `toGraph()` serializes. There is no code path that
- * could save it, because the maps it would have to be in are not the ones it
- * is in.
+ * **It looks like a step on purpose.** An earlier cut gave it its own chrome to
+ * say "this is not a step", and what that actually communicated was "this is
+ * not part of the flow" — which is the opposite of why it is here. It uses
+ * `.fb-node` and the same header/title/body structure, so it stays identical to
+ * a step card by construction rather than by two sets of values kept in step.
+ * The one difference is the accent, which comes from `--flow-accent` like every
+ * other card's does.
  *
- * Editing still belongs to the Django drawer — clicking this dispatches the
- * same `toggle-triggers` event the left column's button does. A second trigger
- * editor in React would be a second place for the platform gate to be wrong.
+ * **It is not a node, and must never become one.** Triggers are `Trigger` rows,
+ * not graph nodes: they carry a platform binding, a priority that is
+ * workspace-wide, and an enabled flag, none of which a graph node has. So this
+ * card is injected into the *projection* in store/selectors.ts and never into
+ * `nodeType` / `nodeOrder`, which is what `toGraph()` serializes.
+ *
+ * Clicking it selects it, exactly as clicking a step does, and the left column
+ * shows what can be changed — see editor/StepEditor.tsx. The fields themselves
+ * still belong to the Django drawer: a second trigger editor in React would be
+ * a second place for the platform gate to be wrong.
  */
 import { Handle, Position as HandlePosition } from "@xyflow/react";
 import { memo } from "react";
 
 import { TRIGGER_PHRASE } from "../schema/plain";
-import { useBuilder } from "../store/context";
+import { useBuilder, useBuilderStore } from "../store/context";
 
 /** The id the synthetic node and its edge are addressed by, and its React Flow type. */
 export const TRIGGER_NODE_ID = "__trigger__";
 export const TRIGGER_CARD_TYPE = TRIGGER_NODE_ID;
 
-function openDrawer() {
-  window.dispatchEvent(new CustomEvent("toggle-triggers", { bubbles: true }));
-}
-
 function TriggerCardInner() {
+  const store = useBuilderStore();
   const triggers = useBuilder((state) => state.triggers);
-  const canEdit = useBuilder((state) => state.env.canEdit);
+  const selected = useBuilder((state) => state.triggerSelected);
   const enabled = triggers.filter((trigger) => trigger.enabled);
+  const off = triggers.length > 0 && enabled.length === 0;
 
   return (
     <div
-      className={`fb-trigger-card${triggers.length === 0 ? " is-empty" : ""}`}
-      role={canEdit ? "button" : undefined}
-      tabIndex={canEdit ? 0 : undefined}
-      onClick={canEdit ? openDrawer : undefined}
-      onKeyDown={
-        canEdit
-          ? (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                openDrawer();
-              }
-            }
-          : undefined
-      }
+      className={["fb-node", "fb-node-trigger", selected ? "is-selected" : "", off ? "is-quiet" : ""]
+        .filter(Boolean)
+        .join(" ")}
+      data-node-type={TRIGGER_NODE_ID}
+      onClick={() => store.getState().selectTrigger()}
     >
-      <p className="fb-trigger-card-eyebrow">{TRIGGER_PHRASE}</p>
+      <div className="fb-node-header">
+        <span className="fb-node-kind">
+          <span className="fb-node-dot" aria-hidden="true" />
+          {TRIGGER_PHRASE}
+        </span>
+      </div>
 
-      {triggers.length === 0 ? (
-        <p className="fb-trigger-card-empty">
-          Nothing starts this flow yet.
-          {canEdit ? " Click to choose what does." : ""}
-        </p>
-      ) : (
-        <>
-          {triggers.map((trigger) => (
-            <div key={trigger.id} className={trigger.enabled ? "fb-trigger-card-row" : "fb-trigger-card-row is-off"}>
-              <span className="fb-trigger-card-name">{trigger.type_label}</span>
-              {!trigger.enabled ? <span className="fb-trigger-card-off">Off</span> : null}
-              <span className="fb-trigger-card-detail">{trigger.summary}</span>
-            </div>
-          ))}
-          {enabled.length === 0 ? (
-            <p className="fb-trigger-card-empty">All switched off, so nothing reaches this flow.</p>
-          ) : null}
-        </>
-      )}
+      {/* The title is the sentence, not the type name. "Keyword" over "quote,
+          estimate, how much" was two fragments that read as one mashed line;
+          `plain` is the whole thing — "When someone sends “quote”" — and it is
+          the same sentence the flow list shows. */}
+      <div className="fb-node-title">
+        {triggers.length === 0 ? "Nothing starts this flow yet" : triggers[0]?.plain}
+      </div>
+
+      <div className="fb-node-body">
+        {triggers.length === 0 ? (
+          <span className="fb-empty">Click to choose what starts it.</span>
+        ) : (
+          <>
+            {triggers.length > 1 ? (
+              <span className="fb-empty">
+                and {triggers.length - 1} other way{triggers.length === 2 ? "" : "s"} in
+              </span>
+            ) : null}
+            {off ? <span className="fb-node-warn">Switched off, so nothing reaches this flow</span> : null}
+          </>
+        )}
+      </div>
 
       {/* Source only. Nothing routes *into* what starts the flow, and
           Canvas.tsx refuses a connection at either end of this id anyway. */}

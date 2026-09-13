@@ -73,17 +73,21 @@ export function Canvas() {
       const state = store.getState();
       let selection: string[] | null = null;
       const moves: { id: string; position: Position }[] = [];
+      const sized: { id: string; width: number; height: number }[] = [];
       const removed: string[] = [];
       let dragEnded = false;
       let dragging = false;
 
       for (const change of changes) {
         // The trigger card is drawn on the canvas and is not in the graph, so
-        // every change React Flow reports about it is about something the store
-        // does not have. Dropping them here rather than filtering per case:
-        // `deleteNodes(["__trigger__"])` would be a silent no-op today and a
+        // a move, a selection or a removal of it names something the store does
+        // not have: `deleteNodes(["__trigger__"])` is a silent no-op today and a
         // corrupted map the day deleteNodes stops checking.
-        if ("id" in change && change.id === TRIGGER_NODE_ID) {
+        //
+        // Its *measurement* is the exception, and has to be, because `measured`
+        // is what puts a node inside Fit's bounds — dropping it here is what
+        // left the card off screen after pressing Fit.
+        if ("id" in change && change.id === TRIGGER_NODE_ID && change.type !== "dimensions") {
           continue;
         }
         switch (change.type) {
@@ -109,14 +113,27 @@ export function Canvas() {
             removed.push(change.id);
             break;
           }
+          case "dimensions": {
+            // Kept, in a view-only slice. These used to be discarded along with
+            // `replace` and `add`, on the grounds that they are not ours and the
+            // server rejects them — both true, and it cost more than it saved:
+            // React Flow computes every node box from `measured`, so without it
+            // Fit found no bounds and did nothing, and the minimap drew nothing.
+            // `setMeasured` touches neither `revision` nor history.
+            if (change.dimensions) {
+              sized.push({ id: change.id, ...change.dimensions });
+            }
+            break;
+          }
           default:
-            // `dimensions`, `replace`, `add` — measurement and internals we do
-            // not own. Discarded, because they are exactly the keys the server
-            // rejects and there is no reason to carry them.
+            // `replace` and `add` — internals we do not own and have no use for.
             break;
         }
       }
 
+      if (sized.length > 0) {
+        state.setMeasured(sized);
+      }
       if (moves.length > 0) {
         // On the first frame that actually moves something, not on drag start:
         // a click-and-hold that never moves would otherwise leave a no-op step

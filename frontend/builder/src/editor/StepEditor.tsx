@@ -34,6 +34,7 @@ export function StepEditor() {
   const triggerCount = useBuilder((state) => state.triggers.length);
   const canEdit = useBuilder((state) => state.env.canEdit);
 
+  const triggerSelected = useBuilder((state) => state.triggerSelected);
   const nodeId = selected.length === 1 ? (selected[0] as string) : null;
   const nodeType = useBuilder((state) => (nodeId ? state.nodeType[nodeId] : undefined));
   const config = useBuilder((state) => (nodeId ? state.config[nodeId] : undefined));
@@ -136,6 +137,14 @@ export function StepEditor() {
               </button>
             ) : null}
           </section>
+        ) : triggerSelected ? (
+          // The trigger card on the canvas is selected. Its own panel is at the
+          // top of this column and is highlighted; saying so beats leaving the
+          // column looking like nothing was clicked.
+          <p className="fb-empty mt-3">
+            What starts this flow is at the top of this column. Open it to change the words it
+            watches for, or which account it watches.
+          </p>
         ) : stepCount > 0 ? (
           <p className="fb-empty mt-3">Pick a step above, or on the canvas, to change what it says.</p>
         ) : null}
