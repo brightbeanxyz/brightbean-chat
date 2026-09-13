@@ -299,16 +299,37 @@ def _apply_and_redirect(request: WorkspaceRequest, workspace_id: str, record: Fl
 
     record.refresh_from_db()
     logger.info("Workspace %s imported %s flow(s) from %r", request.workspace.pk, len(flows), record.original_filename)
+
+    # One flow: open it. The toast used to land on the list saying "Open it to
+    # read the messages before anything goes live" — an instruction for a click
+    # the product was already in a position to make. Reading the messages is the
+    # whole reason a template arrives as a draft, so the import ends where that
+    # happens.
+    #
+    # More than one: the list, because there is no single flow to open and what
+    # a bundle brought with it is the thing worth seeing first.
+    if len(flows) == 1:
+        messages.success(request, _imported_body(1))
+        return redirect("flows:edit", workspace_id=workspace_id, flow_id=flows[0].pk)
+
     messages.success(request, _imported_body(len(flows)))
     return redirect("flows:list", workspace_id=workspace_id)
 
 
 def _imported_body(count: int) -> str:
-    """What landed, said once, for both the form path and the htmx one."""
+    """What landed, said once, for both the form path and the htmx one.
+
+    The singular is written for a reader who is now looking at the flow, because
+    that is where :func:`_apply_and_redirect` leaves them.
+    """
+    if count == 1:
+        return (
+            "Imported as a draft, with its trigger switched off. Read the messages below, "
+            "then switch the trigger on and set it live."
+        )
     return (
-        f"{count} flow{'' if count == 1 else 's'} arrived as draft{'' if count == 1 else 's'}, "
-        f"with the triggers switched off. Open {'it' if count == 1 else 'them'} to read the "
-        f"messages before anything goes live."
+        f"{count} flows arrived as drafts, with their triggers switched off. "
+        f"Open each one to read the messages before anything goes live."
     )
 
 
@@ -338,9 +359,6 @@ def _review_context(
         "groups": _groups(request.workspace, workspace_id, plan),
         "review_url": reverse(
             "flows:import_review", kwargs={"workspace_id": workspace_id, "flow_import_id": record.pk}
-        ),
-        "confirm_url": reverse(
-            "flows:import_confirm", kwargs={"workspace_id": workspace_id, "flow_import_id": record.pk}
         ),
         "discard_url": reverse(
             "flows:import_discard", kwargs={"workspace_id": workspace_id, "flow_import_id": record.pk}

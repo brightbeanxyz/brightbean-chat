@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from apps.flows.models import FlowImport, FlowImportStatus
+from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.portability import library
 
 pytestmark = pytest.mark.django_db
@@ -116,8 +116,28 @@ class TestImportIsOneClick:
 
         record.refresh_from_db()
         assert record.status == FlowImportStatus.APPLIED
+
+        # Into the builder, not back to the list: reading the messages is why a
+        # template arrives as a draft, and that is where reading happens.
+        imported = Flow.objects.for_workspace(tenancy.workspace).get(name="Ask for an email address")
+        assert response.redirect_chain[-1][0].endswith(f"/flows/{imported.pk}/edit/")
+        assert "Imported as a draft" in response.content.decode()
+
+    def test_a_bundle_lands_on_the_list_because_there_is_no_single_flow_to_open(self, client_for, tenancy) -> None:
+        record = self._start(tenancy)
+        # A second flow in the same document, so the import is a bundle.
+        document = record.document
+        second = {**document["flows"][0], "key": "flow-2", "name": "Second flow", "triggers": []}
+        record.document = {**document, "flows": [*document["flows"], second]}
+        record.save(update_fields=["document", "updated_at"])
+        url = f"/w/{tenancy.workspace.id}/flows/imports/{record.pk}/"
+
+        response = client_for(tenancy.owner).post(
+            url, {**self.ANSWERS, "platform|instagram|id": "any", "then": "import"}, follow=True
+        )
+
         assert response.redirect_chain[-1][0].endswith("/flows/")
-        assert "arrived as draft" in response.content.decode()
+        assert "2 flows arrived as drafts" in response.content.decode()
 
     def test_an_unanswered_question_comes_back_flagged_rather_than_refusing(self, client_for, tenancy) -> None:
         """The trap, from the other side: clicking Import with a blank answer
