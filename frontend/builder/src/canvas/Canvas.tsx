@@ -65,7 +65,6 @@ export function Canvas() {
   const canEdit = useBuilder((state) => state.env.canEdit);
   const { screenToFlowPosition } = useReactFlow();
   const wrapper = useRef<HTMLDivElement>(null);
-
   useKeyboard();
 
   const onNodesChange = useCallback(
@@ -275,7 +274,15 @@ export function Canvas() {
         deleteKeyCode={null}
         selectionKeyCode="Shift"
         multiSelectionKeyCode={["Meta", "Control"]}
-        fitView
+        // React Flow's default floor is 0.5, and a flow is laid out left to
+        // right: six steps span about 2000 units, which needs 0.28 to fit in a
+        // 666px pane — so zooming out far enough to see a whole flow was not
+        // possible at all. 0.15 reaches roughly twenty steps.
+        //
+        // This was also one of two reasons Fit did nothing: it computed the
+        // right rectangle and was clamped to 0.5 every time. The other reason
+        // is still open — see the PR.
+        minZoom={0.15}
         proOptions={{ hideAttribution: false }}
       >
         <Background />
