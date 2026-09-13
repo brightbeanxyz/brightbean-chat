@@ -354,3 +354,78 @@ describe("a member id the workspace no longer has", () => {
     expect(actions[0]?.member_ids).toEqual([]);
   });
 });
+
+describe("adding a section to a step", () => {
+  /**
+   * A send_message with only what the schema requires.
+   *
+   * `openNode` builds from `makeSampleGraph({ optional: true })`, which fills
+   * every optional property — so nothing is absent and there is nothing to add.
+   * These tests are about what a step does *not* have yet.
+   */
+  function bareSendMessage() {
+    const store = makeStore(
+      makeDetail({
+        schema: 1,
+        nodes: [
+          {
+            id: "n1",
+            type: "send_message",
+            position: { x: 0, y: 0 },
+            config: { blocks: [{ type: "text", text: "Hello" }] },
+          },
+        ],
+        edges: [],
+      }),
+    );
+    store.getState().setSelection({ nodes: ["n1"], edges: [] });
+    const view = renderWith(store, <StepEditor />);
+    return { store, view, id: "n1" };
+  }
+
+  it("offers the ones it does not have as chips, under what they are for", () => {
+    // They used to be `+ Label` text links in schema order, stacked at the
+    // bottom of the form: the same size, weight and colour as prose, with a
+    // plus sign at 12px the only thing marking them as controls.
+    withoutOverrides();
+    bareSendMessage();
+
+    const chips = screen.getAllByRole("button", { name: /^\+ / });
+    expect(chips.length).toBeGreaterThan(0);
+    for (const chip of chips) {
+      expect(chip.className).toContain("fb-add-chip");
+    }
+    expect(screen.getByText("Add to this step")).toBeInTheDocument();
+    expect(screen.getByText("If they go quiet")).toBeInTheDocument();
+  });
+
+  it("names what a list adder adds, in the same words its accessible name uses", () => {
+    // The visible label was "Add", full stop, while the accessible name has
+    // always been "Add to Message blocks" — so a screen reader was told what it
+    // added and a reader was not.
+    withoutOverrides();
+    bareSendMessage();
+
+    const adder = screen.getByRole("button", { name: "Add to Message blocks" });
+    expect(adder.textContent).toContain("Add a message part");
+    expect(adder.className).toContain("fb-add-wide");
+  });
+
+  it("spells WhatsApp the way WhatsApp does", () => {
+    withoutOverrides();
+    const { view } = bareSendMessage();
+
+    expect(view.container.textContent).toContain("WhatsApp template");
+    expect(view.container.textContent).not.toContain("Whatsapp");
+  });
+
+  it("moves a chip into the form when it is picked, and leaves the group behind", () => {
+    withoutOverrides();
+    const { store, id } = bareSendMessage();
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Quick replies" }));
+
+    expect(store.getState().config[id]).toHaveProperty("quick_replies");
+    expect(screen.queryByRole("button", { name: "+ Quick replies" })).toBeNull();
+  });
+});

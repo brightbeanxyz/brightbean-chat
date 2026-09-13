@@ -127,14 +127,21 @@ export function StepEditor() {
               />
             </FieldProvider>
 
+            {/* Below a rule, on its own. It used to sit in the same cluster as
+                the controls that *add* things, in the same register, so the one
+                irreversible action on the panel was a few pixels from "add a
+                button" and looked no different. */}
             {canEdit ? (
-              <button
-                type="button"
-                className="fb-step-delete"
-                onClick={() => store.getState().deleteNodes([nodeId])}
-              >
-                Delete this step
-              </button>
+              <>
+                <hr className="fb-step-rule" />
+                <button
+                  type="button"
+                  className="fb-step-delete"
+                  onClick={() => store.getState().deleteNodes([nodeId])}
+                >
+                  Delete this step
+                </button>
+              </>
             ) : null}
           </section>
         ) : triggerSelected ? (

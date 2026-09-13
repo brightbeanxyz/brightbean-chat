@@ -10,10 +10,12 @@
 
 export const LABELS: Record<string, string> = {
   blocks: "Message blocks",
+  // Its own line, because the humanised fallback spells the brand "Whatsapp".
+  whatsapp_template: "WhatsApp template",
   buttons: "Buttons",
   quick_replies: "Quick replies",
-  followup: "Follow-up",
-  retry_unmatched: "Retry on unrecognised reply",
+  followup: "If nobody answers",
+  retry_unmatched: "Retry if they reply something else",
   actions: "Actions",
   flow_id: "Flow",
   match: "Match",
@@ -117,3 +119,48 @@ export const VARIANT_LABELS: Record<string, string> = {
 export function variantLabel(tag: string): string {
   return VARIANT_LABELS[tag] ?? humanize(tag);
 }
+
+
+/**
+ * What one item of a list is called, for the button that appends one.
+ *
+ * The adder used to read "Add", with "Add to Buttons" as its accessible name —
+ * so a screen reader was told what it added and a reader was not. These are the
+ * visible half, and they name the *thing*, not the list: you add a button, not
+ * a Buttons.
+ *
+ * A list with no entry here falls back to "Add to <list label>", which is
+ * serviceable and still says what it adds. Adding a line here is the polish.
+ */
+export const ADD_ONE: Record<string, string> = {
+  blocks: "Add a message part",
+  buttons: "Add a button",
+  quick_replies: "Add a quick reply",
+  cards: "Add a card",
+  actions: "Add an action",
+  rules: "Add a rule",
+  paths: "Add a path",
+  headers: "Add a header",
+  response_mappings: "Add a value to save",
+  keywords: "Add a keyword",
+  texts: "Add a version",
+};
+
+/**
+ * How the "Add to this step" chips are grouped, and in what order.
+ *
+ * The headings answer "what is this for?" without opening anything, which a
+ * flat row of four cannot: two of a send_message step's options are about
+ * somebody going quiet and one is WhatsApp-only, and nothing said so.
+ *
+ * Keys, not node types, because the same property means the same thing
+ * wherever it appears — `followup` is a wait on send_message and on
+ * data_collection alike. A key in no group falls into the last one, so a
+ * property added by a later layer is never silently dropped off the panel.
+ */
+export const ADD_GROUPS: readonly { label: string; keys: readonly string[] }[] = [
+  { label: "Things they can tap", keys: ["buttons", "quick_replies"] },
+  { label: "If they go quiet", keys: ["followup", "retry_unmatched", "retry", "timeout"] },
+  { label: "WhatsApp only", keys: ["whatsapp_template", "template"] },
+  { label: "More", keys: [] },
+];
