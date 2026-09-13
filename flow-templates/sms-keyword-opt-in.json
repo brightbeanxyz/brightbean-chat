@@ -19,16 +19,16 @@
             "target": "record"
           },
           {
-            "id": "ask-timeout-record",
-            "source": "ask_name",
-            "sourceHandle": "timeout",
-            "target": "record"
-          },
-          {
             "id": "record-default-welcome",
             "source": "record",
             "sourceHandle": "default",
             "target": "welcome"
+          },
+          {
+            "id": "ask_name-timeout-record",
+            "source": "ask_name",
+            "sourceHandle": "timeout",
+            "target": "record"
           }
         ],
         "nodes": [

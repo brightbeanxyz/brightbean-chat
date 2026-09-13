@@ -1,0 +1,71 @@
+{% comment %}
+The 60px app header: workspace switcher, search, notification bell.
+
+Rendered on every page of the shell *including settings*. The redesign's
+settings artboards draw no header, but the bell lives here now — following
+those artboards literally would make notifications unreachable on all fourteen
+settings pages, and would leave the bell's 60-second poll with no target on
+them. One header everywhere, one bell, one place the unread count can be.
+
+That consolidation is the reason notifications/partials/_badge.html swaps a
+single id rather than three: the footer bell and the mobile top bar it used to
+also update are both gone.
+
+The switcher's `wsOpen` state is declared on the shell wrapper in base.html,
+not here — the rail's logo button opens the same menu, and two triggers sharing
+one panel need the state above both of them.
+{% endcomment %}
+<header class="appbar">
+    {% if sidebar_workspaces %}
+    {% comment %}
+      The guard on `click.away` is load-bearing. This panel has two triggers —
+      the button below and the rail's workspace mark — and the rail's one is
+      outside this wrapper, so an unguarded `@click.away` fired on the very
+      click that opened the panel and closed it again in the same event. The
+      rail button did nothing at all until this was scoped.
+
+      Matched on `data-ws-toggle` rather than on a class, so a third trigger
+      opts in by saying what it is rather than by being named here.
+    {% endcomment %}
+    <div class="relative" @keydown.escape.window="wsOpen = false"
+         @click.away="if (!$event.target.closest('[data-ws-toggle]')) wsOpen = false">
+        <button type="button" class="appbar-ws" data-ws-toggle @click="wsOpen = !wsOpen"
+                aria-haspopup="true" :aria-expanded="wsOpen ? 'true' : 'false'">
+            <span class="truncate max-w-[180px]">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-ghost);" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div x-show="wsOpen" x-cloak class="anim-collapse absolute left-0 mt-1 z-50 rounded-lg py-1 min-w-[220px]"
+             style="background: var(--surface-0); box-shadow: var(--shadow-lg); border: 1px solid var(--border);">
+            {% for ws in sidebar_workspaces %}
+            <a href="{{ ws.url }}" class="block px-3 py-1.5 text-xs btn-surface-1"
+               style="color: {% if ws.is_current %}var(--brand-700){% else %}var(--text-secondary){% endif %};">{{ ws.name }}</a>
+            {% endfor %}
+            {% if can_create_workspace %}
+            <a href="{{ create_workspace_url }}" class="block px-3 py-1.5 text-xs btn-surface-1" style="color: var(--primary);">New workspace</a>
+            {% endif %}
+        </div>
+    </div>
+    {% else %}
+    <span class="text-sm font-semibold truncate" style="color: var(--text-primary);">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
+    {% endif %}
+
+    <div class="ml-auto flex items-center gap-2.5">
+        {% comment %}
+          A real form so Enter works and the browser can remember the query.
+
+          It searches CONTACTS, and the placeholder says so. The design mocked
+          "Search people, flows, messages", but this submits to `contacts:list`
+          and nothing here looks at flows or messages — somebody typing a flow
+          name would land on an empty contact list with no hint that their
+          search never went near a flow. The placeholder promises what the form
+          actually does; widen the copy on the day the search widens.
+        {% endcomment %}
+        {% if request.workspace %}
+        <form method="get" action="{% url 'contacts:list' workspace_id=request.workspace.id %}" role="search">
+            <input type="search" name="q" class="appbar-search" placeholder="Search contacts by name, email or phone"
+                   aria-label="Search contacts">
+        </form>
+        {% endif %}
+        {% if request.user.is_authenticated %}{% include "notifications/partials/_bell.html" %}{% endif %}
+    </div>
+</header>

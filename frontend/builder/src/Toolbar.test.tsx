@@ -51,7 +51,7 @@ describe("Publish", () => {
     });
 
     renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={autosave} />);
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
 
     await waitFor(() => expect(order).toEqual(["flush", "publish"]), SETTLE);
   });
@@ -61,7 +61,7 @@ describe("Publish", () => {
     const store = makeStore(makeDetail(makeSampleGraph()));
 
     renderWith(store, <Toolbar autosave={null} />);
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
 
     await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2), SETTLE);
   });
@@ -74,9 +74,9 @@ describe("Publish", () => {
     const store = makeStore(makeDetail(makeSampleGraph()));
 
     renderWith(store, <Toolbar autosave={null} />);
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
 
-    await waitFor(() => expect(store.getState().save.message).toContain("Publish blocked"), SETTLE);
+    await waitFor(() => expect(store.getState().save.message).toContain("Not set live"), SETTLE);
     expect(store.getState().validation.errors[0]?.code).toBe("no_entry_node");
     expect(store.getState().save.publishedVersion).toBeNull();
   });
@@ -99,7 +99,7 @@ describe("Publish", () => {
   it("offers no Publish at all when the member cannot edit", () => {
     renderWith(makeStore(makeDetail(makeSampleGraph()), { canEdit: false }), <Toolbar autosave={null} />);
 
-    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Set live" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
   });
 });
@@ -114,7 +114,7 @@ describe("Publish and a flush that did not land", () => {
     const store = makeStore(makeDetail(makeSampleGraph()));
 
     renderWith(store, <Toolbar autosave={autosave} />);
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
 
     await waitFor(() => expect(store.getState().save.message).toContain("could not be saved"), SETTLE);
     expect(http.requests.filter((request) => request.url.includes("/publish/"))).toHaveLength(0);
@@ -127,7 +127,7 @@ describe("Publish and a flush that did not land", () => {
     const store = makeStore(makeDetail(makeSampleGraph()));
 
     renderWith(store, <Toolbar autosave={autosave} />);
-    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
 
     await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2), SETTLE);
   });

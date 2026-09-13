@@ -25,7 +25,7 @@ so it cannot disagree with the routes.
   <p class="muted">
     A key is scoped to exactly one workspace; there is no cross-workspace call and
     no way to widen a key after issuance. Requests without a valid key get
-    <code>401</code>. Outside development a key sent over plain HTTP is refused —
+    <code>401</code>. Outside development a key sent over plain HTTP is refused,
     it has already been logged by every hop that saw it.
   </p>
 
@@ -54,7 +54,7 @@ so it cannot disagree with the routes.
   <h2>Requests</h2>
   <p>
     JSON in, JSON out. Bodies are capped at {{ max_body_bytes }} bytes, and unknown
-    keys are rejected rather than ignored — a typo in a field name is a
+    keys are rejected rather than ignored. A typo in a field name is a
     <code>422</code>, not a silently dropped value.
   </p>
 
@@ -69,7 +69,7 @@ so it cannot disagree with the routes.
     Pass <code>?limit=</code> (1–{{ max_limit }}, default {{ default_limit }}) and
     <code>?cursor=</code>. The cursor is opaque: echo back <code>next_cursor</code>
     and never construct one. Keep paging while <code>has_more</code> is true. There
-    is no total — counting a workspace's contacts costs more than the page does.
+    is no total, because counting a workspace's contacts costs more than the page does.
   </p>
 
   <h2>Errors</h2>
@@ -141,7 +141,7 @@ so it cannot disagree with the routes.
   <h3>Verifying a delivery</h3>
   <p>
     The signature is <code>v1=</code> followed by the hex HMAC-SHA256, over the
-    timestamp, a literal dot, and the raw request body — in that order, on the
+    timestamp, a literal dot, and the raw request body, in that order, on the
     bytes you received, before any JSON parsing.
   </p>
   <pre><code>import hashlib, hmac, time
@@ -156,7 +156,7 @@ def verify(secret, headers, raw_body, tolerance={{ timestamp_tolerance }}):
     return hmac.compare_digest(expected, presented)</code></pre>
   <p class="muted">
     Compare in constant time, check the timestamp, and treat
-    <code>{{ delivery_header }}</code> as the deduplication key — delivery is
+    <code>{{ delivery_header }}</code> as the deduplication key. Delivery is
     at-least-once. Answer <code>2xx</code> to acknowledge. A delivery that fails is
     retried on a backoff; after {{ failure_limit }} consecutive failed deliveries
     the endpoint is switched off and the workspace admins are notified.

@@ -125,7 +125,10 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
             issues.append(
                 Issue(
                     code="dangling_edge",
-                    message=f"Edge {edge_id!r} names no such node ({', '.join(missing)}).",
+                    message=(
+                        "A connection points at a step that is not in this flow any more. "
+                        "Delete the connection and draw it again."
+                    ),
                     edge_id=edge_id,
                 )
             )
@@ -137,8 +140,8 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
                     Issue(
                         code="note_node_connected",
                         message=(
-                            f"Edge {edge_id!r} connects to note {node_id!r}. A note is a builder-only "
-                            f"annotation and takes no part in routing (SPEC §11.11)."
+                            "A note is connected to something. Notes are there for you to read and "
+                            "take no part in what the flow does, so delete the connection."
                         ),
                         edge_id=edge_id,
                         node_id=node_id,
@@ -151,8 +154,8 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
                 Issue(
                     code="terminal_node_has_outgoing_edge",
                     message=(
-                        f"Node {source!r} is a {specs[source].type} node, which ends the execution, "
-                        f"so edge {edge_id!r} can never be followed."
+                        "This step ends the flow, so nothing joined after it can ever run. "
+                        "Delete the connection leaving it."
                     ),
                     edge_id=edge_id,
                     node_id=source,
@@ -165,8 +168,7 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
                 Issue(
                     code="malformed_handle",
                     message=(
-                        f"{raw_handle!r} is not a handle. Expected default, timeout, error, cond:true, "
-                        f"cond:false, or btn:/qr:/rand: followed by an id."
+                        "A connection leaves this step by a path that does not exist. Delete it and draw it again."
                     ),
                     edge_id=edge_id,
                     node_id=source,
@@ -180,8 +182,9 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
                 Issue(
                     code="handle_not_available",
                     message=(
-                        f"Node {source!r} does not expose {raw_handle!r}. "
-                        f"It offers: {', '.join(sorted(available)) or 'nothing'}."
+                        "A connection leaves this step by a path it no longer has, usually because "
+                        "the button or the option it followed was removed. Delete the connection "
+                        "and draw it again."
                     ),
                     edge_id=edge_id,
                     node_id=source,
@@ -195,8 +198,8 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
                 Issue(
                     code="duplicate_handle_edge",
                     message=(
-                        f"Edges {previous!r} and {edge_id!r} both leave node {source!r} by {raw_handle!r}. "
-                        f"The runner follows one edge per handle, so which one is undefined."
+                        "Two connections leave this step the same way, and only one of them will be "
+                        "followed. Delete the one you do not want."
                     ),
                     edge_id=edge_id,
                     node_id=source,
@@ -276,9 +279,8 @@ def _check_reply_ids(nodes: list[dict[str, Any]]) -> list[Issue]:
             Issue(
                 code="duplicate_reply_id",
                 message=(
-                    f"{reply_id!r} is both a button id and a quick reply id on this node. An inbound "
-                    f"reply carries only the id, so the two cannot be told apart — give one of them a "
-                    f"different id."
+                    f"A button and a quick reply on this step are both called {reply_id!r}. A reply "
+                    f"only carries the name, so the flow cannot tell which one was tapped. Rename one."
                 ),
                 node_id=node.get("id"),
                 path="quick_replies",
@@ -324,7 +326,7 @@ def _check_entry_nodes(routable: list[str], entries: list[str]) -> list[Issue]:
         return [
             Issue(
                 code="no_entry_node",
-                message="The flow has no nodes to run. Add one before publishing.",
+                message="This flow has no steps yet, so there is nothing to run. Add one.",
             )
         ]
 
@@ -333,18 +335,24 @@ def _check_entry_nodes(routable: list[str], entries: list[str]) -> list[Issue]:
             Issue(
                 code="no_entry_node",
                 message=(
-                    "Every node is only reachable from another node, so there is nowhere to start. "
-                    "Exactly one node must have no incoming edge — break the loop that returns to "
-                    "the node the flow should begin at (SPEC §9.1)."
+                    "Every step follows another one, so there is nowhere for the flow to begin. "
+                    "One step has to have nothing pointing into it: find the connection that loops "
+                    "back to the step you want first, and delete it."
                 ),
             )
         ]
     if len(entries) > 1:
-        listed = ", ".join(sorted(entries))
+        # The ids used to be listed in the sentence. They are not now: every
+        # Issue below carries `node_id`, so the builder's rail flags each of
+        # these steps and jumps to it on click, which is the same information
+        # without asking anybody to match `n7` to a card.
         return [
             Issue(
                 code="multiple_entry_nodes",
-                message=f"{len(entries)} nodes have no incoming edge ({listed}); exactly one may (SPEC §9.1).",
+                message=(
+                    f"{len(entries)} steps have nothing pointing into them, so it is not clear where "
+                    f"this flow begins. Exactly one may. Join the others up, or delete them."
+                ),
                 node_id=node_id,
             )
             for node_id in sorted(entries)
@@ -384,7 +392,7 @@ def _unreachable_warnings(
     return [
         Issue(
             code="unreachable_node",
-            message=f"Nothing routes to node {node_id!r}, so it will never run.",
+            message="Nothing leads to this step, so it will never run. Join it up, or delete it.",
             node_id=node_id,
         )
         for node_id in sorted(routable - seen)
@@ -418,7 +426,7 @@ def _capability_warnings(nodes: list[dict[str, Any]], platforms: Sequence[str]) 
                 issues.append(
                     _warn(
                         "no_connection_for_node",
-                        f"This node needs a {required} connection and the workspace has none (SPEC §11.9, §11.10).",
+                        f"This step sends over {required}, and no {required} account is connected here.",
                         node,
                     )
                 )
@@ -443,7 +451,7 @@ def _send_message_warnings(
         if isinstance(block_type, str) and block_type != "text" and not capabilities.supports_block(block_type):
             yield _warn(
                 "capability_unsupported",
-                f"{platform} has no native {block_type} block; the adapter downgrades it (SPEC §6.1).",
+                f"{platform} cannot show {block_type} properly. It will be sent in a simpler form.",
                 node,
                 f"config.blocks[{index}]",
             )
@@ -451,7 +459,7 @@ def _send_message_warnings(
         if isinstance(text, str) and len(text) > capabilities.max_text_len:
             yield _warn(
                 "capability_limit_exceeded",
-                f"{platform} truncates at {capabilities.max_text_len} characters; this block has {len(text)}.",
+                f"{platform} cuts messages off at {capabilities.max_text_len} characters and this one is {len(text)}.",
                 node,
                 f"config.blocks[{index}].text",
             )
@@ -462,8 +470,8 @@ def _send_message_warnings(
         # because the buttons took the only control set the message has.
         yield _warn(
             "capability_unsupported",
-            f"{platform} shows buttons or quick replies, not both; the adapter appends the quick "
-            "replies to the text as numbered options instead (SPEC §6.1).",
+            f"{platform} shows buttons or quick replies, not both. The quick replies will "
+            "arrive as a numbered list at the end of the message instead.",
             node,
             "config.quick_replies",
         )
@@ -478,14 +486,14 @@ def _send_message_warnings(
         if not supported:
             yield _warn(
                 "capability_unsupported",
-                f"{platform} does not support {label}; the adapter appends them to the text instead (SPEC §6.1).",
+                f"{platform} does not support {label}. They will be added to the end of the message as text instead.",
                 node,
                 f"config.{key}",
             )
         elif len(items) > ceiling:
             yield _warn(
                 "capability_limit_exceeded",
-                f"{platform} allows {ceiling} {label}; this node has {len(items)}.",
+                f"{platform} allows {ceiling} {label} and this step has {len(items)}.",
                 node,
                 f"config.{key}",
             )

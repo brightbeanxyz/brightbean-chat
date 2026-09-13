@@ -113,102 +113,99 @@ class TestContentSecurityPolicy:
 
 
 @pytest.mark.django_db
-class TestSidebarCollapse:
-    """The no-flash mechanism only works if all three layers ship together."""
+class TestTheRail:
+    """The rail replaced a collapsible sidebar, and with it a whole mechanism.
 
-    def test_the_pre_paint_script_stamps_the_html_element(self, tenant_client, shell_urls, shell_url):
+    The old sidebar could start a page at either of two widths, so three pieces
+    had to ship together to stop the wrong one flashing: a pre-paint script
+    reading localStorage, a .sidebar-initial block mirroring every collapsed
+    rule in plain CSS, and an x-init handover on <aside>. The rail is a fixed
+    76px with nothing persisted, so all three were removed rather than reduced.
+    These tests pin that they stay gone — a half-restored mechanism is worse
+    than either state.
+    """
+
+    def test_nothing_persists_or_restores_a_sidebar_width(self, tenant_client, shell_urls, shell_url):
         body = tenant_client.get(shell_url).content.decode()
 
-        assert "localStorage.getItem('sidebarCollapsed')" in body
-        assert "classList.add('sidebar-is-collapsed')" in body
+        for ghost in [
+            "sidebarCollapsed",
+            "sidebar-is-collapsed",
+            "sidebar-initial",
+            "sidebar-collapsed",
+        ]:
+            assert ghost not in body, f"{ghost} came back without the rest of the mechanism"
 
-    def test_the_css_mirrors_the_collapsed_state_before_alpine_boots(self, tenant_client, shell_urls, shell_url):
-        body = tenant_client.get(shell_url).content.decode()
+    def test_the_cloak_rule_survives_on_every_page(self, tenant_client, shell_urls, shell_url, client):
+        """The one line of the old pre-paint <style> that is still load-bearing.
 
-        assert ".sidebar-initial" in body
-        assert "html.sidebar-is-collapsed .sidebar-initial" in body
-        assert "[x-cloak]" in body
-
-    def test_alpine_persists_the_state_and_takes_over_the_classes(self, tenant_client, shell_urls, shell_url):
-        body = tenant_client.get(shell_url).content.decode()
-
-        assert "x-effect=\"localStorage.setItem('sidebarCollapsed', sidebarCollapsed)\"" in body
-        assert "classList.remove('sidebar-initial')" in body
-        assert "documentElement.classList.remove('sidebar-is-collapsed')" in body
-
-    def test_the_aside_ships_with_the_pre_alpine_class(self, tenant_client, shell_urls, shell_url):
-        body = tenant_client.get(shell_url).content.decode()
-        aside = body[body.index("<aside") : body.index("</aside>")]
-
-        assert "sidebar-initial" in aside
-
-    def test_the_pre_paint_css_targets_only_classes_the_shell_renders(self, tenant_client, shell_urls, shell_url):
-        """The three layers have to stay in step.
-
-        A `.sidebar-initial .sidebar-foo` rule whose `sidebar-foo` no longer
-        exists in the markup silently stops mirroring that collapsed state, and
-        the only symptom is a flash of the expanded sidebar on reload — which no
-        assertion about a page's text would ever catch.
-
-        Both settings and app pages are sampled because some of these classes
-        are conditional: the section-label wrapper only appears on a nav with
-        group headings, and the badge only when a count is non-zero.
+        The workspace switcher, the user menu and the bell panel are all Alpine
+        dropdowns, and the auth templates use Alpine too. Without this rule every
+        one of them renders open on first paint — which is why it is asserted on
+        an anonymous page as well as a signed-in one.
         """
-        pages = [tenant_client.get(url).content.decode() for url in [shell_url, "/accounts/settings/"]]
+        for body in [
+            tenant_client.get(shell_url).content.decode(),
+            client.get("/accounts/login/").content.decode(),
+        ]:
+            assert "[x-cloak]" in body
 
-        head_style = pages[0][pages[0].index("<style") : pages[0].index("</style>")]
-        targeted = set(re.findall(r"\.(sidebar-[a-z-]+)", head_style))
-        assert targeted, "the pre-paint block vanished"
+    def test_the_rail_renders_its_rows(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
+        rail = body[body.index("<aside") : body.index("</aside>")]
 
-        # Only real class attributes count. Searching the raw HTML would match
-        # the stylesheet's own rules and make this test vacuous.
-        rendered_classes: set[str] = set()
-        for page in pages:
-            without_style = re.sub(r"<style.*?</style>", "", page, flags=re.S)
-            for attr in re.findall(r'class="([^"]*)"', without_style):
-                rendered_classes.update(attr.split())
-        # Added to <html> by the pre-paint script rather than by an attribute.
-        rendered_classes.add("sidebar-is-collapsed")
-        # Renders only when a nav item carries a non-zero count, and every count
-        # is 0 until issue #14 (L4-D) supplies the unread inbox number. The
-        # markup exists — test_the_badge_markup_exists_for_a_non_zero_count
-        # below proves it — so the collapsed-state rule is correct, not orphaned.
-        rendered_classes.add("sidebar-badge")
+        assert "rail-item" in rail
+        # Labels track the design, keys track the route — see MAIN_NAV.
+        for label in ["Home", "Inbox", "Flows", "Broadcasts", "Contacts"]:
+            assert f">{label}</span>" in rail, label
 
-        missing = sorted(targeted - rendered_classes)
-        assert not missing, f"styled for the collapsed state but never rendered: {missing}"
+    def test_sequences_and_notifications_left_the_rail(self, tenant_client, shell_urls, shell_url):
+        """Both moved rather than vanished: Sequences is a tab on the flows
+        page, Notifications is the header bell. A row for either here would be
+        a second way to reach one destination."""
+        body = tenant_client.get(shell_url).content.decode()
+        rail = body[body.index("<aside") : body.index("</aside>")]
+
+        assert ">Sequences</span>" not in rail
+        assert ">Notifications</span>" not in rail
+
+    def test_the_rail_survives_a_missing_optional_app(self, tenant_client, shell_urls, shell_url):
+        """apps.analytics is an optional install, so the Insights row reverses
+        to "#" and _render_nav drops it. The rail must not assume six items —
+        it is laid out with flex for exactly this."""
+        body = tenant_client.get(shell_url).content.decode()
+        rail = body[body.index("<aside") : body.index("</aside>")]
+
+        assert 'href="#"' not in rail
 
     def test_no_element_combines_x_show_with_a_display_none_utility(self):
         """`class="hidden" x-show="..."` is a trap that cannot be seen in a
         rendered page: Alpine shows an element by clearing its inline display,
         after which the utility's own display:none reasserts itself and the
-        element stays invisible forever. Here it would have meant a collapsed
-        sidebar with no way to expand it again.
+        element stays invisible forever.
+
+        The shell's dropdowns moved into partials, so those are read too — the
+        moment this stopped covering them would be the moment new dropdowns
+        were added.
         """
-        html = (Path(__file__).parents[3] / "templates" / "base.html").read_text()
+        root = Path(__file__).parents[3] / "templates"
+        sources = [root / "base.html", *sorted((root / "partials").glob("_app_*.html"))]
 
         offenders = []
-        for tag in re.findall(r"<[a-z]+\s[^>]*x-show=[^>]*>", html, re.S):
-            classes = re.search(r'class="([^"]*)"', tag)
-            # Token-exact: a responsive variant like `lg:hidden` is fine and
-            # deliberate — the mobile backdrop must stay hidden on desktop
-            # whatever Alpine thinks. Only an unconditional `hidden` is a trap.
-            if classes and "hidden" in classes.group(1).split():
-                offenders.append(tag)
+        for path in sources:
+            html = path.read_text()
+            for tag in re.findall(r"<[a-z]+\s[^>]*x-show=[^>]*>", html, re.S):
+                classes = re.search(r'class="([^"]*)"', tag)
+                # Token-exact: a responsive variant like `lg:hidden` is fine.
+                # Only an unconditional `hidden` is a trap.
+                if classes and "hidden" in classes.group(1).split():
+                    offenders.append(f"{path.name}: {tag}")
 
         assert not offenders, f"x-show on an element that a utility class keeps hidden: {offenders}"
 
-    def test_the_footer_halves_are_not_cloaked(self):
-        """x-cloak on either half would blank the footer until Alpine boots —
-        the exact flash the pre-paint block exists to prevent. They are mirrored
-        by CSS instead."""
-        html = (Path(__file__).parents[3] / "templates" / "base.html").read_text()
 
-        for half in ["sidebar-org-expanded", "sidebar-org-collapsed"]:
-            tag = re.search(rf"<div class=\"{half}[^>]*>", html)
-            assert tag, half
-            assert "x-cloak" not in tag.group(0), f"{half} is cloaked"
-
+@pytest.mark.django_db
+class TestTheNavBadge:
     def test_the_badge_markup_exists_for_a_non_zero_count(self):
         """Pairs with the allowance above: the class is unreachable today only
         because every badge count is 0, not because nothing renders it."""
@@ -523,7 +520,7 @@ class TestStyleGuide:
         nobody can open is a design system nobody reviews."""
         body = client.get("/ui/").content.decode()
 
-        assert "sidebar-nav-item" in body
+        assert "rail-item" in body
 
     def test_it_exercises_ui_select_outside_the_page_it_was_written_for(self, client):
         body = client.get("/ui/").content.decode()
@@ -618,32 +615,59 @@ class TestLogoSizing:
 
 @pytest.mark.django_db
 class TestSettingsLayouts:
-    def test_the_settings_layout_replaces_the_nav_wholesale(self, tenant_client, shell_urls):
-        """Studio's convention, kept: a settings section is a sidebar_nav
-        override, not a tab bar or a second column."""
+    def test_the_settings_nav_sits_beside_the_rail_rather_than_replacing_it(self, tenant_client, shell_urls):
+        """The redesign's structural change, and the reason the badge sinks
+        could be deleted.
+
+        The settings layouts used to override {% block sidebar_nav %} and swap
+        the product's whole navigation out, which took the bell's out-of-band
+        badge targets with it and left its poll aiming at nothing — every
+        settings page logged htmx:oobErrorNoTarget once a minute. A second
+        column leaves the rail in place, so no archetype strands an id.
+        """
         body = tenant_client.get("/accounts/settings/").content.decode()
 
-        assert "Account" in body and "Organization" in body
-        assert "Broadcasts" not in body
+        assert 'class="setnav"' in body
+        # The rail is still there, with the rest of the product on it.
+        assert "rail-item" in body
+        assert ">Broadcasts</span>" in body
+        # And so there is nothing to go "back" to.
+        assert "Back to app" not in body
 
-    def test_the_two_settings_layouts_carry_different_scopes(self, tenant_client, shell_urls, tenancy):
-        """Not cosmetic: once issue #31 lands RBAC an Editor reaches workspace
-        settings without being able to see org settings, so one shared nav would
-        advertise pages the viewer cannot open."""
+    def test_both_settings_layouts_render_one_filtered_nav(self, tenant_client, shell_urls, tenancy):
+        """There used to be two group lists, so an Editor on workspace settings
+        would not be shown organisation rows.
+
+        The intent was right and the mechanism was too coarse both ways. It hid
+        every Workspace row from the account settings page, which is where the
+        rail's Settings row lands, so Channels, Tags, Labels and five more had
+        no entry point in the product at all. And inside a group it filtered
+        nothing, so the Editor still saw rows they would be refused at. Each row
+        is now gated on the key its own view is gated on, so one list is both
+        complete and honest.
+        """
         account = tenant_client.get("/accounts/settings/").content.decode()
         workspace = tenant_client.get(f"/w/{tenancy.workspace.id}/settings/tags/").content.decode()
 
-        assert "Team Members" in account
-        assert "Team Members" not in workspace
-        assert "Tags" in workspace
-        assert "Tags" not in account
+        for body in (account, workspace):
+            assert "People &amp; roles" in body
+            assert ">Tags</span>" in body
+            assert ">Channels</span>" in body
+            assert "Profile" in body
 
     def test_no_view_supplied_settings_active_string_is_needed(self, tenant_client, shell_urls):
-        """Deviation 4: the layouts read the same nav structure the main nav
-        does. Studio needs 11 views to each remember a `settings_active` key."""
-        body = tenant_client.get("/accounts/preferences/").content.decode()
+        """Deviation 4: the layouts read the same nav structure the rail does.
+        Studio needs 11 views to each remember a `settings_active` key.
 
-        assert 'sidebar-nav-item active"' in body
+        Asks /accounts/settings/ rather than /accounts/preferences/: the
+        Notifications row was retired with the placeholder it pointed at, so
+        nothing in the nav is active on that route any more. The contract under
+        test is unchanged — a settings page highlights its own row without its
+        view saying which one.
+        """
+        body = tenant_client.get("/accounts/settings/").content.decode()
+
+        assert 'setnav-item active"' in body
 
 
 class TestTemplateHygiene:

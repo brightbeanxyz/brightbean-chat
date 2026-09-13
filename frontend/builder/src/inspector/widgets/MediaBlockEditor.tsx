@@ -90,7 +90,7 @@ export function MediaBlockEditor(props: FieldProps) {
           }}
         />
         <p className="fb-field-help">
-          A library asset survives a storage change; a URL is yours to keep working.
+          Pick from the library and we keep the file. Paste a link and it is yours to keep working.
         </p>
       </div>
 

@@ -30,8 +30,25 @@ import { groupOf, nodeSpec } from "../schema/artifact";
 import type { Position } from "../schema/types";
 import { useBuilder, useBuilderStore } from "../store/context";
 import { selectRfEdges, selectRfNodes, type CardData, type CardNode } from "../store/selectors";
+import { AddStep } from "./AddStep";
 import { edgeTypes, nodeTypes } from "./types";
 import { useKeyboard } from "./useKeyboard";
+
+/**
+ * How big the minimap is, in pixels.
+ *
+ * React Flow's default is 200x150, which on a three-step flow is a white
+ * rectangle taking a corner of the canvas to show three dots. It cannot be
+ * sized from CSS: `MiniMap` reads `style.width` and `style.height` as **numbers**
+ * and divides the graph's bounding box by them, so a `.react-flow__minimap`
+ * rule (which the conventions forbid anyway — React Flow's own stylesheet is
+ * unlayered and loads after ours) would resize the box and leave the viewport
+ * mask computed against the old one.
+ *
+ * Numbers, therefore, and not "120px": the arithmetic gives NaN on a string and
+ * the mask silently disappears.
+ */
+const MINIMAP = { width: 132, height: 92 } as const;
 
 const GROUP_COLOR: Record<string, string> = {
   content: "var(--flow-group-content)",
@@ -200,7 +217,12 @@ export function Canvas() {
   );
 
   return (
-    <div ref={wrapper} className="flex-1 min-h-0" onDrop={onDrop} onDragOver={(event) => event.preventDefault()}>
+    <div
+      ref={wrapper}
+      className="fb-canvas flex-1 min-h-0 relative"
+      onDrop={onDrop}
+      onDragOver={(event) => event.preventDefault()}
+    >
       <ReactFlow<CardNode>
         nodes={nodes}
         edges={edges}
@@ -223,9 +245,18 @@ export function Canvas() {
         proOptions={{ hideAttribution: false }}
       >
         <Background />
-        <Controls showInteractive={false} />
-        <MiniMap<CardNode> pannable zoomable nodeColor={minimapColor} />
+        <Controls showInteractive={false} position="bottom-right" />
+        <MiniMap<CardNode>
+          pannable
+          zoomable
+          nodeColor={minimapColor}
+          position="top-right"
+          style={{ ...MINIMAP, borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
+        />
       </ReactFlow>
+      {/* Outside <ReactFlow> so it is not pan/zoom transformed, and after it so
+          it stacks above the pane without a z-index fight. */}
+      <AddStep />
     </div>
   );
 }

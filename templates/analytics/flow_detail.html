@@ -19,7 +19,7 @@ this issue), so nothing here reaches a CDN.
 {% block page_header %}
 <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
     <div>
-        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ flow.name }}</h1>
+        <h1 class="page-title">{{ flow.name }}</h1>
         <p class="text-sm" style="color: var(--text-secondary);">
             Counters for the last {{ days }} days.
             <span class="status-pill status-pill-{{ flow.status }}">{{ flow.get_status_display }}</span>
@@ -46,15 +46,15 @@ this issue), so nothing here reaches a CDN.
 
 <div class="an-panel">
     <div class="an-panel-head">
-        <span class="an-panel-title">Nodes</span>
-        <span class="an-hint">A node deleted from the graph keeps its numbers — the sends still happened.</span>
+        <span class="an-panel-title">Steps</span>
+        <span class="an-hint">A step you deleted keeps its numbers. Those messages still went out.</span>
     </div>
     {% if node_rows %}
     <div style="overflow-x: auto;">
         <table class="an-table">
             <thead>
                 <tr>
-                    <th scope="col">Node</th>
+                    <th scope="col">Step</th>
                     <th scope="col" class="an-num">Sent</th>
                     <th scope="col" class="an-num">Delivered</th>
                     <th scope="col" class="an-num">Failed</th>
@@ -102,7 +102,7 @@ this issue), so nothing here reaches a CDN.
     var token = function (name, fallback) { return (style.getPropertyValue(name) || fallback).trim(); };
     var lines = [
       { key: "sent", label: "Sent", color: token("--primary", "#F97316") },
-      { key: "delivered", label: "Delivered", color: token("--success-700", "#15803D") },
+      { key: "delivered", label: "Delivered", color: token("--success-700", "#5F6B27") },
       { key: "failed", label: "Failed", color: token("--error-700", "#B91C1C") },
       { key: "clicked", label: "Clicked", color: token("--text-secondary", "#57534E") }
     ];

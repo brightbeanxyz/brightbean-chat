@@ -16,6 +16,16 @@ summary and (for ref triggers) its per-connection links.
 
         <p class="text-xs mt-0.5 break-words" style="color: var(--text-secondary);">{{ row.summary }}</p>
 
+        {% comment %}
+          A trigger the platform never delivers looks identical to a working one
+          here — enabled, bound, correct — so the reason it is quiet has to be on
+          the row itself. See TriggerSpec.unavailable.
+        {% endcomment %}
+        {% if row.spec.unavailable %}
+        <p class="text-xs mt-1.5 rounded-lg p-2"
+           style="color: var(--text-secondary); background: rgba(var(--warning-500-rgb), 0.1);">{{ row.spec.unavailable }}</p>
+        {% endif %}
+
         <div class="flex items-center gap-1.5 mt-1.5 text-xs" style="color: var(--text-tertiary);">
             {% if row.trigger.channel_connection %}
             <span class="pi-chip pi-{{ row.trigger.channel_connection.platform }}" style="width: 1.1rem; height: 1.1rem;">

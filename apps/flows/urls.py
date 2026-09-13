@@ -15,6 +15,9 @@ app_name = "flows"
 
 urlpatterns = [
     path("flows/", views.flow_list, name="list"),
+    # Before nothing in particular: "templates" is not a uuid, so the
+    # <uuid:flow_id> patterns below cannot shadow it.
+    path("flows/templates/", views.flow_templates, name="templates"),
     path("flows/create/", views.flow_create, name="create"),
     path("flows/<uuid:flow_id>/edit/", views.flow_edit, name="edit"),
     path("flows/<uuid:flow_id>/rename/", views.flow_rename, name="rename"),
@@ -26,6 +29,13 @@ urlpatterns = [
     path("flows/<uuid:flow_id>/export/", views_portability.flow_export, name="export"),
     path("flows/<uuid:flow_id>/export/bundle/", views_portability.flow_export_bundle, name="export_bundle"),
     path("flows/import/", views_portability.import_start, name="import_start"),
+    # "Start from a template" on the home and flows pages. A slug rather than a
+    # file upload; the same three-step wizard from here on.
+    path(
+        "flows/import/template/<slug:slug>/",
+        views_portability.import_shipped_template,
+        name="import_template",
+    ),
     path(
         "flows/imports/<uuid:flow_import_id>/",
         views_portability.import_review,

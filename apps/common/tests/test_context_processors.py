@@ -12,20 +12,39 @@ from apps.common.context_processors import (
     navigation_context,
     sidebar_context,
 )
+from apps.members.roles import WorkspaceRole
 
 
-def _request(path="/", *, workspace=None, user=None, org_membership=None):
+def _request(path="/", *, workspace=None, user=None, org_membership=None, workspace_membership=None):
     """A request shaped like one RBACMiddleware has already handled.
 
-    RequestFactory runs no URL resolution and no middleware, and both matter
-    here: `resolver_match` is what the active flag is computed from, and
-    `request.workspace` is what workspace-scoped rows reverse against.
+    RequestFactory runs no URL resolution and no middleware, and three things
+    matter here: `resolver_match` is what the active flag is computed from,
+    `request.workspace` is what workspace-scoped rows reverse against, and
+    `request.workspace_membership` is what the per-row permission check reads.
+
+    The membership is looked up from the workspace and user when it is not
+    passed, because that is what the middleware does — including on routes with
+    no workspace in the URL, where it falls back to the user's last workspace
+    (see RBACMiddleware.__call__). Leaving it None here would hide every
+    permission-gated row and make these tests pass for the wrong reason.
     """
     request = RequestFactory().get(path)
     request.resolver_match = resolve(path)
     request.workspace = workspace
     request.org_membership = org_membership
     request.user = user if user is not None else AnonymousUser()
+    if workspace_membership is None and workspace is not None and user is not None:
+        from apps.members.models import WorkspaceMembership
+
+        workspace_membership = WorkspaceMembership.objects.filter(user=user, workspace=workspace).first()
+    request.workspace_membership = workspace_membership
+    if org_membership is None and user is not None and not isinstance(user, AnonymousUser):
+        # The middleware resolves this for every authenticated request, and the
+        # organisation rows are gated on it.
+        from apps.members.models import OrgMembership
+
+        request.org_membership = OrgMembership.objects.filter(user=user).order_by("created_at").first()
     return request
 
 
@@ -62,18 +81,25 @@ class TestActiveFlag:
             ("contacts/", "contacts"),
             ("flows/", "flows"),
             ("inbox/", "inbox"),
-            ("sequences/", "sequences"),
+            # Sequences is a tab on the flows page now, not a rail row of its
+            # own, so it lights the row its tab strip hangs under.
+            ("sequences/", "flows"),
             ("broadcasts/", "broadcasts"),
             ("media/", "media"),
         ],
     )
     def test_exactly_one_main_nav_item_is_active_per_route(self, suffix, expected, tenancy):
         """Every main-nav row is workspace-scoped now — issue #31 put the app
-        under /w/<uuid>/ (SPEC §16), so the dashboard is the workspace root."""
+        under /w/<uuid>/ (SPEC §16), so the dashboard is the workspace root.
+
+        Both halves of the rail are searched: Library and Settings sit in the
+        bottom group, and a route lighting a row there is still exactly one row.
+        """
         path = f"/w/{tenancy.workspace.id}/{suffix}"
         context = navigation_context(_request(path, workspace=tenancy.workspace, user=tenancy.owner))
 
-        active = [i["key"] for g in context["nav_groups"] for i in g["items"] if i["active"]]
+        rail = context["nav_groups"] + context["nav_footer_groups"]
+        active = [i["key"] for g in rail for i in g["items"] if i["active"]]
         assert active == [expected]
 
     @pytest.mark.django_db
@@ -81,7 +107,6 @@ class TestActiveFlag:
         ("path", "key", "expected"),
         [
             ("/accounts/settings/", "settings_nav_groups", "profile"),
-            ("/accounts/preferences/", "settings_nav_groups", "preferences"),
             ("/organization/settings/", "settings_nav_groups", "org_general"),
             ("/organization/members/", "settings_nav_groups", "org_members"),
             ("/organization/workspaces/", "settings_nav_groups", "org_workspaces"),
@@ -102,16 +127,45 @@ class TestActiveFlag:
         assert active == [expected]
 
     @pytest.mark.django_db
-    def test_the_two_settings_navs_are_disjoint_views_of_one_structure(self, tenancy):
+    def test_there_is_one_settings_nav_filtered_per_viewer(self, tenancy):
+        """Both layouts render the same list now, gated row by row.
+
+        There used to be two group lists, so that an Editor on workspace
+        settings would not be shown organisation rows. The intent was right and
+        the mechanism was too coarse in both directions: it hid every Workspace
+        row from the account settings page — where the rail's Settings row lands
+        — leaving Channels, Tags, Labels and five more with no entry point at
+        all, and inside a group it filtered nothing, so the Editor still saw
+        rows they would be refused at.
+        """
         context = navigation_context(
             _request(f"/w/{tenancy.workspace.id}/", workspace=tenancy.workspace, user=tenancy.owner)
         )
 
-        account = {i["key"] for g in context["settings_nav_groups"] for i in g["items"]}
-        workspace = {i["key"] for g in context["workspace_settings_nav_groups"] for i in g["items"]}
+        account = [i["key"] for g in context["settings_nav_groups"] for i in g["items"]]
+        workspace = [i["key"] for g in context["workspace_settings_nav_groups"] for i in g["items"]]
 
-        assert not account & workspace
-        assert account | workspace == {i.key for g in SETTINGS_NAV for i in g.items}
+        assert account == workspace
+        # An owner holds every permission, so they see the whole structure.
+        assert set(account) == {i.key for g in SETTINGS_NAV for i in g.items}
+
+    @pytest.mark.django_db
+    def test_a_row_is_hidden_from_a_viewer_its_page_would_refuse(self, tenancy):
+        """The reason one list is safe to render.
+
+        An Agent holds `reply_in_inbox` but not `manage_channels`, so Labels is
+        theirs and Channels is not. A link that always answers 403 reads as a
+        bug rather than as a boundary.
+        """
+        agent = tenancy.user_for(WorkspaceRole.AGENT)
+        context = navigation_context(_request(f"/w/{tenancy.workspace.id}/", workspace=tenancy.workspace, user=agent))
+        keys = {i["key"] for g in context["settings_nav_groups"] for i in g["items"]}
+
+        assert "ws_labels" in keys
+        assert "ws_channels" not in keys
+        assert "ws_general" not in keys
+        # And the rows nobody is gated out of are still there.
+        assert "profile" in keys
 
     @pytest.mark.django_db
     def test_org_general_and_workspace_general_do_not_collide(self, tenancy):
@@ -230,30 +284,97 @@ class TestNavStructure:
                 assert item["url"] != "#", f"{item['key']} does not resolve"
                 assert item["url"].startswith("/")
 
+    @pytest.mark.django_db
+    def test_every_settings_page_is_reachable_from_the_nav(self, tenancy):
+        """The guard for a page going quietly unreachable.
+
+        The redesign briefly merged the Tags and Labels rows to match a design
+        that drew one "Tags & labels": the merged row pointed at the tag list,
+        which renders contact tags only, and the inbox Labels page was left with
+        no link anywhere in the product. Nothing failed — the route still
+        resolved, the view still worked, and the only way to find the page was
+        to type its URL.
+
+        Every settings route the product serves has to be some row's target.
+        A row may cover several routes through ``url_names``, but a route no row
+        points at is a page nobody can get to.
+        """
+        context = navigation_context(
+            _request(f"/w/{tenancy.workspace.id}/", workspace=tenancy.workspace, user=tenancy.owner)
+        )
+        linked = {
+            item["url"]
+            for key in ("settings_nav_groups", "workspace_settings_nav_groups")
+            for group in context[key]
+            for item in group["items"]
+        }
+
+        for group in SETTINGS_NAV:
+            for item in group.items:
+                expected = item._url(tenancy.workspace.id)
+                assert expected in linked, f"{item.key} ({item.label}) has no nav row pointing at it"
+
+    def test_tags_and_labels_are_separate_destinations(self):
+        """They are different models answering to different permissions, and the
+        Labels page's own copy says so: a tag like "VIP" follows a person across
+        every channel, a label like "waiting on shipping" is true of one thread.
+        One row would have to lead somewhere that hides half of what it
+        promises."""
+        rows = {item.key: item for group in SETTINGS_NAV for item in group.items}
+
+        assert rows["ws_tags"].url_name == "contacts:tag_list"
+        assert rows["ws_labels"].url_name == "inbox:label_settings"
+
     def test_nav_item_keys_are_unique_across_both_navs(self):
         keys = [i.key for g in MAIN_NAV + SETTINGS_NAV for i in g.items]
 
         assert len(keys) == len(set(keys))
 
-    def test_the_product_nav_is_the_one_the_issue_specifies(self):
+    def test_the_product_nav_is_the_one_the_design_specifies(self):
+        """The encoded product decision, so changing it is a deliberate edit.
+
+        Keys track the route and labels track the design — `dashboard`,
+        `analytics` and `media` keep their keys while reading Home, Insights and
+        Library, which is what keeps every cross-app test that looks a row up by
+        key working through a rename.
+
+        Two rows left the rail rather than the product: `sequences` became a tab
+        on the flows page, and `notifications` became the header bell.
+        """
         keys = [i.key for g in MAIN_NAV for i in g.items]
 
         assert set(keys) == {
             "dashboard",
-            "contacts",
-            "flows",
             "inbox",
-            "sequences",
+            "flows",
             "broadcasts",
-            # Issue #26. The L1-B brief predates it; SPEC §18's pages needed a
-            # home and the layer-7 table gives the app one.
+            "contacts",
             "analytics",
             "media",
-            "notifications",
+            "settings",
         }
 
-    def test_settings_groups_match_the_brief(self):
-        assert [g.label for g in SETTINGS_NAV] == ["Account", "Organization", "Workspace"]
+    def test_the_rail_is_split_into_a_top_and_a_bottom_group(self):
+        """Library and Settings sit against the avatar, away from the six rows
+        that answer "what am I doing"."""
+        top = [i.key for g in MAIN_NAV if g.placement == "top" for i in g.items]
+        bottom = [i.key for g in MAIN_NAV if g.placement == "bottom" for i in g.items]
+
+        assert top == ["dashboard", "inbox", "flows", "broadcasts", "contacts", "analytics"]
+        assert bottom == ["media", "settings"]
+
+    def test_the_settings_row_lights_up_on_every_settings_page(self):
+        """Derived from SETTINGS_NAV rather than hand-listed, so a settings page
+        added later cannot leave the rail row dark."""
+        settings_row = next(i for g in MAIN_NAV for i in g.items if i.key == "settings")
+        every_settings_route = {
+            name for g in SETTINGS_NAV for i in g.items for name in (i.url_names or frozenset({i.url_name}))
+        }
+
+        assert settings_row.url_names == every_settings_route
+
+    def test_settings_groups_match_the_design(self):
+        assert [g.label for g in SETTINGS_NAV] == ["Workspace", "Organisation", "You"]
 
     @pytest.mark.django_db
     def test_badges_default_to_zero_and_render_nothing(self, tenancy):
@@ -339,16 +460,21 @@ class TestTenancyIntegration:
         archived. A row pointing into a workspace that is not there is worse
         than no row.
 
-        Notifications survive, and should: issue #7's row is per-user rather
-        than workspace-scoped, so it still has somewhere real to point when the
-        person has no current workspace — which is exactly when a
-        `channel_needs_reauth` alert matters most.
+        Settings survives, and should: it is per-user rather than
+        workspace-scoped, so it still has somewhere real to point when the
+        person has no current workspace — which is exactly when they need to
+        reach the organisation's workspace list to bring one back.
         """
         context = navigation_context(_request("/organization/settings/", user=tenancy.owner))
 
-        keys = [item["key"] for group in context["nav_groups"] for item in group["items"]]
-        assert keys == ["notifications"]
-        assert context["workspace_settings_nav_groups"] == []
+        top = [item["key"] for group in context["nav_groups"] for item in group["items"]]
+        bottom = [item["key"] for group in context["nav_footer_groups"] for item in group["items"]]
+        assert top == []
+        assert bottom == ["settings"]
+        # The Workspace group empties for the same reason: no workspace means
+        # no workspace membership, so none of its rows are visible either.
+        # Organisation and You survive — they point somewhere real.
+        assert [g["label"] for g in context["workspace_settings_nav_groups"]] == ["Organisation", "You"]
 
     def test_channel_connections_is_still_a_placeholder(self):
         """Issue #4 owns ChannelConnection; #31's credential store is

@@ -28,7 +28,7 @@ does is how somebody ends up debugging automation that is not in front of them.
             <span class="ib-rule-handle" data-rule-handle aria-hidden="true">⋮⋮</span>
             <div class="ib-rule-body">
               <strong>{{ rule.name }}</strong>
-              {% if not rule.enabled %}<span class="muted">— disabled</span>{% endif %}
+              {% if not rule.enabled %}<span class="muted">· disabled</span>{% endif %}
               <ul class="ib-rule-clauses">
                 {% for clause in rule.conditions %}<li>{{ clause }}</li>{% endfor %}
                 {% if not rule.conditions %}<li class="muted">No conditions</li>{% endif %}

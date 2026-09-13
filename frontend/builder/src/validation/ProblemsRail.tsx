@@ -33,6 +33,7 @@ export function ProblemsRail() {
           key={index_}
           type="button"
           className={`fb-problem fb-problem-${issue.severity}`}
+          data-code={issue.code}
           onClick={() =>
             issue.node_id
               ? store.getState().setSelection({ nodes: [issue.node_id], edges: [] })
@@ -42,7 +43,11 @@ export function ProblemsRail() {
           }
         >
           {issue.message}
-          <span className="fb-problem-code block">{issue.code}</span>
+          {/* The code is on the element, not in the sentence. It is how a
+              support conversation identifies a finding, and `code` is also
+              what the rail deduplicates on — but printing
+              `flow_triggers_all_disabled` under a sentence that already says
+              the same thing in English is principle 5's exact target. */}
         </button>
       ))}
     </section>

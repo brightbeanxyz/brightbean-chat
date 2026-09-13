@@ -14,9 +14,9 @@ in docs/agent-prompts/layer-2.md.
 {% block page_header %}
 <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
     <div>
-        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Sequences</h1>
+        <h1 class="page-title">Sequences</h1>
         <p class="text-sm" style="color: var(--text-secondary);">
-            Drip campaigns. Each step waits its delay from the previous step's send, then starts a flow.
+            A series of messages sent over days. Each step waits for the time you set, counting from the message before it, then runs a flow.
         </p>
     </div>
     {% if can_edit %}

@@ -57,6 +57,17 @@ class TriggerSpec:
     stage_only: bool = False
     #: Fired only through an entry point — SPEC §10's ``api``.
     entrypoint_only: bool = False
+    #: Why this type cannot fire on a real deployment today, in the reader's
+    #: words, or empty when it can.
+    #:
+    #: SPEC §10 lets a trigger "degrade gracefully if the field is unavailable
+    #: to the app", and ``follow`` takes it up: the matcher is real, the parser
+    #: is tested, and the Instagram API with Instagram Login publishes no follow
+    #: webhook field for it to read. The type is kept rather than deleted so an
+    #: app granted the field later needs no code — but a picker that offers it
+    #: silently is a picker that sells a flow which never runs. Anything that
+    #: lets somebody choose a trigger type shows this sentence beside it.
+    unavailable: str = ""
 
 
 TRIGGER_TYPES: dict[str, TriggerSpec] = {}
@@ -147,6 +158,11 @@ register_trigger_type(
         "New follower",
         "Runs when someone follows this account.",
         trigger_schema.FOLLOW,
+        unavailable=(
+            "Instagram does not tell apps about new followers yet, so this trigger "
+            "will not run. It is here so it starts working on its own if Instagram "
+            "opens that up."
+        ),
     )
 )
 register_trigger_type(

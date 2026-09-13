@@ -1,0 +1,32 @@
+{% comment %}
+One template in a gallery. The tile IS the submit button: picking a template is
+an act that creates a FlowImport row, so it posts rather than linking.
+
+Shared by the Flows list's four-up strip and the full Templates page, because a
+tile that looks different in the two places reads as two different things.
+{% endcomment %}
+<form method="post" action="{% url 'flows:import_template' workspace_id=request.workspace.id slug=template.slug %}">
+    {% csrf_token %}
+    <button type="submit" class="tile p-4 block w-full h-full text-left cursor-pointer">
+        <span class="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center mb-3"
+              style="background: var(--primary-tint); color: var(--brand-700);">
+            {% include "partials/_nav_icon.html" with name="flows" size=17 %}
+        </span>
+        <span class="block text-sm font-semibold" style="color: var(--text-primary);">{{ template.name }}</span>
+        {% comment %}
+          The platform, not the folder: every shipped template is in "Starters",
+          so the folder subtitled twenty-five tiles identically. The colour
+          chips stay as the quick visual scan and the words carry the meaning —
+          a chip alone says nothing to anyone not already fluent in the palette.
+        {% endcomment %}
+        <span class="block text-xs leading-relaxed mt-1" style="color: var(--text-tertiary);">
+            {{ template.steps }} step{{ template.steps|pluralize }} · {{ template.platform_label }}
+        </span>
+        <span class="flex gap-1 mt-3" aria-hidden="true">
+            {% for platform in template.platforms %}
+            <span class="w-[18px] h-[18px] rounded-md"
+                  style="background: var(--platform-{{ platform }}, var(--neutral-300));"></span>
+            {% endfor %}
+        </span>
+    </button>
+</form>

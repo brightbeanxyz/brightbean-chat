@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% comment %}
+The template gallery — the Templates tab on the Flows page.
+
+This tab used to point at a placeholder in config/urls.py's _WORKSPACE_STUBS,
+so the strip offered a third view of flows that answered "Templates is not
+built yet. Lands with issue #redesign." A dead tab is worse than no tab, and a
+tab that shows an issue number to a customer is worse again.
+
+The count is the real one. flow-templates/ ships what it ships, and a gallery
+that claims more than it has is a promise the next click breaks.
+{% endcomment %}
+
+{% block title %}Templates · BrightBean Chat{% endblock %}
+
+{% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
+
+{% block content %}
+<div class="max-w-[1060px] w-full">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">Templates</h1>
+            <p class="page-lede mt-1.5">
+                Flows somebody already built and tested. Pick one, change the words, make it yours.
+            </p>
+        </div>
+        {% if can_edit %}
+        <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
+           class="btn-pill-secondary flex-shrink-0">Import a file</a>
+        {% endif %}
+    </div>
+
+    {% if templates %}
+    <p class="text-[13px] mb-4" style="color: var(--text-tertiary);">
+        Picking one does not create anything straight away. You answer what it needs first, and
+        it arrives as a draft you can read before it replies to anybody.
+    </p>
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {% for template in templates %}
+        {% include "flows/_template_tile.html" %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="empty-state-title">No templates are available</p>
+        <p class="empty-state-body">
+            You can still build a flow from scratch, or import one somebody sent you as a file.
+        </p>
+        {% if can_edit %}
+        <a href="{% url 'flows:list' workspace_id=request.workspace.id %}"
+           class="btn-pill-primary mt-4">Back to flows</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

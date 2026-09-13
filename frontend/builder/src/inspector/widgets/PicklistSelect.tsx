@@ -18,9 +18,9 @@ import { useField } from "../FieldContext";
 type ListKey = keyof Picklists;
 
 const EMPTY_COPY: Partial<Record<ListKey, string>> = {
-  tags: "Tags arrive with the contacts app — type a name to use it now.",
-  custom_fields: "Custom fields arrive with the contacts app — type a name to use it now.",
-  sequences: "Sequences arrive with the sequences app — type a name to use it now.",
+  tags: "Tags arrive with the contacts app. Type a name to use it now.",
+  custom_fields: "Custom fields arrive with the contacts app. Type a name to use it now.",
+  sequences: "Sequences arrive with the sequences app. Type a name to use it now.",
   flows: "This workspace has no other flows yet.",
   members: "No workspace members to choose from.",
   connections: "No channels are connected yet.",

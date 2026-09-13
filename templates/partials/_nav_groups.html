@@ -1,38 +1,36 @@
 {% comment %}
-Renders a navigation structure built by apps.common.context_processors.
+The settings nav — the 232px second column beside the rail.
 
-DEVIATION 4 of the L1-B brief. Studio writes each nav row by hand and computes
-`active` inline against request.resolver_match — at three different
-granularities across 13 call sites — while its settings layouts use a fourth
-convention, a view-supplied `settings_active` string that 11 views have to
-remember to set. Here `active` is computed once, in Python, and every nav in
-the product is this one loop.
+DEVIATION 4 of the L1-B brief, unchanged by the redesign. Studio writes each
+nav row by hand and computes `active` inline against request.resolver_match —
+at three different granularities across 13 call sites — while its settings
+layouts use a fourth convention, a view-supplied `settings_active` string that
+11 views have to remember to set. Here `active` is computed once, in Python,
+and both navs in the product are a loop over the same structure.
+
+Since the redesign this renders the settings nav only; the rail has its own
+renderer in partials/_rail_items.html. They share the data, not the markup.
+
+Unlike the old sidebar, this column does *not* replace the rail — it sits
+beside it. That is why there is no "Back to app" link any more: the rail never
+left, so there is nothing to go back to.
 
 Args:
   groups: list of {label, items: [{key,label,icon,url,active,badge,badge_slot}]}
 {% endcomment %}
 {% for group in groups %}
-{% if group.label %}
-<div class="sidebar-section-label-wrap">
-    <div class="sidebar-section-label">{{ group.label }}</div>
-</div>
-{% endif %}
+{% if group.label %}<div class="setnav-label">{{ group.label }}</div>{% endif %}
 {% for item in group.items %}
 <a href="{{ item.url }}"
-   class="mb-1 sidebar-nav-item{% if item.active %} active{% endif %}"
-   {% if item.active %}aria-current="page"{% endif %}
-   title="{{ item.label }}">
+   class="setnav-item{% if item.active %} active{% endif %}"
+   {% if item.active %}aria-current="page"{% endif %}>
     {% include "partials/_nav_icon.html" with name=item.icon %}
-    <span class="sidebar-nav-label">{{ item.label }}</span>
-    {% comment %}The id lets the owning app keep its own count in step with an
-    in-page action, via an htmx out-of-band swap, without re-rendering the nav.
-    Issue #7 uses it; #14's inbox badge gets it for free.
-
-    `badge_slot`, not `badge`: the slot is rendered even at zero, because that
-    is what the swap aims at — see partials/_nav_badge.html. Rows no app owns
-    get no slot, because an id nothing ever swaps is dead weight on every page,
-    and partials/_nav_badge_sinks.html has to mirror this list for the layouts
-    that replace this nav wholesale — two lists worth keeping short.{% endcomment %}
+    <span>{{ item.label }}</span>
+    {% comment %}
+      A settings row can still own a badge — the mechanism is the nav's, not
+      the rail's. See partials/_nav_badge.html for why the slot is rendered
+      even at zero.
+    {% endcomment %}
     {% if item.badge_slot %}{% include "partials/_nav_badge.html" with key=item.key count=item.badge only %}{% endif %}
 </a>
 {% endfor %}

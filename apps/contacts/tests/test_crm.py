@@ -1067,15 +1067,22 @@ class TestMixedConsentState:
 
     def test_a_contact_opted_out_on_one_channel_still_shows_the_other(self, tenancy, client_for, crm):
         """`annotate_reachability`'s docstring says collapsing the two facts
-        "would have to pick which one to lie about" — the elif did exactly
-        that and hid a still-reachable channel."""
+        "would have to pick which one to lie about" — an elif did exactly that
+        and hid a still-reachable channel.
+
+        The redesign renamed the column from "Opt-in" to "Contactable" and
+        answers it in words, so the mixed state gets its own sentence rather
+        than two pills. What must not change is that it is neither "Yes" nor
+        "Opted out": both of those pick one fact and drop the other.
+        """
         self._identity(crm["contact"], "telegram", opt_in=True, opt_in_at=timezone.now(), opt_in_source="message_in")
         self._identity(crm["contact"], "sms", opted_out_at=timezone.now())
 
         body = client_for(tenancy.owner).get(url(tenancy, "contacts/rows/")).content.decode()
 
-        assert "Opted in" in body
-        assert "Opted out" in body
+        assert "On some channels" in body
+        # The detail is still reachable, in the title, for somebody who needs it.
+        assert "still opted in on another" in body
 
     def test_opted_out_everywhere_shows_only_that(self, tenancy, client_for, crm):
         self._identity(crm["contact"], "sms", opted_out_at=timezone.now())

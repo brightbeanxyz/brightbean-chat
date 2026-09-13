@@ -410,13 +410,31 @@ class TestSubscribers:
 
 @pytest.mark.django_db
 class TestTheNav:
-    def test_the_sequences_row_points_at_the_real_page(self, tenancy, client_for):
+    def test_the_sequences_tab_points_at_the_real_page(self, tenancy, client_for):
         """Issue #22 replaced the placeholder; the nav entry is data, so only its
-        ``url_name`` changed."""
+        ``url_name`` changed.
+
+        The redesign moved Sequences off the rail and onto the automations tab
+        strip — it is one of three views of the same job, not a section of its
+        own — so the entry is now in ``flow_tab_groups``.
+        """
         response = client_for(tenancy.owner).get(url(tenancy, ""))
 
         row = next(
-            item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == "sequences"
+            item
+            for group in response.context["flow_tab_groups"]
+            for item in group["items"]
+            if item["key"] == "tab_sequences"
         )
         assert row["url"] == url(tenancy, "")
+        assert row["active"] is True
+
+    def test_the_flows_rail_row_stays_lit_on_a_sequences_page(self, tenancy, client_for):
+        """The tab strip hangs under that row, so the rail has to agree that
+        this is still the automations section."""
+        response = client_for(tenancy.owner).get(url(tenancy, ""))
+
+        row = next(
+            item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == "flows"
+        )
         assert row["active"] is True

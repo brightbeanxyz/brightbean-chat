@@ -44,6 +44,10 @@
 :root {
   /* Brand Tokens - BrightBean Orange */
   --brand-50:  #FFF7ED;
+  /* Between 50 and 100: the redesign's active/selected tint. A touch warmer
+     than --brand-50, which stays where it is because the auth pages and the
+     flow-builder palette drawers are built on it. */
+  --brand-75:  #FFF3E8;
   --brand-100: #FFEDD5;
   --brand-200: #FED7AA;
   --brand-300: #FDBA74;
@@ -54,12 +58,20 @@
   --brand-800: #9A3412;
   --brand-900: #7C2D12;
 
-  /* Brand Tokens - BrightBean Green (the bean in the logo) — used for
-     selection controls (checkboxes, toggle switches) */
+  /* Brand Tokens - BrightBean Green (the bean in the logo) — selection
+     controls (checkboxes, toggle switches), and from the redesign onwards the
+     product's "good" colour: healthy channels, live flows, completed steps.
+
+     The ramp gained both ends for that second job. --brand-green-500 is a
+     FILL: a dot, a toggle track, a tick's background. It is ~2.8:1 on white,
+     so it must never be text. Labels use --brand-green-700 (~5.4:1) on
+     --brand-green-50. */
+  --brand-green-50:  #F1F6E9;
   --brand-green-100: #EFF2DC;
   --brand-green-200: #DDE4B9;
   --brand-green-500: #94A43F;
   --brand-green-600: #7B8A33;
+  --brand-green-700: #5F6B27;
 
   /* Brand Tokens - channel triplets. Needed wherever a colour is used at
      partial alpha: CSS cannot extract the channels out of a hex custom
@@ -68,7 +80,7 @@
      utility silently falls back to a literal and stops white-labelling. */
   --brand-500-rgb:   249, 115, 22;
   --error-500-rgb:   239, 68, 68;
-  --success-500-rgb: 34, 197, 94;
+  --success-500-rgb: 148, 164, 63;  /* = --brand-green-500 */
   --info-500-rgb:    59, 130, 246;
   --warning-500-rgb: 234, 179, 8;
   --accent-teal-rgb: 20, 184, 166;
@@ -97,6 +109,12 @@
   --primary-soft:  var(--brand-50);
   --primary-muted: var(--brand-100);
   --primary-ring:  var(--brand-200);
+  /* The redesign's active-nav / selected-card tint. Deliberately a token of
+     its own rather than a repoint of --primary-soft: that one also feeds
+     --flow-group-content-soft, so moving it would silently recolour the flow
+     builder's content drawer along with every nav row. */
+  --primary-tint:  var(--brand-75);
+  --primary-tint-border: #FBD3AF;
   /* Studio's .btn-primary-tint reads var(--primary-rgb, 249, 115, 22) with no
      definition anywhere, so the fallback always won and the tint stayed orange
      after a rebrand. Defined here, it tracks the brand ramp like everything else. */
@@ -112,17 +130,40 @@
   --neutral-400: #A8A29E;
   --neutral-300: #D6D3D1;
   --neutral-200: #E7E5E4;
+  /* Three steps the redesign added between 200 and 50. The hairline got
+     lighter and the card got bigger, which only reads as "calmer" if the
+     rule itself recedes — at #E7E5E4 a 16px card outline draws more attention
+     than what is inside it. */
+  --neutral-150: #EFEDE9;  /* hairline: card and panel outlines */
+  --neutral-125: #F4F2EE;  /* divider: rules *inside* a card */
   --neutral-100: #F5F5F4;
+  --neutral-75:  #FBFAF8;  /* sunken: inset wells, tiles, done states */
   --neutral-50:  #FAFAF9;
 
   /* Surfaces */
   --surface-0: #FFFFFF;
-  --surface-page: rgb(247, 246, 242);
+  --surface-page: #F7F6F2;
   --surface-1: var(--neutral-50);
   --surface-2: var(--neutral-100);
   --surface-3: var(--neutral-200);
-  --border:    var(--neutral-200);
+  --surface-sunken: var(--neutral-75);
+  --border:    var(--neutral-150);
   --border-hover: var(--neutral-300);
+  /* Rules inside a card, one step lighter than the card's own outline. */
+  --divider:   var(--neutral-125);
+  /* Form controls keep the old, heavier hairline. A card outline can recede —
+     that is the whole point of lightening --border — but a field has to look
+     like somewhere you type, and at #EFEDE9 a 1.5px input outline stops
+     reading as an edge at all. A field you cannot find is a worse regression
+     than a heavy one.
+
+     Every 1.5px border in this file is a control: .form-input-styled,
+     .btn-outline, .btn-social, .auth-card's select and textarea,
+     .form-datetime, and the @layer base inputs inside .app-content. That
+     weight is the control signature here, so they all read this token — if you
+     add a control, use it, and if a 1.5px rule ever stops being a control,
+     move it back to --border. */
+  --border-strong: var(--neutral-200);
 
   /* Text */
   --text-primary:   var(--neutral-900);
@@ -142,7 +183,14 @@
   /* Studio's quads are 50/500/700. Two extra steps are added: --warning-200
      and --error-600, both of which Studio's component classes already
      referenced through literal fallbacks. */
-  --success-500: #22C55E; --success-50: #F0FDF4; --success-700: #15803D;
+  /* Success is the bean green, not a generic green. The redesign states
+     "good" in the logo's own colour — a healthy channel, a live flow, a
+     completed setup step — so these point at the --brand-green-* ramp rather
+     than carrying a second, unrelated green. --success-500 is a fill only
+     (see the note on that ramp); --success-700 is the text weight. */
+  --success-500: var(--brand-green-500);
+  --success-50:  var(--brand-green-50);
+  --success-700: var(--brand-green-700);
   --warning-500: #EAB308; --warning-50: #FEFCE8; --warning-700: #A16207;
   --warning-200: #FDE68A;
   --error-500:   #EF4444; --error-50:   #FEF2F2; --error-700:   #B91C1C;
@@ -189,9 +237,29 @@
   --radius-sm:   0.25rem;
   --radius-md:   0.375rem;
   --radius-lg:   0.5rem;
+  --radius-control: 0.625rem;  /* 10 — inputs, selects, small buttons */
   --radius-xl:   0.75rem;
-  --radius-2xl:  1rem;
+  --radius-tile: 0.875rem;     /* 14 — tiles and list cards inside a card */
+  --radius-2xl:  1rem;         /* 16 — the card */
   --radius-full: 9999px;
+
+  /* Type scale.
+     Named --fs-* rather than --text-*, for two reasons. --text-primary and
+     friends already own the --text- prefix in this file and they are COLOURS,
+     so --text-lg beside --text-ghost would read as one family and is not. And
+     --text-* is Tailwind v4's @theme namespace for generating text-lg
+     utilities — harmless while this block is a plain :root, a trap the day
+     somebody converts it.
+
+     Additive: the ~60 existing literal rem sizes still work. New components
+     use these; old ones migrate when they are next touched. */
+  --fs-display: 1.75rem;    /* 28 — page title */
+  --fs-title:   1.0625rem;  /* 17 — section heading */
+  --fs-body-lg: 0.9375rem;  /* 15 — lede, form controls */
+  --fs-body:    0.8125rem;  /* 13 — body, meta */
+  --fs-sm:      0.75rem;    /* 12 — eyebrows, pills */
+  --fs-xs:      0.6875rem;  /* 11 — timestamps */
+  --fs-2xs:     0.625rem;   /* 10 — rail labels, node eyebrows */
 
   /* Transitions */
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
@@ -228,46 +296,365 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   SIDEBAR - uses CSS variables that Tailwind can't express
+   APP SHELL — rail, header, sub-nav, settings nav
+   ═══════════════════════════════════════════════════════════════
+
+   The 240px collapsible sidebar is gone and so is every trace of its
+   collapse: no persisted width, no pre-paint mirror, no x-init handover.
+   The rail is a fixed 76px at every breakpoint down to `lg`, below which it
+   becomes a bottom tab bar. Because there is no second, narrower state to
+   mirror, there is nothing here for a flash-of-wrong-width to happen to.
    ═══════════════════════════════════════════════════════════════ */
-.sidebar-nav-item {
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 76px;
+  flex: 0 0 76px;
+  background: var(--surface-0);
+  border-right: 1px solid var(--border);
+  padding: 12px 0 10px;
+}
+.rail-logo-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+  cursor: pointer;
+}
+.rail-logo-btn:hover { border-color: var(--border-hover); }
+.rail-items,
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+}
+.rail-items {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 14px;
+}
+.rail-footer {
+  flex-shrink: 0;
+  padding-top: 8px;
+}
+.rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 60px;
+  flex-shrink: 0;
+  padding: 8px 0;
+  border-radius: var(--radius-xl);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-tertiary);
+  text-decoration: none;
+  text-align: center;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.rail-item:hover { background: var(--surface-page); color: var(--text-primary); }
+.rail-item.active { background: var(--primary-tint); color: var(--brand-700); }
+/* The badge's containing block. Without position:relative here the count
+   would be placed against the rail itself and drift as items scroll. */
+.rail-icon-wrap { position: relative; display: flex; }
+.rail-avatar {
+  width: 32px;
+  height: 32px;
+  margin-top: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--brand-green-500);
+  color: var(--text-inverse);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+}
+
+/* The unread count.
+   Kept under its old name on purpose. This class and the markup around it are
+   asserted as literal strings by apps/inbox/tests/test_read_state.py, and the
+   same partial is both the shell's first render and the out-of-band response
+   fragment the bell's poll swaps in — the two ends have to agree exactly.
+   Restyling in place costs one block; renaming would cost three test rewrites
+   and a real chance of desynchronising the swap. */
+.sidebar-badge {
+  position: absolute;
+  top: -4px;
+  right: -9px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+  background: var(--brand-500);
+  color: var(--text-inverse);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- App header ---------------------------------------------------------- */
+.appbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 60px;
+  flex-shrink: 0;
+  padding: 0 16px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border);
+}
+.appbar-ws {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.appbar-ws:hover { border-color: var(--border-hover); }
+.appbar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-full);
+  background: var(--surface-page);
+  border: 1px solid transparent;
+  font-size: var(--fs-body);
+  color: var(--text-primary);
+}
+.appbar-search::placeholder { color: var(--text-ghost); }
+.appbar-search:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.appbar-bell {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.appbar-bell:hover { background: var(--surface-page); color: var(--text-primary); }
+/* Reuses .notif-dot and notifications/partials/_dot_slot.html rather than
+   inventing a second unread indicator — that partial owns the id the
+   out-of-band swap targets, and a second one would be a second thing to keep
+   in step. Only the placement is new. */
+.appbar-bell .notif-dot { position: absolute; top: 6px; right: 8px; }
+/* The search is the first thing to go on a narrow screen. A rule here rather
+   than `hidden sm:block` at the call site: this file is unlayered and beats
+   @layer utilities, so a display utility next to .appbar-search would lose. */
+@media (max-width: 639px) {
+  .appbar-search { display: none; }
+}
+
+/* --- Sub-nav (the tab strip under the header) ---------------------------- */
+.subnav {
+  display: flex;
+  align-items: stretch;
+  gap: 20px;
+  height: 44px;
+  flex-shrink: 0;
+  padding: 0 16px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border);
+}
+.subnav-item {
+  display: flex;
+  align-items: center;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text-tertiary);
+  text-decoration: none;
+}
+.subnav-item:hover { color: var(--text-primary); }
+.subnav-item.active {
+  font-weight: 700;
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--brand-500);
+}
+
+/* --- Settings nav (the 232px second column) ------------------------------ */
+.setnav {
+  width: 232px;
+  flex: 0 0 232px;
+  overflow-y: auto;
+  background: var(--surface-0);
+  border-right: 1px solid var(--border);
+  padding: 16px 12px;
+}
+.setnav-label {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-ghost);
+  padding: 20px 10px 10px;
+}
+.setnav-label:first-child { padding-top: 0; }
+.setnav-item {
   display: flex;
   align-items: center;
   gap: 9px;
   padding: 7px 10px;
-  border-radius: var(--radius-md);
-  font-size: 0.8125rem;
+  margin-bottom: 1px;
+  border-radius: var(--radius-control);
+  font-size: var(--fs-body-lg);
   font-weight: 500;
   color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--dur-fast) ease;
   text-decoration: none;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
-.sidebar-nav-item:hover {
-  background: rgba(var(--scrim-rgb), 0.04);
-  color: var(--text-primary);
-}
-.sidebar-nav-item.active {
-  background: var(--primary-soft);
+.setnav-item:hover { background: var(--surface-page); color: var(--text-primary); }
+.setnav-item.active {
+  background: var(--primary-tint);
   color: var(--brand-700);
   font-weight: 600;
 }
-.sidebar-section-label {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-ghost);
-  padding: 14px 10px 4px;
+
+/* Below `lg` the second column would leave 143px of a 375px phone for the page
+   itself, which clips every form on it. It becomes a scrolling strip above the
+   content instead: the same rows, laid out the way the sub-nav already is, so
+   a phone reader still has every settings destination without losing the page.
+
+   Group labels are hidden rather than inlined. In a horizontal strip they read
+   as items, and the row labels are unambiguous on their own. */
+@media (max-width: 1023px) {
+  .setnav {
+    position: absolute;
+    top: 60px;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    width: 100%;
+    flex: none;
+    display: flex;
+    gap: 6px;
+    height: 48px;
+    padding: 6px 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .setnav-label { display: none; }
+  .setnav-item {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+    padding: 6px 12px;
+    border-radius: var(--radius-full);
+    background: var(--surface-page);
+    font-size: var(--fs-body);
+    white-space: nowrap;
+  }
+  /* The strip is positioned over the top of the page, so the content it covers
+     has to start below it. */
+  .setnav ~ div .app-shell-main { padding-top: 48px; }
 }
-.sidebar-badge {
-  margin-left: auto;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--text-tertiary);
+
+/* --- Mobile: the rail becomes a bottom tab bar --------------------------- */
+/* Not an off-canvas drawer, deliberately. A drawer needs a second copy of the
+   nav, and a second copy means a second `nav-badge-inbox` — which is exactly
+   how notification-badge-mobile came to exist, and what the "each id appears
+   exactly once" tests forbid. One rail, repositioned. */
+@media (max-width: 1023px) {
+  .rail {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    width: 100%;
+    flex: none;
+    flex-direction: row;
+    justify-content: space-around;
+    height: 60px;
+    padding: 0 4px;
+    border-right: none;
+    border-top: 1px solid var(--border);
+  }
+  .rail-items {
+    flex-direction: row;
+    justify-content: space-around;
+    margin-top: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  /* The workspace mark goes: the header already names the workspace, and the
+     bar needs the width. The FOOTER STAYS. Hiding it took Library, Settings and
+     the avatar's Sign out with it, and nothing else on a phone offers them —
+     the header has no menu and the tab strip has no room — so a mobile reader
+     could not reach settings or sign out of the product at all.
+
+     It becomes the right-hand end of the bar instead: the avatar, whose menu
+     carries Library, Settings and Sign out (see partials/_app_rail.html). Its
+     own two rail rows are hidden because they are in that menu. */
+  .rail-logo-btn { display: none; }
+  .rail-footer {
+    flex-direction: row;
+    width: auto;
+    flex: 0 0 auto;
+    padding-top: 0;
+    padding-left: 4px;
+    border-left: 1px solid var(--border);
+    margin-left: 2px;
+  }
+  .rail-footer .rail-item { display: none; }
+  .rail-avatar { margin-top: 0; }
+  .rail-item {
+    width: auto;
+    min-width: 54px;
+    padding: 6px 4px;
+    gap: 3px;
+  }
+  /* Six items in 375px is tight by design — the alternative was hiding two
+     behind a "more", which is the drawer problem again in miniature. They
+     shrink to fit and the strip scrolls if a seventh ever arrives. */
+  .rail-item span:last-child {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Clear the bar so the last row of any scrolling page stays reachable. */
+  .app-shell-main { padding-bottom: 60px; }
 }
 .sidebar-logo-mark {
   width: 30px;
@@ -299,29 +686,308 @@ img.sidebar-logo-mark {
   width: 28px;
   height: 28px;
 }
-
-/* Sidebar collapsed state - desktop only */
-@media (min-width: 1024px) {
-  .sidebar-collapsed .sidebar-nav-item {
-    justify-content: center;
-    padding: 8px;
-    gap: 0;
-  }
-  .sidebar-collapsed .sidebar-nav-label,
-  .sidebar-collapsed .sidebar-section-label,
-  .sidebar-collapsed .sidebar-section-label-wrap,
-  .sidebar-collapsed .sidebar-badge {
-    display: none;
-  }
+/* The rail's workspace button. Same reason as -sm: a caller cannot shrink or
+   grow this from the outside, so each size is its own modifier. */
+.sidebar-logo-mark-lg {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-lg);
 }
 
-/* Mobile: larger touch targets for sidebar nav */
-@media (max-width: 1023px) {
-  .sidebar-nav-item {
-    min-height: 44px;
-    padding: 10px 12px;
-  }
+/* ═══════════════════════════════════════════════════════════════
+   SURFACES — the shared card, and the page furniture on top of it
+   ═══════════════════════════════════════════════════════════════
+
+   .card sets background, border and radius AND NOTHING ELSE. No padding, no
+   display, no margin — on purpose, and this is the one rule to keep in mind
+   when extending it.
+
+   Everything in this file is unlayered, so it beats Tailwind's
+   @layer utilities regardless of specificity or source order. Any property
+   .card sets is therefore a property no `p-6`, `flex` or `mb-4` at the call
+   site can ever override — silently, with no error anywhere. Leaving spacing
+   and layout unset is exactly what lets pages compose this with utilities.
+   The day somebody adds `padding` here, every `p-4` in the product stops
+   working. (Same trap as `.btn-outline w-auto`, which is why .btn-inline
+   exists.)
+   ═══════════════════════════════════════════════════════════════ */
+.card {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
 }
+/* A rule between rows inside a card — one step lighter than the card's own
+   outline, or the row separators compete with the card edge. */
+.card-row + .card-row { border-top: 1px solid var(--divider); }
+/* The sunken tile: template pickers, option cards, completed checklist steps. */
+.tile {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+}
+.tile-selected {
+  background: var(--primary-tint);
+  border: 1.5px solid var(--brand-500);
+}
+
+/* Page furniture */
+.page-title {
+  font-size: var(--fs-display);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+.page-lede {
+  font-size: var(--fs-body-lg);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+.section-title {
+  font-size: var(--fs-title);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.section-eyebrow {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-ghost);
+}
+/* Figures. Tabular numerals so a column of counts does not shift width as it
+   polls — the inbox and the flow list both refresh theirs on a timer. */
+.figure {
+  font-size: 1.625rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.figure-label { font-size: var(--fs-body); color: var(--text-tertiary); }
+
+/* Pill buttons.
+   Height and padding live here rather than on the call site for the unlayered
+   reason above. .btn-pill-primary is the ONE primary action a screen gets. */
+.btn-pill-primary,
+.btn-pill-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 22px;
+  border-radius: var(--radius-full);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.btn-pill-primary {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border: none;
+  box-shadow: var(--shadow-primary);
+}
+.btn-pill-primary:hover { background: var(--primary-hover); }
+.btn-pill-primary:disabled,
+.btn-pill-primary[aria-disabled="true"] {
+  background: var(--primary-tint);
+  color: var(--brand-700);
+  border: 1px solid var(--primary-tint-border);
+  box-shadow: none;
+  cursor: default;
+}
+.btn-pill-secondary {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+}
+.btn-pill-secondary:hover { border-color: var(--border-hover); }
+/* The compact variant used inside cards and list rows. */
+.btn-pill-sm { height: 36px; padding: 0 16px; font-size: var(--fs-body); }
+.btn-icon-round {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-0);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.btn-icon-round:hover { background: var(--surface-page); color: var(--text-primary); }
+
+/* Filter / saved-view chips. The selected one is ink, not brand: on a screen
+   whose single primary action is already orange, a second orange control
+   would read as a second call to action. */
+.chip-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip-filter:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.chip-filter.active {
+  background: var(--neutral-900);
+  border-color: var(--neutral-900);
+  color: var(--text-inverse);
+}
+.chip-filter-add { border-style: dashed; color: var(--text-ghost); }
+
+/* Round initials avatar. Replaces the 4px platform squares in list rows. */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 700;
+  overflow: hidden;
+}
+.avatar-sm { width: 32px; height: 32px; font-size: var(--fs-sm); }
+.avatar-xs { width: 20px; height: 20px; font-size: 9px; }
+.avatar-lg { width: 56px; height: 56px; font-size: 1.125rem; }
+.avatar-brand { background: var(--brand-green-500); color: var(--text-inverse); }
+
+/* One empty state, instead of the four each list grew its own copy of. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 2.5rem 2rem;
+  border-radius: var(--radius-2xl);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+}
+.empty-state-title {
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.empty-state-body {
+  font-size: var(--fs-body);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  margin-top: 0.25rem;
+  max-width: 30rem;
+}
+
+/* The list row, and its one overflow menu.
+
+   The redesign's third principle: a flow row used to carry seven buttons of
+   equal weight, which made the action wanted on nine visits out of ten as hard
+   to find as the one wanted twice a year. One named action, everything else
+   behind the "…".
+
+   The panel is anchored the way .bb-select-panel is and for the same reason —
+   a row sits in a scrolling container, so an absolutely positioned panel is
+   clipped by that overflow. Callers write the panel inline rather than through
+   a partial, because its contents are forms carrying their own htmx attributes
+   and no include can take a body. */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+}
+.list-row + .list-row { border-top: 1px solid var(--divider); }
+.list-row:hover { background: var(--surface-sunken); }
+.list-row-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--radius-xl);
+  background: var(--surface-page);
+  color: var(--text-tertiary);
+}
+.list-row-icon-live { background: var(--primary-tint); color: var(--brand-700); }
+.list-row-title { font-size: var(--fs-body-lg); font-weight: 600; color: var(--text-primary); }
+.list-row-meta { font-size: var(--fs-body); color: var(--text-tertiary); margin-top: 3px; }
+.list-row-figure {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.list-row-figure-label { font-size: var(--fs-xs); color: var(--text-ghost); }
+.row-menu-panel {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  min-width: 200px;
+}
+.row-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.row-menu-item:hover { background: var(--surface-page); color: var(--text-primary); }
+.row-menu-item-danger { color: var(--error-700); }
+.row-menu-item-danger:hover { background: var(--error-50); color: var(--error-700); }
+.row-menu-sep { height: 1px; margin: 4px 0; background: var(--divider); }
+
+/* Status pills, redesigned: a dot plus a word, on a tint.
+   Extends the existing .status-pill family rather than replacing it — those
+   names come from model status values and are asserted by tests. */
+.status-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+/* Health: a state in plain words, with a dot carrying the colour.
+   The dot is the fill and the text is the readable weight — the green is
+   ~2.8:1 on white and can never be the label itself. */
+.health { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-body); font-weight: 600; }
+.health-dot { width: 8px; height: 8px; flex-shrink: 0; border-radius: var(--radius-full); }
+.health-ok       { color: var(--success-700); }
+.health-ok       .health-dot { background: var(--success-500); }
+.health-bad      { color: var(--error-700); }
+.health-bad      .health-dot { background: var(--error-500); }
+.health-off      { color: var(--text-tertiary); }
+.health-off      .health-dot { background: var(--neutral-300); }
+.health-warn     { color: var(--warning-700); }
+.health-warn     .health-dot { background: var(--warning-500); }
 
 /* Focus ring utility */
 .focus-ring:focus {
@@ -481,7 +1147,7 @@ img.sidebar-logo-mark {
   font-family: var(--font-body);
   font-size: 0.9375rem;
   padding: 0.625rem 0.875rem;
-  border: 1.5px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface-0);
   color: var(--text-primary);
@@ -561,7 +1227,7 @@ img.sidebar-logo-mark {
   background: var(--surface-0);
   color: var(--text-primary);
   box-shadow: var(--shadow-xs);
-  border: 1.5px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   width: 100%;
 }
 .btn-outline:hover {
@@ -606,7 +1272,7 @@ img.sidebar-logo-mark {
   transition: all var(--dur-base) var(--ease-out);
   background: var(--surface-0);
   color: var(--text-primary);
-  border: 1.5px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   width: 100%;
   text-decoration: none;
 }
@@ -653,7 +1319,7 @@ img.sidebar-logo-mark {
   font-family: var(--font-body);
   font-size: 0.9375rem;
   padding: 0.625rem 0.875rem;
-  border: 1.5px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface-0);
   color: var(--text-primary);
@@ -788,7 +1454,7 @@ img.sidebar-logo-mark {
   font-size: 0.8125rem;
   font-weight: 500;
   padding: 0.5rem 0.75rem;
-  border: 1.5px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface-0);
   color: var(--text-primary);
@@ -1212,7 +1878,7 @@ span.flatpickr-weekday {
   transition: color var(--dur-fast) ease;
 }
 .bb-toast-dismiss:hover { color: var(--text-inverse); }
-.bb-toast-success .bb-toast-icon { color: var(--success-500); }
+.bb-toast-success .bb-toast-icon { color: var(--success-700); }
 .bb-toast-info    .bb-toast-icon { color: var(--brand-400); }
 .bb-toast-warn    .bb-toast-icon { color: var(--warning-500); }
 .bb-toast-error   { background: var(--error-700); }
@@ -1462,7 +2128,7 @@ span.flatpickr-weekday {
    ═══════════════════════════════════════════════════════════════ */
 
 #flow-builder {
-  --xy-background-color: var(--surface-1);
+  --xy-background-color: var(--surface-page);
   --xy-background-pattern-color: var(--neutral-300);
   --xy-edge-stroke: var(--border-hover);
   --xy-edge-stroke-selected: var(--primary);
@@ -1508,80 +2174,382 @@ span.flatpickr-weekday {
 .fb-toolbar {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  gap: 0.625rem;
+  padding: 0.625rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface-0);
+  font-size: var(--fs-body);
 }
 
-/* ── Palette ─────────────────────────────────────────────────── */
+/* ── Import review: one question per card ────────────────────── */
 
-.fb-palette {
-  width: 13rem;
+/* A question the import cannot proceed without. The card is tinted and ruled
+   rather than merely carrying red text, because the text was the part that was
+   easy to miss — and in one case (a platform picker with no accounts to offer)
+   it had been suppressed entirely, leaving the footer's "1 answer still
+   needed" pointing at nothing. */
+/* The border colour lives here rather than in a `style=` on the card: inline
+   wins over a class, so the unanswered state below could only have overridden
+   it with !important. */
+.import-ask {
+  border-color: var(--border);
+  scroll-margin-top: 5rem;
+}
+
+.import-ask.is-unanswered {
+  border-color: var(--error-500);
+  background: var(--error-50);
+}
+
+.import-ask-flag {
+  display: inline-block;
+  margin-right: 0.375rem;
+  padding: 0.0625rem 0.375rem;
+  border-radius: var(--radius-full);
+  background: var(--error-500);
+  color: #fff;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  vertical-align: 0.05em;
+}
+
+.import-ask-problem {
+  margin-top: 0.5rem;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--error-700);
+}
+
+.import-todo {
+  margin-top: 0.625rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--error-700);
+}
+.import-todo a { font-weight: 600; text-decoration: underline; }
+
+/* ── Left column: the step editor ────────────────────────────── */
+
+/* Replaces .fb-palette and .fb-inspector, which were one job split either side
+   of the canvas: you picked a node type on the left, it landed in the middle,
+   and you configured it on the right. Steps are added from the canvas now, so
+   this is the single place a step is read and edited. */
+.fb-editor {
+  width: 21.75rem;
   flex: 0 0 auto;
-  overflow-y: auto;
-  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--border);
   background: var(--surface-0);
 }
+.fb-editor-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem; }
 
-.fb-palette-group-label {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+.fb-editor-section { margin-top: 1.25rem; }
+.fb-editor-section:first-child { margin-top: 0; }
+
+.fb-section-label {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--text-tertiary);
-  margin: 0.75rem 0 0.375rem;
+  color: var(--text-ghost);
+  margin-bottom: 0.5rem;
 }
-.fb-palette-group-label:first-child { margin-top: 0; }
 
-.fb-palette-item {
+/* The getting-started card, shown only when a flow has neither a trigger nor a
+   step. Sunken rather than bordered: it is guidance, not a control. */
+.fb-editor-start {
+  margin-top: 1.25rem;
+  padding: 0.875rem;
+  border-radius: var(--radius-tile);
+  background: var(--surface-sunken);
+}
+.fb-editor-start-title { font-size: var(--fs-body); font-weight: 700; color: var(--text-primary); }
+.fb-editor-start-body { margin-top: 0.25rem; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-tertiary); }
+
+/* ── What starts the flow ────────────────────────────────────── */
+
+.fb-trigger-section {
+  padding: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-1);
+}
+.fb-trigger-empty { margin-top: 0.25rem; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-tertiary); }
+.fb-trigger-list { margin-top: 0.5rem; }
+.fb-trigger-row { margin-bottom: 0.5rem; }
+.fb-trigger-row:last-child { margin-bottom: 0; }
+.fb-trigger-row.is-off { opacity: 0.65; }
+.fb-trigger-name { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
+.fb-trigger-off {
+  margin-left: 0.375rem;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--warning-700);
+}
+.fb-trigger-detail { font-size: var(--fs-sm); line-height: 1.45; color: var(--text-tertiary); }
+
+/* ── The step list, and one step's header ────────────────────── */
+
+.fb-steplist-item {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  align-items: flex-start;
+  gap: 0.625rem;
   width: 100%;
-  padding: 0.375rem 0.5rem;
+  padding: 0.5rem;
   margin-bottom: 0.125rem;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-primary);
-  font-size: 0.8125rem;
   text-align: left;
-  cursor: grab;
+  cursor: pointer;
 }
-.fb-palette-item:hover { background: var(--surface-2); border-color: var(--border); }
-.fb-palette-item:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 1px; }
+.fb-steplist-item:hover { background: var(--surface-2); }
+.fb-steplist-item.is-selected { background: var(--primary-tint); border-color: var(--border); }
+.fb-steplist-item:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 1px; }
+.fb-steplist-title { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
 
-.fb-palette-swatch {
+/* The numbered circle the design puts beside every step. */
+.fb-step-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.375rem;
+  height: 1.375rem;
+  flex: 0 0 auto;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: #fff;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.fb-step-eyebrow {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--brand-700);
+}
+
+.fb-step-flag {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 0.0625rem 0.375rem;
+  border-radius: var(--radius-full);
+  background: var(--error-50);
+  color: var(--error-700);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+}
+
+.fb-step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-inner);
+}
+.fb-step-title { font-size: var(--fs-body-lg); font-weight: 700; color: var(--text-primary); }
+
+/* What is wrong with this step, at the top of it rather than behind a tab. */
+.fb-step-problems { margin-bottom: 0.75rem; }
+.fb-step-problem {
+  padding: 0.5rem 0.625rem;
+  margin-bottom: 0.375rem;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.fb-step-problem-error { background: var(--error-50); color: var(--error-700); }
+.fb-step-problem-warning { background: var(--warning-50); color: var(--warning-700); }
+
+.fb-step-delete {
+  margin-top: 1rem;
+  padding: 0.25rem 0;
+  background: none;
+  border: 0;
+  color: var(--error-700);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.fb-step-delete:hover { text-decoration: underline; }
+
+/* ── Add a step ──────────────────────────────────────────────── */
+
+.fb-canvas { position: relative; }
+
+.fb-addstep {
+  position: absolute;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.fb-addstep-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 2.5rem;
+  padding: 0 1.25rem;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: #fff;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  box-shadow: var(--shadow-primary);
+  cursor: pointer;
+}
+.fb-addstep-button:hover { background: var(--primary-hover); }
+.fb-addstep-button:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+
+.fb-addstep-menu {
+  width: 17.5rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  margin-bottom: 0.625rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-lg);
+}
+
+.fb-addstep-group {
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-ghost);
+  margin: 0.625rem 0 0.25rem 0.375rem;
+}
+.fb-addstep-group:first-child { margin-top: 0.125rem; }
+
+.fb-addstep-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4375rem 0.5rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+}
+.fb-addstep-item:hover { background: var(--surface-2); }
+.fb-addstep-item:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: -2px; }
+.fb-addstep-hint { font-size: var(--fs-2xs); color: var(--text-tertiary); }
+
+.fb-addstep-swatch {
   width: 0.5rem;
-  height: 1.25rem;
+  height: 1.5rem;
   flex: 0 0 auto;
   border-radius: var(--radius-full);
   background: var(--flow-accent);
 }
 
+/* ── Preview ─────────────────────────────────────────────────── */
+
+.fb-preview {
+  width: 18.75rem;
+  flex: 0 0 auto;
+  overflow-y: auto;
+  padding: 1rem;
+  border-left: 1px solid var(--border);
+  background: var(--surface-0);
+}
+
+.fb-phone {
+  padding: 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 1.5rem;
+  background: var(--surface-sunken);
+}
+.fb-phone-screen {
+  min-height: 16rem;
+  padding: 0.75rem;
+  border-radius: 1.125rem;
+  background: var(--surface-0);
+}
+.fb-phone-empty { font-size: var(--fs-sm); line-height: 1.5; color: var(--text-tertiary); }
+
+.fb-phone-turn { margin-bottom: 0.625rem; }
+.fb-phone-bubble {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 1rem 1rem 1rem 0.25rem;
+  background: var(--primary);
+  color: #fff;
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fb-phone-placeholder { opacity: 0.75; font-style: italic; }
+
+.fb-phone-buttons { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.375rem; }
+.fb-phone-button {
+  padding: 0.3125rem 0.625rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  color: var(--primary);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
+.fb-phone-attachment {
+  padding: 1.25rem;
+  margin-bottom: 0.625rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-tile);
+  color: var(--text-tertiary);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
+.fb-preview-note { margin-top: 0.625rem; font-size: var(--fs-2xs); line-height: 1.5; color: var(--text-tertiary); }
+.fb-preview-note code { font-size: var(--fs-2xs); }
+
 /* ── Node cards ──────────────────────────────────────────────── */
 
 .fb-node {
   width: 15rem;
+  padding: 0.875rem 1rem;
   border: 1px solid var(--border);
-  border-left: 3px solid var(--flow-accent);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-tile);
   background: var(--surface-0);
   color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
+  box-shadow: var(--shadow-xs);
 }
-.fb-node.is-selected { box-shadow: 0 0 0 2px var(--primary-ring), var(--shadow-md); }
+/* A ring, not a heavier border: the card's own outline stays put so selecting
+   one does not shift its neighbours by a pixel. */
+.fb-node.is-selected { border-color: var(--primary); box-shadow: 0 0 0 1.5px var(--primary); }
 .fb-node.is-invalid { border-color: var(--error-500); }
 
 /* Group accents. Sibling modifiers rather than utilities, because
    .fb-node already sets border-left-color and would beat one. */
-.fb-node-content { --flow-accent: var(--flow-group-content); --flow-accent-soft: var(--flow-group-content-soft); }
-.fb-node-logic   { --flow-accent: var(--flow-group-logic);   --flow-accent-soft: var(--flow-group-logic-soft); }
-.fb-node-actions { --flow-accent: var(--flow-group-actions); --flow-accent-soft: var(--flow-group-actions-soft); }
-.fb-node-other   { --flow-accent: var(--flow-group-other);   --flow-accent-soft: var(--flow-group-other-soft); }
+/* --flow-accent is the dot; --flow-ink is the eyebrow's text, which needs a
+   readable weight the dot colour does not have. The four pairs map onto the
+   four phrases in schema/plain.ts: When, Then send, If they reply, Then do. */
+.fb-node-content { --flow-accent: var(--flow-group-content); --flow-accent-soft: var(--flow-group-content-soft); --flow-ink: var(--brand-700); }
+.fb-node-logic   { --flow-accent: var(--flow-group-logic);   --flow-accent-soft: var(--flow-group-logic-soft);   --flow-ink: #3730A3; }
+.fb-node-actions { --flow-accent: var(--flow-group-actions); --flow-accent-soft: var(--flow-group-actions-soft); --flow-ink: #0F766E; }
+.fb-node-other   { --flow-accent: var(--flow-group-other);   --flow-accent-soft: var(--flow-group-other-soft);   --flow-ink: var(--text-tertiary); }
 
 /* A note is an annotation, not a step: no chrome, no handles. */
 .fb-node-note {
@@ -1591,24 +2559,47 @@ span.flatpickr-weekday {
   box-shadow: none;
 }
 
+/* The eyebrow row: a dot, the kind of step in plain words, and the entry flag.
+   No tinted bar across the top any more — four differently-tinted headers on
+   one canvas read as four unrelated components rather than four steps of one
+   flow. The colour is now one dot and one small word. */
 .fb-node-header {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  padding: 0.375rem 0.5rem;
-  background: var(--flow-accent-soft);
-  border-bottom: 1px solid var(--border);
-  font-size: 0.75rem;
-  font-weight: 600;
+  margin-bottom: 0.25rem;
+  min-height: 0.875rem;
 }
-.fb-node-body { padding: 0.5rem; font-size: 0.75rem; color: var(--text-secondary); }
+.fb-node-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--flow-ink);
+}
+.fb-node-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--flow-accent);
+  flex-shrink: 0;
+}
+.fb-node-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.fb-node-body { padding: 0.25rem 0 0; font-size: var(--fs-sm); color: var(--text-tertiary); }
 .fb-node-footer {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  padding: 0.25rem 0.5rem;
-  border-top: 1px solid var(--border);
-  font-size: 0.6875rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--divider);
+  font-size: var(--fs-2xs);
 }
 
 .fb-entry-flag {
@@ -1666,18 +2657,11 @@ span.flatpickr-weekday {
 .fb-badge-error   { background: var(--error-50);   color: var(--error-700); }
 .fb-badge-warning { background: var(--warning-50); color: var(--warning-700); }
 
-/* ── Inspector ───────────────────────────────────────────────── */
+/* ── Fields ──────────────────────────────────────────────────── */
 
-.fb-inspector {
-  width: 22rem;
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-left: 1px solid var(--border);
-  background: var(--surface-0);
-}
-.fb-inspector-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.75rem; }
+/* Shared by the step editor. The .fb-inspector shell these sat under is gone
+   with the right-hand drawer; the field classes are not, because SchemaField
+   and every widget under it were the good part and are reused unchanged. */
 
 .fb-field { margin-bottom: 0.75rem; }
 .fb-field-label {
@@ -1823,20 +2807,51 @@ span.flatpickr-weekday {
 .ib-rail-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 .ib-row {
-  display: block;
+  /* A grid rather than a block: the avatar is a column of its own now, and the
+     name, preview, meta and labels stack beside it.
+
+     `grid-auto-flow: row` with the avatar pinned to column 1 is NOT enough on
+     its own. A row's content children vary — labels render only when the
+     conversation has some — so anything that relies on the avatar spanning
+     exactly as many rows as there happen to be content children breaks the
+     moment the count changes. It did: with labels present the fifth child
+     overflowed the avatar's span and auto-placed into column 1, sliding under
+     the avatar. Every content child is pinned to column 2 below instead, which
+     is true whatever the row happens to carry. */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.75rem;
   width: 100%;
   text-align: left;
   /* The row is an <a>, and .app-content a in @layer base paints links with
      --primary. Unlayered wins, so the row keeps its own colours. */
   color: inherit;
   text-decoration: none;
-  padding: 0.625rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-0);
+  padding: 0.75rem;
+  border-radius: var(--radius-tile);
+  background: transparent;
   cursor: pointer;
 }
-.ib-row:hover { background: var(--surface-1); }
-.ib-row.is-current { background: var(--surface-2); }
+/* The avatar owns column 1 for the row's whole height; everything else owns
+   column 2, however many of them there are. */
+.ib-row > * { grid-column: 2; }
+.ib-row > .ib-row-avatar { grid-column: 1; grid-row: 1 / -1; }
+.ib-row:hover { background: var(--surface-page); }
+.ib-row.is-current { background: var(--primary-tint); }
+/* The avatar, with the channel pinned to its corner — the person is what the
+   row is about and the channel is a qualifier on them. */
+.ib-row-avatar { position: relative; display: flex; align-self: start; }
+.ib-row-channel {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--surface-0);
+  box-sizing: content-box;
+}
+.ib-row.is-current .ib-row-channel { border-color: var(--primary-tint); }
 .ib-row.is-unread .ib-row-name { font-weight: 700; color: var(--text-primary); }
 
 .ib-row-name {
@@ -2493,7 +3508,7 @@ span.flatpickr-weekday {
     font-family: var(--font-body);
     font-size: 0.875rem;
     padding: 0.5rem 0.75rem;
-    border: 1.5px solid var(--border);
+    border: 1.5px solid var(--border-strong);
     border-radius: var(--radius-lg);
     background: var(--surface-0);
     color: var(--text-primary);
@@ -2518,7 +3533,7 @@ span.flatpickr-weekday {
     font-size: 0.8125rem;
     font-weight: 600;
     padding: 0.5rem 1rem;
-    border: 1.5px solid var(--border);
+    border: 1.5px solid var(--border-strong);
     border-radius: var(--radius-full);
     background: var(--surface-0);
     color: var(--text-primary);
@@ -2603,45 +3618,62 @@ span.flatpickr-weekday {
 
 /* ── Composer step rail ─────────────────────────────────────── */
 
+/* A progress rail, not a row of pills.
+
+   The steps used to be four identical chips with only the current one tinted,
+   which said where you are but not how far along. Now the connector between
+   them fills in as they complete: a completed step is a tick, the current one
+   is its number in brand, and the rest are grey. Same four buttons, same
+   navigation — it just answers "how much is left" without being asked. */
 .bc-rail {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin-bottom: 1rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
 }
 .bc-step {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface-1);
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
+  gap: 0.5rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--fs-body-lg);
+  font-weight: 500;
   line-height: 1.4;
   white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 .bc-step:disabled { opacity: 0.55; cursor: not-allowed; }
-.bc-step-current {
-  background: var(--primary-soft);
-  border-color: var(--primary);
-  color: var(--primary);
-  font-weight: 600;
-}
-.bc-step-done { color: var(--text-primary); }
+.bc-step-current { color: var(--text-primary); font-weight: 700; }
+.bc-step-done { color: var(--text-primary); font-weight: 600; }
 .bc-step-index {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
   border-radius: var(--radius-full);
   background: var(--surface-2);
-  font-size: 0.6875rem;
-  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: var(--fs-body);
+  font-weight: 700;
 }
 .bc-step-current .bc-step-index { background: var(--primary); color: var(--text-inverse); }
+.bc-step-done .bc-step-index { background: var(--success-500); color: var(--text-inverse); }
+/* The connector. A flex-1 hairline that turns olive once the step behind it is
+   done, which is the whole "how far along am I" signal. */
+.bc-step-link {
+  flex: 1;
+  min-width: 1rem;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--border);
+}
+.bc-step-link-done { background: var(--success-500); }
 
 /* ── Panels shared by every step ────────────────────────────── */
 

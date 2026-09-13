@@ -55,6 +55,11 @@ operator table the condition engine's docstring exists to prevent.
       rules: ((config.document && config.document.rules) || []).map(hydrate),
       segmentName: '',
 
+      // The builder starts closed — it is how a segment gets made, not how a
+      // list gets read — but opens on load when the current view already has
+      // rules, so nobody is shown a filtered list with no visible reason for it.
+      showBuilder: ((config.document && config.document.rules) || []).length > 0,
+
       // --- vocabulary lookups -------------------------------------------
       sourceNamed: function (name) {
         return this.config.sources.find(function (s) { return s.name === name; });

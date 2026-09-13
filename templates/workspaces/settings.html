@@ -1,6 +1,6 @@
 {% extends "layouts/workspace_settings.html" %}
 {% block title %}Workspace settings · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Workspace settings</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title">Workspace settings</h1>{% endblock %}
 
 {% block content %}
   <form method="post" action="{% url 'workspaces:update_settings' workspace_id=request.workspace.id %}">

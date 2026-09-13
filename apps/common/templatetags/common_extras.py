@@ -61,6 +61,29 @@ def platform_ink_class(platform: Any) -> str:
     return f"pi-ink-{platform}" if platform in PLATFORMS else ""
 
 
+@register.filter
+def lines(value: Any) -> str:
+    """Join a list onto one line each, for a ``<textarea>``.
+
+    ``{{ items|join:"<newline>" }}`` cannot be written in a Django template, and
+    the way it fails is silent and expensive. Django's lexer is
+    ``re.compile(r"({%.*?%}|{{.*?}}|{#.*?#})")`` with **no** ``re.DOTALL``, so a
+    tag broken across two lines to hold a literal newline is not recognised as a
+    tag at all: it is printed as text. The comment-trigger form did exactly that
+    for four fields, so opening it pre-filled the boxes with the string
+    ``{{ config.post_ids|join:"``, and saving stored that as a post id — leaving
+    a trigger scoped to posts that do not exist, which matches nothing and says
+    nothing about why.
+
+    Non-strings are rendered with ``str`` so a list of ids reads the same as a
+    list of words. A non-list returns empty rather than its repr: this fills a
+    form field, and a stray ``None`` there would be saved back as content.
+    """
+    if isinstance(value, str) or not isinstance(value, Iterable):
+        return ""
+    return "\n".join(str(item) for item in value)
+
+
 @register.filter(is_safe=True)
 def json_attr(value: Any) -> SafeString:
     """Serialize a value as a JSON literal safe to embed in an HTML attribute.

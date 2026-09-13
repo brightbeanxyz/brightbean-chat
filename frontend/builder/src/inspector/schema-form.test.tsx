@@ -15,7 +15,7 @@ import { makeDetail, makeSampleGraph } from "../test/fixtures";
 import { makeStore, renderWith } from "../test/render";
 import { sampleConfig } from "../schema/sample";
 import { toGraph } from "../store/serialize";
-import { Inspector } from "./Inspector";
+import { StepEditor } from "../editor/StepEditor";
 import { OVERRIDES } from "./overrides";
 
 let saved: Record<string, unknown>;
@@ -47,7 +47,7 @@ function openMinimal(type: string) {
     }),
   );
   store.getState().setSelection({ nodes: ["n1"], edges: [] });
-  renderWith(store, <Inspector />);
+  renderWith(store, <StepEditor />);
   return { store, id: "n1" };
 }
 
@@ -55,19 +55,24 @@ function openNode(type: string) {
   const store = makeStore(makeDetail(makeSampleGraph({ optional: true })));
   const id = store.getState().nodeOrder.find((entry) => store.getState().nodeType[entry] === type) as string;
   store.getState().setSelection({ nodes: [id], edges: [] });
-  const view = renderWith(store, <Inspector />);
+  const view = renderWith(store, <StepEditor />);
   return { store, id, view };
 }
 
 describe("the generic renderer alone", () => {
   it.each(NODE_TYPES.map((spec) => spec.type))("renders a form for %s without any override", (type) => {
     withoutOverrides();
-    const { store, id } = openNode(type);
+    const { store, id, view } = openNode(type);
 
     // condition's config is a bare $ref and smart_delay's is a bare tagged
     // union — two of eleven with no `config.properties` at all. Both go
     // through the same dispatcher as any nested value, which is why they work.
-    expect(screen.getByText(NODE_TYPES.find((spec) => spec.type === type)?.label as string)).toBeInTheDocument();
+    //
+    // The assertion is on the editor having opened for this step, not on the
+    // registry label appearing: the step editor titles a step by its own
+    // content (editor/title.ts), because a flow with four sends was four rows
+    // reading "Send Message".
+    expect(view.container.querySelector(".fb-step-head")).not.toBeNull();
     expect(validateNode(toGraph(store.getState()).nodes.find((node) => node.id === id)).errors).toEqual([]);
   });
 
@@ -234,7 +239,7 @@ describe("the condition panel, against contract 8's real schema", () => {
       ),
     );
     store.getState().setSelection({ nodes: ["n1"], edges: [] });
-    renderWith(store, <Inspector />);
+    renderWith(store, <StepEditor />);
     fireEvent.click(screen.getByRole("button", { name: "Add to Rules" }));
 
     const key = screen.getByLabelText("Key") as HTMLSelectElement;
@@ -339,7 +344,7 @@ describe("a member id the workspace no longer has", () => {
       }),
     );
     store.getState().setSelection({ nodes: ["n1"], edges: [] });
-    renderWith(store, <Inspector />);
+    renderWith(store, <StepEditor />);
 
     const ghost = screen.getByLabelText(/who-is-this/);
     expect(ghost).toBeChecked();

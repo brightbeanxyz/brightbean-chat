@@ -280,7 +280,7 @@ register_defs(
             "unit": f.enum("minutes", "hours", "days"),
         },
         required=["enabled"],
-        description="Routes to the `timeout` handle when the wait expires (SPEC §11.1).",
+        description="Where the flow goes if nobody answers in time.",
     ),
     retry_unmatched=f.obj(
         {
@@ -409,7 +409,9 @@ for _verb_name, _verb_schema in (
             "set_field",
             {
                 "field": f.string(min_length=1, max_length=200),
-                "value": f.string(max_length=4096, description="May carry {{placeholders}} (SECURITY-BASELINE §3)."),
+                "value": f.string(
+                    max_length=4096, description="Can include {{placeholders}}, filled in when the message is sent."
+                ),
             },
             ["field", "value"],
         ),
@@ -452,8 +454,8 @@ for _verb_name, _verb_schema in (
 register_node_type(
     NodeSpec(
         type="send_message",
-        label="Send Message",
-        description="SPEC §11.1. Waits when buttons or quick replies are present, otherwise continues.",
+        label="Send a message",
+        description="Sends a message. If it offers buttons or quick replies, the flow waits for an answer.",
         group="content",
         config=f.obj(
             {
@@ -479,8 +481,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="action",
-        label="Action",
-        description="SPEC §11.2. Runs its verbs in order and always continues.",
+        label="Tag, save or assign",
+        description="Tags a contact, saves a detail, assigns the conversation. Several at once, in order.",
         group="actions",
         # The verb union is built at export time from ACTION_VERBS, so a verb a
         # later issue registers appears without this line changing.
@@ -492,8 +494,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="start_flow",
-        label="Start Flow",
-        description="SPEC §11.3. Terminal in-graph: it ends this execution and starts the target flow.",
+        label="Hand over to another flow",
+        description="Hands over to another flow. This one stops here.",
         group="logic",
         config=f.obj({"flow_id": f.string(min_length=1, max_length=64)}, required=["flow_id"]),
         handles=(),
@@ -504,8 +506,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="condition",
-        label="Condition",
-        description="SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded, not re-declared.",
+        label="Branch on a condition",
+        description="Splits the flow in two, on what you know about the contact.",
         group="logic",
         config=f.ref("condition_filter"),
         handles=("cond:true", "cond:false"),
@@ -515,8 +517,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="smart_delay",
-        label="Smart Delay",
-        description="SPEC §11.5. Schedules a resume, adjusted into the next allowed window.",
+        label="Wait",
+        description="Waits, then carries on. Picks up at the next hour you allow sending.",
         group="logic",
         # Discriminated on `mode` rather than a flat object with everything
         # optional. With only `mode` required, {"mode": "duration"} published
@@ -532,13 +534,15 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="randomizer",
-        label="Randomizer",
-        description="SPEC §11.6. Splits by weight; sticky by default, remembered in variables.",
+        label="Split the traffic",
+        description="Splits people down different paths, to compare two versions. Each person keeps the path they got.",
         group="logic",
         config=f.obj(
             {
                 "paths": f.array(f.ref("randomizer_path"), min_items=2, max_items=10),
-                "sticky": f.boolean(description="Default true (SPEC §11.6)."),
+                "sticky": f.boolean(
+                    description="On by default, so somebody who comes back takes the path they had before."
+                ),
             },
             required=["paths"],
         ),
@@ -550,11 +554,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="external_request",
-        label="External Request",
-        description=(
-            "SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard "
-            "(SECURITY-BASELINE §6); nothing in this app fetches the URL."
-        ),
+        label="Call another system",
+        description="Calls another system and can save what it sends back.",
         group="actions",
         config=f.obj(
             {
@@ -576,8 +577,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="data_collection",
-        label="Data Collection",
-        description="SPEC §11.8. Validated reply capture; email/phone answers also record consent.",
+        label="Ask a question",
+        description="Asks a question and saves the answer on the contact. Checks emails and phone numbers look real.",
         group="content",
         config=f.obj(
             {
@@ -612,8 +613,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="send_sms",
-        label="Send SMS",
-        description="SPEC §11.9. Runtime is L5-D. Needs an SMS connection and a phone identity.",
+        label="Send a text",
+        description="Sends a text message. Needs an SMS account connected and a phone number for the contact.",
         group="actions",
         config=f.obj(
             {
@@ -629,8 +630,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="send_email",
-        label="Send Email",
-        description="SPEC §11.10. Runtime is L5-E. Needs an email connection and an email identity.",
+        label="Send an email",
+        description="Sends an email. Needs an email account connected and an address for the contact.",
         group="actions",
         config=f.obj(
             {
@@ -649,8 +650,8 @@ register_node_type(
 register_node_type(
     NodeSpec(
         type="note",
-        label="Note",
-        description="SPEC §11.11. Builder-only annotation, ignored at runtime and never connected.",
+        label="Note to yourself",
+        description="A note to yourself on the canvas. It never runs and never connects to anything.",
         group="content",
         config=f.obj({"text": f.string(max_length=5000)}, required=["text"]),
         handles=(),

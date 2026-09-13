@@ -26,13 +26,40 @@ from tests.support import create_tenancy
 
 pytestmark = pytest.mark.django_db
 
-#: The three the issue asks for. Pinned by name so that deleting one is a
+#: Every template the gallery offers. Pinned by name so that deleting one is a
 #: deliberate act with a test to update rather than a directory that quietly
-#: empties.
+#: empties, and so that adding one without running the suite is not possible.
+#:
+#: Written by scripts/make_flow_templates.py, which is also where a new template
+#: is authored — the files are exported by the real exporter rather than typed,
+#: because their `requirements` manifests are derived from the graph and a
+#: hand-written one asks the importer for the wrong things.
 EXPECTED = (
+    "collect-an-email-address.json",
+    "event-reminder.json",
+    "feedback-after-a-purchase.json",
+    "first-message-welcome.json",
+    "follow-up-an-unanswered-enquiry.json",
+    "hand-over-to-a-person.json",
+    "instagram-comment-to-discount-code.json",
     "instagram-comment-to-dm-lead-magnet.json",
+    "instagram-link-in-bio-capture.json",
+    "instagram-price-question.json",
+    "instagram-story-mention-thank-you.json",
+    "instagram-story-reply-to-conversation.json",
+    "messenger-comment-to-dm.json",
+    "messenger-quote-request.json",
+    "messenger-welcome.json",
+    "out-of-hours-reply.json",
+    "sms-appointment-reminder.json",
     "sms-keyword-opt-in.json",
+    "sms-review-request.json",
+    "telegram-booking-enquiry.json",
+    "telegram-support-triage.json",
     "telegram-welcome-and-faq.json",
+    "waitlist-signup.json",
+    "whatsapp-opening-hours.json",
+    "whatsapp-order-status.json",
 )
 
 
@@ -68,9 +95,14 @@ class TestTheShippedTemplates:
         # the trigger to every platform its type supports, so nobody gets to
         # choose that by not looking. Everything *else* is answered by the
         # defaults, which is the acceptance criterion.
-        assert [r.requirement.kind for r in portability.plan_import(clean.workspace, document, mapping).unanswered] == [
-            "platform"
+        #
+        # `platform` at most once, not exactly once: a template started by `api`
+        # or `default_reply` names no channel — those types are delivered by no
+        # platform — so it has nothing left to answer at all.
+        unanswered = [
+            r.requirement.kind for r in portability.plan_import(clean.workspace, document, mapping).unanswered
         ]
+        assert set(unanswered) <= {"platform"}, unanswered
 
         answer_channels(document, mapping)
         plan = portability.plan_import(clean.workspace, document, mapping)
@@ -189,4 +221,4 @@ class TestTheValidateCommand:
 
         out = StringIO()
         call_command("validate_flow_templates", stdout=out)
-        assert "All 3 template(s) validate." in out.getvalue()
+        assert f"All {len(EXPECTED)} template(s) validate." in out.getvalue()

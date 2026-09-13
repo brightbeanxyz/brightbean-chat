@@ -16,7 +16,7 @@ import { makeStore, renderWith } from "../test/render";
 import { toGraph } from "../store/serialize";
 import { useBuilder } from "../store/context";
 import { selectRfNodes } from "../store/selectors";
-import { Inspector } from "../inspector/Inspector";
+import { StepEditor } from "../editor/StepEditor";
 
 function hundredNodes(): FlowGraph {
   const config = sampleConfig("send_message");
@@ -41,9 +41,9 @@ function CardProbe({ nodeId, onRender }: { nodeId: string; onRender: () => void 
   return null;
 }
 
-function InspectorProbe({ onRender }: { onRender: () => void }) {
+function StepEditorProbe({ onRender }: { onRender: () => void }) {
   onRender();
-  return <Inspector />;
+  return <StepEditor />;
 }
 
 describe("dragging one node in a hundred", () => {
@@ -58,7 +58,7 @@ describe("dragging one node in a hundred", () => {
     renderWith(
       store,
       <>
-        <InspectorProbe onRender={() => (inspectorRenders += 1)} />
+        <StepEditorProbe onRender={() => (inspectorRenders += 1)} />
         {Array.from({ length: 100 }, (_unused, index) => (
           <CardProbe key={index} nodeId={`n${index}`} onRender={bump(`n${index}`)} />
         ))}

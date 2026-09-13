@@ -18,7 +18,7 @@ at all — the caller has already resolved the flow through
 clause that was going to filter on the primary key anyway.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from django.db import transaction
@@ -95,7 +95,22 @@ def validate_for_workspace(
         platforms = platforms_for_flow(flow)
     else:
         platforms = connected_platforms(workspace)
-    return validate_graph(graph, platforms=platforms, known_size=known_size)
+    result = validate_graph(graph, platforms=platforms, known_size=known_size)
+    if flow is None:
+        return result
+
+    # "Is this graph well formed?" and "will anything ever reach it?" are
+    # different questions, and only the first was ever asked. A template
+    # imported into a workspace with no matching channel published clean, showed
+    # Live, and could not run. See apps/flows/triggers/readiness.py.
+    from apps.flows.triggers.readiness import readiness_warnings
+
+    ready = readiness_warnings(flow, connected=set(connected_platforms(workspace)))
+    if not ready:
+        return result
+    # A new result rather than a mutation: ValidationResult is frozen, and these
+    # go last so a capability finding about the graph still reads first.
+    return replace(result, warnings=[*result.warnings, *ready])
 
 
 def _versions(flow: Flow) -> Any:

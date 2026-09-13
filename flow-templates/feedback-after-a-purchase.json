@@ -1,0 +1,200 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "settle-default-ask",
+            "source": "settle",
+            "sourceHandle": "default",
+            "target": "ask"
+          },
+          {
+            "id": "ask-qr-good-happy",
+            "source": "ask",
+            "sourceHandle": "qr:good",
+            "target": "happy"
+          },
+          {
+            "id": "ask-qr-bad-unhappy",
+            "source": "ask",
+            "sourceHandle": "qr:bad",
+            "target": "unhappy"
+          },
+          {
+            "id": "happy-default-review",
+            "source": "happy",
+            "sourceHandle": "default",
+            "target": "review"
+          },
+          {
+            "id": "unhappy-default-fix",
+            "source": "unhappy",
+            "sourceHandle": "default",
+            "target": "fix"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "duration": {
+                "unit": "days",
+                "value": 3
+              },
+              "mode": "duration"
+            },
+            "id": "settle",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "How did you get on with your order, {{first_name}}?",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "good",
+                  "label": "All good"
+                },
+                {
+                  "id": "bad",
+                  "label": "Not quite right"
+                }
+              ]
+            },
+            "id": "ask",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Happy customer",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "happy",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "That is good to hear. A quick review would mean a lot:",
+                  "type": "text"
+                }
+              ],
+              "buttons": [
+                {
+                  "action": "url",
+                  "id": "review",
+                  "label": "Leave a review",
+                  "url": "https://example.com/review"
+                }
+              ]
+            },
+            "id": "review",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Needs a person",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "unhappy",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Sorry to hear that. Tell me what went wrong and I will get it sorted.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "fix",
+            "position": {
+              "x": 0,
+              "y": 200
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Ask how it went after a purchase",
+      "triggers": [
+        {
+          "config": {},
+          "platform": null,
+          "type": "api"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "happy customer",
+        "name": "Happy customer",
+        "used_by": [
+          "flow-1:happy"
+        ]
+      },
+      {
+        "key": "needs a person",
+        "name": "Needs a person",
+        "used_by": [
+          "flow-1:unhappy"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

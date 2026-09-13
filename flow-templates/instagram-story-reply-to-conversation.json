@@ -1,0 +1,119 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "hello-default-tag_story",
+            "source": "hello",
+            "sourceHandle": "default",
+            "target": "tag_story"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks for replying to my story!",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "buy",
+                  "label": "I want to buy"
+                },
+                {
+                  "id": "ask",
+                  "label": "I have a question"
+                }
+              ]
+            },
+            "id": "hello",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Replied to a story",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_story",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "Story replies land in the inbox as normal messages. Add your own answers under each quick reply."
+            },
+            "id": "advice",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Story reply starts a conversation",
+      "triggers": [
+        {
+          "config": {
+            "keywords": []
+          },
+          "platform": "instagram",
+          "type": "story_reply"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "replied to a story",
+        "name": "Replied to a story",
+        "used_by": [
+          "flow-1:tag_story"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

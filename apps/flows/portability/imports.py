@@ -333,9 +333,22 @@ def requirements_for(document: dict[str, Any]) -> list[Requirement]:
             )
             platform = trigger.get("platform")
             if isinstance(platform, str) and platform:
-                record("platform", platform, f"{key}:trigger-{index}", name=platform)
+                # Its proper name, not its stored value: the review page prints
+                # this as a heading, and "instagram" beside "Instagram" chips
+                # everywhere else reads as an id that leaked.
+                record("platform", platform, f"{key}:trigger-{index}", name=_platform_label(platform))
 
     return [found[identity] for identity in order]
+
+
+def _platform_label(platform: str) -> str:
+    """ "instagram" -> "Instagram". Unknown values pass through untouched."""
+    from apps.common.platforms import Platform
+
+    try:
+        return str(Platform(platform).label)
+    except ValueError:
+        return platform
 
 
 def _collector(record: Any, labels: dict[tuple[str, str], dict[str, Any]], flow_key: str, location: str | None = None):
@@ -491,7 +504,7 @@ def trigger_choices(document: dict[str, Any], mapping: dict[str, Any] | None = N
                 index=index,
                 type=str(trigger["type"]),
                 label=spec.label if spec is not None else str(trigger["type"]),
-                platform=trigger.get("platform"),
+                platform=_platform_label(str(trigger["platform"])) if trigger.get("platform") else None,
             )
             answer = answers.get(choice.key) or {}
             choice.keep = str(answer.get("action") or ACTION_KEEP) != ACTION_SKIP
@@ -559,9 +572,9 @@ def _notes(document: dict[str, Any], resolutions: list[Resolution] | None = None
         requirement = resolution.requirement
         if requirement.kind == "platform" and resolution.action == ACTION_BLANK and not resolution.problem:
             notes.append(
-                f"The {requirement.key} trigger(s) will listen on every connection their trigger type supports, "
-                f"not only {requirement.key} — that is what leaving the channel blank means (SPEC §5). "
-                f"Pick a connection to keep them where the template had them."
+                f"The {_platform_label(requirement.key)} triggers will listen on every account their kind works "
+                f"on, not only {requirement.key} — that is what leaving the channel open means. "
+                f"Pick an account to keep them where the file had them."
             )
         if requirement.kind == refs.KIND_COMMENT_POSTS and not _post_ids(resolution.literal):
             notes.append(
@@ -572,7 +585,8 @@ def _notes(document: dict[str, Any], resolutions: list[Resolution] | None = None
     stale = declared - derived
     if stale:
         notes.append(
-            f"The file's manifest lists {len(stale)} requirement(s) that nothing in it actually references. "
+            f"This file says it needs {len(stale)} thing{'' if len(stale) == 1 else 's'} that nothing in it "
+            f"actually uses. "
             f"They are ignored: what has to be supplied is worked out from the flows themselves."
         )
     return notes
@@ -629,7 +643,10 @@ def _resolve(workspace: Any, requirement: Requirement, answer: dict[str, Any]) -
             resolution.target_id = str(target[0])
             resolution.name = str(target[1])
             return resolution
-        resolution.problem = f"Pick a {requirement.key} connection, or choose to leave the trigger unbound."
+        resolution.problem = (
+            f"Pick the {_platform_label(requirement.key)} account this trigger should watch, "
+            f"or choose to let it watch them all."
+        )
         return resolution
 
     if requirement.kind in refs.STRIPPED_KINDS:

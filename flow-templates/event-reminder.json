@@ -1,0 +1,162 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "details-default-register",
+            "source": "details",
+            "sourceHandle": "default",
+            "target": "register"
+          },
+          {
+            "id": "register-default-before",
+            "source": "register",
+            "sourceHandle": "default",
+            "target": "before"
+          },
+          {
+            "id": "before-default-remind",
+            "source": "before",
+            "sourceHandle": "default",
+            "target": "remind"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "The next one is Thursday at 7pm, online and free.",
+                  "type": "text"
+                }
+              ],
+              "buttons": [
+                {
+                  "action": "url",
+                  "id": "seat",
+                  "label": "Save your seat",
+                  "url": "https://example.com/event"
+                }
+              ]
+            },
+            "id": "details",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Event: interested",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "register",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "duration": {
+                "unit": "days",
+                "value": 1
+              },
+              "mode": "duration"
+            },
+            "id": "before",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Tomorrow at 7pm, {{first_name}}. The link arrives an hour before.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "remind",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Remind people about an event",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "event"
+              },
+              {
+                "mode": "any_word",
+                "text": "webinar"
+              },
+              {
+                "mode": "any_word",
+                "text": "class"
+              }
+            ]
+          },
+          "platform": "telegram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "telegram",
+        "name": "telegram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "event: interested",
+        "name": "Event: interested",
+        "used_by": [
+          "flow-1:register"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

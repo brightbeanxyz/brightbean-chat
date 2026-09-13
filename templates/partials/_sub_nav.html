@@ -1,0 +1,17 @@
+{% comment %}
+The tab strip under the app header.
+
+Used by the automations section, where Flows, Sequences and Templates are three
+views of one job and used to be three separate rail rows. Rendered through the
+same nav data as everything else, so "which tab am I on" stays the one
+convention resolved in NavItem.resolved() rather than a fourth.
+
+Args:
+  groups: rendered nav groups — flow_tab_groups, for now the only caller.
+{% endcomment %}
+<nav class="subnav" aria-label="Section">
+    {% for group in groups %}{% for item in group.items %}
+    <a href="{{ item.url }}" class="subnav-item{% if item.active %} active{% endif %}"
+       {% if item.active %}aria-current="page"{% endif %}>{{ item.label }}</a>
+    {% endfor %}{% endfor %}
+</nav>

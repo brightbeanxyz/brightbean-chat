@@ -7,9 +7,9 @@
       "graph": {
         "edges": [
           {
-            "id": "deliver-qr-more-ask_email",
+            "id": "deliver-default-ask_email",
             "source": "deliver",
-            "sourceHandle": "qr:more",
+            "sourceHandle": "default",
             "target": "ask_email"
           },
           {
@@ -23,6 +23,12 @@
             "source": "tag_lead",
             "sourceHandle": "default",
             "target": "thanks"
+          },
+          {
+            "id": "ask_email-timeout-thanks",
+            "source": "ask_email",
+            "sourceHandle": "timeout",
+            "target": "thanks"
           }
         ],
         "nodes": [
@@ -32,21 +38,14 @@
                 {
                   "text": "Thanks for commenting! Here is the guide I promised.",
                   "type": "text"
-                },
-                {
-                  "subtitle": "Everything in one PDF.",
-                  "title": "The starter guide",
-                  "type": "card",
-                  "url_button": {
-                    "label": "Open the guide",
-                    "url": "https://example.com/guide"
-                  }
                 }
               ],
-              "quick_replies": [
+              "buttons": [
                 {
-                  "id": "more",
-                  "label": "Send me more like this"
+                  "action": "url",
+                  "id": "guide",
+                  "label": "Open the guide",
+                  "url": "https://example.com/guide"
                 }
               ]
             },
@@ -59,18 +58,17 @@
           },
           {
             "config": {
-              "question": "Where should I send the next one? Reply with your email address.",
+              "question": "Want the follow-up tips by email? Send your email address, or say no thanks.",
               "reply_type": "email",
               "retry": {
-                "invalid_text": "That does not look like an email address - try again?",
-                "max": 2
+                "max": 1
               },
               "target": {
                 "key": "email",
                 "type": "system_field"
               },
               "timeout": {
-                "delay": 2,
+                "delay": 1,
                 "enabled": true,
                 "unit": "days"
               }
@@ -88,6 +86,11 @@
                 {
                   "tag": "Lead magnet",
                   "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "Instagram comment",
+                  "verb": "set_field"
                 }
               ]
             },
@@ -122,19 +125,18 @@
       "triggers": [
         {
           "config": {
+            "exclude_keywords": [],
             "include_keywords": [
               "guide",
-              "send me"
+              "GUIDE"
             ],
-            "like_comment": true,
+            "like_comment": false,
             "once_per_contact_per_post": true,
+            "post_ids": [],
             "post_scope": "all",
             "public_reply": {
-              "mode": "random",
-              "texts": [
-                "Just sent it over!",
-                "Check your DMs."
-              ]
+              "mode": "none",
+              "texts": []
             },
             "top_level_only": true
           },
@@ -146,8 +148,23 @@
   ],
   "format": 1,
   "requirements": {
-    "comment_posts": [],
-    "custom_field": [],
+    "comment_posts": [
+      {
+        "key": "flow-1:trigger-0",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "custom_field": [
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:tag_lead"
+        ]
+      }
+    ],
     "flow": [],
     "from_override": [],
     "link_handle": [],

@@ -1,0 +1,101 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "remind-default-hold",
+            "source": "remind",
+            "sourceHandle": "default",
+            "target": "hold"
+          },
+          {
+            "id": "hold-default-day_of",
+            "source": "hold",
+            "sourceHandle": "default",
+            "target": "day_of"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Reminder: your appointment is tomorrow at {{Preferred time}}.\nReply R to reschedule or C to cancel.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "remind",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "duration": {
+                "unit": "hours",
+                "value": 20
+              },
+              "mode": "duration"
+            },
+            "id": "hold",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "See you today, {{first_name}}. Reply here if anything changes.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "day_of",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Remind someone of an appointment",
+      "triggers": [
+        {
+          "config": {},
+          "platform": null,
+          "type": "api"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}
