@@ -52,14 +52,19 @@ def _usage_rows(usage: Any) -> list[dict[str, Any]]:
     line here rather than a block there.
     """
     rows = [
-        ("Contacts reached this month", usage.active_contacts, usage.active_contacts_limit),
-        ("Channels connected", usage.channels, usage.channels_limit),
-        ("Active automations", usage.automations, usage.automations_limit),
-        ("Users", usage.seats, usage.seats_limit),
-        ("Workspaces", usage.workspaces, usage.workspaces_limit),
+        # The glyph names are apps/common/context_processors' existing
+        # vocabulary, rendered by templates/partials/_nav_icon.html. Reusing
+        # them rather than inventing five more means a nav icon and a usage icon
+        # for the same thing can never drift apart.
+        ("contacts", "Contacts reached this month", usage.active_contacts, usage.active_contacts_limit),
+        ("channels", "Channels connected", usage.channels, usage.channels_limit),
+        ("flows", "Active automations", usage.automations, usage.automations_limit),
+        ("users", "Users", usage.seats, usage.seats_limit),
+        ("grid", "Workspaces", usage.workspaces, usage.workspaces_limit),
     ]
     return [
         {
+            "icon": icon,
             "label": label,
             "used": used,
             "limit": limit,
@@ -72,7 +77,7 @@ def _usage_rows(usage: Any) -> list[dict[str, Any]]:
             "near_limit": limit is not None and limit > 1 and limit * 0.8 <= used < limit,
             "at_limit": limit is not None and limit > 1 and used >= limit,
         }
-        for label, used, limit in rows
+        for icon, label, used, limit in rows
     ]
 
 

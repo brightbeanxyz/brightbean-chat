@@ -93,6 +93,25 @@ LIMITS_BY_PLAN: dict[str, Limits] = {
 
 
 @dataclass(frozen=True)
+class Feature:
+    """One bullet, and the glyph that stands for it.
+
+    ``icon`` is a name from ``templates/partials/_nav_icon.html``'s vocabulary —
+    the same one the sidebar draws from. Reusing it rather than inventing a
+    second set means the glyph beside "Connect 2 channels" is the glyph on the
+    Channels nav row, which is the whole value of a glyph: it is recognised
+    before it is read.
+
+    ``apps/billing/tests/test_billing_page.py`` asserts every name here is one
+    that partial actually draws, because an unknown name renders a neutral dot
+    rather than failing — kind in a nav row, invisible here.
+    """
+
+    icon: str
+    text: str
+
+
+@dataclass(frozen=True)
 class PlanCopy:
     """The English for one column of the comparison table."""
 
@@ -100,7 +119,11 @@ class PlanCopy:
     name: str
     tagline: str
     price_note: str
-    features: tuple[str, ...]
+    features: tuple[Feature, ...]
+    # The Pro column carries the product mark. Only one plan is being sold, and
+    # the emblem is what makes the column read as the thing on offer rather than
+    # as the right-hand half of a table.
+    show_logo: bool = False
 
 
 #: The feature bullets, in the same order in both columns so a reader can scan
@@ -115,12 +138,12 @@ PLAN_COPY: tuple[PlanCopy, ...] = (
         tagline="Everything you need to try it properly.",
         price_note="Free forever",
         features=(
-            "25 contacts a month",
-            "Connect 2 channels",
-            "4 active automations",
-            "1 user",
-            "Shared inbox, labels and reminders",
-            "Contacts, tags and segments",
+            Feature("contacts", "25 contacts a month"),
+            Feature("channels", "Connect 2 channels"),
+            Feature("flows", "4 active automations"),
+            Feature("user", "1 user"),
+            Feature("inbox", "Shared inbox, labels and reminders"),
+            Feature("tag", "Contacts, tags and segments"),
         ),
     ),
     PlanCopy(
@@ -129,13 +152,15 @@ PLAN_COPY: tuple[PlanCopy, ...] = (
         tagline="Everything, with nothing counted.",
         price_note="Billed monthly or yearly",
         features=(
-            "Unlimited contacts",
-            "Every channel",
-            "Unlimited automations and sequences",
-            "Unlimited users",
-            "Shared inbox, labels and reminders",
-            "Contacts, tags and segments",
-            "Public API and outbound webhooks",
+            Feature("contacts", "Unlimited contacts"),
+            Feature("channels", "Every channel"),
+            Feature("flows", "Unlimited automations"),
+            Feature("sequences", "Unlimited sequences and broadcasts"),
+            Feature("users", "Unlimited users"),
+            Feature("inbox", "Shared inbox, labels and reminders"),
+            Feature("tag", "Contacts, tags and segments"),
+            Feature("key", "Public API and outbound webhooks"),
         ),
+        show_logo=True,
     ),
 )

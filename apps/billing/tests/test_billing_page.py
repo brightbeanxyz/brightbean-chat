@@ -9,6 +9,7 @@ restricted plan when they are not.
 """
 
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -60,7 +61,7 @@ class TestSelfHosted:
 
         text = body(client_for(tenancy.owner).get(URL))
 
-        assert "Subscribe monthly" not in text
+        assert ">Subscribe<" not in text
         assert "Current plan" not in text
         assert "Self-hosted" in text
 
@@ -93,12 +94,29 @@ class TestOnTheFreePlan:
         assert "Current plan" in text
         assert text.index("Free") < text.index("Current plan")
 
-    def test_subscribe_is_offered_for_both_intervals(self, client_for: Any, tenancy: Any) -> None:
+    def test_there_is_one_subscribe_button(self, client_for: Any, tenancy: Any) -> None:
+        """One call to action, not one per interval."""
         text = body(client_for(tenancy.owner).get(URL))
 
-        assert "Subscribe monthly" in text
-        assert "Subscribe yearly" in text
+        assert text.count(">Subscribe<") == 1
         assert 'action="/organization/billing/checkout/"' in text
+
+    def test_both_intervals_are_still_reachable(self, client_for: Any, tenancy: Any) -> None:
+        """The interval moved into a segmented control rather than being
+        dropped — a yearly price nobody can select is a price that does not
+        exist."""
+        text = body(client_for(tenancy.owner).get(URL))
+
+        assert 'value="monthly"' in text
+        assert 'value="yearly"' in text
+
+    def test_monthly_is_preselected(self, client_for: Any, tenancy: Any) -> None:
+        """Posting the form untouched has to carry an interval, or the view
+        refuses it against its own allowlist."""
+        text = body(client_for(tenancy.owner).get(URL))
+        monthly = text.index('value="monthly"')
+
+        assert "checked" in text[monthly : monthly + 60]
 
     def test_manage_billing_is_not_offered(self, client_for: Any, tenancy: Any) -> None:
         assert "Manage billing" not in body(client_for(tenancy.owner).get(URL))
@@ -118,7 +136,7 @@ class TestOnThePaidPlan:
 
         assert "Manage billing" in text
         assert 'action="/organization/billing/portal/"' in text
-        assert "Subscribe monthly" not in text
+        assert ">Subscribe<" not in text
 
     def test_the_renewal_date_is_shown(self, client_for: Any, tenancy: Any) -> None:
         paid(tenancy, current_period_end=timezone.now() + timedelta(days=20))
@@ -158,7 +176,7 @@ class TestComingBackFromCheckout:
         text = body(client_for(tenancy.owner).get(URL + "?checkout=success"))
 
         assert "Manage billing" not in text
-        assert "Subscribe monthly" in text
+        assert ">Subscribe<" in text
 
     def test_a_stale_pending_checkout_stops_claiming_anything(self, client_for: Any, tenancy: Any) -> None:
         """Past the point a webhook was ever likely, the reconcile job owns it
@@ -184,7 +202,7 @@ class TestWhoCanSeeWhat:
     def test_an_ordinary_member_gets_no_controls(self, client_for: Any, tenancy: Any) -> None:
         text = body(client_for(tenancy.user_for("agent")).get(URL))
 
-        assert "Subscribe monthly" not in text
+        assert ">Subscribe<" not in text
         assert "Only organization admins" in text
 
     def test_anonymous_is_sent_to_login(self, client: Any) -> None:
@@ -236,6 +254,60 @@ class TestTheUsageColouring:
         rows = billing_context(tenancy.organization)["usage_rows"]
 
         assert all(row["at_limit"] is False and row["near_limit"] is False for row in rows)
+
+
+@pytest.mark.usefixtures("stripe_on")
+class TestTheIcons:
+    """Every glyph the page asks for is one the partial actually draws.
+
+    ``templates/partials/_nav_icon.html`` renders a neutral dot for a name it
+    does not recognise — deliberately, so a mistyped nav key is visible rather
+    than collapsing a row. On this page that same kindness is a trap: five
+    usage rows quietly drawing dots looks like a design choice, not a bug, and
+    nothing else would ever fail.
+    """
+
+    @staticmethod
+    def known_icon_names() -> set[str]:
+        import re
+
+        source = (Path(__file__).resolve().parents[3] / "templates/partials/_nav_icon.html").read_text()
+        return set(re.findall(r'name == "([a-z_]+)"', source))
+
+    def test_every_usage_row_names_a_glyph_the_partial_draws(self, tenancy: Any) -> None:
+        from apps.billing.selectors import billing_context
+
+        known = self.known_icon_names()
+        assert known, "the icon partial was parsed but yielded no names"
+
+        for row in billing_context(tenancy.organization)["usage_rows"]:
+            assert row["icon"] in known, f"{row['label']!r} asks for a glyph the partial does not draw"
+
+    def test_every_plan_feature_names_a_glyph_the_partial_draws(self) -> None:
+        """Same trap, on the column that is being sold: eight features quietly
+        drawing identical dots looks deliberate."""
+        from apps.billing.plans import PLAN_COPY
+
+        known = self.known_icon_names()
+
+        for card in PLAN_COPY:
+            for feature in card.features:
+                assert feature.icon in known, f"{card.name}/{feature.text!r} asks for a glyph that is not drawn"
+
+    def test_only_the_paid_column_carries_the_logo(self) -> None:
+        """The mark is what makes one column read as the thing on offer. On both
+        it would mean nothing."""
+        from apps.billing.plans import PLAN_COPY
+
+        assert [card.key for card in PLAN_COPY if card.show_logo] == ["paid"]
+
+    def test_the_rendered_page_draws_one_glyph_per_usage_row(self, client_for: Any, tenancy: Any) -> None:
+        """The end of the chain: names resolve, and the SVGs reach the HTML."""
+        text = body(client_for(tenancy.owner).get(URL))
+
+        assert text.count('class="plan-usage-icon"') == 5
+        # Six Free features plus seven Pro ones, each with a check.
+        assert text.count("plan-card-features") >= 2
 
 
 class TestTheNavRow:

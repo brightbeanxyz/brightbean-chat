@@ -1,4 +1,5 @@
 {% extends "layouts/settings.html" %}
+{% load static %}
 {% block title %}Plan &amp; billing · BrightBean Chat{% endblock %}
 {% block page_header %}<h1>Plan &amp; billing</h1>{% endblock %}
 
@@ -16,7 +17,12 @@
       {% for card in plans %}
         <div class="plan-card{% if card.key == plan %} plan-card-current{% endif %}">
           <div class="plan-card-head">
-            <span class="plan-card-name">{{ card.name }}</span>
+            <span class="plan-card-title">
+              {% if card.show_logo %}
+                <img src="{% static 'img/brightbean-logo.webp' %}" alt="" class="plan-card-logo" />
+              {% endif %}
+              <span class="plan-card-name">{{ card.name }}</span>
+            </span>
             {% if card.key == plan %}
               <span class="status-pill status-pill-{{ card.key }}">Current plan</span>
             {% endif %}
@@ -24,40 +30,55 @@
           <p class="plan-card-tagline">{{ card.tagline }}</p>
           <p class="plan-card-price">{{ card.price_note }}</p>
 
-          <ul class="plan-card-features">
-            {% for feature in card.features %}<li>{{ feature }}</li>{% endfor %}
-          </ul>
+          {% comment %}
+            The call to action sits above the feature list. Somebody who already
+            knows they want the plan should not have to travel the whole list to
+            act, and both columns then start their bullets at the same height
+            whatever each one offers.
 
-          <div class="plan-card-actions">
-            {% if card.key == plan %}
-              {% if can_manage_billing and can_manage %}
-                {% comment %}
-                  The Customer Portal. A plain POST, not a link: it mints a
-                  single-use session server-side, and CSP is form-action 'self'
-                  so the form could not point at Stripe even if we wanted it to.
-                {% endcomment %}
-                <form method="post" action="{% url 'billing:portal' %}">
-                  {% csrf_token %}
-                  <button type="submit" class="btn-outline btn-inline">Manage billing</button>
-                </form>
-              {% endif %}
-            {% elif card.key == "paid" and can_manage %}
+            Rendered only when there is something to put in it: Django leaves
+            the whitespace inside a block like this, so an empty div is not
+            `:empty` and a CSS rule could not collapse the gap.
+          {% endcomment %}
+          {% if card.key == plan and can_manage_billing and can_manage %}
+            <div class="plan-card-actions">
               {% comment %}
-                Two submit buttons in one form. The interval travels as the
-                button's own value and is validated against a two-element
-                allowlist server-side; there is deliberately no price field.
+                The Customer Portal. A plain POST, not a link: it mints a
+                single-use session server-side, and CSP is form-action 'self' so
+                the form could not point at Stripe even if we wanted it to.
+              {% endcomment %}
+              <form method="post" action="{% url 'billing:portal' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn-brand-outline">Manage billing</button>
+              </form>
+            </div>
+          {% elif card.key == "paid" and card.key != plan and can_manage %}
+            <div class="plan-card-actions">
+              {% comment %}
+                One call to action. The interval is a segmented control rather
+                than a second button: its value posts with the form and the view
+                validates it against the same two-element allowlist it always
+                did, so this is presentation and not a new input to trust.
               {% endcomment %}
               <form method="post" action="{% url 'billing:checkout' %}">
                 {% csrf_token %}
-                <button type="submit" name="interval" value="monthly" class="btn-brand btn-inline">
-                  Subscribe monthly
-                </button>
-                <button type="submit" name="interval" value="yearly" class="btn-outline btn-inline">
-                  Subscribe yearly
-                </button>
+                <fieldset class="plan-interval">
+                  <legend class="sr-only">Billing interval</legend>
+                  <input type="radio" name="interval" id="interval-monthly" value="monthly" checked />
+                  <label for="interval-monthly">Monthly</label>
+                  <input type="radio" name="interval" id="interval-yearly" value="yearly" />
+                  <label for="interval-yearly">Yearly</label>
+                </fieldset>
+                <button type="submit" class="btn-brand">Subscribe</button>
               </form>
-            {% endif %}
-          </div>
+            </div>
+          {% endif %}
+
+          <ul class="plan-card-features">
+            {% for feature in card.features %}
+              <li>{% include "partials/_nav_icon.html" with name=feature.icon %}<span>{{ feature.text }}</span></li>
+            {% endfor %}
+          </ul>
         </div>
       {% endfor %}
     </div>
@@ -82,7 +103,7 @@
       limits are fiction on a box that has no limits is the one thing the
       promise in docs/SPEC.md §1.1 actually forbids.
     {% endcomment %}
-    <div class="crm-panel mb-4">
+    <div class="crm-panel plan-panel mb-4">
       <h2>Self-hosted</h2>
       <p>
         Every feature is available, with no limits and nothing counted. There is no plan to be on and no
@@ -91,11 +112,12 @@
     </div>
   {% endif %}
 
-  <div class="crm-panel">
+  <div class="crm-panel plan-panel">
     <h2>Usage</h2>
     <table class="plan-usage">
       {% for row in usage_rows %}
         <tr class="{% if row.at_limit %}plan-usage-at{% elif row.near_limit %}plan-usage-near{% endif %}">
+          <td class="plan-usage-icon">{% include "partials/_nav_icon.html" with name=row.icon %}</td>
           <td>{{ row.label }}</td>
           <td class="plan-usage-figure">
             {% if row.limit is None %}{{ row.used }}{% else %}{{ row.used }} of {{ row.limit }}{% endif %}
