@@ -887,9 +887,7 @@ STRIPE_EVENT_LOG_RETENTION_DAYS = env.int("STRIPE_EVENT_LOG_RETENTION_DAYS", def
 # independently (apps/billing/views_webhooks.py) — two switches, each guarding
 # only what it can actually do, and apps/billing/checks.py warns at boot when
 # only one of them is thrown.
-STRIPE_ENABLED = bool(
-    STRIPE_SECRET_KEY.strip() and STRIPE_PRICE_ID_MONTHLY.strip() and STRIPE_PRICE_ID_YEARLY.strip()
-)
+STRIPE_ENABLED = bool(STRIPE_SECRET_KEY.strip() and STRIPE_PRICE_ID_MONTHLY.strip() and STRIPE_PRICE_ID_YEARLY.strip())
 
 # Sentry. Configured through apps.common.sentry so error reports get the same
 # credential scrubbing as logs — Sentry builds events from exception objects
