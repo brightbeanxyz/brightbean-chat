@@ -221,7 +221,15 @@ def _apply_subscription(event_type: str, event: dict[str, Any], subscription: di
         logger.info("Ignoring out-of-order Stripe event %s for %s", event.get("id"), row.stripe_customer_id)
         return row
 
-    if event_type == "customer.subscription.deleted":
+    _write_subscription(row, subscription, deleted=event_type == "customer.subscription.deleted")
+    row.last_event_at = created or timezone.now()
+    row.save()
+    return row
+
+
+def _write_subscription(row: BillingCustomer, subscription: dict[str, Any], *, deleted: bool) -> None:
+    """Copy a subscription's state onto the row. Does not save."""
+    if deleted:
         row.status = "canceled"
         row.stripe_subscription_id = ""
         row.cancel_at_period_end = False
@@ -230,12 +238,32 @@ def _apply_subscription(event_type: str, event: dict[str, Any], subscription: di
         row.stripe_subscription_id = str(subscription.get("id") or "")
         row.cancel_at_period_end = bool(subscription.get("cancel_at_period_end"))
         row.price_id = _price_id(subscription)
-
     row.current_period_end = _period_end(subscription)
     row.checkout_pending_since = None
-    row.last_event_at = created or timezone.now()
+
+
+def apply_snapshot(row: BillingCustomer, subscription: dict[str, Any] | None) -> None:
+    """Apply a subscription read directly from Stripe, and save.
+
+    Deliberately skips the ``last_event_at`` ordering guard that
+    :func:`_apply_subscription` applies. That guard exists because *events*
+    arrive out of order; a snapshot is a direct read of what is true right now,
+    so it is never stale and must be able to correct a row that a lost event
+    left wrong. It does not advance ``last_event_at`` either — a later event
+    that genuinely is newer than the last one seen should still apply.
+
+    ``None`` means the customer has no subscription at all, which is what a
+    checkout that was abandoned after the session was created looks like.
+    """
+    if subscription is None:
+        row.status = STATUS_NONE
+        row.stripe_subscription_id = ""
+        row.cancel_at_period_end = False
+        row.current_period_end = None
+        row.checkout_pending_since = None
+    else:
+        _write_subscription(row, subscription, deleted=False)
     row.save()
-    return row
 
 
 def _customer_for(customer_id: str) -> BillingCustomer | None:

@@ -93,6 +93,12 @@ urlpatterns = [
     *[_stub(*stub) for stub in _GLOBAL_STUBS],
     path("accounts/", include("allauth.urls")),
     # Org-scoped management. One org per user in v1, so no id in the URL.
+    # Billing's two writes (start a subscription, open the portal). Mounted
+    # before the organization include below so the deeper prefix is tried first,
+    # the convention this file already states for the workspace mounts. The
+    # billing PAGE is organizations:billing and stays there — this app owns only
+    # the POSTs and the webhook. Both 404 when Stripe is unconfigured.
+    path("organization/billing/", include("apps.billing.urls")),
     path("organization/", include("apps.organizations.urls")),
     path("organization/members/", include("apps.members.urls")),
     # API keys are org-tier (SPEC §4.1: they span every workspace in the org).
