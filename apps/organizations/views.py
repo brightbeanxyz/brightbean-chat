@@ -77,6 +77,34 @@ def workspaces_view(request: OrgRequest) -> HttpResponse:
 
 
 @login_required
+@require_org_role("member")
+@require_GET
+def billing_view(request: OrgRequest) -> HttpResponse:
+    """Plan and billing.
+
+    ``member``, not ``admin``: everybody in the organization can see which plan
+    they are on and how much of it is used. Only an admin gets the Subscribe and
+    Manage billing controls, and those are the POSTs in ``apps.billing.views``,
+    which gate themselves.
+
+    **Always 200, including on a deployment with no Stripe.** The usage figures
+    come from the same models everything else reads, and "how many people did we
+    talk to this month" is worth answering whether or not anybody is selling
+    anything. What an unconfigured deployment does not get is the plan
+    comparison — see the template.
+
+    Usage is counted across the organization's workspaces rather than the
+    current one: a plan is bought by an organization, and a per-workspace figure
+    on a page headed "Plan" would be the wrong denominator.
+    """
+    from apps.billing.selectors import billing_context
+
+    context: dict[str, Any] = {"can_manage": _can_manage(request)}
+    context.update(billing_context(request.org, checkout=request.GET.get("checkout", "")))
+    return render(request, "organizations/billing.html", context)
+
+
+@login_required
 @require_org_role("admin")
 @require_POST
 def create_workspace(request: OrgRequest) -> HttpResponse:
