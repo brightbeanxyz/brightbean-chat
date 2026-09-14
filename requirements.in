@@ -22,7 +22,7 @@
 # Core
 Django==5.2.17            # 5.2 is the LTS line (security fixes through Apr 2028)
 django-environ==0.14.0
-psycopg[binary]==3.3.4     # psycopg 3; Postgres is the only datastore (SPEC §2)
+psycopg[binary]==3.3.5     # psycopg 3; Postgres is the only datastore (SPEC §2)
 gunicorn==26.1.0
 
 # Security
