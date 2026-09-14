@@ -10,13 +10,13 @@ This page is for an operator running BrightBean Chat as a paid service.
 
 ## What it does
 
-Two plans. **Free** carries the limits below; **Pro** carries none. A customer
-subscribes through Stripe's hosted Checkout and manages the subscription through
-Stripe's Customer Portal. Nothing about cards, addresses or invoices is stored
-here — the only Stripe data in the database is a customer id, a subscription id
-and its status.
+Two plans. **Free** carries the limits below; **Pro Chat** carries none. A
+customer subscribes through Stripe's hosted Checkout and manages the
+subscription through Stripe's Customer Portal. Nothing about cards, addresses or
+invoices is stored here — the only Stripe data in the database is a customer id,
+a subscription id and its status.
 
-| Free | Pro |
+| Free | Pro Chat |
 |---|---|
 | 25 contacts reached per month | unlimited |
 | 2 channel connections | unlimited |
@@ -59,7 +59,9 @@ and GDPR erasure keep working regardless.
 
 Nothing here creates these for you.
 
-1. A **product** for the paid plan.
+1. A **product** for the paid plan, named **Pro Chat** — the name and description
+   you give it are what a customer sees at Checkout, on the invoice and in the
+   portal, so they have to match the billing page.
 2. Two **prices** on it: one monthly, one yearly. Note both price ids (`price_…`).
 3. A **Customer Portal configuration** (Settings → Billing → Customer portal).
    Note its id (`bpc_…`). Decide there what customers may do — change plan,
@@ -105,9 +107,10 @@ python manage.py check
 `billing.W002` means nothing will hear back from Stripe: a customer can complete
 checkout and stay on the free plan.
 
-Then walk it in test mode: subscribe, land back on the billing page showing Pro,
-open Manage billing, cancel, and confirm the page shows the end date. Finally set
-`STRIPE_SECRET_KEY=` empty and confirm the product is unlimited again.
+Then walk it in test mode: subscribe, land back on the billing page showing
+Pro Chat, open Manage billing, cancel, and confirm the page shows the end date.
+Finally set `STRIPE_SECRET_KEY=` empty and confirm the product is unlimited
+again.
 
 ## Switching billing on for an existing deployment
 
