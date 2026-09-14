@@ -59,7 +59,7 @@ boto3==1.43.78
 sentry-sdk[django]==2.68.1
 
 # Auth
-django-allauth[socialaccount]==65.19.1   # 65.x API: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS
+django-allauth[socialaccount]==65.19.2   # 65.x API: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS
 bcrypt==5.0.0             # BCryptSHA256PasswordHasher's runtime dep; Django does not declare it
 
 # QR codes for ref-URL triggers (issue #11, SPEC §21 phase 2). Pure Python with
