@@ -135,7 +135,18 @@ def set_status(sequence: Sequence, *, status: str) -> Sequence:
     if status == SequenceStatus.ACTIVE and sequence.status != SequenceStatus.ACTIVE:
         # Only the transition INTO active spends a slot; re-saving a live
         # sequence must not be refused because it is already counted.
-        _check_plan_allows_activation(sequence)
+        #
+        # The write is inside the lock, not after it: the count and the status
+        # change have to be one critical section or two activations at once both
+        # read `limit - 1`.
+        from apps.billing.entitlements import organization_locked
+
+        with organization_locked(sequence.workspace.organization):
+            _check_plan_allows_activation(sequence)
+            sequence.status = status
+            sequence.save(update_fields=["status", "updated_at"])
+        return sequence
+
     sequence.status = status
     sequence.save(update_fields=["status", "updated_at"])
     return sequence
@@ -519,15 +530,9 @@ def _check_plan_allows_activation(sequence: Sequence) -> None:
     caller of this module already has; a ``PlanLimitError`` escaping would be a
     500 rather than a message.
     """
-    from apps.billing.entitlements import (
-        PlanLimitError,
-        check_can_activate_automation,
-        organization_locked,
-    )
+    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation
 
-    organization = sequence.workspace.organization
     try:
-        with organization_locked(organization):
-            check_can_activate_automation(organization)
+        check_can_activate_automation(sequence.workspace.organization)
     except PlanLimitError as exc:
         raise CampaignsError(str(exc)) from exc

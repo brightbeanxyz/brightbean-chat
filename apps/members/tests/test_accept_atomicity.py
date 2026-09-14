@@ -25,13 +25,18 @@ pytestmark = pytest.mark.django_db
 class TestItRunsInATransaction:
     def test_the_decorator_is_on_accept_invitation_itself(self) -> None:
         """The exact failure that happened: a decorator separated from its
-        function by an insertion, which reads as fine in a diff."""
-        source = inspect.getsource(services)
-        index = source.index("def accept_invitation(")
-        preceding = source[:index].rstrip().splitlines()[-1].strip()
+        function by an insertion, which reads as fine in a diff.
 
-        assert preceding == "@transaction.atomic", (
-            f"accept_invitation is preceded by {preceding!r}, not its @transaction.atomic decorator"
+        Anchored on the function object rather than a text search of the module:
+        ``source.index("def accept_invitation(")`` finds the first *textual*
+        match, so a docstring mentioning the signature would silently move the
+        assertion onto an unrelated line.
+        """
+        source = inspect.getsource(services.accept_invitation)
+        first = source.splitlines()[0].strip()
+
+        assert first == "@transaction.atomic", (
+            f"accept_invitation begins with {first!r}, not its @transaction.atomic decorator"
         )
 
     def test_the_body_really_runs_inside_an_atomic_block(self, tenancy: Any, user: Any, monkeypatch: Any) -> None:

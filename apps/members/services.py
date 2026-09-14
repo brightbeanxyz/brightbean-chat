@@ -206,7 +206,6 @@ def create_invitation(
     # checked at creation rather than only at acceptance: otherwise an
     # organization at its limit sends ten invitations, every one of them passes,
     # and who gets the seat is decided by who clicks first.
-    _check_plan_allows_seat(org)
 
     if OrgMembership.objects.filter(organization=org, user__email__iexact=email).exists():
         raise MembershipError("This person is already a member of your organization.")
@@ -245,7 +244,18 @@ def create_invitation(
         expires_at=timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS),
     )
     token = invitation.issue_token()
-    invitation.save()
+
+    # The seat count and the insert are one critical section — a lock released
+    # when the check returns serialises nothing (see
+    # apps/billing/entitlements.organization_locked). The email is deliberately
+    # outside it: holding a database lock across an SMTP round trip is the
+    # pattern apps/channels/views_messenger.py documents avoiding.
+    from apps.billing.entitlements import organization_locked
+
+    with organization_locked(org):
+        _check_plan_allows_seat(org)
+        invitation.save()
+
     send_invite_email(invitation, token)
     return invitation
 
@@ -343,11 +353,10 @@ def _check_plan_allows_seat(org: Any, *, excluding_invitation: Any = None) -> No
     Re-raised as ``MembershipError`` so it reaches the ``except`` clause the
     members views already have.
     """
-    from apps.billing.entitlements import PlanLimitError, check_can_add_seat, organization_locked
+    from apps.billing.entitlements import PlanLimitError, check_can_add_seat
 
     try:
-        with organization_locked(org):
-            check_can_add_seat(org, excluding_invitation=excluding_invitation)
+        check_can_add_seat(org, excluding_invitation=excluding_invitation)
     except PlanLimitError as exc:
         raise MembershipError(str(exc)) from exc
 

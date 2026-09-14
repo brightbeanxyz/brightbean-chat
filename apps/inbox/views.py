@@ -35,6 +35,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.billing.entitlements import organization_locked
 from apps.channels.capabilities import capabilities_for
 from apps.channels.events import MediaBlock, OutboundMessage, TextBlock
 from apps.channels.media import MEDIA_CACHE_CONTROL, MediaUnavailableError, fetch_media, media_response
@@ -1604,17 +1605,24 @@ def rule_save(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     # automation is. Only a rule that is not already enabled spends a slot, so
     # editing a live rule is never refused.
     enabling = bool(request.POST.get("enabled")) and not (rule is not None and rule.enabled)
-    if enabling:
-        refusal = _plan_refusal(request)
-        if refusal is not None:
-            return toast_response(tone="warn", title="Not saved", body=refusal)
-
     if rule is None:
         rule = InboxRule(workspace=request.workspace, priority=_next_priority(request))
     rule.name = name[:120]
     rule.condition_json = condition
     rule.actions_json = actions
     rule.enabled = bool(request.POST.get("enabled"))
+
+    if enabling:
+        # The count and the save are one critical section; see
+        # apps/billing/entitlements.organization_locked on why a lock released
+        # when the check returns serialises nothing.
+        with organization_locked(request.org):
+            refusal = _plan_refusal(request)
+            if refusal is not None:
+                return toast_response(tone="warn", title="Not saved", body=refusal)
+            rule.save()
+        return toast_response(tone="success", title="Rule saved", events={"inboxRulesChanged": True})
+
     rule.save()
     return toast_response(tone="success", title="Rule saved", events={"inboxRulesChanged": True})
 
@@ -1625,14 +1633,19 @@ def rule_save(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 def rule_toggle(request: WorkspaceRequest, workspace_id: str, rule_id: str) -> HttpResponse:
     rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=rule_id)
     if not rule.enabled:
-        # Switching one back on is the same lever as saving it enabled.
-        refusal = _plan_refusal(request)
-        if refusal is not None:
-            return toast_response(tone="warn", title="Not enabled", body=refusal)
-    rule.enabled = not rule.enabled
+        # Switching one back on is the same lever as saving it enabled, and the
+        # write goes inside the lock for the same reason rule_save's does.
+        with organization_locked(request.org):
+            refusal = _plan_refusal(request)
+            if refusal is not None:
+                return toast_response(tone="warn", title="Not enabled", body=refusal)
+            rule.enabled = True
+            rule.save(update_fields=["enabled", "updated_at"])
+        return toast_response(tone="success", title="Rule enabled", events={"inboxRulesChanged": True})
+
+    rule.enabled = False
     rule.save(update_fields=["enabled", "updated_at"])
-    title = "Rule enabled" if rule.enabled else "Rule disabled"
-    return toast_response(tone="success", title=title, events={"inboxRulesChanged": True})
+    return toast_response(tone="success", title="Rule disabled", events={"inboxRulesChanged": True})
 
 
 @login_required
@@ -1777,11 +1790,10 @@ def _plan_refusal(request: WorkspaceRequest) -> str | None:
     ``warn`` rather than ``error``: this is a refusal the reader can act on, not
     a fault.
     """
-    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation, organization_locked
+    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation
 
     try:
-        with organization_locked(request.org):
-            check_can_activate_automation(request.org)
+        check_can_activate_automation(request.org)
     except PlanLimitError as exc:
         return str(exc)
     return None

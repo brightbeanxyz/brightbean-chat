@@ -46,6 +46,7 @@ takes down every caller written against it.
 """
 
 import logging
+from enum import StrEnum
 from typing import Any
 
 from django.db import DatabaseError, transaction
@@ -128,8 +129,23 @@ def allows_reaching(organization: Any, contact: Any, *, limit: int | None, perio
     return active_contact_count(organization, period=period) < limit
 
 
-def mark_reached(organization: Any, contact: Any, *, period: str | None = None) -> bool:
-    """Record that this contact was reached. Returns whether it was newly marked.
+class MarkOutcome(StrEnum):
+    """What :func:`mark_reached` did, as distinct from whether it wrote a row.
+
+    ``bool`` conflated three unrelated answers — billing off, unlimited plan, and
+    a swallowed database failure all returned False — so no caller could tell
+    "nothing to count" from "we failed to count", and a lost mark was
+    unobservable to anything but the log.
+    """
+
+    MARKED = "marked"
+    ALREADY = "already"
+    NOT_METERED = "not_metered"
+    FAILED = "failed"
+
+
+def mark_reached(organization: Any, contact: Any, *, period: str | None = None) -> MarkOutcome:
+    """Record that this contact was reached. See :class:`MarkOutcome`.
 
     **Never raises**, per the module docstring: the statement runs in its own
     savepoint so a database failure rolls back the mark alone and leaves the
@@ -142,7 +158,7 @@ def mark_reached(organization: Any, contact: Any, *, period: str | None = None) 
     in tests and null in production.
     """
     if not billing_enabled():
-        return False
+        return MarkOutcome.NOT_METERED
 
     # The guard covers the plan read as well as the insert. Reading the plan is
     # itself a query, and an earlier version left it outside — so a database in
@@ -152,7 +168,7 @@ def mark_reached(organization: Any, contact: Any, *, period: str | None = None) 
         if limits_for(organization).active_contacts_per_month is None:
             # Unlimited: nothing to count, and no row is written. A test asserts
             # this table stays empty on a deployment with no billing.
-            return False
+            return MarkOutcome.NOT_METERED
 
         now = timezone.now()
         params = [
@@ -168,17 +184,17 @@ def mark_reached(organization: Any, contact: Any, *, period: str | None = None) 
         # transaction — the send that is mid-flight has to be able to commit.
         with transaction.atomic(), db_connection.cursor() as cursor:
             cursor.execute(_MARK_SQL, params)
-            return cursor.rowcount > 0
+            return MarkOutcome.MARKED if cursor.rowcount > 0 else MarkOutcome.ALREADY
     except DatabaseError:
         logger.exception(
             "Could not record contact %s as active for organization %s; the month is under-counted by one",
             contact.pk,
             organization.pk,
         )
-        return False
+        return MarkOutcome.FAILED
 
 
-def meter(organization: Any, contact: Any) -> bool:
+def meter(organization: Any, contact: Any) -> MarkOutcome:
     """Mark a contact active for the current period. The inbound path's entry.
 
     Inbound is metered and never gated, so this is :func:`mark_reached` with no

@@ -102,6 +102,13 @@ def _checkout_state(row: BillingCustomer | None, checkout: str) -> str:
     checkout was started and nothing has confirmed it yet.
     """
     if checkout == "cancelled":
+        # The one moment the code knows for certain that nothing is in flight.
+        # Left set, the pending flag refuses the reader's very next attempt with
+        # "a checkout is already open", which is both false and unactionable —
+        # there is no session left to finish.
+        if row is not None and row.checkout_pending_since is not None:
+            row.checkout_pending_since = None
+            row.save(update_fields=["checkout_pending_since", "updated_at"])
         return "cancelled"
     if row is None or row.checkout_pending_since is None or row.is_entitled:
         return ""

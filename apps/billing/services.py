@@ -114,9 +114,18 @@ def get_or_create_customer(organization: Any, *, email: str, name: str) -> Billi
 def start_checkout(organization: Any, *, interval: str, email: str, name: str) -> str:
     """Open a Checkout session and return the URL to send the browser to."""
     price_id = price_id_for(interval)
+
+    # Before get_or_create_customer, which on a first attempt is a live POST to
+    # Stripe: a refused attempt should not pay a network round trip to be told
+    # to come back later.
+    existing = BillingCustomer.objects.filter(organization=organization).first()
+    if existing is not None and _checkout_in_flight(existing):
+        raise BillingError("A checkout is already open. Finish it, or wait a minute and try again.")
+
     row = get_or_create_customer(organization, email=email, name=name)
 
-    # One checkout in flight at a time. Each session carries its own random
+    # Re-checked against the row we are about to stamp, because the read above
+    # can predate a concurrent request's stamp. Each session carries its own random
     # idempotency key — it has to, so somebody who abandons one and comes back
     # gets a fresh session rather than the dead one — which means nothing else
     # stops a double-submit, or two admins starting at once, from completing two

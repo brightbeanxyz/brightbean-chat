@@ -109,7 +109,9 @@ class TestStripeUnconfigured:
 
         contact = _contact(tenancy.workspace)
 
-        assert meter(tenancy.organization, contact) is False
+        from apps.billing.metering import MarkOutcome
+
+        assert meter(tenancy.organization, contact) is MarkOutcome.NOT_METERED
         assert ActiveContactMonth.objects.unscoped().count() == 0
 
 

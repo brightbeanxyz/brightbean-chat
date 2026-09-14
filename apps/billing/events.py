@@ -48,6 +48,11 @@ SUBSCRIPTION_EVENTS = frozenset(
 )
 HANDLED_EVENTS = SUBSCRIPTION_EVENTS | {"checkout.session.completed", "customer.deleted"}
 
+#: How long a row may sit in RECEIVED before a redelivery is allowed to
+#: re-run it. Long enough that a delivery still in flight is not duplicated,
+#: short enough that Stripe's own retry schedule can still recover the event.
+STALE_RECEIVED_MINUTES = 5
+
 
 class CustomerConflictError(Exception):
     """A binding would move a Stripe customer between organizations.
@@ -75,10 +80,14 @@ def handle(event: dict[str, Any]) -> str:
         # Stripe's retry and dropping it would lose the event for good: the view
         # answers 200 either way, so Stripe will not offer it a third time.
         existing = StripeEventLog.objects.filter(event_id=event_id).first()
-        if existing is None or existing.status != EventStatus.FAILED:
+        if existing is None or not _is_retryable(existing):
             logger.debug("Ignoring duplicate Stripe event %s", event_id)
             return EventStatus.PROCESSED
-        logger.info("Retrying Stripe event %s after an earlier failure", event_id)
+        logger.info("Retrying Stripe event %s left %s by an earlier delivery", event_id, existing.status)
+        # The payload is refreshed: this row's `raw` is the only record of what
+        # was acted on, and leaving the failed delivery's copy there points
+        # anybody debugging a mis-applied subscription at the wrong body.
+        existing.raw = _storable(event)
         row = existing
 
     if event_type not in HANDLED_EVENTS:
@@ -113,6 +122,33 @@ def _claim(event_id: str, event_type: str, event: dict[str, Any]) -> StripeEvent
             )
     except IntegrityError:
         return None
+
+
+def _is_retryable(row: StripeEventLog) -> bool:
+    """Whether a delivery already recorded for this event should be re-run.
+
+    ``FAILED`` always: the view answers 200 even when a handler raises, so Stripe
+    will not offer the event again on its own and dropping the redelivery loses
+    it for good.
+
+    ``RECEIVED`` once it is stale. That status means a delivery claimed the event
+    and never reached :func:`_finish` — a killed worker, a dropped connection, a
+    request cut in half. Treating it as a duplicate forever meant the event could
+    never be applied, and nothing else recovers it: ``reconcile_pending_checkouts``
+    only looks at rows with ``checkout_pending_since`` set, so a lost
+    ``customer.subscription.deleted`` would leave an organization on the paid
+    plan indefinitely. The grace period is so a redelivery racing a delivery that
+    is still in flight is not run twice.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    if row.status == EventStatus.FAILED:
+        return True
+    if row.status != EventStatus.RECEIVED:
+        return False
+    return timezone.now() - row.received_at > timedelta(minutes=STALE_RECEIVED_MINUTES)
 
 
 def _storable(event: dict[str, Any]) -> dict[str, Any]:

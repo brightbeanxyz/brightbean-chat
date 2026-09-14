@@ -700,7 +700,11 @@ def _dispatch(
     never happened. The **token last**, so the only thing that consumes rate is
     a send that is actually about to be attempted.
     """
-    if message.conversation.contact.status != ContactStatus.ACTIVE:
+    # Bound once: this attribute chain is two foreign keys, and the mark at the
+    # end of this function needs the same contact. Reading it again there would
+    # be free only for as long as _finalize keeps returning the same instance.
+    contact = message.conversation.contact
+    if contact.status != ContactStatus.ACTIVE:
         # The last gate before a provider call, and the only one that catches a
         # contact deleted *after* the message was queued. `send_outbound` cannot
         # do it alone: `handle_send_retry` re-enters here directly, so a pending
@@ -787,7 +791,7 @@ def _dispatch(
     # person it answers is someone the workspace exchanged messages with, which
     # is what the meter counts. Inbound has almost always marked them already,
     # so it is a no-op in practice.
-    _mark_plan_contact_reached(sent.conversation.contact)
+    _mark_plan_contact_reached(contact)
     return sent
 
 

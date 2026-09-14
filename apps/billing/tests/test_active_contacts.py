@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from apps.billing.metering import (
+    MarkOutcome,
     active_contact_count,
     current_period,
     is_contact_active,
@@ -139,7 +140,9 @@ class TestTheLimit:
         for index in range(FREE_CONTACTS + 5):
             person = contact(tenancy.workspace, f"p{index}")
             assert reach(tenancy.workspace, person) is True
-            assert mark_reached(tenancy.organization, person) is False
+            # NOT_METERED, not FAILED: there is nothing to count on an unlimited
+            # plan, which is a different answer from having failed to count.
+            assert mark_reached(tenancy.organization, person) is MarkOutcome.NOT_METERED
 
         assert ActiveContactMonth.objects.unscoped().count() == 0
 
@@ -315,7 +318,9 @@ class TestItNeverRaisesIntoTheSendPath:
         # Patched after the contact exists: creating one needs a cursor too.
         monkeypatch.setattr(metering.db_connection, "cursor", explode)
 
-        assert metering.mark_reached(tenancy.organization, person) is False
+        # FAILED rather than a bare False: the caller can tell a swallowed
+        # database error from "there was nothing to count".
+        assert metering.mark_reached(tenancy.organization, person) is metering.MarkOutcome.FAILED
 
     def test_a_database_failure_while_gating_allows_the_send(self, tenancy: Any, monkeypatch: Any) -> None:
         """Fails open, deliberately: a billing read must not take a send down,

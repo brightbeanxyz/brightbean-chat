@@ -282,24 +282,26 @@ def connection_create(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
         if form.is_valid():
             connection = form.save(commit=False)
             connection.workspace = request.workspace
-            # Under the organization lock, so the count and the insert below are
-            # one critical section: two admins adding a channel at the same
-            # moment would otherwise both read `limit - 1`.
-            with plan_locked(request.workspace):
-                refusal = plan_refusal(request.workspace)
-            if refusal:
-                # A form error rather than a message, so it lands beside the
-                # control the reader was using — the same place the duplicate
-                # check below puts its refusal.
-                form.add_error(None, refusal)
-                return render(
-                    request,
-                    "channels/new.html",
-                    {"form": form, "platforms": Platform.choices, "connect_flow_issues": CONNECT_FLOW_ISSUES},
-                )
             secret = connection.rotate_webhook_secret()
             try:
-                with transaction.atomic():
+                # The count and the insert are one critical section; see
+                # apps/billing/entitlements.organization_locked.
+                with plan_locked(request.workspace), transaction.atomic():
+                    refusal = plan_refusal(request.workspace)
+                    if refusal:
+                        # A form error rather than a message, so it lands beside
+                        # the control the reader was using — the same place the
+                        # duplicate check below puts its refusal.
+                        form.add_error(None, refusal)
+                        return render(
+                            request,
+                            "channels/new.html",
+                            {
+                                "form": form,
+                                "platforms": Platform.choices,
+                                "connect_flow_issues": CONNECT_FLOW_ISSUES,
+                            },
+                        )
                     connection.save()
             except IntegrityError:
                 # The form's duplicate check is a read, so it is check-then-
@@ -352,18 +354,22 @@ def connection_set_status(request: WorkspaceRequest, workspace_id: str, connecti
     # over its limit disables three channels and switches them back on one at a
     # time — the shape every half-enforced limit bug takes.
     turning_on = status != ConnectionStatus.DISABLED and connection.status == ConnectionStatus.DISABLED
-    refusal = ""
-    if turning_on:
-        with plan_locked(request.workspace):
-            refusal = plan_refusal(request.workspace)
     if status not in SETTABLE_STATUSES:
         messages.error(request, "That is not a status you can set by hand.")
-    elif refusal:
-        messages.error(request, refusal)
     else:
-        connection.status = status
-        connection.save(update_fields=["status", "updated_at"])
-        messages.success(request, f"{connection.display_name} is now {connection.get_status_display().lower()}.")
+        # The count and the status change are one critical section when the
+        # change is a re-enable: two admins switching channels back on at the
+        # same moment would otherwise both read `limit - 1`.
+        with plan_locked(request.workspace):
+            refusal = plan_refusal(request.workspace) if turning_on else ""
+            if refusal:
+                messages.error(request, refusal)
+            else:
+                connection.status = status
+                connection.save(update_fields=["status", "updated_at"])
+                messages.success(
+                    request, f"{connection.display_name} is now {connection.get_status_display().lower()}."
+                )
     return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
 
 

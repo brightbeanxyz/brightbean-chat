@@ -14,6 +14,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.billing.entitlements import organization_locked
 from apps.members.decorators import require_org_role
 from apps.members.models import WorkspaceMembership
 from apps.members.requests import OrgRequest
@@ -115,15 +116,19 @@ def create_workspace(request: OrgRequest) -> HttpResponse:
     if Workspace.objects.for_org(request.org.pk).filter(name=name).exists():
         messages.error(request, "A workspace with that name already exists.")
         return redirect(reverse("organizations:workspaces"))
-    refusal = _plan_refusal(request.org)
-    if refusal is not None:
-        messages.error(request, refusal)
-        return redirect(reverse("organizations:workspaces"))
+    # The count and the insert are one critical section. See
+    # apps/billing/entitlements.organization_locked: a lock released when the
+    # check returns serialises nothing.
+    with organization_locked(request.org):
+        refusal = _plan_refusal(request.org)
+        if refusal is not None:
+            messages.error(request, refusal)
+            return redirect(reverse("organizations:workspaces"))
 
-    workspace = Workspace.objects.create(organization=request.org, name=name)
-    # The creator becomes its admin, or nobody can configure the thing they
-    # just made.
-    WorkspaceMembership.objects.create(user=request.user, workspace=workspace, workspace_role=WorkspaceRole.ADMIN)
+        workspace = Workspace.objects.create(organization=request.org, name=name)
+        # The creator becomes its admin, or nobody can configure the thing they
+        # just made.
+        WorkspaceMembership.objects.create(user=request.user, workspace=workspace, workspace_role=WorkspaceRole.ADMIN)
     messages.success(request, f"Created {workspace.name}.")
     return redirect(reverse("organizations:workspaces"))
 
@@ -148,10 +153,16 @@ def set_workspace_archived(request: OrgRequest, target_id: str) -> HttpResponse:
     if not archiving and workspace.is_archived:
         # Restoring is the same lever as creating. Without this an organization
         # at its workspace limit archives one, creates another, and restores the
-        # first — which is the shape every "half-enforced limit" bug takes.
-        refusal = _plan_refusal(request.org)
-        if refusal is not None:
-            messages.error(request, refusal)
+        # first — which is the shape every "half-enforced limit" bug takes. The
+        # write is inside the lock for the reason create_workspace's is.
+        with organization_locked(request.org):
+            refusal = _plan_refusal(request.org)
+            if refusal is not None:
+                messages.error(request, refusal)
+                return redirect(reverse("organizations:workspaces"))
+            workspace.is_archived = archiving
+            workspace.save(update_fields=["is_archived", "updated_at"])
+            messages.success(request, f"Restored {workspace.name}.")
             return redirect(reverse("organizations:workspaces"))
 
     workspace.is_archived = archiving
@@ -172,11 +183,10 @@ def _plan_refusal(org: Any) -> str | None:
     ``apps.billing.entitlements`` sum across an organization's workspaces, and
     for an organization that has never paid that sum has one term.
     """
-    from apps.billing.entitlements import PlanLimitError, check_can_add_workspace, organization_locked
+    from apps.billing.entitlements import PlanLimitError, check_can_add_workspace
 
     try:
-        with organization_locked(org):
-            check_can_add_workspace(org)
+        check_can_add_workspace(org)
     except PlanLimitError as exc:
         return str(exc)
     return None

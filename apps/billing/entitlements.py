@@ -259,34 +259,65 @@ def count_workspaces(organization: Any, *, workspaces: list[Any] | None = None) 
 # --- Serialising a check against the mutation it guards -----------------------
 
 
+class OrganizationUnavailableError(Exception):
+    """The organization vanished between the request starting and the lock.
+
+    Not a ``PlanLimitError``: every call site turns one of those into plan-limit
+    wording, and telling somebody they have hit their plan's cap because the
+    tenant was deleted underneath them is a worse answer than an error page.
+    """
+
+
 @contextmanager
 def organization_locked(organization: Any) -> Iterator[None]:
-    """Hold the organization row for a check-then-mutate.
+    """Hold the organization row for a check **and the write it guards**.
 
-    Every ``check_*`` below is a *read*: it counts, compares and returns. On its
-    own that is check-then-act, so two admins connecting a channel at the same
-    moment both read ``limit - 1`` and both write, and the organization ends up
-    one past a cap the page says it is on.
+    **Put the mutation inside this block.** Every ``check_*`` below is a read:
+    it counts, compares and returns. A lock that is released when the check
+    returns serialises nothing, because a Postgres row lock lives exactly as
+    long as its transaction — so::
 
-    This is ``apps/media_library/quotas.py``'s rule, generalised: that module
-    requires its caller to hold the workspace row before ``check_workspace_quota``
-    for exactly this reason, and says so. The lock is the organization rather
-    than the resource because the counts span an organization's workspaces.
+        with organization_locked(org):      # WRONG
+            check_can_add_workspace(org)
+        Workspace.objects.create(...)
 
-    **Take it around the smallest possible section, and never across a network
-    call.** The channel adapters run their platform handshake first and only then
-    enter this block; holding a database lock across a third-party request is how
-    a degraded provider turns into an exhausted connection pool.
+    leaves both racing requests reading ``limit - 1`` and both inserting. An
+    earlier version of this helper was used that way at eight of its nine call
+    sites, and the comments beside them claimed a serialisation that was not
+    happening. The write has to be inside::
+
+        with organization_locked(org):
+            check_can_add_workspace(org)
+            Workspace.objects.create(...)
+
+    This is ``apps/media_library/quotas.py``'s rule generalised: that module
+    requires its caller to hold the workspace row *across*
+    ``check_workspace_quota`` and the insert, and says so. The lock is the
+    organization rather than the resource because the counts span an
+    organization's workspaces.
+
+    **The lock is taken only when something could actually refuse.** The guards
+    short-circuit on an unlimited plan, so locking before reading the limit made
+    every gated write on a self-hosted deployment queue behind one row for a
+    check that can never say no. The transaction is opened either way, so the
+    block's atomicity does not depend on which plan the organization is on.
+
+    **Never hold it across a network call.** The channel adapters run their
+    platform handshake before entering; a database lock held across a
+    third-party request is how a degraded provider becomes an exhausted
+    connection pool.
+
+    **Lock order.** Where a caller already holds another row — ``accept_invitation``
+    holds its ``Invitation`` — this is taken *second*. Anything that comes to
+    need both must take them in that order.
     """
     from apps.organizations.models import Organization
 
     with transaction.atomic():
-        locked = Organization.objects.select_for_update().filter(pk=organization.pk).only("id").first()
-        if locked is None:
-            # No row, no lock. Refusing is the safe read: an organization that is
-            # not there cannot be granted anything, and continuing would run the
-            # count with none of the serialisation this exists to provide.
-            raise PlanLimitError("That organization is no longer available.", code="plan_no_organization")
+        if limits_for(organization) is not UNLIMITED:
+            locked = Organization.objects.select_for_update().filter(pk=organization.pk).only("id").first()
+            if locked is None:
+                raise OrganizationUnavailableError(str(organization.pk))
         yield
 
 
