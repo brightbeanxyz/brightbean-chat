@@ -3,8 +3,14 @@
 Ported from BrightBean Studio's ``apps/organizations/models.py``. Differences:
 the pk and timestamps come from :class:`apps.common.models.BaseModel` (UUIDv7,
 not a hand-rolled ``uuid.uuid4`` per model), and Studio's ``billing_email`` is
-dropped — it belongs to its hosted-SaaS billing integration, which this project
-does not have (SPEC §1.1: no billing).
+dropped — it belongs to its hosted-SaaS billing integration.
+
+It stays dropped now that :mod:`apps.billing` exists, and for a better reason
+than before: Stripe holds the billing address and the customer's email, so a
+second copy here would drift from it the first time somebody changed one in the
+Customer Portal. What billing adds to this model is a reverse one-to-one
+(``organization.billing``) and nothing else — the tenant root does not grow
+payment columns (SPEC §1.1).
 """
 
 from typing import Any

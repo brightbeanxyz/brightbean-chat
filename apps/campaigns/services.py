@@ -132,6 +132,21 @@ def set_status(sequence: Sequence, *, status: str) -> Sequence:
         raise CampaignsError("That is not a sequence status.")
     if status == SequenceStatus.ACTIVE and not sequence.steps.exists():
         raise SequenceNotRunnableError("Add at least one step before activating this sequence.")
+    if status == SequenceStatus.ACTIVE and sequence.status != SequenceStatus.ACTIVE:
+        # Only the transition INTO active spends a slot; re-saving a live
+        # sequence must not be refused because it is already counted.
+        #
+        # The write is inside the lock, not after it: the count and the status
+        # change have to be one critical section or two activations at once both
+        # read `limit - 1`.
+        from apps.billing.entitlements import organization_locked
+
+        with organization_locked(sequence.workspace.organization):
+            _check_plan_allows_activation(sequence)
+            sequence.status = status
+            sequence.save(update_fields=["status", "updated_at"])
+        return sequence
+
     sequence.status = status
     sequence.save(update_fields=["status", "updated_at"])
     return sequence
@@ -506,3 +521,18 @@ def _clean_time(raw: Any, fallback: str) -> str:
         except ValueError:
             pass
     return fallback
+
+
+def _check_plan_allows_activation(sequence: Sequence) -> None:
+    """Refuse activating a sequence the organization's plan has no room for.
+
+    Re-raised as ``CampaignsError`` so it lands in the ``except`` clause every
+    caller of this module already has; a ``PlanLimitError`` escaping would be a
+    500 rather than a message.
+    """
+    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation
+
+    try:
+        check_can_activate_automation(sequence.workspace.organization)
+    except PlanLimitError as exc:
+        raise CampaignsError(str(exc)) from exc

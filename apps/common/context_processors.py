@@ -266,6 +266,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(key="org_general", label="General", icon="building", url_name="organizations:settings"),
             NavItem(key="org_workspaces", label="Workspaces", icon="grid", url_name="organizations:workspaces"),
             NavItem(key="org_members", label="Team Members", icon="users", url_name="members:list"),
+            NavItem(key="org_billing", label="Plan & billing", icon="billing", url_name="organizations:billing"),
             NavItem(
                 key="org_api_keys",
                 label="API Keys",

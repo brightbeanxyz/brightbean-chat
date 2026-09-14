@@ -74,7 +74,7 @@ from apps.channels.providers.exceptions import APIError, RateLimitError
 from apps.channels.registry import adapter_for
 from apps.contacts.models import ContactStatus
 from apps.messaging import analytics, buckets
-from apps.messaging.codes import Denial, Failure
+from apps.messaging.codes import Denial, Failure, Limit
 from apps.messaging.compliance import Allowed, can_send
 
 # The single write site for `opted_out_at` (ROADMAP contract 3). No cycle:
@@ -445,6 +445,22 @@ def send_outbound(
         # `default` edge from, and an operator needs to know what was refused.
         return _failed(conversation, outbound, source, idempotency_key, decision.code)
 
+    # The organization's own plan, and the contact meter behind it. Deliberately
+    # **after** compliance rather than before: if a contact is opted out *and*
+    # the plan is spent, "they opted out" is the more useful and more important
+    # thing to record on the row, and no message goes out either way. Nothing is
+    # metered for a send compliance was going to refuse anyway.
+    #
+    # Costs nothing on an unlimited plan — which is every organization on a
+    # deployment with no billing configured — and writes no row there either.
+    #
+    # `send_compliance_reply` does not reach this, and not by a flag: it is a
+    # separate function that never calls send_outbound. SPEC §6.6 requires an
+    # SMS STOP to be answered, and refusing a carrier obligation because a card
+    # expired would be a compliance failure dressed up as a billing decision.
+    if not plan_allows_reaching(workspace, contact):
+        return _failed(conversation, outbound, source, idempotency_key, Limit.ACTIVE_CONTACTS.value)
+
     on_the_wire = decision.apply(outbound)
     message, created = _record(conversation, on_the_wire, source, idempotency_key)
     if not created and message.status != MessageStatus.QUEUED:
@@ -452,6 +468,11 @@ def send_outbound(
         # "on unique violation, skip the call".
         return message
 
+    # The contact is counted inside `_dispatch`, at the point the platform
+    # actually takes the message — never here at the gate. Marking at the gate
+    # spends one of the plan's monthly slots on a provider rejection, and a
+    # workspace with a misconfigured channel could burn its whole allowance on
+    # sends that never left the building.
     return _dispatch(message, connection, identity, on_the_wire, blocking=blocking)
 
 
@@ -679,7 +700,11 @@ def _dispatch(
     never happened. The **token last**, so the only thing that consumes rate is
     a send that is actually about to be attempted.
     """
-    if message.conversation.contact.status != ContactStatus.ACTIVE:
+    # Bound once: this attribute chain is two foreign keys, and the mark at the
+    # end of this function needs the same contact. Reading it again there would
+    # be free only for as long as _finalize keeps returning the same instance.
+    contact = message.conversation.contact
+    if contact.status != ContactStatus.ACTIVE:
         # The last gate before a provider call, and the only one that catches a
         # contact deleted *after* the message was queued. `send_outbound` cannot
         # do it alone: `handle_send_retry` re-enters here directly, so a pending
@@ -745,11 +770,29 @@ def _dispatch(
 
     if result.status == SendStatus.FAILED:
         return _finalize(message, status=MessageStatus.FAILED, error=_provider_code(result))
-    return _finalize(
+
+    sent = _finalize(
         message,
         status=MessageStatus.SENT,
         provider_message_id=result.provider_message_id,
     )
+    # The plan's contact meter, at the one point in the codebase where a message
+    # has demonstrably reached a platform.
+    #
+    # Here rather than in `send_outbound` because this function has three
+    # callers and that is only one of them: `handle_send_retry` re-enters here
+    # directly, so a send that deferred and then succeeded would never have been
+    # counted, and a free organization could walk past its cap through deferred
+    # sends. The same reasoning the tombstone check at the top of this function
+    # gives for living here rather than in its caller.
+    #
+    # `send_compliance_reply` reaches this too, and should: it is exempt from
+    # the *gate* — a carrier obligation is not refused over a card — but the
+    # person it answers is someone the workspace exchanged messages with, which
+    # is what the meter counts. Inbound has almost always marked them already,
+    # so it is a no-op in practice.
+    _mark_plan_contact_reached(contact)
+    return sent
 
 
 def _defer(
@@ -987,3 +1030,34 @@ def _cancel_retry(message: Message) -> int:
     from apps.messaging.handlers import cancel_send_retry
 
     return cancel_send_retry(message)
+
+
+def plan_allows_reaching(workspace: Any, contact: Any) -> bool:
+    """Whether the organization's plan permits reaching this contact now.
+
+    Reads only. The mark is :func:`_mark_plan_contact_reached`, after the send.
+
+    A late import, the shape ``apps/flows/analytics.py`` uses for the same
+    reason: ``apps.billing`` reads this app's models, so importing it at module
+    scope here would close the loop. It also keeps the send path from loading
+    billing at all on a deployment that has none.
+    """
+    from apps.billing.metering import reach
+
+    return reach(workspace, contact)
+
+
+def _mark_plan_contact_reached(contact: Any) -> None:
+    """Count this contact towards the organization's month, after a real send.
+
+    Neither this nor :func:`plan_allows_reaching` may raise — contract 1 says
+    ``send_outbound`` never does, and the billing module holds itself to that.
+    """
+    from apps.billing.entitlements import billing_enabled
+    from apps.billing.metering import mark_reached
+
+    if not billing_enabled():
+        # Checked before the organization is resolved, which is two queries: a
+        # deployment with no billing must pay nothing on the send path.
+        return
+    mark_reached(contact.workspace.organization, contact)

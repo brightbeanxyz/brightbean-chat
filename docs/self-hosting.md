@@ -736,3 +736,10 @@ not match what you typed into Meta's dashboard (403).
 **Stored credentials stopped decrypting after a restore.** `SECRET_KEY` or
 `ENCRYPTION_KEY_SALT` differs from the one in use when they were written. They
 are not in the dump; restore them from wherever you put them in step 2.
+
+## Billing
+
+You do not need it. BrightBean Chat has one tier and every feature is in it;
+there is no payment provider to configure and no limit counted on a
+self-hosted install. [`docs/billing.md`](billing.md) documents the optional
+Stripe integration for operators running BrightBean Chat as a paid service.

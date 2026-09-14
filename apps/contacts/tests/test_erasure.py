@@ -416,6 +416,22 @@ CLASSIFIED: dict[str, str] = {
     # SET_NULL on purpose: an anonymised counter that has to outlive the person
     # (SPEC §19), settled first so the figures still reconcile.
     "broadcasts.BroadcastRecipient.contact": "anonymized",
+    # Cascade, deliberately — and the interesting part is why it is not
+    # "anonymized" like the broadcast counter above it.
+    #
+    # That one keeps an anonymised row because a broadcast's figures have to
+    # reconcile after somebody is erased. This one is a billing meter: a set of
+    # (contact, month) rows saying who an organization reached. Erasing the
+    # contact drops their row and frees that month's slot, which is the same
+    # thing an ordinary delete does and is already the documented behaviour —
+    # "remove extras" is half of what the plan promises, and
+    # apps/billing/tests/test_active_contacts.py pins it.
+    #
+    # There is no figure to protect by keeping it. The free plan is free, so
+    # nothing is under-billed by a slot coming back, and keeping an anonymised
+    # row would mean retaining a record that some erased person was contacted —
+    # more retention than the feature needs, for no reconciliation it owes.
+    "billing.ActiveContactMonth.contact": "cascade",
 }
 
 

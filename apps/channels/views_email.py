@@ -53,6 +53,7 @@ from django.views.decorators.http import require_POST
 
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.models import ChannelConnection
+from apps.channels.plan import plan_refusal
 from apps.channels.providers import email_backends, email_html
 from apps.channels.providers.email import MAX_TOPIC_ARN_CHARS, compliance_headers
 from apps.channels.providers.exceptions import APIError
@@ -175,6 +176,12 @@ def _connect(request: WorkspaceRequest, provider: str) -> str:
     credentials = _credentials(request, provider, from_address)
     if isinstance(credentials, str):
         return credentials
+
+    # The organization's channel limit. See apps/channels/plan.py on why this
+    # is called here in all six adapters rather than in one shared service.
+    refusal = plan_refusal(request.workspace)
+    if refusal:
+        return refusal
 
     connection = ChannelConnection(
         workspace=request.workspace,

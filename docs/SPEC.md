@@ -1,6 +1,6 @@
 # OpenChat Engineering Specification
 
-Working title: OpenChat (ships as **BrightBean Chat** in this repo). Open-source, self-hostable chat marketing automation platform. Feature target: ManyChat parity minus AI features, minus billing (every feature available to every user), minus TikTok DMs (partner-gated API, not obtainable by self-hosters).
+Working title: OpenChat (ships as **BrightBean Chat** in this repo). Open-source, self-hostable chat marketing automation platform. Feature target: ManyChat parity minus AI features, minus TikTok DMs (partner-gated API, not obtainable by self-hosters). Billing is not a product feature: the software has exactly one tier and every feature is available to every user. A hosted operator may configure an optional Stripe integration (§1.1, `docs/billing.md`), which is inert and invisible on every deployment that has not.
 
 Version 1.0 of this spec. Owner: Jan. License: AGPL-3.0.
 
@@ -17,7 +17,16 @@ Deployment model mirrors BrightBean Studio: each self-hoster creates their own p
 ### 1.1 Non-goals (do not build)
 
 - AI features of any kind (no AI reply nodes, no intents, no flow generation).
-- Billing, plans, feature gates, contact limits. There is exactly one tier.
+- Billing as a **product** feature. The software has exactly one tier, and a deployment with no payment
+  provider configured has no plans, no feature gates and no contact limits — which is every self-hosted
+  install, and is the state the test suite treats as the default.
+  The one exception, added after this spec's first version, is an optional **deployment** integration for
+  an operator running BrightBean Chat as a paid service: `apps/billing` ships in every install and does
+  nothing at all unless `STRIPE_SECRET_KEY` and both price ids are set. With them unset every organization
+  reads as unlimited, the checkout, portal and webhook routes 404, and no limit is ever counted.
+  `apps/billing/tests/test_self_hosted_is_unlimited.py` is the gate on that, and
+  `tests/acceptance/criteria.py` carries it as a security criterion. See `docs/billing.md`.
+  Anything beyond that — usage-based pricing, seats sold per head, metered messages — remains out of scope.
 - TikTok DM automation (Business Messaging API is restricted to badged TikTok partners).
 - Native mobile apps. The web UI must be responsive; that is the mobile story.
 - Native third-party integrations (Zapier clones, CRM connectors). The integration surface is: public API + External Request node + outbound webhooks.
@@ -544,5 +553,6 @@ Accept when: a Make/Zapier-style scenario (inbound webhook -> API contact update
 - SSE deferred; HTMX polling with 304s is the inbox transport.
 - WhatsApp costs are the self-hoster's Meta bill; OpenChat only warns, never meters.
 - Human agent 7-day tag is available only to inbox sends, never automation, hard-coded.
-- TikTok, website widgets, e-commerce, AI, billing: out of scope, do not stub.
+- TikTok, website widgets, e-commerce, AI: out of scope, do not stub.
+- Billing: not a product feature. An optional hosted-operator integration that is inert unless configured (§1.1).
 - Naming: "OpenChat" is a working title; this repo ships as **BrightBean Chat** — use BrightBean Chat in user-facing UI and docs, keep internal naming grep-friendly.
