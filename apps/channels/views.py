@@ -37,7 +37,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.channels.capabilities import capabilities_for
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR, ChannelConnectionForm
 from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEventLog
-from apps.channels.plan import plan_refusal
+from apps.channels.plan import plan_locked, plan_refusal
 from apps.channels.policy import policy_for
 from apps.channels.providers import email_backends
 from apps.channels.providers.base import Adapter
@@ -282,7 +282,11 @@ def connection_create(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
         if form.is_valid():
             connection = form.save(commit=False)
             connection.workspace = request.workspace
-            refusal = plan_refusal(request.workspace)
+            # Under the organization lock, so the count and the insert below are
+            # one critical section: two admins adding a channel at the same
+            # moment would otherwise both read `limit - 1`.
+            with plan_locked(request.workspace):
+                refusal = plan_refusal(request.workspace)
             if refusal:
                 # A form error rather than a message, so it lands beside the
                 # control the reader was using — the same place the duplicate
@@ -348,7 +352,10 @@ def connection_set_status(request: WorkspaceRequest, workspace_id: str, connecti
     # over its limit disables three channels and switches them back on one at a
     # time — the shape every half-enforced limit bug takes.
     turning_on = status != ConnectionStatus.DISABLED and connection.status == ConnectionStatus.DISABLED
-    refusal = plan_refusal(request.workspace) if turning_on else ""
+    refusal = ""
+    if turning_on:
+        with plan_locked(request.workspace):
+            refusal = plan_refusal(request.workspace)
     if status not in SETTABLE_STATUSES:
         messages.error(request, "That is not a status you can set by hand.")
     elif refusal:

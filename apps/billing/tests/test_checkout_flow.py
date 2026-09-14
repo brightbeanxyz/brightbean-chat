@@ -156,6 +156,49 @@ class TestSubscribing:
         assert fake.calls_to("POST", "/v1/checkout/sessions") == []
 
 
+class TestOnlyOneCheckoutAtATime:
+    """Two completed sessions mean two subscriptions on one customer.
+
+    Each session carries a random idempotency key — it has to, so somebody who
+    abandons one and comes back gets a fresh session — so nothing else stops a
+    double-submit, or two admins starting at once, from being charged twice.
+    """
+
+    def test_a_second_attempt_while_one_is_pending_is_refused(self, client_for: Any, tenancy: Any) -> None:
+        client = client_for(tenancy.owner)
+
+        with fake_stripe(sessions) as fake:
+            first = client.post(CHECKOUT_URL, {"interval": "monthly"})
+            second = client.post(CHECKOUT_URL, {"interval": "monthly"})
+
+        assert first.status_code == 303
+        assert second.status_code == 302, "the second attempt should redirect back with a message"
+        assert len(fake.calls_to("POST", "/v1/checkout/sessions")) == 1
+
+    def test_an_abandoned_checkout_stops_blocking_after_the_window(self, client_for: Any, tenancy: Any) -> None:
+        """The flag must not lock an organization out for good. The bound is the
+        same one the reconcile job uses to decide a checkout needs chasing."""
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.billing.housekeeping import PENDING_CHECKOUT_MINUTES
+
+        client = client_for(tenancy.owner)
+        with fake_stripe(sessions):
+            client.post(CHECKOUT_URL, {"interval": "monthly"})
+
+        BillingCustomer.objects.filter(organization=tenancy.organization).update(
+            checkout_pending_since=timezone.now() - timedelta(minutes=PENDING_CHECKOUT_MINUTES + 1)
+        )
+
+        with fake_stripe(sessions) as fake:
+            again = client.post(CHECKOUT_URL, {"interval": "monthly"})
+
+        assert again.status_code == 303
+        assert len(fake.calls_to("POST", "/v1/checkout/sessions")) == 1
+
+
 class TestRedirectSafety:
     def test_a_non_stripe_url_is_refused(self, client_for: Any, tenancy: Any) -> None:
         """Stripe returning somewhere else means the account or the SDK has been

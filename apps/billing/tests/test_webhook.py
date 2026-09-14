@@ -255,6 +255,84 @@ class TestHandlerFailure:
         assert StripeEventLog.objects.get(event_id="evt_1").status == EventStatus.FAILED
 
 
+class TestAFailedEventIsRetried:
+    """Stripe gets one more chance, because it will not offer a third.
+
+    The view answers 200 even when a handler raises — a 5xx makes Stripe retry a
+    poison event until it disables the endpoint. So a row left FAILED has to let
+    the *next* delivery through: treating it as a duplicate meant a transient
+    failure lost a subscription update permanently.
+    """
+
+    def test_a_redelivery_after_a_failure_is_processed(self, client: Any, tenancy: Any, monkeypatch: Any) -> None:
+        from apps.billing import events as events_module
+
+        customer_row(tenancy, status=STATUS_NONE)
+        payload = event(
+            "customer.subscription.updated",
+            {"id": "sub_1", "customer": "cus_known", "status": "active", "cancel_at_period_end": False},
+        )
+
+        original = events_module._dispatch
+        calls: list[int] = []
+
+        def fail_once(*args: Any, **kwargs: Any) -> Any:
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("transient")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(events_module, "_dispatch", fail_once)
+
+        first = post(client, payload)
+        assert first.status_code == 200
+        assert StripeEventLog.objects.get(event_id="evt_1").status == EventStatus.FAILED
+
+        second = post(client, payload)
+
+        assert second.status_code == 200
+        assert StripeEventLog.objects.get(event_id="evt_1").status == EventStatus.PROCESSED
+        assert BillingCustomer.objects.get(stripe_customer_id="cus_known").status == "active"
+
+    def test_a_redelivery_after_success_is_still_a_duplicate(self, client: Any, tenancy: Any) -> None:
+        """The dedup still holds for the case it was written for."""
+        row = customer_row(tenancy, status=STATUS_NONE)
+        payload = event(
+            "customer.subscription.updated",
+            {"id": "sub_1", "customer": "cus_known", "status": "active", "cancel_at_period_end": False},
+        )
+
+        post(client, payload)
+        row.refresh_from_db()
+        row.status = "canceled"
+        row.save(update_fields=["status"])
+        post(client, payload)
+
+        row.refresh_from_db()
+        assert row.status == "canceled", "a duplicate delivery re-applied its payload"
+
+
+class TestADeletedSubscriptionDoesNotLookLikeARenewal:
+    def test_the_period_end_is_cleared_on_deletion(self, client: Any, tenancy: Any) -> None:
+        """Stripe sends the final period on the deletion event, and keeping it
+        made the page tell a cancelled organization it renews."""
+        from apps.billing.selectors import billing_context
+
+        customer_row(tenancy, status="active", stripe_subscription_id="sub_1")
+
+        post(
+            client,
+            event(
+                "customer.subscription.deleted",
+                {"id": "sub_1", "customer": "cus_known", "current_period_end": 1_790_000_000},
+            ),
+        )
+
+        row = BillingCustomer.objects.get(stripe_customer_id="cus_known")
+        assert row.current_period_end is None
+        assert billing_context(tenancy.organization)["renews_on"] is None
+
+
 class TestCrossTenant:
     def test_a_customer_cannot_be_moved_between_organizations(
         self, client: Any, tenancy: Any, other_tenancy: Any

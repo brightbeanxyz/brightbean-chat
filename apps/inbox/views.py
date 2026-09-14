@@ -1777,10 +1777,11 @@ def _plan_refusal(request: WorkspaceRequest) -> str | None:
     ``warn`` rather than ``error``: this is a refusal the reader can act on, not
     a fault.
     """
-    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation
+    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation, organization_locked
 
     try:
-        check_can_activate_automation(request.org)
+        with organization_locked(request.org):
+            check_can_activate_automation(request.org)
     except PlanLimitError as exc:
         return str(exc)
     return None

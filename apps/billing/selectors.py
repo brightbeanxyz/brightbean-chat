@@ -41,8 +41,15 @@ def billing_context(organization: Any, *, checkout: str = "") -> dict[str, Any]:
         "usage": usage,
         "usage_rows": _usage_rows(usage),
         "subscription": row,
-        "cancels_on": row.current_period_end if row is not None and row.cancel_at_period_end else None,
-        "renews_on": row.current_period_end if row is not None and not row.cancel_at_period_end else None,
+        # Both gated on the row still entitling. A cancelled subscription can
+        # carry a final period_end, and reading that as a renewal told the
+        # reader a date that will never come.
+        "cancels_on": (
+            row.current_period_end if row is not None and row.is_entitled and row.cancel_at_period_end else None
+        ),
+        "renews_on": (
+            row.current_period_end if row is not None and row.is_entitled and not row.cancel_at_period_end else None
+        ),
         "can_manage_billing": row is not None and bool(row.stripe_customer_id),
         "checkout_state": _checkout_state(row, checkout),
     }

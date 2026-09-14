@@ -172,10 +172,11 @@ def _plan_refusal(org: Any) -> str | None:
     ``apps.billing.entitlements`` sum across an organization's workspaces, and
     for an organization that has never paid that sum has one term.
     """
-    from apps.billing.entitlements import PlanLimitError, check_can_add_workspace
+    from apps.billing.entitlements import PlanLimitError, check_can_add_workspace, organization_locked
 
     try:
-        check_can_add_workspace(org)
+        with organization_locked(org):
+            check_can_add_workspace(org)
     except PlanLimitError as exc:
         return str(exc)
     return None

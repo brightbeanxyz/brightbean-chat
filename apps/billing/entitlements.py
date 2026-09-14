@@ -47,10 +47,13 @@ decides what an organization may do is the last one that should contain an
 example of it for somebody to copy.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from django.conf import settings
+from django.db import transaction
 from django.urls import NoReverseMatch, reverse
 
 from apps.billing.plans import LIMITS_BY_PLAN, UNLIMITED, Limits, PlanKey
@@ -251,6 +254,40 @@ def count_workspaces(organization: Any, *, workspaces: list[Any] | None = None) 
     if workspaces is not None:
         return sum(1 for workspace in workspaces if not workspace.is_archived)
     return Workspace.objects.for_org(organization.pk).filter(is_archived=False).count()
+
+
+# --- Serialising a check against the mutation it guards -----------------------
+
+
+@contextmanager
+def organization_locked(organization: Any) -> Iterator[None]:
+    """Hold the organization row for a check-then-mutate.
+
+    Every ``check_*`` below is a *read*: it counts, compares and returns. On its
+    own that is check-then-act, so two admins connecting a channel at the same
+    moment both read ``limit - 1`` and both write, and the organization ends up
+    one past a cap the page says it is on.
+
+    This is ``apps/media_library/quotas.py``'s rule, generalised: that module
+    requires its caller to hold the workspace row before ``check_workspace_quota``
+    for exactly this reason, and says so. The lock is the organization rather
+    than the resource because the counts span an organization's workspaces.
+
+    **Take it around the smallest possible section, and never across a network
+    call.** The channel adapters run their platform handshake first and only then
+    enter this block; holding a database lock across a third-party request is how
+    a degraded provider turns into an exhausted connection pool.
+    """
+    from apps.organizations.models import Organization
+
+    with transaction.atomic():
+        locked = Organization.objects.select_for_update().filter(pk=organization.pk).only("id").first()
+        if locked is None:
+            # No row, no lock. Refusing is the safe read: an organization that is
+            # not there cannot be granted anything, and continuing would run the
+            # count with none of the serialisation this exists to provide.
+            raise PlanLimitError("That organization is no longer available.", code="plan_no_organization")
+        yield
 
 
 # --- Guards -------------------------------------------------------------------

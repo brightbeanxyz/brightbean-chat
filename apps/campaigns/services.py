@@ -519,9 +519,15 @@ def _check_plan_allows_activation(sequence: Sequence) -> None:
     caller of this module already has; a ``PlanLimitError`` escaping would be a
     500 rather than a message.
     """
-    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation
+    from apps.billing.entitlements import (
+        PlanLimitError,
+        check_can_activate_automation,
+        organization_locked,
+    )
 
+    organization = sequence.workspace.organization
     try:
-        check_can_activate_automation(sequence.workspace.organization)
+        with organization_locked(organization):
+            check_can_activate_automation(organization)
     except PlanLimitError as exc:
         raise CampaignsError(str(exc)) from exc

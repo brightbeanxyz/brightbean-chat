@@ -102,10 +102,12 @@ def _check_plan_allows_api(workspace: Any) -> None:
     other side: an integration that worked yesterday starts answering 403 and
     nothing the operator can see explains why.
     """
-    from apps.billing.entitlements import PlanLimitError, check_api_access
+    from apps.billing.entitlements import PlanLimitError, check_api_access, organization_locked
 
+    organization = workspace.organization
     try:
-        check_api_access(workspace.organization)
+        with organization_locked(organization):
+            check_api_access(organization)
     except PlanLimitError as exc:
         raise ApiKeysError(str(exc)) from exc
 

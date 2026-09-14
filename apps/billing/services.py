@@ -116,6 +116,19 @@ def start_checkout(organization: Any, *, interval: str, email: str, name: str) -
     price_id = price_id_for(interval)
     row = get_or_create_customer(organization, email=email, name=name)
 
+    # One checkout in flight at a time. Each session carries its own random
+    # idempotency key — it has to, so somebody who abandons one and comes back
+    # gets a fresh session rather than the dead one — which means nothing else
+    # stops a double-submit, or two admins starting at once, from completing two
+    # sessions and creating two subscriptions against the same customer.
+    #
+    # The window is deliberately short. An abandoned session leaves the flag set
+    # and must not lock the organization out for good: after
+    # PENDING_CHECKOUT_MINUTES the reconcile job has asked Stripe what is true
+    # and cleared it, so the same bound serves both.
+    if _checkout_in_flight(row):
+        raise BillingError("A checkout is already open. Finish it, or wait a minute and try again.")
+
     session = stripe_client.create_checkout_session(
         customer_id=row.stripe_customer_id,
         price_id=price_id,
@@ -178,3 +191,21 @@ def _stripe_url(session: Any) -> str:
         logger.error("Stripe returned an unusable redirect URL for host %r", host)
         raise BillingError("We could not start checkout. Try again in a minute.")
     return url
+
+
+def _checkout_in_flight(row: BillingCustomer) -> bool:
+    """Whether a checkout was started recently enough to still be live.
+
+    Bounded by the same window ``apps.billing.housekeeping`` uses to decide a
+    pending checkout needs reconciling, so the two can never disagree about
+    whether one is still in flight.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.billing.housekeeping import PENDING_CHECKOUT_MINUTES
+
+    if row.checkout_pending_since is None:
+        return False
+    return timezone.now() - row.checkout_pending_since < timedelta(minutes=PENDING_CHECKOUT_MINUTES)

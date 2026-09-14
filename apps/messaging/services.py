@@ -468,20 +468,12 @@ def send_outbound(
         # "on unique violation, skip the call".
         return message
 
-    sent = _dispatch(message, connection, identity, on_the_wire, blocking=blocking)
-    # The contact is counted only once the platform has actually taken the
-    # message, never at the gate above. Marking at the gate spends one of the
-    # plan's monthly slots on a provider rejection, and a workspace with a
-    # misconfigured channel could burn its whole allowance on sends that never
-    # left the building.
-    #
-    # QUEUED is excluded as deliberately as FAILED: it means a retry is pending
-    # and nothing has reached anybody yet. The retry runs through this same
-    # function and marks then, and the mark is idempotent, so the contact is
-    # counted exactly once however many attempts it takes.
-    if sent.status not in (MessageStatus.FAILED, MessageStatus.QUEUED):
-        _mark_plan_contact_reached(workspace, contact)
-    return sent
+    # The contact is counted inside `_dispatch`, at the point the platform
+    # actually takes the message — never here at the gate. Marking at the gate
+    # spends one of the plan's monthly slots on a provider rejection, and a
+    # workspace with a misconfigured channel could burn its whole allowance on
+    # sends that never left the building.
+    return _dispatch(message, connection, identity, on_the_wire, blocking=blocking)
 
 
 def send_as_agent(
@@ -774,11 +766,29 @@ def _dispatch(
 
     if result.status == SendStatus.FAILED:
         return _finalize(message, status=MessageStatus.FAILED, error=_provider_code(result))
-    return _finalize(
+
+    sent = _finalize(
         message,
         status=MessageStatus.SENT,
         provider_message_id=result.provider_message_id,
     )
+    # The plan's contact meter, at the one point in the codebase where a message
+    # has demonstrably reached a platform.
+    #
+    # Here rather than in `send_outbound` because this function has three
+    # callers and that is only one of them: `handle_send_retry` re-enters here
+    # directly, so a send that deferred and then succeeded would never have been
+    # counted, and a free organization could walk past its cap through deferred
+    # sends. The same reasoning the tombstone check at the top of this function
+    # gives for living here rather than in its caller.
+    #
+    # `send_compliance_reply` reaches this too, and should: it is exempt from
+    # the *gate* — a carrier obligation is not refused over a card — but the
+    # person it answers is someone the workspace exchanged messages with, which
+    # is what the meter counts. Inbound has almost always marked them already,
+    # so it is a no-op in practice.
+    _mark_plan_contact_reached(sent.conversation.contact)
+    return sent
 
 
 def _defer(
@@ -1033,7 +1043,7 @@ def plan_allows_reaching(workspace: Any, contact: Any) -> bool:
     return reach(workspace, contact)
 
 
-def _mark_plan_contact_reached(workspace: Any, contact: Any) -> None:
+def _mark_plan_contact_reached(contact: Any) -> None:
     """Count this contact towards the organization's month, after a real send.
 
     Neither this nor :func:`plan_allows_reaching` may raise — contract 1 says
@@ -1043,7 +1053,7 @@ def _mark_plan_contact_reached(workspace: Any, contact: Any) -> None:
     from apps.billing.metering import mark_reached
 
     if not billing_enabled():
-        # Before resolving the organization, which is a query: a deployment with
-        # no billing must pay nothing on the send path.
+        # Checked before the organization is resolved, which is two queries: a
+        # deployment with no billing must pay nothing on the send path.
         return
-    mark_reached(workspace.organization, contact)
+    mark_reached(contact.workspace.organization, contact)

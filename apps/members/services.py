@@ -251,27 +251,6 @@ def create_invitation(
 
 
 @transaction.atomic
-def _check_plan_allows_seat(org: Any, *, excluding_invitation: Any = None) -> None:
-    """Refuse a seat the organization's plan does not include.
-
-    ``excluding_invitation`` is the invitation being *consumed*, and leaving it
-    out is not an optimisation. A seat is a member or a live invitation, so at
-    acceptance the same person is counted twice — once as the pending invite and
-    once as the membership they are about to become. On a two-seat plan an
-    organization with one member and one pending invitation would refuse that
-    invitation, even though accepting it lands exactly on the limit.
-
-    Re-raised as ``MembershipError`` so it reaches the ``except`` clause the
-    members views already have.
-    """
-    from apps.billing.entitlements import PlanLimitError, check_can_add_seat
-
-    try:
-        check_can_add_seat(org, excluding_invitation=excluding_invitation)
-    except PlanLimitError as exc:
-        raise MembershipError(str(exc)) from exc
-
-
 def accept_invitation(invitation: Invitation, user: Any, *, require_email_match: bool = True) -> None:
     """Turn a pending invitation into memberships.
 
@@ -349,6 +328,28 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
     if first_workspace_id:
         user.last_workspace_id = first_workspace_id
         user.save(update_fields=["last_workspace_id"])
+
+
+def _check_plan_allows_seat(org: Any, *, excluding_invitation: Any = None) -> None:
+    """Refuse a seat the organization's plan does not include.
+
+    ``excluding_invitation`` is the invitation being *consumed*, and leaving it
+    out is not an optimisation. A seat is a member or a live invitation, so at
+    acceptance the same person is counted twice — once as the pending invite and
+    once as the membership they are about to become. On a two-seat plan an
+    organization with one member and one pending invitation would refuse that
+    invitation, even though accepting it lands exactly on the limit.
+
+    Re-raised as ``MembershipError`` so it reaches the ``except`` clause the
+    members views already have.
+    """
+    from apps.billing.entitlements import PlanLimitError, check_can_add_seat, organization_locked
+
+    try:
+        with organization_locked(org):
+            check_can_add_seat(org, excluding_invitation=excluding_invitation)
+    except PlanLimitError as exc:
+        raise MembershipError(str(exc)) from exc
 
 
 def resend_invitation(invitation: Invitation) -> Invitation:

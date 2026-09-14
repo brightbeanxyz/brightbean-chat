@@ -70,9 +70,16 @@ def handle(event: dict[str, Any]) -> str:
 
     row = _claim(event_id, event_type, event)
     if row is None:
-        # Another delivery of the same event already did this.
-        logger.debug("Ignoring duplicate Stripe event %s", event_id)
-        return EventStatus.PROCESSED
+        # A row already exists for this event id. That is the dedup working —
+        # unless the previous attempt *failed*, in which case this delivery is
+        # Stripe's retry and dropping it would lose the event for good: the view
+        # answers 200 either way, so Stripe will not offer it a third time.
+        existing = StripeEventLog.objects.filter(event_id=event_id).first()
+        if existing is None or existing.status != EventStatus.FAILED:
+            logger.debug("Ignoring duplicate Stripe event %s", event_id)
+            return EventStatus.PROCESSED
+        logger.info("Retrying Stripe event %s after an earlier failure", event_id)
+        row = existing
 
     if event_type not in HANDLED_EVENTS:
         # Not an error. Stripe sends whatever the endpoint is subscribed to, and
@@ -229,17 +236,24 @@ def _apply_subscription(event_type: str, event: dict[str, Any], subscription: di
 
 def _write_subscription(row: BillingCustomer, subscription: dict[str, Any], *, deleted: bool) -> None:
     """Copy a subscription's state onto the row. Does not save."""
+    row.checkout_pending_since = None
+
     if deleted:
         row.status = "canceled"
         row.stripe_subscription_id = ""
         row.cancel_at_period_end = False
-    else:
-        row.status = str(subscription.get("status") or STATUS_NONE)
-        row.stripe_subscription_id = str(subscription.get("id") or "")
-        row.cancel_at_period_end = bool(subscription.get("cancel_at_period_end"))
-        row.price_id = _price_id(subscription)
+        # Cleared, not copied from the payload. Stripe sends the final period on
+        # the deletion event, and keeping it made `billing_context` read the row
+        # as renewing — a cancelled organization would be told "Renews on" a
+        # date that will never come.
+        row.current_period_end = None
+        return
+
+    row.status = str(subscription.get("status") or STATUS_NONE)
+    row.stripe_subscription_id = str(subscription.get("id") or "")
+    row.cancel_at_period_end = bool(subscription.get("cancel_at_period_end"))
+    row.price_id = _price_id(subscription)
     row.current_period_end = _period_end(subscription)
-    row.checkout_pending_since = None
 
 
 def apply_snapshot(row: BillingCustomer, subscription: dict[str, Any] | None) -> None:

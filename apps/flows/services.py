@@ -288,9 +288,18 @@ def _check_plan_allows_activation(flow: Flow) -> None:
     A late import — billing reads this app's models, so a module-scope import
     would close the loop, and an unconfigured deployment should never load it.
     """
-    from apps.billing.entitlements import PlanLimitError, check_can_activate_automation
+    from apps.billing.entitlements import (
+        PlanLimitError,
+        check_can_activate_automation,
+        organization_locked,
+    )
 
+    organization = flow.workspace.organization
     try:
-        check_can_activate_automation(flow.workspace.organization)
+        # Locked, not merely counted: `publish` holds its own flow row, which
+        # says nothing about the *other* flows the count walks. Two publishes at
+        # once would otherwise both read `limit - 1`.
+        with organization_locked(organization):
+            check_can_activate_automation(organization)
     except PlanLimitError as exc:
         raise FlowPlanLimitError(str(exc)) from exc
