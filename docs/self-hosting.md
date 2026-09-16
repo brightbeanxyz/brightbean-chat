@@ -3,10 +3,9 @@
 Everything needed to run this yourself: first boot, TLS, the background worker,
 backups, upgrades, and how to tell whether what you deployed is healthy.
 
-The reference deployment is Docker Compose on one machine. There are also
-one-click configurations for Heroku, Render and Railway. All four are hardened
-out of the box — no default secrets, `DEBUG` off, Postgres closed to the
-internet — and this guide will not ask you to relax any of that.
+The reference deployment is Docker Compose on one machine. Heroku and Render
+have deployment configurations; Railway has a multi-service setup guide below.
+Production settings require real secrets and disable `DEBUG`.
 
 > The security expectations behind every choice here are in
 > [`SECURITY-BASELINE.md`](SECURITY-BASELINE.md). This guide points at it rather
@@ -444,40 +443,76 @@ environment group from the dashboard once you have deployed. See
 
 ## Railway
 
-Railway's config-as-code applies to one service at a time, so this is a
-four-step setup rather than a button. (A one-click template has to be published
-from a Railway account; the repository cannot ship one. If you maintain a fork,
-publish a template from your project and link it here.)
+The Dockerfile is ready for Railway. Configure the project in Railway's
+dashboard or use its `.railway/railway.ts` Infrastructure as Code. The old
+per-service `railway.json` files were removed because Railway no longer allows
+new services to opt into that format. Existing Railway services that used those
+files need their settings migrated before the next deployment, and before
+Railway's December 1, 2026 cutoff. See [Railway's Infrastructure as Code
+guide](https://docs.railway.com/infrastructure-as-code).
 
-1. **New Project → Deploy PostgreSQL.**
-2. **Add a service from this repository.** It picks up
-   [`railway.json`](../railway.json): Dockerfile build, `/healthz` as the health
-   check, and `python manage.py migrate --noinput` as the pre-deploy command.
-3. **Add a second service from the same repository** for the worker. In its
-   settings, set the config-as-code path to `/deploy/railway.worker.json`, which
-   replaces the start command with `python manage.py process_tasks` and drops
-   the health check (the worker serves no port).
-4. **Set the variables on both services.** `DATABASE_URL` is
-   `${{Postgres.DATABASE_URL}}`. `SECRET_KEY` and `ENCRYPTION_KEY_SALT` must be
-   the **same value on both services** — use a shared variable rather than
-   generating each one twice, for the same reason Render uses an env group.
-   Also set `DJANGO_SETTINGS_MODULE=config.settings.production`,
-   `DJANGO_ENV_FILE=/nonexistent`, `ALLOWED_HOSTS` and `APP_URL`.
+1. Create a project with a **Postgres** service. Add a private S3-compatible
+   bucket (Railway Bucket or another provider) for uploaded media and queued
+   contact-import files.
+2. Add **web** from this repository. Railway detects the root Dockerfile. Enable
+   public HTTP networking and generate a domain. Keep the Dockerfile's default
+   Gunicorn start command. Set the pre-deploy command to
+   `python manage.py migrate --noinput`, the health-check path to `/healthz`,
+   and a health-check timeout of at least 120 seconds.
+3. Add **worker** from the same repository and Dockerfile. Set its start command
+   to `python manage.py process_tasks`. Keep it running as a persistent service;
+   give it no public domain or HTTP health check. The worker runs the
+   PostgreSQL-backed queue; Redis and a separate scheduler are unnecessary.
+4. Set these variables on **both** app services. Use Railway shared variables
+   for the secrets and storage configuration so web and worker receive identical
+   values. Create `SECRET_KEY` and `ENCRYPTION_KEY_SALT` once each with distinct
+   random values and retain them for database recovery.
 
-   Two more that Railway's config files cannot carry, and that a deployment is
-   quietly broken without:
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (if the database service is named `Postgres`) |
+   | `DJANGO_SETTINGS_MODULE` | `config.settings.production` |
+   | `DJANGO_ENV_FILE` | `/nonexistent` |
+   | `SECRET_KEY`, `ENCRYPTION_KEY_SALT` | Two distinct, shared random secrets |
+   | `ALLOWED_HOSTS` | The web service's public hostname **and** `healthcheck.railway.app`, comma-separated; add custom domains when attached |
+   | `APP_URL` | `https://` plus the web service's public hostname |
+   | `TRUSTED_PROXIES` | `127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
+   | `STORAGE_BACKEND` | `s3` |
+   | `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL`, `S3_REGION_NAME` | The same private bucket's settings on both services |
 
-   - `TRUSTED_PROXIES=127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`, so
-     requests are attributed to the caller rather than to Railway's router. Without
-     it auth rate limiting, API throttling and the webhook signature ban all share
-     one bucket across every user.
-   - `STORAGE_BACKEND=s3` and the `S3_*` variables, as shared variables so both
-     services agree. A Railway volume attaches to one service, so the worker
-     cannot read a contact-import file the web service wrote — see
-     [Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate).
+   Railway Bucket exposes `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`,
+   `ENDPOINT` and `REGION`; reference those from the application's corresponding
+   `S3_*` variables. Use the bucket's `BUCKET` value, not its display name or
+   `RAILWAY_BUCKET_NAME`. For AWS S3, leave `S3_ENDPOINT_URL` empty and use its
+   actual region. Do not set `S3_CUSTOM_DOMAIN` for a private bucket without a
+   CloudFront signer.
 
-Generate a domain for the web service, then put that hostname in `ALLOWED_HOSTS`
-and its `https://` form in `APP_URL`.
+Railway sends the health probe with `Host: healthcheck.railway.app`. Without
+that exact entry in `ALLOWED_HOSTS`, Django returns `400` and the deployment
+fails even while Gunicorn is running. The public hostname alone is insufficient.
+After deployment, check the web service's `/healthz`, confirm the worker remains
+running, and sign up at `/accounts/signup/`.
+
+### Create a Railway template
+
+Deploy and verify the three-service project first. In the project canvas, open
+**Settings → Generate Template from Project → Create Template**. In the template
+composer, check the GitHub source for both app services, the worker start
+command, web-only public networking and health check, the web pre-deploy
+migration, the Postgres reference, and all required variables. Replace your
+project's actual secret values in the template with generated values (for
+example `${{secret(50)}}` once per secret), then reference each from the worker
+or share it between services. Generating each secret separately on web and
+worker breaks encrypted credentials. To make the generated domain reusable,
+set web's `ALLOWED_HOSTS` to `${{RAILWAY_PUBLIC_DOMAIN}},healthcheck.railway.app`
+and `APP_URL` to `https://${{RAILWAY_PUBLIC_DOMAIN}}`. On the worker, use
+`${{web.RAILWAY_PUBLIC_DOMAIN}}` in place of the same-service reference (assuming
+the web service is named `web`). If your storage bucket is not included in
+the template, prompt for the `S3_*` variables and require a private bucket
+before users start uploading files. Create the template, deploy
+one copy to verify it, then publish it from your Railway workspace if you want
+it listed in the marketplace. Railway provides a shareable template URL before
+marketplace publication. See [Railway's template guide](https://docs.railway.com/templates/create).
 
 ---
 
