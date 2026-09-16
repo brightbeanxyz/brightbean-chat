@@ -35,7 +35,7 @@ import logging
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -49,6 +49,7 @@ from apps.flows.compat import installed_model
 from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.picklists import picklists
 from apps.flows.portability.envelope import MAX_DOCUMENT_BYTES
+from apps.flows.portability.library import read_template, template_cards, template_for_slug
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
 
@@ -59,6 +60,8 @@ __all__ = [
     "import_discard",
     "import_review",
     "import_start",
+    "template_gallery",
+    "template_start",
 ]
 
 logger = logging.getLogger(__name__)
@@ -138,11 +141,25 @@ def import_start(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if document is None:
         return _upload_failed(request, workspace_id, [issue.message for issue in issues])
 
+    return _begin_import(request, workspace_id, document, str(upload.name or ""))
+
+
+def _begin_import(
+    request: WorkspaceRequest, workspace_id: str, document: dict[str, Any], filename: str
+) -> HttpResponse:
+    """Store the validated document and send the user to the mapping step.
+
+    The tail of an upload, and the whole of starting from a shipped template —
+    which is the point of it being one function. A template skips exactly one
+    thing an upload does, reading the bytes off the wire; everything after that
+    has to be identical, and the cheapest way to keep a promise like that is to
+    have only one place that can break it.
+    """
     record = FlowImport(
         workspace=request.workspace,
         document=document,
         mapping=portability.default_mapping(request.workspace, document, user=request.user),
-        original_filename=str(upload.name or "")[:255],
+        original_filename=filename[:255],
         created_by=request.user,
     )
     record.save()
@@ -165,6 +182,113 @@ def _upload_failed(request: WorkspaceRequest, workspace_id: str, errors: list[st
 
 def _redirect_to_review(workspace_id: str, record: FlowImport) -> HttpResponse:
     return redirect("flows:import_review", workspace_id=workspace_id, flow_import_id=record.pk)
+
+
+# ---------------------------------------------------------------------------
+# Import, step zero: the shipped template gallery
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("edit_flows")
+@require_GET
+def template_gallery(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """The templates this installation ships, as something you can pick from.
+
+    Until this existed the library had no UI at all: the files sat in the
+    repository and the only door into them was downloading one and uploading it
+    again. Nothing here is workspace data — every card is the same for everyone
+    on this installation — which is why there is no object to scope and why the
+    slug is not a tenant identifier.
+    """
+    return render(request, "flows/template_gallery.html", _gallery_context(workspace_id))
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def template_start(request: WorkspaceRequest, workspace_id: str, template_slug: str) -> HttpResponse:
+    """Begin an import from a shipped template.
+
+    Joins the wizard the upload path already walks, one step in. POST and not
+    GET because it writes the ``FlowImport`` row — the same row an upload
+    writes, and still the only thing that exists before the confirm.
+    """
+    path = template_for_slug(template_slug)
+    if path is None:
+        raise Http404("No such template.")
+
+    document, issues = read_template(path)
+    if document is None:
+        # A file this repository ships failing its own importer is our bug, not
+        # the user's, so it is logged at error and the page says so plainly
+        # rather than blaming whatever they clicked.
+        logger.error(
+            "shipped flow template %s does not validate: %s",
+            path.name,
+            "; ".join(issue.message for issue in issues[:5]),
+        )
+        errors = [f"{path.name} could not be read. This is a problem with the template, not with you."]
+        return render(
+            request,
+            "flows/template_gallery.html",
+            _gallery_context(workspace_id, errors=errors),
+            status=400,
+        )
+
+    return _begin_import(request, workspace_id, document, path.name)
+
+
+def _gallery_context(workspace_id: str, *, errors: list[str] | None = None) -> dict[str, Any]:
+    """Everything the gallery page renders, built in one place.
+
+    One builder rather than one per view: the 400 that a broken shipped template
+    produces renders the same page, and a second copy of this dict is a second
+    thing to keep in step — which is how that copy came to pass an empty
+    ``categories`` and silently drop the filter chips.
+    """
+    cards = template_cards()
+    return {
+        "cards": [_card_context(workspace_id, card) for card in cards],
+        "categories": list(dict.fromkeys(card.category for card in cards if card.category)),
+        "errors": errors or [],
+        "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
+        "upload_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
+    }
+
+
+def _card_context(workspace_id: str, card: Any) -> dict[str, Any]:
+    """One card with its labels resolved and its start URL reversed.
+
+    Labels come from the registries that already own them — ``_KIND_LABELS``,
+    ``Platform``'s choices, and each trigger type's own ``TriggerSpec.label`` —
+    rather than from a second table: the review step and the trigger panel
+    already name these things, and a gallery that called a channel or a trigger
+    something else would be the same feature speaking with two voices.
+    """
+    from apps.common.platforms import Platform
+    from apps.flows.triggers.registry import spec_for
+
+    def platform_label(key: str) -> str:
+        try:
+            return str(Platform(key).label)
+        except ValueError:
+            return key
+
+    def trigger_label(trigger_type: str) -> str:
+        spec = spec_for(trigger_type)
+        return spec.label if spec is not None else trigger_type
+
+    return {
+        "card": card,
+        "platforms": [platform_label(key) for key in card.platforms],
+        "needs": [_KIND_LABELS.get(kind, kind) for kind in card.needs],
+        "triggers": [trigger_label(trigger_type) for trigger_type in card.trigger_types],
+        "start_url": reverse(
+            "flows:template_start",
+            kwargs={"workspace_id": workspace_id, "template_slug": card.slug},
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

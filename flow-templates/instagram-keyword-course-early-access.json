@@ -1,0 +1,159 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Convert",
+      "graph": {
+        "edges": [
+          {
+            "id": "pitch-qr-notify-tag_waitlist",
+            "source": "pitch",
+            "sourceHandle": "qr:notify",
+            "target": "tag_waitlist"
+          },
+          {
+            "id": "tag_waitlist-default-confirm",
+            "source": "tag_waitlist",
+            "sourceHandle": "default",
+            "target": "confirm"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "It opens Thursday, and this list gets in first.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Before anyone else.",
+                  "title": "Early access",
+                  "type": "card",
+                  "url_button": {
+                    "label": "See what is inside",
+                    "url": "https://example.com/early-access"
+                  }
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "notify",
+                  "label": "Put me on the list"
+                }
+              ]
+            },
+            "id": "pitch",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Waitlist",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_waitlist",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are on it. I will message you the moment doors open.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "confirm",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "On launch day, broadcast to everyone carrying 'Waitlist'. This flow cannot message them later by itself: Instagram closes the 24-hour window after their last message, so the promise is kept by the broadcast, not by this graph.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "launch_day",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Early access to the launch",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "EARLY"
+              },
+              {
+                "mode": "exact",
+                "text": "ACCESS"
+              },
+              {
+                "mode": "exact",
+                "text": "COURSE"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "waitlist",
+        "name": "Waitlist",
+        "used_by": [
+          "flow-1:tag_waitlist"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

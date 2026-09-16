@@ -1,0 +1,211 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Grow",
+      "graph": {
+        "edges": [
+          {
+            "id": "offer-qr-join-ask_phone",
+            "source": "offer",
+            "sourceHandle": "qr:join",
+            "target": "ask_phone"
+          },
+          {
+            "id": "offer-qr-skip-skip",
+            "source": "offer",
+            "sourceHandle": "qr:skip",
+            "target": "skip"
+          },
+          {
+            "id": "ask_phone-default-tag_sms",
+            "source": "ask_phone",
+            "sourceHandle": "default",
+            "target": "tag_sms"
+          },
+          {
+            "id": "tag_sms-default-confirm",
+            "source": "tag_sms",
+            "sourceHandle": "default",
+            "target": "confirm"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Drops go out by text first. Want in?",
+                  "type": "text"
+                },
+                {
+                  "text": "A couple of texts a month. Reply STOP any time and they end.",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "join",
+                  "label": "Text me the drops"
+                },
+                {
+                  "id": "skip",
+                  "label": "No thanks"
+                }
+              ]
+            },
+            "id": "offer",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "What is the best number for you? Include the country code.",
+              "reply_type": "phone",
+              "retry": {
+                "invalid_text": "That number did not parse. Try it with the country code?",
+                "max": 2
+              },
+              "target": {
+                "key": "phone",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 6,
+                "enabled": true,
+                "unit": "hours"
+              }
+            },
+            "id": "ask_phone",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "SMS subscriber",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_sms",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are on the list. First text comes with the next drop.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "confirm",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "No problem. Everything still goes out here too.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "skip",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "The phone answer records consent with the number, and the SMS channel answers STOP and HELP on its own. Keep the sentence saying how often you text and how to stop: in most countries that sentence is the legal part, not a nicety.\n\nThis collects numbers. It does not text anybody. Sending is a broadcast to the tag, or the 'Move the conversation to SMS' template.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "consent_and_stop",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Grow the SMS list",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "TEXTME"
+              },
+              {
+                "mode": "exact",
+                "text": "DROPS"
+              },
+              {
+                "mode": "exact",
+                "text": "SMS"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "sms subscriber",
+        "name": "SMS subscriber",
+        "used_by": [
+          "flow-1:tag_sms"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

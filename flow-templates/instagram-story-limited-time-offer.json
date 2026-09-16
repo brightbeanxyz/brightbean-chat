@@ -1,0 +1,183 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Convert",
+      "graph": {
+        "edges": [
+          {
+            "id": "offer-default-tag_offer",
+            "source": "offer",
+            "sourceHandle": "default",
+            "target": "tag_offer"
+          },
+          {
+            "id": "tag_offer-default-wait",
+            "source": "tag_offer",
+            "sourceHandle": "default",
+            "target": "wait"
+          },
+          {
+            "id": "wait-default-nudge",
+            "source": "wait",
+            "sourceHandle": "default",
+            "target": "nudge"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Here is the code from the Story. It is good for today only.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Applies at checkout.",
+                  "title": "Your code",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Use it now",
+                    "url": "https://example.com/offer"
+                  }
+                }
+              ]
+            },
+            "id": "offer",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Story offer",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_offer",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "duration": {
+                "unit": "hours",
+                "value": 20
+              },
+              "mode": "duration"
+            },
+            "id": "wait",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Last call on that code, {{first_name}}. It stops working tonight.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Until midnight.",
+                  "title": "Still yours",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Use it now",
+                    "url": "https://example.com/offer"
+                  }
+                }
+              ]
+            },
+            "id": "nudge",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "Twenty hours, not twenty-four. Instagram closes the messaging window 24 hours after the contact's last message, and a reminder scheduled at the edge of it arrives to a closed door.\n\nThe deadline lives in the copy rather than in the delay. A fixed date baked into a template is already in the past by the time somebody downloads it, so the flow counts hours from the reply instead.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "twenty_hours",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Limited-time offer from Stories",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "offer"
+              },
+              {
+                "mode": "any_word",
+                "text": "code"
+              },
+              {
+                "mode": "any_word",
+                "text": "deal"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "story_reply"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "story offer",
+        "name": "Story offer",
+        "used_by": [
+          "flow-1:tag_offer"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}
