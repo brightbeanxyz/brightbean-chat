@@ -297,6 +297,7 @@ make audit
 
 CI runs all of that plus a production Docker build, a smoke test of the HTTPS
 stack in `docker-compose.prod.yml`, and a gitleaks scan. A change to any deploy
-configuration — the compose files, `deploy/`, `app.json`, `render.yaml`,
-`railway.json` — is checked by `tests/test_deploy_config.py`, which asserts the
-secure-by-default properties `docs/self-hosting.md` promises.
+configuration — the compose files, `deploy/`, `app.json`, and `render.yaml` —
+is checked by `tests/test_deploy_config.py`, which asserts the secure-by-default
+properties `docs/self-hosting.md` promises. Railway's dashboard setup is
+documented in that guide.

@@ -149,7 +149,7 @@ background worker, and Caddy with automatic HTTPS. Uploaded media is stored in
 the shared Docker volume. See [storage guidance](docs/self-hosting.md#storage-when-web-and-worker-are-separate)
 when web and worker run on separate hosts or a PaaS.
 
-### One-click deployment
+### Platform deployment
 
 | Heroku | Render | Railway |
 |:------:|:------:|:-------:|
