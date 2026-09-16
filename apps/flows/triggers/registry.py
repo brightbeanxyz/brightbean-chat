@@ -38,6 +38,9 @@ class TriggerSpec:
     """Everything about a trigger type that is not behaviour."""
 
     type: str
+    #: What this is called on screen. Copy, not contract — the stored value is
+    #: ``type``, which migrations and the API pin; nothing asserts these, so
+    #: "Ref URL / QR" could become "Link or QR code" without a migration.
     label: str
     description: str
     #: SPEC §10's "Channels" column. Empty means the type is not delivered by a
@@ -168,7 +171,7 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.REF_URL,
-        "Ref URL / QR",
+        "Link or QR code",
         "Runs when someone arrives through a link or QR code carrying this reference.",
         trigger_schema.REF_URL,
         default_config=lambda: {"ref": ""},
@@ -177,7 +180,7 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.DEFAULT_REPLY,
-        "Default reply",
+        "Nothing else matched",
         "Runs when nothing else matched. At most once per contact per day.",
         trigger_schema.DEFAULT_REPLY,
         stage_only=True,
@@ -194,7 +197,7 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.RULE,
-        "Rule",
+        "Something happens here",
         "Runs when something happens to a contact — a tag added, a field changed.",
         trigger_schema.RULE,
         bindable=False,
@@ -203,7 +206,7 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.API,
-        "API",
+        "Another system",
         "Runs only when the API asks for it.",
         trigger_schema.API,
         bindable=False,
