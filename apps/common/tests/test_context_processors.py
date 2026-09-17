@@ -1,5 +1,7 @@
 """The sidebar context processor — one active-state convention (deviation 4)."""
 
+from pathlib import Path
+
 import pytest
 from django.contrib.auth.models import AnonymousUser
 from django.test import RequestFactory
@@ -364,8 +366,10 @@ class TestNavStructure:
         Library, which is what keeps every cross-app test that looks a row up by
         key working through a rename.
 
-        Two rows left the rail rather than the product: `sequences` became a tab
-        on the flows page, and `notifications` became the header bell.
+        One row left the nav rather than the product: `sequences` became a tab
+        on the flows page. `notifications` left for the app header and came
+        back when the header was deleted — the sidebar is the surface that
+        renders on every page now, and its row is the bell's trigger.
         """
         keys = [i.key for g in MAIN_NAV for i in g.items]
 
@@ -376,18 +380,49 @@ class TestNavStructure:
             "broadcasts",
             "contacts",
             "analytics",
+            "notifications",
             "media",
             "settings",
         }
 
-    def test_the_rail_is_split_into_a_top_and_a_bottom_group(self):
-        """Library and Settings sit against the avatar, away from the six rows
+    def test_the_nav_is_split_into_a_top_and_a_bottom_group(self):
+        """Library and Settings sit in the sidebar's footer, away from the rows
         that answer "what am I doing"."""
         top = [i.key for g in MAIN_NAV if g.placement == "top" for i in g.items]
         bottom = [i.key for g in MAIN_NAV if g.placement == "bottom" for i in g.items]
 
-        assert top == ["dashboard", "inbox", "flows", "broadcasts", "contacts", "analytics"]
+        assert top == ["dashboard", "inbox", "flows", "broadcasts", "contacts", "analytics", "notifications"]
         assert bottom == ["media", "settings"]
+
+    def test_the_notifications_row_is_not_workspace_scoped(self):
+        """A notification is addressed to a person and the feed spans every
+        workspace they belong to, so this is the one main-nav row that survives
+        a user whose workspaces are all archived — which is exactly when a
+        channel_needs_reauth alert matters most."""
+        row = next(i for g in MAIN_NAV for i in g.items if i.key == "notifications")
+
+        assert row.workspace_scoped is False
+        assert row.badge_key == "unread_notifications"
+
+    def test_the_notifications_row_carries_the_partial_that_draws_it(self):
+        """The row is the bell's trigger, not a plain anchor, so it renders
+        itself. An include of a template that does not exist fails soft in
+        Django — as an empty string — so the path is pinned here rather than
+        discovered as a missing row on a page."""
+        row = next(i for g in MAIN_NAV for i in g.items if i.key == "notifications")
+
+        assert row.partial == "notifications/partials/_bell.html"
+        assert (Path(__file__).parents[3] / "templates" / row.partial).exists()
+
+    def test_a_row_marked_authenticated_only_is_dropped_for_an_anonymous_request(self):
+        """sidebar_context returns {} for anonymous users, so this matters for
+        exactly one caller: apps.common.views.ui_demo, which calls
+        navigation_context directly for visitors with no session and promises
+        /ui/ "reads no database and no session"."""
+        context = navigation_context(_request("/ui/"))
+
+        keys = [item["key"] for group in context["nav_groups"] for item in group["items"]]
+        assert "notifications" not in keys
 
     def test_the_settings_row_lights_up_on_every_settings_page(self):
         """Derived from SETTINGS_NAV rather than hand-listed, so a settings page
@@ -495,7 +530,11 @@ class TestTenancyIntegration:
 
         top = [item["key"] for group in context["nav_groups"] for item in group["items"]]
         bottom = [item["key"] for group in context["nav_footer_groups"] for item in group["items"]]
-        assert top == []
+        # Notifications survives for the same reason Settings does, and more
+        # sharply: it is addressed to the person, not the workspace, and a
+        # channel_needs_reauth alert is most of what there is to read when
+        # every workspace has been archived.
+        assert top == ["notifications"]
         assert bottom == ["settings"]
         # The Workspace group empties for the same reason: no workspace means
         # no workspace membership, so none of its rows are visible either.

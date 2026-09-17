@@ -1,0 +1,43 @@
+{% comment %}
+One run of sidebar rows. Same data as partials/_nav_groups.html renders for the
+settings nav — the NavGroup/NavItem structure from
+apps.common.context_processors, with `active` already resolved in Python.
+
+Still two renderers rather than one with a variant flag, but not for the old
+reason (a rail row stacked its label under its glyph; both are icon-beside-
+label now). What is left is real and smaller: a sidebar row has the collapse
+hooks the settings column has no use for — `.sidebar-nav-label`, which every
+collapsed rule keys on, and a `title`, which is the only affordance left at
+60px — it is a size down (`--fs-body` against `--fs-body-lg`), and it can be a
+trigger rather than a link. A flag would have to branch on all four.
+
+`item.partial` is that last case: a row that is more than an anchor renders
+itself. Exactly one row uses it — Notifications, which is also the bell's
+trigger — and the alternative was an `{% if item.key == "notifications" %}`
+here, in the renderer that is supposed not to know what the rows are.
+
+Args:
+  groups: rendered nav groups (each {label, items: [...]}).
+{% endcomment %}
+{% for group in groups %}
+{% if group.label %}<div class="sidebar-section-label">{{ group.label }}</div>{% endif %}
+{% for item in group.items %}
+{% if item.partial %}{% include item.partial with item=item %}{% else %}
+<a href="{{ item.url }}"
+   class="sidebar-nav-item{% if item.active %} active{% endif %}"
+   {% if item.active %}aria-current="page"{% endif %}
+   title="{{ item.label }}">
+    {% include "partials/_nav_icon.html" with name=item.icon %}
+    <span class="sidebar-nav-label">{{ item.label }}</span>
+    {% comment %}
+      The badge is a sibling of the label, not a child of a wrapper round the
+      glyph: expanded it is pushed to the row's far end with `margin-left:auto`,
+      and inside a wrapper that auto margin has nothing to push against. The
+      row is its containing block for the collapsed corner state — see
+      .sidebar-nav-item's position:relative. partials/_nav_badge.html explains
+      why the slot is rendered even at zero.
+    {% endcomment %}
+    {% if item.badge_slot %}{% include "partials/_nav_badge.html" with key=item.key count=item.badge only %}{% endif %}
+</a>
+{% endif %}
+{% endfor %}{% endfor %}

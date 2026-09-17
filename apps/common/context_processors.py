@@ -102,14 +102,32 @@ class NavItem:
     #: The organisation role the row's page requires, "member" or "admin".
     #: Checked against ORG_ROLE_LEVEL, so "member" passes for an admin too.
     org_role: str = ""
+    #: A template that draws this row instead of the default anchor, for a row
+    #: that is more than a link. Read by partials/_sidebar_items.html, which
+    #: hands it the resolved item and nothing else. Exactly one row uses it —
+    #: Notifications, which is also the trigger for the bell's panel — and the
+    #: alternative was a second nav renderer, or an `{% if item.key ==
+    #: "notifications" %}` in the shared one. A field keeps the special case
+    #: with the row that is special.
+    partial: str = ""
+    #: Rows that exist only for a signed-in person. ``sidebar_context`` returns
+    #: ``{}`` for anonymous requests, so this matters for exactly one caller:
+    #: apps.common.views.ui_demo, which calls ``navigation_context`` directly
+    #: for visitors with no session and whose docstring promises /ui/ "reads no
+    #: database and no session".
+    authenticated_only: bool = False
 
     def visible_to(self, request: HttpRequest) -> bool:
         """Whether this viewer may open the page behind the row.
 
         Advertising a page somebody is refused at is worse than omitting it:
         they cannot tell a permission from a bug. Unset gates mean "everyone",
-        which is what every rail row and every tab uses.
+        which is what every sidebar row and every tab uses.
         """
+        if self.authenticated_only:
+            user = getattr(request, "user", None)
+            if user is None or not user.is_authenticated:
+                return False
         if self.permission:
             membership = getattr(request, "workspace_membership", None)
             if membership is None:
@@ -162,6 +180,9 @@ class NavItem:
             # wholesale and would otherwise leave the poll with no target at
             # all — the bug this flag exists to close.
             "badge_slot": bool(self.badge_key),
+            # Empty for every row but Notifications; the renderer falls back to
+            # its own anchor markup when this is blank.
+            "partial": self.partial,
         }
 
     def _url(self, workspace_id: Any) -> str:
@@ -186,7 +207,7 @@ class NavGroup:
 
     label: str
     items: tuple[NavItem, ...] = ()
-    # "bottom" pins the group to the end of the rail, past the flex spacer:
+    # "bottom" pins the group to the sidebar's footer, below the scrolling nav:
     # Library and Settings sit against the avatar, away from the six rows that
     # answer "what am I doing". A field on the group rather than a second
     # module-level list, because the tests that police nav invariants — unique
@@ -349,7 +370,7 @@ SETTINGS_NAV: list[NavGroup] = [
 ]
 
 
-# Every route any settings row points at. The rail's Settings row lights up on
+# Every route any settings row points at. The sidebar's Settings row lights up on
 # all of them, and deriving the set beats hand-listing seventeen route names
 # that would drift the first time a settings page is added.
 _SETTINGS_ROUTES: frozenset[str] = frozenset(
@@ -358,8 +379,8 @@ _SETTINGS_ROUTES: frozenset[str] = frozenset(
 
 
 # --- The product's navigation ------------------------------------------------
-# The rail (SPEC §16's shell, as redesigned): six rows that answer "what am I
-# doing", then a bottom group for the things you reach occasionally.
+# The sidebar (SPEC §16's shell): the rows that answer "what am I doing", then
+# a bottom group for the things you reach occasionally.
 #
 # Keys track the route; labels track the design. That is why `dashboard`,
 # `analytics` and `media` keep their keys while reading Home, Insights and
@@ -387,7 +408,7 @@ MAIN_NAV: list[NavGroup] = [
                 badge_key="unread_inbox",
                 workspace_scoped=True,
             ),
-            # Sequences left the rail and became a tab on this page, so the row
+            # Sequences left the nav and became a tab on this page, so the row
             # stays lit while either half of "automations" is open.
             NavItem(
                 key="flows",
@@ -419,8 +440,8 @@ MAIN_NAV: list[NavGroup] = [
             ),
             # apps.analytics is an optional install, so this row legitimately
             # reverses to "#" and is dropped on deployments without it. The
-            # rail is laid out with flex for that reason: it must not assume
-            # six items.
+            # sidebar's nav is laid out with flex for that reason: it must not
+            # assume a fixed number of rows.
             NavItem(
                 key="analytics",
                 label="Insights",
@@ -428,6 +449,26 @@ MAIN_NAV: list[NavGroup] = [
                 url_name="analytics:overview",
                 url_names=frozenset({"analytics:overview", "analytics:flow_detail"}),
                 workspace_scoped=True,
+            ),
+            # Back in the nav, where it was before the header existed. The bell
+            # lived in the appbar because that was the one surface on every
+            # page; the sidebar is that surface now, and a row can carry both
+            # the unread count and the panel the bell used to open.
+            #
+            # Deliberately NOT workspace_scoped: a notification is addressed to
+            # a person and the feed spans every workspace they belong to (see
+            # apps/notifications/urls.py). It is therefore the one main-nav row
+            # that survives a user whose workspaces are all archived — which is
+            # exactly when a channel_needs_reauth alert matters most.
+            NavItem(
+                key="notifications",
+                label="Notifications",
+                icon="bell",
+                url_name="notifications:list",
+                url_names=frozenset({"notifications:list"}),
+                badge_key="unread_notifications",
+                partial="notifications/partials/_bell.html",
+                authenticated_only=True,
             ),
         ),
     ),
@@ -563,10 +604,11 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         from apps.notifications.selectors import unread_count_for
 
         badges["unread_notifications"] = unread_count_for(request.user)
-    # Also returned under its own name below: the nav row reads it out of
-    # `badges`, but the bell and the mobile bar sit outside the nav loop and
-    # need it directly, and the notification views re-supply the same key so one
-    # partial serves both the first render and every htmx swap.
+    # Also returned under its own name below. The nav row reads it out of
+    # `badges` — the bell's trigger IS that row now — but the bell panel's
+    # "Mark all read" guard and the notification views need it directly, and
+    # those views re-supply the same key so one partial serves both the first
+    # render and every htmx swap.
 
     # RBACMiddleware (issue #31) resolves these before any view runs. getattr
     # rather than attribute access because /ui/ renders the chrome for requests
@@ -587,6 +629,11 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         sidebar_workspaces = [
             {
                 "name": m.workspace.name,
+                # The switcher draws each workspace's mark beside its name, so
+                # the emoji comes along with it — partials/_logo.html reads
+                # `.icon` then falls back to the name's initial, and a dict
+                # answers both lookups the same way a model does.
+                "icon": m.workspace.icon,
                 "url": reverse_cached("workspaces:dashboard", workspace_id=m.workspace_id) or "#",
                 "is_current": workspace is not None and m.workspace_id == workspace.id,
             }
@@ -628,8 +675,9 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     workspace_id = workspace.id if workspace is not None else None
     settings_nav = _render_nav(SETTINGS_NAV, request, badges, workspace_id)
     return {
-        # The rail, in two halves. One structure, filtered on placement, so the
-        # invariant tests that iterate MAIN_NAV still cover every row.
+        # The sidebar's nav, in two halves. One structure, filtered on
+        # placement, so the invariant tests that iterate MAIN_NAV still cover
+        # every row.
         "nav_groups": _render_nav([g for g in MAIN_NAV if g.placement == "top"], request, badges, workspace_id),
         "nav_footer_groups": _render_nav(
             [g for g in MAIN_NAV if g.placement == "bottom"], request, badges, workspace_id
