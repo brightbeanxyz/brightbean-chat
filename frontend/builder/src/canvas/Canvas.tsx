@@ -283,6 +283,22 @@ export function Canvas() {
         // right rectangle and was clamped to 0.5 every time. The other reason
         // is still open — see the PR.
         minZoom={0.15}
+        fitView
+        // maxZoom because the smallest interesting flow is one step and one
+        // trigger card, and the default (2) would fill the pane with them.
+        //
+        // Without any fit the canvas opens at the default viewport while the
+        // starter graph sits away from the origin, so a new flow's trigger and
+        // first step began off-screen with nothing to say so.
+        //
+        // The trigger card declares no size — onNodesChange above lets its
+        // `dimensions` changes through precisely so React Flow measures it — so
+        // the first fit can run before that measurement lands. React Flow 12
+        // refits once the initial measurement arrives, which is what makes a
+        // bare `fitView` enough here; if the opening frame ever cuts the
+        // trigger off, give the node explicit width/height rather than
+        // reaching for a manual fitBounds.
+        fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
         proOptions={{ hideAttribution: false }}
       >
         <Background />

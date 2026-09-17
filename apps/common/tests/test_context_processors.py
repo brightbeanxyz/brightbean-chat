@@ -325,6 +325,20 @@ class TestNavStructure:
         assert rows["ws_tags"].url_name == "contacts:tag_list"
         assert rows["ws_labels"].url_name == "inbox:label_settings"
 
+    def test_the_templates_tab_is_gated_like_the_page_behind_it(self):
+        """Its two neighbours are readable by anybody in the workspace; this one
+        is not. views_portability.template_gallery requires edit_flows, because
+        picking a template writes a FlowImport row — so an ungated tab is a tab
+        that answers 403 for an Agent while Flows and Sequences beside it work.
+        """
+        from apps.common.context_processors import FLOWS_TABS
+
+        tabs = {item.key: item for group in FLOWS_TABS for item in group.items}
+
+        assert tabs["tab_templates"].permission == "edit_flows"
+        assert tabs["tab_flows"].permission == ""
+        assert tabs["tab_sequences"].permission == ""
+
     def test_every_permission_a_row_names_is_a_real_permission_key(self):
         """A typo in NavItem.permission fails open in the worst direction: the
         key is never in effective_permissions, so the row silently vanishes for

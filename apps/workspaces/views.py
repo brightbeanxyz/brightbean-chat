@@ -159,17 +159,33 @@ def _setup_steps(request: WorkspaceRequest) -> list[dict[str, Any]]:
     Ordered by dependency — a flow with no channel has nothing to reply on —
     and the first incomplete step is the one the page offers to do next.
     """
-    from apps.channels.models import ChannelConnection
+    from apps.channels.models import ChannelConnection, ConnectionStatus
     from apps.flows.models import Flow, FlowStatus
 
     workspace = request.workspace
-    has_channel = ChannelConnection.objects.for_workspace(workspace).exists()
-    live_flows = Flow.objects.for_workspace(workspace).filter(status=FlowStatus.ACTIVE).count()
+    # ACTIVE, not merely present. `disabled` and `needs_reauth` are the two
+    # states a connection sits in when it cannot deliver, so counting a row in
+    # either of them ticks the step off and tells the reader "Messages arrive
+    # here now" about a channel that receives nothing. Same rule
+    # apps.flows.capabilities.connected_platforms applies.
+    has_channel = ChannelConnection.objects.for_workspace(workspace).filter(status=ConnectionStatus.ACTIVE).exists()
+    # Published is not the same as answering: a flow can go live with no trigger
+    # at all, or with every trigger switched off, and the builder reports both as
+    # non-blocking warnings rather than refusing the publish. Such a flow runs
+    # for nobody, so it does not finish the step that claims one is answering.
+    live_flows = (
+        Flow.objects.for_workspace(workspace)
+        .filter(status=FlowStatus.ACTIVE, triggers__enabled=True)
+        .distinct()
+        .count()
+    )
     teammates = WorkspaceMembership.objects.filter(workspace=workspace).count()
+    permissions = request.workspace_membership.effective_permissions
 
     steps = [
         {
             "key": "channel",
+            "permission": "manage_channels",
             "title": "Connect a channel",
             "body": "Wherever people already message you: Telegram, Instagram, WhatsApp or email.",
             "cta": "Connect a channel",
@@ -179,6 +195,7 @@ def _setup_steps(request: WorkspaceRequest) -> list[dict[str, Any]]:
         },
         {
             "key": "flow",
+            "permission": "edit_flows",
             "title": "Build your first flow",
             "body": "A template comes with its trigger and its replies already written.",
             "cta": "Pick a template",
@@ -194,6 +211,9 @@ def _setup_steps(request: WorkspaceRequest) -> list[dict[str, Any]]:
             "url": reverse("members:list"),
             "done": teammates > 1,
             "done_body": "Other people can answer too.",
+            # members:list is gated on an organisation role rather than a
+            # workspace permission, and every member holds "member".
+            "permission": "",
         },
     ]
     # Exactly one step is "current": the first unfinished one. The rest are
@@ -203,6 +223,13 @@ def _setup_steps(request: WorkspaceRequest) -> list[dict[str, Any]]:
     for index, step in enumerate(steps, start=1):
         step["number"] = index
         step["current"] = step is current
+        # A call to action nobody may act on is worse than none: every one of
+        # these links at a view gated on the key beside it, so an Agent opening
+        # Home would have been sent to a 403. The step still shows — what the
+        # workspace is missing is worth knowing either way — it just stops
+        # offering to do it for somebody who cannot.
+        needed = str(step["permission"])
+        step["actionable"] = not needed or permissions.get(needed, False)
     return steps
 
 

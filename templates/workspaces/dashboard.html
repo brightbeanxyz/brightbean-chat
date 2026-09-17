@@ -72,8 +72,17 @@ goes.
                 <p class="text-[13px] leading-relaxed" style="color: {% if step.done %}var(--text-ghost){% else %}var(--text-secondary){% endif %};">
                     {% if step.done %}{{ step.done_body }}{% else %}{{ step.body }}{% endif %}
                 </p>
-                {% if not step.done %}
-                <a class="{% if step.current %}btn-pill-primary{% else %}btn-pill-secondary{% endif %} btn-pill-sm mt-3.5" href="{{ step.url }}">{{ step.cta }}</a>
+                {% comment %}
+                  One live call to action, on the current step only. The view
+                  marks exactly one step current — the first unfinished one —
+                  because the list is ordered by dependency and a flow with no
+                  channel has nothing to reply on. Offering all three at once
+                  is the thing the redesign set out to stop, and `actionable`
+                  drops the link again for a member the page behind it would
+                  refuse.
+                {% endcomment %}
+                {% if not step.done and step.current and step.actionable %}
+                <a class="btn-pill-primary btn-pill-sm mt-3.5" href="{{ step.url }}">{{ step.cta }}</a>
                 {% endif %}
             </div>
             {% endfor %}

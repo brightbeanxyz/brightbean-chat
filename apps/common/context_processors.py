@@ -483,6 +483,12 @@ FLOWS_TABS: list[NavGroup] = [
                 label="Templates",
                 icon="grid",
                 url_name="flows:template_gallery",
+                # Unlike its two neighbours, the page behind this tab is gated:
+                # views_portability.template_gallery requires edit_flows,
+                # because picking a template writes a FlowImport row. Without
+                # the key here an Agent saw a tab that answered 403 while Flows
+                # and Sequences beside it read fine.
+                permission="edit_flows",
                 workspace_scoped=True,
             ),
         ),
