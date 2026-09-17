@@ -1,5 +1,5 @@
 {% comment %}
-Feather-style nav glyph, 18px by default. `name` comes from a NavItem.icon in
+Nav glyph, 18px by default. `name` comes from a NavItem.icon in
 apps.common.context_processors; an unknown name renders a neutral dot rather
 than nothing, so a mistyped key is visible instead of silently collapsing the
 row's layout.
@@ -9,15 +9,30 @@ switcher's dropdown sets 14px, because 18px against its 12px labels made the
 settings row taller than the workspace rows above it. Named `icon_size` rather
 than `size` so an ambient `size` in a parent context cannot resize a glyph by
 accident: `{% include %}` without `only` inherits everything.
+
+The stroke width is 1.5 for every glyph, set once on the wrapper. Most of these
+are feather outlines drawn at 2; four of them (dashboard, inbox, broadcasts,
+automations) are not, and a 2 beside a 1.5 in the same column reads as a
+rendering fault rather than as two icon sets. One weight, applied here.
+
+The main nav no longer has a Flows row or a Sequences row — they are one
+Automations row — but neither glyph is dead. `flows` still draws the workspace
+settings "Inbox rules" row (a rule is a small flow), and both names are used by
+apps/billing/plans.py and apps/billing/selectors.py for plan features and the
+usage table. Deleting either would turn a live row into the neutral dot below,
+which is by design invisible; tests/markup.py::nav_icon_names is read by
+apps/common/tests/test_context_processors.py and
+apps/billing/tests/test_billing_page.py to catch that.
 {% endcomment %}{% spaceless %}
 {% with px=icon_size|default:18 %}
-<svg class="flex-shrink-0" width="{{ px }}" height="{{ px }}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-{% if name == "dashboard" %}<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>
-{% elif name == "inbox" %}<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/>
+<svg class="flex-shrink-0" width="{{ px }}" height="{{ px }}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{% if name == "dashboard" %}<path d="m4 12 8-8 8 8M6 10.5V19a1 1 0 0 0 1 1h3v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h3a1 1 0 0 0 1-1v-8.5"/>
+{% elif name == "inbox" %}<path d="M16 10.5h.01m-4.01 0h.01M8 10.5h.01M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-6.6a1 1 0 0 0-.69.275l-2.866 2.723A.5.5 0 0 1 8 18.635V17a1 1 0 0 0-1-1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z"/>
 {% elif name == "contacts" %}<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+{% elif name == "automations" %}<path d="M8.737 8.737a21.49 21.49 0 0 1 3.308-2.724m0 0c3.063-2.026 5.99-2.641 7.331-1.3 1.827 1.828.026 6.591-4.023 10.64-4.049 4.049-8.812 5.85-10.64 4.023-1.33-1.33-.736-4.218 1.249-7.253m6.083-6.11c-3.063-2.026-5.99-2.641-7.331-1.3-1.827 1.828-.026 6.591 4.023 10.64m3.308-9.34a21.497 21.497 0 0 1 3.308 2.724m2.775 3.386c1.985 3.035 2.579 5.923 1.248 7.253-1.336 1.337-4.245.732-7.295-1.275M14 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z"/>
 {% elif name == "flows" %}<rect x="3" y="3" width="7" height="5" rx="1"/><rect x="14" y="16" width="7" height="5" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/><path d="M6.5 8v5a2 2 0 002 2h9a2 2 0 002-2V8"/>
 {% elif name == "sequences" %}<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7"/><path d="M11 6h9"/><path d="M11 18h9"/>
-{% elif name == "broadcasts" %}<path d="M3 11l18-8v18l-18-8v-2z"/><path d="M7 12.5V19a1 1 0 001 1h2"/>
+{% elif name == "broadcasts" %}<path d="M11 9H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h6m0-6v6m0-6 5.419-3.87A1 1 0 0 1 18 5.942v12.114a1 1 0 0 1-1.581.814L11 15m7 0a3 3 0 0 0 0-6M6 15h3v5H6v-5Z"/>
 {% elif name == "settings" %}<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
 {% elif name == "user" %}<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>
 {% elif name == "sliders" %}<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>

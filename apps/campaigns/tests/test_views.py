@@ -10,10 +10,12 @@ directly here.
 import json
 
 import pytest
+from django.urls import reverse
 
 from apps.campaigns import services
 from apps.campaigns.models import EnrollmentStatus, Sequence, SequenceEnrollment, SequenceStatus, SequenceStep
 from apps.campaigns.tests.support import contact_for, runnable_flow, sequence_with
+from tests.markup import automations_tabs
 
 #: ``edit_flows`` holders (SPEC §4). A sequence is a schedule over flows, so it
 #: is gated by the same key the flow builder is.
@@ -23,6 +25,13 @@ READ_ONLY_ROLES = ("agent", "viewer")
 
 def url(tenancy, suffix: str) -> str:
     return f"/w/{tenancy.workspace.id}/sequences/{suffix}"
+
+
+def flows_url(tenancy) -> str:
+    """The other Automations tab. Reversed rather than spelled out: apps/flows
+    mounts at the workspace root and spells `flows/` itself (config/urls.py), so
+    a literal path here would couple this module to that choice."""
+    return reverse("flows:list", kwargs={"workspace_id": tenancy.workspace.pk})
 
 
 def triggers(response) -> dict:
@@ -480,13 +489,39 @@ class TestSubscribers:
 
 @pytest.mark.django_db
 class TestTheNav:
-    def test_the_sequences_row_points_at_the_real_page(self, tenancy, client_for):
+    def test_the_automations_row_is_lit_on_the_sequence_list(self, tenancy, client_for):
         """Issue #22 replaced the placeholder; the nav entry is data, so only its
-        ``url_name`` changed."""
+        ``url_name`` changed. Flows and sequences have since merged into one
+        Automations row: it opens on the flows tab, so its href is the flow list
+        even here — what proves this page belongs to the row is ``active``, and
+        the tab bar below carries the reader the rest of the way."""
         response = client_for(tenancy.owner).get(url(tenancy, ""))
 
         row = next(
-            item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == "sequences"
+            item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == "automations"
         )
-        assert row["url"] == url(tenancy, "")
+        assert row["url"] == flows_url(tenancy)
         assert row["active"] is True
+
+    def test_the_row_stays_lit_on_a_sequence(self, tenancy, client_for):
+        sequence = Sequence.objects.create(workspace=tenancy.workspace, name="Onboarding")
+
+        response = client_for(tenancy.owner).get(url(tenancy, f"{sequence.id}/"))
+
+        row = next(
+            item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == "automations"
+        )
+        assert row["active"] is True
+
+
+@pytest.mark.django_db
+class TestTheAutomationsTabs:
+    """The flows half lives in apps/flows/tests/test_views.py."""
+
+    def test_both_tabs_render_and_sequences_is_the_lit_one(self, tenancy, client_for):
+        body = client_for(tenancy.owner).get(url(tenancy, "")).content.decode()
+
+        assert automations_tabs(body) == {
+            flows_url(tenancy): "bb-tab",
+            url(tenancy, ""): "bb-tab is-active",
+        }

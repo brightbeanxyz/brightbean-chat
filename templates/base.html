@@ -178,7 +178,11 @@
             {% endif %}
         </div>
 
-        <nav class="sidebar-nav flex-1 overflow-y-auto py-2 px-3" :class="sidebarCollapsed ? 'px-2' : 'px-3'">
+        {% comment %}Named, because it is no longer the only <nav> on the page:
+        templates/partials/_automations_tabs.html adds a second landmark, and
+        two navigation landmarks of which one is anonymous is worse for a
+        screen reader's landmark list than one unnamed landmark was.{% endcomment %}
+        <nav class="sidebar-nav flex-1 overflow-y-auto py-2 px-3" :class="sidebarCollapsed ? 'px-2' : 'px-3'" aria-label="Main">
             {% block sidebar_nav %}
             {% include "partials/_nav_groups.html" with groups=nav_groups %}
             {% endblock %}

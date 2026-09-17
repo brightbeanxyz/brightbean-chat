@@ -1228,6 +1228,45 @@ span.flatpickr-weekday {
 .bb-toast-error   .bb-toast-body { color: var(--error-50); opacity: 0.85; }
 
 /* ═══════════════════════════════════════════════════════════════
+   PAGE TABS
+   A run of mutually exclusive pages under one heading — the Automations
+   header splits Flows and Sequences this way (templates/partials/
+   _automations_tabs.html). Each tab is a real link to a real URL, so the
+   active one is decided by which page rendered, not by JavaScript.
+
+   Ground rule 9, stated exactly: this file is unlayered, so every
+   property below beats a Tailwind utility at the call site. `padding`
+   and the -1px `margin-bottom` are part of the component — a tab's box
+   is what puts its underline on the container's rule — so `px-4` or
+   `mb-0` on a .bb-tab will NOT take. Vary those with a modifier class
+   here, not a utility. What the caller does own is placement: display,
+   flex, gap and the margin around .bb-tabs are deliberately unset.
+
+   The tokens are the ones .sidebar-nav-item.active and
+   .media-pill.is-active already use, which is what keeps the
+   white-label swap in this file meaningful.
+   ═══════════════════════════════════════════════════════════════ */
+.bb-tabs { border-bottom: 1px solid var(--border); }
+.bb-tab {
+  padding: 0.5rem 0.75rem;
+  /* Pulls the tab's own rule down onto the container's, so the active
+     underline replaces that segment of it rather than sitting above it. */
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+}
+.bb-tab:hover { color: var(--text-primary); }
+.bb-tab.is-active {
+  color: var(--brand-700);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    SHARED ANIMATIONS
    Studio ships these inside approvals/partials/_toasts.html, so a page gets
    them only if it happens to include the toast partial. They belong to the

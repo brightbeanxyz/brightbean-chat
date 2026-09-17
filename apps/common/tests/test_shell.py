@@ -7,6 +7,8 @@ import pytest
 from django.test import RequestFactory
 from django.urls import resolve
 
+from tests.markup import automations_tab_includes
+
 NONCE_ATTR_RE = re.compile(r'nonce="([A-Za-z0-9+/=]+)"')
 INLINE_SCRIPT_RE = re.compile(r"<(script|style)(?![^>]*\bsrc=)([^>]*)>", re.I)
 
@@ -697,6 +699,32 @@ class TestSettingsLayouts:
         body = tenant_client.get("/accounts/preferences/").content.decode()
 
         assert 'sidebar-nav-item active"' in body
+
+
+class TestTheAutomationsTabIncludes:
+    """Static, because the failure is silent at runtime.
+
+    `templates/partials/_automations_tabs.html` lights the tab whose name it is
+    given and no tab at all for anything else — deliberately, so a wrong value
+    cannot mislabel the page it is on. Nothing raises, though: the bar renders
+    with both tabs grey and the reader has no idea where they are. Checking the
+    include sites here means a third page filling `{% block automations_tabs %}`
+    with a typo fails immediately, rather than when someone looks at it.
+    """
+
+    TABS = {"flows", "sequences"}
+
+    def test_every_include_names_a_tab_the_partial_draws(self):
+        includes = automations_tab_includes()
+
+        assert includes, "no include of the tab partial was found — has it been renamed?"
+        for template, value in includes.items():
+            assert value in self.TABS, f"{template} passes automations_tab={value!r}, which lights no tab"
+
+    def test_both_tabs_are_someone_is_page(self):
+        """The other half: a tab the partial draws but no page claims is a link
+        to a page that will not look like the tab you came from."""
+        assert set(automations_tab_includes().values()) == self.TABS
 
 
 class TestTemplateHygiene:

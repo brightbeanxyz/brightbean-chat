@@ -10,12 +10,19 @@ from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.services import archive_flow, create_flow, publish, save_draft
 from apps.flows.views import UNFILED_VALUE
 from apps.members.roles import WorkspaceRole
+from tests.markup import automations_tabs
 
 pytestmark = pytest.mark.django_db
 
 
 def list_url(tenancy):
     return reverse("flows:list", kwargs={"workspace_id": tenancy.workspace.pk})
+
+
+def sequences_url(tenancy):
+    """The other Automations tab. Reversed rather than spelled out, so this does
+    not care where apps/campaigns is mounted."""
+    return reverse("campaigns:list", kwargs={"workspace_id": tenancy.workspace.pk})
 
 
 def action_url(name, tenancy, flow):
@@ -318,27 +325,56 @@ class TestTheBuilderPage:
         assert Client().get(action_url("flows:edit", tenancy, flow)).status_code == 302
 
 
+def nav_row(response, key: str = "automations") -> dict:
+    """The one row flows and sequences now share. `next` rather than a filtered
+    list: a missing key should fail where it is looked up, not as an empty
+    assertion two lines later."""
+    return next(item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == key)
+
+
 class TestNavigation:
     def test_the_sidebar_row_points_at_the_real_list_now(self, tenancy, client_for):
         """The nav registry is data (ground rule 7); this issue swapped one
-        entry from the placeholder to flows:list."""
+        entry from the placeholder to flows:list. Flows and sequences have since
+        merged into one Automations row, and flows is the tab it opens on."""
         response = client_for(tenancy.owner).get(list_url(tenancy))
-        flows_row = next(
-            item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == "flows"
-        )
 
-        assert flows_row["url"] == list_url(tenancy)
-        assert flows_row["active"] is True
+        row = nav_row(response)
+
+        assert row["url"] == list_url(tenancy)
+        assert row["active"] is True
 
     def test_the_row_stays_lit_on_the_builder_page(self, tenancy, client_for):
         flow = create_flow(workspace=tenancy.workspace, name="Welcome")
 
         response = client_for(tenancy.owner).get(action_url("flows:edit", tenancy, flow))
-        flows_row = next(
-            item for group in response.context["nav_groups"] for item in group["items"] if item["key"] == "flows"
-        )
 
-        assert flows_row["active"] is True
+        assert nav_row(response)["active"] is True
+
+
+class TestTheAutomationsTabs:
+    """The two pages under the one nav row. Both tabs render on both pages;
+    only which one is lit moves. The sequences half of this lives in
+    apps/campaigns/tests/test_views.py."""
+
+    def test_both_tabs_render_and_flows_is_the_lit_one(self, tenancy, client_for):
+        body = client_for(tenancy.owner).get(list_url(tenancy)).content.decode()
+
+        assert automations_tabs(body) == {
+            list_url(tenancy): "bb-tab is-active",
+            sequences_url(tenancy): "bb-tab",
+        }
+
+    def test_the_tabs_are_there_for_someone_who_may_not_edit(self, tenancy, client_for):
+        """The create controls sit behind can_edit; the tabs are navigation and
+        do not. A Viewer without the Sequences tab cannot reach the other half
+        of the section at all."""
+        body = client_for(tenancy.user_for("viewer")).get(list_url(tenancy)).content.decode()
+
+        assert automations_tabs(body) == {
+            list_url(tenancy): "bb-tab is-active",
+            sequences_url(tenancy): "bb-tab",
+        }
 
 
 class TestFolderFilter:

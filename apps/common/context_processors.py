@@ -196,24 +196,39 @@ MAIN_NAV: list[NavGroup] = [
                 ),
                 workspace_scoped=True,
             ),
+            # Flows and sequences were two rows; they are one section. A
+            # sequence is a schedule over flows, and apps/campaigns/views.py
+            # gates both on the same `edit_flows` key precisely because anyone
+            # who may edit one may edit the other. The page splits them into
+            # two tabs (templates/partials/_automations_tabs.html) and this row
+            # lights on every route either tab can be on: both lists, the flow
+            # builder (issue #6) and the sequence editor (issue #22), each of
+            # which is the same section to a reader as the list it opens from.
             NavItem(
-                key="flows",
-                label="Flows",
-                icon="flows",
+                key="automations",
+                label="Automations",
+                icon="automations",
+                # Flows is the tab the row opens on; the tab bar carries the
+                # reader the rest of the way.
                 url_name="flows:list",
-                # The builder is the same section to a reader, so the row
-                # stays lit while it is open (issue #6).
-                url_names=frozenset({"flows:list", "flows:edit"}),
-                workspace_scoped=True,
-            ),
-            # Issue #22. The editor and the subscriber panel are the same
-            # section to a reader, so the detail page lights the same row.
-            NavItem(
-                key="sequences",
-                label="Sequences",
-                icon="sequences",
-                url_name="campaigns:list",
-                url_names=frozenset({"campaigns:list", "campaigns:detail"}),
+                # Every page in the section, not just the two lists. The
+                # template gallery and the import wizard are reached from the
+                # Automations header's own buttons and return to it, so leaving
+                # them out darkened the whole sidebar mid-task. The trigger
+                # routes are deliberately absent: apps/flows/urls.py notes they
+                # are partials inside the builder page, so `flows:edit` already
+                # covers them.
+                url_names=frozenset(
+                    {
+                        "flows:list",
+                        "flows:edit",
+                        "flows:template_gallery",
+                        "flows:import_start",
+                        "flows:import_review",
+                        "campaigns:list",
+                        "campaigns:detail",
+                    }
+                ),
                 workspace_scoped=True,
             ),
             NavItem(

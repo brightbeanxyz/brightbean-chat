@@ -1,0 +1,28 @@
+{% comment %}
+The Automations tab bar. Flows and sequences are one section with one nav row
+(apps.common.context_processors), and this is how a reader crosses between the
+two pages behind it.
+
+Args:
+  automations_tab: "flows" or "sequences" — which tab this page is.
+
+Named `automations_tab` rather than `tab` for the reason partials/_nav_icon.html
+gives about `icon_size`: `{% include %}` without `only` inherits the whole parent
+context, and a generic name is one an ancestor could already be using. `only` is
+not an option here — the two links reverse against `request.workspace`.
+
+A value neither branch matches lights no tab, rather than defaulting to Flows
+and quietly mislabelling the sequences page. That is a silent-enough failure
+that apps/common/tests/test_shell.py checks every include site names one of the
+two, instead of trusting it to look wrong.
+
+Placement belongs to the caller, so no margin is set on the <nav> here.
+{% endcomment %}
+<nav class="bb-tabs flex items-center gap-1" aria-label="Automations">
+    <a href="{% url 'flows:list' workspace_id=request.workspace.id %}"
+       class="bb-tab{% if automations_tab == 'flows' %} is-active{% endif %}"
+       {% if automations_tab == 'flows' %}aria-current="page"{% endif %}>Flows</a>
+    <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
+       class="bb-tab{% if automations_tab == 'sequences' %} is-active{% endif %}"
+       {% if automations_tab == 'sequences' %}aria-current="page"{% endif %}>Sequences</a>
+</nav>

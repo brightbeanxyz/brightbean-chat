@@ -1,7 +1,10 @@
-{% extends "base.html" %}
+{% extends "layouts/automations.html" %}
 {% comment %}
-The sequence list. Everything below the toolbar is _list_rows.html, so the table
-has exactly one renderer: the filters fetch it, and every mutation answers with a
+The Sequences tab of the Automations page. The heading and the tab bar come from
+layouts/automations.html — this file is what is particular to sequences.
+
+Everything below the toolbar is _list_rows.html, so the table has exactly one
+renderer: the filters fetch it, and every mutation answers with a
 `sequencesChanged` event that makes it re-fetch itself.
 
 Colours come from theme tokens rather than utility palettes, and no Tailwind
@@ -9,29 +12,25 @@ utility here sets a property a design-system class already owns — ground rule 
 in docs/agent-prompts/layer-2.md.
 {% endcomment %}
 
-{% block title %}Sequences · BrightBean Chat{% endblock %}
+{% block title %}Sequences · Automations · BrightBean Chat{% endblock %}
 
-{% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
-        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Sequences</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
-            Drip campaigns. Each step waits its delay from the previous step's send, then starts a flow.
-        </p>
-    </div>
-    {% if can_edit %}
-    <form class="flex items-center gap-2"
-          hx-post="{% url 'campaigns:create' workspace_id=request.workspace.id %}"
-          hx-swap="none"
-          x-data
-          @htmx:after-request="$el.reset()">
-        {% csrf_token %}
-        <input type="text" name="name" maxlength="200" required placeholder="New sequence name"
-               class="form-input-styled" style="width: 14rem;" aria-label="New sequence name">
-        <button type="submit" class="btn-brand btn-inline">Create</button>
-    </form>
-    {% endif %}
-</div>
+{% block automations_subtitle %}Drip campaigns. Each step waits its delay from the previous step's send, then starts a flow.{% endblock %}
+
+{% block automations_tabs %}{% include "partials/_automations_tabs.html" with automations_tab="sequences" %}{% endblock %}
+
+{% block automations_actions %}
+{% if can_edit %}
+<form class="flex items-center gap-2"
+      hx-post="{% url 'campaigns:create' workspace_id=request.workspace.id %}"
+      hx-swap="none"
+      x-data
+      @htmx:after-request="$el.reset()">
+    {% csrf_token %}
+    <input type="text" name="name" maxlength="200" required placeholder="New sequence name"
+           class="form-input-styled" style="width: 14rem;" aria-label="New sequence name">
+    <button type="submit" class="btn-brand btn-inline">Create</button>
+</form>
+{% endif %}
 {% endblock %}
 
 {% block content %}

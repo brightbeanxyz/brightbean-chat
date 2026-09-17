@@ -12,6 +12,7 @@ from apps.common.context_processors import (
     navigation_context,
     sidebar_context,
 )
+from tests.markup import nav_icon_names
 
 
 def _request(path="/", *, workspace=None, user=None, org_membership=None, workspace_membership=None):
@@ -71,9 +72,14 @@ class TestActiveFlag:
         [
             ("", "dashboard"),
             ("contacts/", "contacts"),
-            ("flows/", "flows"),
+            # Every page of the section lights the one row that replaced
+            # the Flows and Sequences rows — including the two the header's
+            # own buttons lead to.
+            ("flows/", "automations"),
+            ("flows/templates/", "automations"),
+            ("flows/import/", "automations"),
             ("inbox/", "inbox"),
-            ("sequences/", "sequences"),
+            ("sequences/", "automations"),
             ("broadcasts/", "broadcasts"),
             ("media/", "media"),
         ],
@@ -241,6 +247,19 @@ class TestNavStructure:
                 assert item["url"] != "#", f"{item['key']} does not resolve"
                 assert item["url"].startswith("/")
 
+    def test_every_nav_row_names_a_glyph_the_partial_actually_draws(self):
+        """An unknown icon name renders the partial's neutral dot, silently.
+        apps/billing/tests/test_billing_page.py makes this check for the five
+        rows of the billing table; every nav row deserves it too — the merge of
+        Flows and Sequences into one Automations row left `flows` drawing only
+        the workspace-settings "Inbox rules" row, which nothing else covers."""
+        drawn = nav_icon_names()
+        assert drawn, "the icon partial was parsed but yielded no names"
+
+        for group in MAIN_NAV + SETTINGS_NAV:
+            for item in group.items:
+                assert item.icon in drawn, f"{item.key} asks for a glyph the partial does not draw"
+
     def test_nav_item_keys_are_unique_across_both_navs(self):
         keys = [i.key for g in MAIN_NAV + SETTINGS_NAV for i in g.items]
 
@@ -283,9 +302,10 @@ class TestNavStructure:
         assert set(keys) == {
             "dashboard",
             "contacts",
-            "flows",
+            # Flows and sequences are one row now: a sequence is a schedule
+            # over flows, and the page splits them into two tabs.
+            "automations",
             "inbox",
-            "sequences",
             "broadcasts",
             # Issue #26. The L1-B brief predates it; SPEC §18's pages needed a
             # home and the layer-7 table gives the app one.

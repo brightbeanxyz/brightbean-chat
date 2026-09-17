@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% comment %}
+The Automations shell. Flows and sequences are one section with one nav row
+(apps.common.context_processors), and this holds the half of the page that is
+the same on both: the heading, and the tab bar under it.
+
+Studio's layouts/settings.html is the pattern — a layout that extends base.html,
+owns the shared chrome and is extended by concrete pages. The difference is
+where it intervenes: settings.html replaces the sidebar_nav block and leaves
+the main column alone; this one leaves the nav alone and owns page_header.
+
+Concrete pages fill three blocks:
+
+  automations_subtitle  the sentence under the heading — this is what says
+                        which tab you are on, since the heading cannot
+  automations_actions   the right-hand controls, usually behind {% if can_edit %}
+  automations_tabs      {% include "partials/_automations_tabs.html" with
+                        automations_tab="flows" %} — the one line each page
+                        must write for itself, because a block's contents
+                        cannot be read back as a value to pass along
+
+…plus their own title block, and the content block, which is re-declared empty
+below so it reaches grandchildren. (Named in prose rather than written out:
+tests/test_page_titles.py reads the first title block in a file as that file's
+page title, and a comment quoting the tag would be read as one.)
+
+apps/common/tests/test_shell.py asserts every include of the tab partial names a
+tab the partial draws, so a page that fills the block with a typo fails there
+rather than rendering a bar with nothing lit.
+{% endcomment %}
+
+{% block page_header %}
+<div class="mb-6">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+            <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Automations</h1>
+            <p class="text-sm" style="color: var(--text-secondary);">
+                {% block automations_subtitle %}{% endblock %}
+            </p>
+        </div>
+        {% block automations_actions %}{% endblock %}
+    </div>
+    <div class="mt-4">{% block automations_tabs %}{% endblock %}</div>
+</div>
+{% endblock %}
+
+{% block content %}{% endblock %}

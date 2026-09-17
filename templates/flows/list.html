@@ -1,9 +1,12 @@
-{% extends "base.html" %}
+{% extends "layouts/automations.html" %}
 {% load common_extras %}
 {% comment %}
-The flow list. Everything below the toolbar is the _list_rows.html partial, so
-the table has exactly one renderer: the filters fetch it, and every mutation
-answers with a `flowsChanged` event that makes it re-fetch itself.
+The Flows tab of the Automations page. The heading and the tab bar come from
+layouts/automations.html — this file is what is particular to flows.
+
+Everything below the toolbar is the _list_rows.html partial, so the table has
+exactly one renderer: the filters fetch it, and every mutation answers with a
+`flowsChanged` event that makes it re-fetch itself.
 
 No Tailwind utility here sets a property a design-system class already owns —
 see ground rule 9 in docs/agent-prompts/layer-2.md. Colours come from the theme
@@ -11,42 +14,38 @@ tokens rather than from utility palettes, which is what keeps the white-label
 swap in styles.css meaningful.
 {% endcomment %}
 
-{% block title %}Flows · BrightBean Chat{% endblock %}
+{% block title %}Flows · Automations · BrightBean Chat{% endblock %}
 
-{% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
-        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Flows</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
-            Automations that run when a trigger fires. Publish one to make it live.
-        </p>
-    </div>
-    {% if can_edit %}
-    <div class="flex flex-wrap items-center gap-2">
-        {% comment %}
-          A page rather than a modal: the import is three steps and the middle
-          one can be long (issue #27). Templates first — it is the one that
-          needs nothing from you — and Import keeps its narrower meaning, which
-          the title spells out because the two buttons otherwise look alike.
-        {% endcomment %}
-        <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
-           class="btn-outline btn-inline">Start from a template</a>
-        <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
-           class="btn-outline btn-inline"
-           title="A flow template file you already have">Import</a>
-        <form class="flex items-center gap-2"
-              hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}"
-              hx-swap="none"
-              x-data
-              @htmx:after-request="$el.reset()">
-            {% csrf_token %}
-            <input type="text" name="name" maxlength="200" required placeholder="New flow name"
-                   class="form-input-styled" style="width: 14rem;" aria-label="New flow name">
-            <button type="submit" class="btn-brand btn-inline">Create</button>
-        </form>
-    </div>
-    {% endif %}
+{% block automations_subtitle %}Each one runs when a trigger fires. Publish one to make it live.{% endblock %}
+
+{% block automations_tabs %}{% include "partials/_automations_tabs.html" with automations_tab="flows" %}{% endblock %}
+
+{% block automations_actions %}
+{% if can_edit %}
+<div class="flex flex-wrap items-center gap-2">
+    {% comment %}
+      A page rather than a modal: the import is three steps and the middle
+      one can be long (issue #27). Templates first — it is the one that
+      needs nothing from you — and Import keeps its narrower meaning, which
+      the title spells out because the two buttons otherwise look alike.
+    {% endcomment %}
+    <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
+       class="btn-outline btn-inline">Start from a template</a>
+    <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
+       class="btn-outline btn-inline"
+       title="A flow template file you already have">Import</a>
+    <form class="flex items-center gap-2"
+          hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}"
+          hx-swap="none"
+          x-data
+          @htmx:after-request="$el.reset()">
+        {% csrf_token %}
+        <input type="text" name="name" maxlength="200" required placeholder="New flow name"
+               class="form-input-styled" style="width: 14rem;" aria-label="New flow name">
+        <button type="submit" class="btn-brand btn-inline">Create</button>
+    </form>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block content %}

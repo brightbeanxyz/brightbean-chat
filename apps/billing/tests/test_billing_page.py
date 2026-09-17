@@ -9,7 +9,6 @@ restricted plan when they are not.
 """
 
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,6 +16,7 @@ from django.utils import timezone
 
 from apps.billing.models import BillingCustomer
 from apps.billing.tests.stripe_support import SECRET_KEY
+from tests.markup import nav_icon_names
 
 pytestmark = pytest.mark.django_db
 
@@ -267,17 +267,10 @@ class TestTheIcons:
     nothing else would ever fail.
     """
 
-    @staticmethod
-    def known_icon_names() -> set[str]:
-        import re
-
-        source = (Path(__file__).resolve().parents[3] / "templates/partials/_nav_icon.html").read_text()
-        return set(re.findall(r'name == "([a-z_]+)"', source))
-
     def test_every_usage_row_names_a_glyph_the_partial_draws(self, tenancy: Any) -> None:
         from apps.billing.selectors import billing_context
 
-        known = self.known_icon_names()
+        known = nav_icon_names()
         assert known, "the icon partial was parsed but yielded no names"
 
         for row in billing_context(tenancy.organization)["usage_rows"]:
@@ -288,7 +281,7 @@ class TestTheIcons:
         drawing identical dots looks deliberate."""
         from apps.billing.plans import PLAN_COPY
 
-        known = self.known_icon_names()
+        known = nav_icon_names()
 
         for card in PLAN_COPY:
             for feature in card.features:
