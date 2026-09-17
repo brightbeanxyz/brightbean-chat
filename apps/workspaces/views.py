@@ -36,14 +36,6 @@ def dashboard(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     still have a landing page. No cards is a degraded dashboard; an ImportError
     is no dashboard at all.
     """
-    # select_related and the archived filter belong here, not in the template:
-    # iterating memberships and touching .workspace costs one query each, on the
-    # most-visited page in the app.
-    switchable = (
-        WorkspaceMembership.objects.filter(user=request.user, workspace__is_archived=False)
-        .select_related("workspace")
-        .order_by("workspace__name")
-    )
     permissions = request.workspace_membership.effective_permissions
     templates = gallery_entries()
     setup_steps = _setup_steps(request)
@@ -52,7 +44,6 @@ def dashboard(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         request,
         "workspaces/dashboard.html",
         {
-            "switchable_memberships": switchable,
             "kpis": _kpis(request),
             "greeting": _greeting(),
             "setup_steps": setup_steps,
@@ -300,6 +291,12 @@ def _needs_you(request: WorkspaceRequest) -> list[dict[str, Any]]:
 @require_POST
 def switch(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """Make this the user's current workspace.
+
+    No UI reaches this today: the sidebar switcher navigates straight to a
+    workspace, and ``RBACMiddleware`` records ``last_workspace_id`` on the way
+    through, which is why the dashboard's duplicate switcher panel could go. The
+    route stays because it is the correct way to say "switch, and only switch",
+    and because its tests are where cross-tenant switching is proved to 404.
 
     POST rather than Studio's GET link: it writes ``last_workspace_id``, and a
     state-changing GET is both CSRF-exposed and prefetchable. The membership

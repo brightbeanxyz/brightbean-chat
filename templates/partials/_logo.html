@@ -15,6 +15,11 @@ Args:
         TestLogoSizing pins every modifier this file emits to a rule that
         exists in the compiled bundle, so the next one cannot rot the same way.
 
+Both text marks are aria-hidden: they are decoration beside a name that
+carries the meaning, which is what the product logo's `alt=""` says one branch
+down. Left audible, a reader announces the emoji's Unicode name — or a bare
+initial — before every workspace name in the switcher.
+
 The size modifier is a class from the design system, not a Tailwind utility.
 .sidebar-logo-mark is unlayered CSS and Tailwind's w-7/h-7 live in
 @layer utilities, so the utility loses the cascade and never applies.
@@ -29,9 +34,9 @@ The size modifier is a class from the design system, not a Tailwind utility.
   `<img src="">`: a broken-image mark, silently, for exactly the workspaces
   that had bothered to choose one.
 {% endcomment %}
-<div class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">{{ workspace.icon }}</div>
+<div class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}" aria-hidden="true">{{ workspace.icon }}</div>
 {% elif workspace %}
-<div class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">{{ workspace.name|make_list|first|upper }}</div>
+<div class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}" aria-hidden="true">{{ workspace.name|make_list|first|upper }}</div>
 {% else %}
 <img src="{% static 'img/brightbean-chat-logo-small.webp' %}" alt="BrightBean Chat" class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">
 {% endif %}

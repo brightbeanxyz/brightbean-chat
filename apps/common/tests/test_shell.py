@@ -446,6 +446,37 @@ class TestTheWorkspaceSettingsAreReachable:
 
 
 @pytest.mark.django_db
+class TestTheShellIsWellNested:
+    """One stray `</div>` closes the wrapper that owns the shell's Alpine state.
+
+    Everything below that point falls out of scope: `x-show` throws
+    "sidebarCollapsed is not defined", both halves of the sidebar footer stay
+    hidden, and the nav and the page's own content render outside the flex row
+    that lays them out — a blank screen from a single character.
+
+    Nothing else in this suite notices, because every assertion here is a
+    substring of a string the template produces either way.
+    """
+
+    def test_the_wrapper_that_owns_the_alpine_state_closes_last(self, tenant_client, shell_urls):
+        for url in shell_urls:
+            body = tenant_client.get(url).content.decode()
+            if '<div class="flex h-screen' not in body:
+                continue
+            shell = body[body.index('<div class="flex h-screen') :]
+
+            depth = 0
+            for match in re.finditer(r"<(/?)div\b[^>]*>", shell):
+                depth += -1 if match.group(1) else 1
+                if depth == 0:
+                    break
+
+            remaining = shell[match.end() :]
+            for stranded in ("<aside", "<main", "sidebar-nav"):
+                assert stranded not in remaining, f"{url}: {stranded} fell outside the Alpine wrapper"
+
+
+@pytest.mark.django_db
 class TestToastHost:
     def test_the_host_is_on_every_page_with_no_per_page_include(self, tenant_client, shell_urls):
         """Deviation 2. Studio's host is a partial each template must remember."""
@@ -657,6 +688,27 @@ class TestLogoSizing:
 
         assert "sidebar-logo-mark" in html
         assert "sidebar-logo-mark-" not in html
+
+    def test_both_text_marks_are_hidden_from_assistive_tech(self):
+        """Decoration beside a name that carries the meaning — which is what the
+        product-logo branch's `alt=""` says a line down. Left audible, a reader
+        announces the emoji's Unicode name, or a bare initial, before every
+        workspace name in the switcher's list."""
+
+        class Emoji:
+            icon = "\U0001fad8"
+            name = "Beanery"
+
+        class Initial:
+            icon = ""
+            name = "Beanery"
+
+        from django.template import Context, Template
+
+        template = Template('{% include "partials/_logo.html" with workspace=workspace only %}')
+
+        for workspace in (Emoji(), Initial()):
+            assert 'aria-hidden="true"' in template.render(Context({"workspace": workspace}))
 
     def test_ambient_context_cannot_resize_the_mark(self):
         """The include passes `only`; without it a stray `size` in the page

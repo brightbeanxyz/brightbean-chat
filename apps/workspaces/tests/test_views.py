@@ -33,6 +33,45 @@ class TestSwitcher:
 
 
 @pytest.mark.django_db
+class TestTheDashboardDoesNotRepeatTheSwitcher:
+    """The landing page used to end in a second "Switch workspace" panel.
+
+    It was the first thing a new account saw below its own KPIs, and it said
+    nothing the sidebar's switcher does not — the middleware records
+    last_workspace_id on any workspace-scoped GET, so the sidebar's plain links
+    already do everything that panel's POST forms did.
+    """
+
+    def test_the_panel_is_gone(self, tenancy, client_for):
+        body = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.pk}/").content.decode()
+
+        # The form, not the phrase: "Switch workspace" is the rail trigger's
+        # tooltip now, so matching the words would fail on a control that is
+        # supposed to be there. The panel was a POST to workspaces:switch
+        # rendered on this page, and that is what must not come back.
+        assert f'action="/w/{tenancy.workspace.pk}/switch/"' not in body
+        assert "an-panel-title" not in body
+
+    def test_the_sidebar_still_offers_every_workspace(self, tenancy, client_for):
+        """Removing the panel must not remove the capability — the switcher in
+        the sidebar is now the only way to change workspace."""
+        second = Workspace.objects.create(organization=tenancy.organization, name="Second")
+        WorkspaceMembership.objects.create(user=tenancy.owner, workspace=second, workspace_role="admin")
+
+        body = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.pk}/").content.decode()
+
+        assert f'href="/w/{second.pk}/"' in body
+
+    def test_the_view_no_longer_builds_the_list_the_panel_needed(self, tenancy, client_for):
+        """The panel's membership query lived in the view, on the most-visited
+        page in the app. Asserted on the context the view returns rather than on
+        its source, so a query left behind under another name still fails."""
+        response = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.pk}/")
+
+        assert "switchable_memberships" not in response.context
+
+
+@pytest.mark.django_db
 class TestWorkspaceSettings:
     def test_an_admin_can_rename_the_workspace(self, tenancy, client_for):
         client = client_for(tenancy.user_for("admin"))
