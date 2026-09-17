@@ -19,6 +19,6 @@ The size modifier is a class from the design system, not a Tailwind utility.
 {% elif workspace %}
 <div class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">{{ workspace.name|make_list|first|upper }}</div>
 {% else %}
-<img src="{% static 'img/brightbean-logo.webp' %}" alt="BrightBean Chat" class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">
+<img src="{% static 'img/brightbean-chat-logo-small.webp' %}" alt="BrightBean Chat" class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">
 {% endif %}
 {% endwith %}

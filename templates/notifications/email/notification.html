@@ -1,4 +1,4 @@
-{% comment %}
+{% load static %}{% comment %}
 Ported from BrightBean Studio's notifications/email/notification.html.
 
 Table layout and inline styles are not a stylistic choice: Outlook's Word
@@ -10,6 +10,14 @@ a var() in an email is another thing Outlook drops.
 Studio's footer links to /notifications/preferences/, which belonged to the
 per-event preference matrix this port drops; that URL 404s here. It points at
 the notification list, which is where the one remaining toggle lives.
+
+The header mark is the .png, not the .webp the app itself uses: Outlook's
+Word engine has no WebP support, so a .webp arrives as a broken image. It
+also needs an absolute URL, because an email has no origin to resolve
+/static/ against -- hence app_url (supplied by notifications/mail.py) in
+front of the static path. alt is empty on purpose: the cell to its right
+already renders the wordmark as live text, so a described image would be
+read out twice, and a blocked image degrades to that text alone.
 {% endcomment %}<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -33,7 +41,7 @@ the notification list, which is where the one remaining toggle lives.
       <td style="padding:28px 32px 20px;border-bottom:1px solid #F5F5F4;">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0">
           <tr>
-            <td style="width:28px;height:28px;background-color:#F97316;border-radius:6px;text-align:center;vertical-align:middle;color:#FFFFFF;font-weight:700;font-size:13px;">B</td>
+            <td style="width:28px;height:28px;font-size:0;line-height:0;"><img src="{{ app_url }}{% static 'img/brightbean-chat-logo-small.png' %}" width="28" height="28" alt="" style="display:block;width:28px;height:28px;border:0;"></td>
             <td style="padding-left:10px;font-weight:700;font-size:15px;color:#1C1917;letter-spacing:-0.01em;">BrightBean Chat</td>
           </tr>
         </table>

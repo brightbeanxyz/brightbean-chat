@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/brightbeanxyz/brightbean-chat">
-    <img src="static/img/brightbean-logo.webp" alt="BrightBean Chat" width="160">
+    <img src="static/img/brightbean-chat-logo-small.webp" alt="BrightBean Chat" width="160">
   </a>
 </p>
 
