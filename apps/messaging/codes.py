@@ -7,7 +7,7 @@ a query string — and this column is rendered in the inbox (SECURITY-BASELINE
 render time rather than stored per row. That is the same "registered copy, not
 an f-string at the call site" shape ``apps.notifications.events`` uses.
 
-Three vocabularies, kept apart because they answer different questions:
+Four vocabularies, kept apart because they answer different questions:
 
 ``Grant``   why a send was allowed — which is not decoration. ``human_agent``
             and ``tag_supplied`` are the difference between a compliant Meta
@@ -15,11 +15,13 @@ Three vocabularies, kept apart because they answer different questions:
             "why did this go out?" is asking for exactly this word.
 ``Denial``  why compliance refused. Lands on the message row.
 ``Failure`` why the provider call did not produce a sent message.
+``Limit``   why the organization's own plan refused. Optional: on a
+            deployment with no billing configured nothing can produce one.
 """
 
 from enum import StrEnum
 
-__all__ = ["Denial", "Failure", "Grant", "REASON_COPY", "describe"]
+__all__ = ["Denial", "Failure", "Grant", "Limit", "REASON_COPY", "describe"]
 
 
 class Grant(StrEnum):
@@ -63,6 +65,24 @@ class Failure(StrEnum):
     WITHDRAWN = "withdrawn"
 
 
+class Limit(StrEnum):
+    """Why the organization's own plan refused the send.
+
+    **A fourth vocabulary rather than a new ``Denial`` member**, and the
+    distinction is not tidiness. ``Denial``'s members are consumed *set-wise*:
+    ``apps.messaging.compliance`` gives each of them a ``Q`` and a callable, and
+    ``apps.broadcasts.audience`` compiles them into a ``Case``/``When`` over
+    identity rows. A plan limit is not a per-identity predicate — it is a
+    property of the organization — so a ``Denial`` member with no ``Q`` spelling
+    would be a landmine for whoever next writes ``for code in Denial``.
+
+    It is also the only vocabulary here that is **optional**: on a deployment
+    with no Stripe configuration nothing can ever produce one of these.
+    """
+
+    ACTIVE_CONTACTS = "plan_active_contacts"
+
+
 #: One sentence per code, for the inbox and the flow-run log. Keyed by the raw
 #: string so a stored value from an older release still resolves.
 REASON_COPY: dict[str, str] = {
@@ -78,6 +98,7 @@ REASON_COPY: dict[str, str] = {
     Denial.NO_CONNECTION: "This address was captured before a channel connection existed.",
     Denial.BROADCAST_NOT_ALLOWED: "This platform does not permit broadcasts.",
     Denial.OUTSIDE_WINDOW: "The messaging window has closed and this platform offers no way to reopen it.",
+    Limit.ACTIVE_CONTACTS: "Your plan's monthly contact limit has been reached, so this did not go out.",
     Denial.NEEDS_TEMPLATE: "Outside the messaging window this platform requires an approved template.",
     Denial.NEEDS_TAG: "Outside the messaging window this platform requires an approved message tag.",
     Failure.NO_ADAPTER: "No adapter is installed for this platform.",

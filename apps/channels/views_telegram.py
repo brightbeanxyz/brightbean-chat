@@ -36,6 +36,7 @@ from django.urls import reverse
 
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.models import ChannelConnection
+from apps.channels.plan import plan_refusal
 from apps.channels.providers import telegram
 from apps.channels.providers.exceptions import APIError
 from apps.common.platforms import Platform
@@ -130,6 +131,12 @@ def _connect(request: WorkspaceRequest, token: str) -> str:
     if not isinstance(bot_id, int) or isinstance(bot_id, bool) or not isinstance(username, str) or not username:
         logger.warning("Telegram connect: getMe returned an unusable identity.")
         return REJECTED_MESSAGE
+
+    # The organization's channel limit. See apps/channels/plan.py on why this
+    # is called here in all six adapters rather than in one shared service.
+    refusal = plan_refusal(request.workspace)
+    if refusal:
+        return refusal
 
     connection = ChannelConnection(
         workspace=request.workspace,

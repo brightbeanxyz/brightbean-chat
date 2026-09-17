@@ -25,7 +25,8 @@ from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
 from apps.flows.models import Flow, FlowStatus
-from apps.flows.portability import gallery
+from apps.flows.portability.cards import card_contexts
+from apps.flows.portability.library import template_cards as shipped_templates
 from apps.flows.starter import starter_graph
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
@@ -62,6 +63,16 @@ _MAX_NAME = Flow._meta.get_field("name").max_length or 200
 EMPTY_STATE_TEMPLATES = 4
 
 
+def _featured(cards: list[Any], limit: int) -> list[Any]:
+    """The first ``limit`` cards to show somebody who has nothing yet.
+
+    Starters first. ``template_paths()`` is alphabetical, which puts four
+    near-identical ``instagram-comment-*`` cards at the front — the same channel
+    four times over, from the one screen meant to suggest the range.
+    """
+    return sorted(cards, key=lambda card: card.category != "Starters")[:limit]
+
+
 def _visible_flows(request: WorkspaceRequest) -> Any:
     """The workspace's flows, filtered by the toolbar."""
     flows = Flow.objects.for_workspace(request.workspace)
@@ -88,7 +99,7 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
     return flows.order_by("folder", "name")
 
 
-def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
+def _list_context(request: WorkspaceRequest, workspace_id: str) -> dict[str, Any]:
     flows = list(_visible_flows(request))
 
     # Runs are detected on the folder value, not on the label it renders under:
@@ -121,19 +132,20 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     # a naked text field. Computed on that path alone, so a workspace that has
     # flows never pays for the extra connections query — and stops paying the
     # moment the first Create lands, since the HTMX refresh re-renders with
-    # groups.
+    # groups. shipped_templates() digests every file on disk even on a cache
+    # hit, so it stays inside the guard — do not hoist it.
     template_cards: list[Any] = []
-    connected: set[str] = set()
+    template_total = 0
     if not groups and not filtered and can_edit:
-        template_cards = gallery.gallery()
-        connected = gallery.connected_platforms(request.workspace)
+        cards = shipped_templates()
+        template_total = len(cards)
+        template_cards = card_contexts(request.workspace, workspace_id, _featured(cards, EMPTY_STATE_TEMPLATES))
 
     return {
         "groups": groups,
         "flow_count": len(flows),
-        "template_cards": template_cards[:EMPTY_STATE_TEMPLATES],
-        "template_total": len(template_cards),
-        "connected_platforms": connected,
+        "template_cards": template_cards,
+        "template_total": template_total,
         # (value, label) pairs, which is what ui_select wants — and what keeps
         # the "Unfiled" row's value distinct from a folder of the same name.
         "folder_options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
@@ -164,7 +176,7 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
 @require_GET
 def flow_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The flow list. Answers the rows partial to HTMX and the page otherwise."""
-    context = _list_context(request)
+    context = _list_context(request, workspace_id)
     template = "flows/_list_rows.html" if request.headers.get("HX-Request") else "flows/list.html"
     return render(request, template, context)
 

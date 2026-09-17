@@ -2,10 +2,10 @@
 
 `docs/self-hosting.md` makes promises on behalf of five files nothing else in
 this repository reads: `docker-compose.prod.yml`, `deploy/Caddyfile`,
-`deploy/env.prod.example`, `app.json`, `render.yaml` and the two Railway
-configs. A regression in any of them is invisible — the stack still boots, the
-blueprint still validates, and the deployment is quietly less safe than the
-guide says it is. CI's `build` job proves the compose stack works end to end;
+`deploy/env.prod.example`, `app.json` and `render.yaml`. A regression in any of
+them is invisible to the running stack: it still boots and the blueprint still
+validates, while the deployment is less safe than the guide says. CI's `build`
+job proves the compose stack works end to end;
 these assert the properties that would still be true of a working-but-weakened
 one.
 
@@ -33,8 +33,6 @@ CADDYFILE = REPO_ROOT / "deploy" / "Caddyfile"
 ENV_TEMPLATE = REPO_ROOT / "deploy" / "env.prod.example"
 APP_JSON = REPO_ROOT / "app.json"
 RENDER_YAML = REPO_ROOT / "render.yaml"
-RAILWAY_WEB = REPO_ROOT / "railway.json"
-RAILWAY_WORKER = REPO_ROOT / "deploy" / "railway.worker.json"
 
 #: Services built from the application image, which therefore need production
 #: settings and the same environment. `caddy` and `postgres` are third-party
@@ -579,31 +577,6 @@ def test_heroku_gives_the_s3_region_a_real_default(app_json: dict[str, Any]) -> 
     blueprint from creating it in the first place.
     """
     assert app_json["env"]["S3_REGION_NAME"]["value"] == "auto"
-
-
-# ---------------------------------------------------------------------------
-# railway.json
-# ---------------------------------------------------------------------------
-
-
-def test_railway_builds_the_dockerfile_for_both_services() -> None:
-    for path in (RAILWAY_WEB, RAILWAY_WORKER):
-        build = _load_json(path)["build"]
-        assert build["builder"] == "DOCKERFILE"
-        assert build["dockerfilePath"] == "Dockerfile"
-
-
-def test_the_railway_web_service_migrates_and_is_health_checked() -> None:
-    deploy = _load_json(RAILWAY_WEB)["deploy"]
-    assert deploy["healthcheckPath"] == "/healthz"
-    assert any("migrate" in command for command in deploy["preDeployCommand"])
-
-
-def test_the_railway_worker_runs_the_queue_and_is_not_health_checked() -> None:
-    """The worker serves no port, so a health check would fail it forever."""
-    deploy = _load_json(RAILWAY_WORKER)["deploy"]
-    assert deploy["startCommand"] == "python manage.py process_tasks"
-    assert "healthcheckPath" not in deploy
 
 
 # ---------------------------------------------------------------------------

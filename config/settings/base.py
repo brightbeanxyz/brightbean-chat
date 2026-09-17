@@ -166,6 +166,10 @@ LOCAL_APPS = [
     # is itself reached through the late-resolving seams in
     # apps/messaging/analytics.py and apps/flows/analytics.py.
     "apps.analytics",
+    # Optional Stripe billing. Installed unconditionally and inert unless
+    # configured — see apps/billing/apps.py for why this is a settings switch
+    # rather than an INSTALLED_APPS one.
+    "apps.billing",
     "theme",
 ]
 
@@ -841,6 +845,49 @@ LOGGING = {
         },
     },
 }
+
+# ---------------------------------------------------------------------------
+# Stripe (hosted deployments only) — SPEC §1.1 as amended
+# ---------------------------------------------------------------------------
+# BrightBean Chat is AGPL and self-hostable, and a self-hoster must never need a
+# payment provider to run it. Leave every one of these empty — which is the
+# default — and the product has exactly one tier with everything unlocked:
+# apps.billing.entitlements.is_paid() answers True for every organization, the
+# checkout and portal routes 404, the webhook 404s, and no limit is ever
+# counted. This is the SENTRY_DSN arrangement below: the code ships in every
+# install and runs only where it has been configured to.
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+STRIPE_PRICE_ID_MONTHLY = env("STRIPE_PRICE_ID_MONTHLY", default="")
+STRIPE_PRICE_ID_YEARLY = env("STRIPE_PRICE_ID_YEARLY", default="")
+# The custom Customer Portal configuration to open. Blank falls back to the
+# Stripe account's default configuration, and apps/billing/services.py OMITS the
+# parameter in that case rather than sending an empty one, which Stripe answers
+# with a 400.
+STRIPE_PORTAL_CONFIGURATION_ID = env("STRIPE_PORTAL_CONFIGURATION_ID", default="")
+# Stripe's own recommendation. Bounds how old a signed delivery may be, which is
+# the real replay window — the event-log table only bounds its own size.
+STRIPE_WEBHOOK_TOLERANCE_SECONDS = env.int("STRIPE_WEBHOOK_TOLERANCE_SECONDS", default=300)
+STRIPE_EVENT_LOG_RETENTION_DAYS = env.int("STRIPE_EVENT_LOG_RETENTION_DAYS", default=30)
+
+# Truthiness with .strip(), not presence — the trap AWS_S3_REGION_NAME's
+# `or "auto"` documents above. environ.Env returns the default only when a
+# variable is *unset*, and every one-click deploy target sets an EMPTY config
+# var for a prompt the operator left blank. `STRIPE_SECRET_KEY=` has to read as
+# "off", not as "on, with a blank key" — the second spelling produces a product
+# that offers checkout and then 500s on the first click.
+#
+# DERIVED, and deliberately not an environment variable of its own: an operator
+# who could write STRIPE_ENABLED=true with no key would reach exactly that
+# state, and deriving it makes the state unreachable.
+#
+# STRIPE_WEBHOOK_SECRET is deliberately NOT part of this. The real setup order
+# is keys first, register the endpoint second, so the billing UI has to be able
+# to go live before the webhook does. The webhook route gates on its own secret
+# independently (apps/billing/views_webhooks.py) — two switches, each guarding
+# only what it can actually do, and apps/billing/checks.py warns at boot when
+# only one of them is thrown.
+STRIPE_ENABLED = bool(STRIPE_SECRET_KEY.strip() and STRIPE_PRICE_ID_MONTHLY.strip() and STRIPE_PRICE_ID_YEARLY.strip())
 
 # Sentry. Configured through apps.common.sentry so error reports get the same
 # credential scrubbing as logs — Sentry builds events from exception objects

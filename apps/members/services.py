@@ -202,6 +202,10 @@ def create_invitation(
     email = (email or "").strip().lower()
     if not email:
         raise MembershipError("An email address is required.")
+    # Seats are counted as accepted members plus live invitations, so this is
+    # checked at creation rather than only at acceptance: otherwise an
+    # organization at its limit sends ten invitations, every one of them passes,
+    # and who gets the seat is decided by who clicks first.
 
     if OrgMembership.objects.filter(organization=org, user__email__iexact=email).exists():
         raise MembershipError("This person is already a member of your organization.")
@@ -240,7 +244,18 @@ def create_invitation(
         expires_at=timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS),
     )
     token = invitation.issue_token()
-    invitation.save()
+
+    # The seat count and the insert are one critical section — a lock released
+    # when the check returns serialises nothing (see
+    # apps/billing/entitlements.organization_locked). The email is deliberately
+    # outside it: holding a database lock across an SMTP round trip is the
+    # pattern apps/channels/views_messenger.py documents avoiding.
+    from apps.billing.entitlements import organization_locked
+
+    with organization_locked(org):
+        _check_plan_allows_seat(org)
+        invitation.save()
+
     send_invite_email(invitation, token)
     return invitation
 
@@ -276,6 +291,12 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
         raise MembershipError("This invitation has expired.")
     if require_email_match and (user.email or "").strip().lower() != invitation.email.strip().lower():
         raise MembershipError("This invitation was sent to a different email address.")
+    # Not redundant with the check in create_invitation. An invitation issued
+    # while the organization was on the paid plan can be accepted after a
+    # downgrade, and this route is reached unauthenticated — so the person who
+    # hits this refusal is not the person who can fix it, which is why it needs
+    # its own message rather than sharing one.
+    _check_plan_allows_seat(invitation.organization, excluding_invitation=invitation.pk)
 
     # v1 routes org-scoped pages from a single OrgMembership (see
     # RBACMiddleware). A second one would leave request.org and
@@ -317,6 +338,27 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
     if first_workspace_id:
         user.last_workspace_id = first_workspace_id
         user.save(update_fields=["last_workspace_id"])
+
+
+def _check_plan_allows_seat(org: Any, *, excluding_invitation: Any = None) -> None:
+    """Refuse a seat the organization's plan does not include.
+
+    ``excluding_invitation`` is the invitation being *consumed*, and leaving it
+    out is not an optimisation. A seat is a member or a live invitation, so at
+    acceptance the same person is counted twice — once as the pending invite and
+    once as the membership they are about to become. On a two-seat plan an
+    organization with one member and one pending invitation would refuse that
+    invitation, even though accepting it lands exactly on the limit.
+
+    Re-raised as ``MembershipError`` so it reaches the ``except`` clause the
+    members views already have.
+    """
+    from apps.billing.entitlements import PlanLimitError, check_can_add_seat
+
+    try:
+        check_can_add_seat(org, excluding_invitation=excluding_invitation)
+    except PlanLimitError as exc:
+        raise MembershipError(str(exc)) from exc
 
 
 def resend_invitation(invitation: Invitation) -> Invitation:

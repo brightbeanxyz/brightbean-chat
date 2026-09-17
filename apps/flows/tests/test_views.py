@@ -80,6 +80,93 @@ class TestTheList:
         assert "Nothing matches these filters" in client.get(list_url(tenancy), {"q": "zzz"}).content.decode()
 
 
+class TestTemplatesInTheEmptyState:
+    """The gallery, where somebody with nothing actually lands.
+
+    The full gallery is a button in the toolbar, which is one click and one
+    guess away from a person who does not yet know the app ships templates at
+    all. These cards are the same library, on the screen that would otherwise
+    offer a naked text field.
+    """
+
+    def test_an_empty_workspace_is_offered_templates(self, tenancy, client_for):
+        response = client_for(tenancy.owner).get(list_url(tenancy))
+
+        assert response.context["template_cards"], "an empty workspace got no cards"
+        assert "start with a template" in response.content.decode()
+
+    def test_it_links_to_the_full_gallery(self, tenancy, client_for):
+        response = client_for(tenancy.owner).get(list_url(tenancy))
+        total = response.context["template_total"]
+
+        assert total > len(response.context["template_cards"])
+        assert f"Browse all {total} templates" in response.content.decode()
+
+    def test_a_workspace_with_a_flow_is_not(self, tenancy, client_for):
+        create_flow(workspace=tenancy.workspace, name="Welcome")
+
+        response = client_for(tenancy.owner).get(list_url(tenancy))
+
+        assert response.context["template_cards"] == []
+        assert "Browse all" not in response.content.decode()
+
+    def test_a_filtered_empty_result_keeps_the_filter_wording(self, tenancy, client_for):
+        """An empty *result* is not an empty workspace. Offering templates to
+        somebody whose filter matched nothing answers a question they did not
+        ask and hides the one they did."""
+        create_flow(workspace=tenancy.workspace, name="Welcome")
+
+        response = client_for(tenancy.owner).get(list_url(tenancy), {"q": "zzz"})
+
+        assert response.context["template_cards"] == []
+        assert "Nothing matches these filters" in response.content.decode()
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_that_cannot_edit_is_not_offered_them(self, tenancy, client_for, role):
+        response = client_for(tenancy.user_for(role)).get(list_url(tenancy))
+
+        assert response.context["template_cards"] == []
+
+    def test_the_htmx_refresh_carries_the_same_panel(self, tenancy, client_for):
+        """_list_rows.html is the only renderer of the rows, so the cards have
+        to survive the partial fetch the filters and every mutation trigger."""
+        response = client_for(tenancy.owner).get(list_url(tenancy), headers={"hx-request": "true"})
+        body = response.content.decode()
+
+        assert "start with a template" in body
+        assert "<html" not in body
+
+    def test_the_cards_say_which_channel_they_need(self, tenancy, client_for):
+        """The badge is the reason the empty state is worth more than a list of
+        names: "Needs Instagram" is answerable before you click."""
+        body = client_for(tenancy.owner).get(list_url(tenancy)).content.decode()
+
+        assert "Needs" in body
+
+    def test_the_cards_here_carry_no_alpine_filter(self, tenancy, client_for):
+        """matches() is defined in template_gallery.html's x-data. This panel
+        sits inside list.html's, which has no such method, so an unguarded
+        x-show would throw inside Alpine's evaluator for every card on every
+        render of the core Flows page — silent apart from the console."""
+        body = client_for(tenancy.owner).get(list_url(tenancy)).content.decode()
+
+        assert "start with a template" in body, "the panel did not render, so this asserts nothing"
+        assert "matches(" not in body
+
+    def test_a_populated_list_asks_the_library_for_nothing(self, tenancy, client_for, monkeypatch):
+        """The guard, asserted rather than assumed: this path runs on every HTMX
+        refresh of every workspace's flow list."""
+        import apps.flows.views as views
+
+        def explode():
+            raise AssertionError("the template library was read for a populated list")
+
+        monkeypatch.setattr(views, "shipped_templates", explode)
+        create_flow(workspace=tenancy.workspace, name="Welcome")
+
+        assert client_for(tenancy.owner).get(list_url(tenancy)).status_code == 200
+
+
 class TestMutations:
     def test_creating_a_flow_makes_a_draft_with_a_first_version(self, tenancy, client_for):
         response = client_for(tenancy.owner).post(

@@ -116,6 +116,7 @@ FIRST_PARTY_APPS = frozenset(
     {
         "accounts",
         "api",
+        "billing",
         "broadcasts",
         "campaigns",
         "channels",
@@ -162,6 +163,15 @@ NOT_TENANT_DATA: dict[str, str] = {
     ),
     "notifications.NotificationDelivery": "Cascades from the notification; one delivery attempt.",
     "notifications.NotificationSetting": "One row per user per event type.",
+    "billing.BillingCustomer": (
+        "Organization-level: a plan is bought by an organization and covers every workspace under "
+        "it, the same tier apps/api/urls_keys.py puts API keys at."
+    ),
+    "billing.StripeEventLog": (
+        "The Stripe webhook has no session and no workspace — the caller is Stripe — so there is "
+        "nothing to scope it by at write time. Its only route back to a tenant is the customer id "
+        "it arrives holding."
+    ),
 }
 
 

@@ -404,6 +404,22 @@ def _persist_one(connection: Any, event: NormalizedEvent) -> None:
         opt_in_source=OptInSource.COMMENT if event.type == EventType.COMMENT else OptInSource.MESSAGE_IN,
     )
 
+    # The organization's contact meter. ManyChat's definition, which this plan
+    # copies, counts a person as active when messages are "sent **or
+    # received**", so the inbound half is marked here.
+    #
+    # **Metered, never gated.** You cannot refuse a message somebody has already
+    # sent. The consequence is worth saying out loud rather than discovering:
+    # inbound traffic a free organization does not control can push it to its
+    # limit, and the refusal then lands on the one thing it does control, which
+    # is starting new outbound conversations. It also means anybody who writes
+    # to you is already counted, so an agent can always reply to them — the
+    # limit only ever bites on reaching somebody new.
+    #
+    # Behind the same dedup guard as the activity write above, so a redelivered
+    # webhook does not re-mark. No-ops entirely on an unlimited plan.
+    _mark_contact_active(contact)
+
     if message is not None:
         emit(
             EVENT_MESSAGE_RECEIVED,
@@ -921,3 +937,21 @@ def _next_status(current: str, incoming: str, error: str) -> tuple[str | None, s
     if DELIVERY_PROGRESS[incoming] <= DELIVERY_PROGRESS[current]:
         return None, ""  # rule 1
     return incoming, ""
+
+
+def _mark_contact_active(contact: Any) -> None:
+    """Count this contact towards the organization's month.
+
+    A late import for the reason ``apps/messaging/services.py`` gives: billing
+    reads this app's models, and an unconfigured deployment should never load it.
+    """
+    from apps.billing.entitlements import billing_enabled
+    from apps.billing.metering import meter
+
+    if not billing_enabled():
+        # Checked before `contact.workspace.organization`, which is two FK
+        # traversals and therefore two queries. Every inbound message on every
+        # self-hosted deployment would otherwise pay them to fetch an
+        # organization the meter immediately discards.
+        return
+    meter(contact.workspace.organization, contact)

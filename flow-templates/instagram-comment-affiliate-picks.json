@@ -1,0 +1,153 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Convert",
+      "graph": {
+        "edges": [
+          {
+            "id": "picks-default-tag_shopper",
+            "source": "picks",
+            "sourceHandle": "default",
+            "target": "tag_shopper"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Here are the three I actually use. Swipe through.",
+                  "type": "text"
+                },
+                {
+                  "cards": [
+                    {
+                      "subtitle": "The one I reach for daily.",
+                      "title": "First pick",
+                      "url_button": {
+                        "label": "See it",
+                        "url": "https://example.com/pick-one"
+                      }
+                    },
+                    {
+                      "subtitle": "Best value of the three.",
+                      "title": "Second pick",
+                      "url_button": {
+                        "label": "See it",
+                        "url": "https://example.com/pick-two"
+                      }
+                    },
+                    {
+                      "subtitle": "Worth it if you use it often.",
+                      "title": "Third pick",
+                      "url_button": {
+                        "label": "See it",
+                        "url": "https://example.com/pick-three"
+                      }
+                    }
+                  ],
+                  "type": "gallery"
+                }
+              ]
+            },
+            "id": "picks",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Affiliate interest",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_shopper",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "Affiliate links usually have to be disclosed. Say so in the first message — the rules differ by country and by network, and the DM is where people read it.\n\nA gallery holds up to ten cards. Add your own photos in the builder: a template cannot ship images, so every card here is text only until you pick one.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "disclosure",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Affiliate picks from comments",
+      "triggers": [
+        {
+          "config": {
+            "include_keywords": [
+              "links",
+              "shop",
+              "where"
+            ],
+            "like_comment": true,
+            "once_per_contact_per_post": true,
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "random",
+              "texts": [
+                "Sent the links!",
+                "Check your DMs."
+              ]
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "affiliate interest",
+        "name": "Affiliate interest",
+        "used_by": [
+          "flow-1:tag_shopper"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

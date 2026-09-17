@@ -93,6 +93,12 @@ urlpatterns = [
     *[_stub(*stub) for stub in _GLOBAL_STUBS],
     path("accounts/", include("allauth.urls")),
     # Org-scoped management. One org per user in v1, so no id in the URL.
+    # Billing's two writes (start a subscription, open the portal). Mounted
+    # before the organization include below so the deeper prefix is tried first,
+    # the convention this file already states for the workspace mounts. The
+    # billing PAGE is organizations:billing and stays there — this app owns only
+    # the POSTs and the webhook. Both 404 when Stripe is unconfigured.
+    path("organization/billing/", include("apps.billing.urls")),
     path("organization/", include("apps.organizations.urls")),
     path("organization/members/", include("apps.members.urls")),
     # API keys are org-tier (SPEC §4.1: they span every workspace in the org).
@@ -170,6 +176,20 @@ urlpatterns = [
     # per-workspace path would need one whitelist entry per tenant. The workspace
     # travels in a signed ``state`` instead. See apps/channels/urls_oauth.py.
     path("channels/", include("apps.channels.urls_oauth")),
+    # Stripe's webhook, for the optional hosted billing integration.
+    #
+    # **Declared before the channels include below, and that is not stylistic.**
+    # That module ends in `<str:platform>/`, which matches "stripe/" — so mounted
+    # the other way round this route would never be reached: the request would
+    # land in platform_webhook, fail its Platform-enum check and 404, with
+    # nothing anywhere saying why. Not part of that module either, because
+    # Stripe is not a messaging platform: different signature scheme, different
+    # dedup table, no adapter.
+    #
+    # 404s when STRIPE_WEBHOOK_SECRET is unset — the answer /internal/tick
+    # gives, for the reason _hub_challenge states: an endpoint that cannot
+    # verify anything should not advertise that it exists.
+    path("webhooks/stripe/", include("apps.billing.urls_webhooks")),
     # Inbound webhooks (SPEC §7.1). Unauthenticated and deliberately NOT under
     # /w/<workspace_id>/: a platform posting an event has no session, and
     # RBACMiddleware would try to resolve a membership for it. The signature is

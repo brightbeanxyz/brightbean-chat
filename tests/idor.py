@@ -121,10 +121,12 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # message_id resolver's job. Zero is as good as any — the route 404s for an
     # outsider at the conversation lookup, long before it looks at this.
     "index": 0,
-    # The flow template gallery's install route. A shipped template is the same
-    # file in every workspace — it is read off disk, never looked up — so the
-    # slug identifies no tenant's object and this route is neutral in the only
-    # kwarg it adds beyond workspace_id.
+    # The filename stem of a template this repository ships (flows:template_*).
+    # It names a file on the server, identical for every tenant and the same on
+    # every installation — there is no row behind it and no workspace it could
+    # belong to, so it is neutral in the strict sense this table means. It is
+    # never used to build a path either: apps/flows/portability/library.py
+    # resolves it by comparing against the stems of flow-templates/*.json.
     #
     # Deliberately NOT spelled `template_id`: that kwarg already belongs to the
     # WhatsApp template manager and resolves to a WhatsAppTemplate pk, so a
@@ -133,7 +135,7 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # tenancy — passing for exactly the reason this file keeps warning about.
     #
     # A REAL stem, for the same reason: the route must 404 on the workspace and
-    # not on a template that is not there. test_portability_gallery.py asserts
+    # not on a template that is not there. test_portability_library.py asserts
     # this still names a shipped file.
     "template_slug": "telegram-welcome-and-faq",
 }

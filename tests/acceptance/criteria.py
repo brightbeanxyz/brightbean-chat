@@ -688,6 +688,29 @@ CRITERIA: tuple[Criterion, ...] = (
 #: security test cannot quietly leave the gate unguarded.
 SECURITY_GATES: tuple[Criterion, ...] = (
     Criterion(
+        id="sec-billing-off-by-default",
+        phase=SECURITY_PHASE,
+        clause="With no payment provider configured, every organization is unlimited and no billing endpoint exists",
+        verification=Verification.CI,
+        targets=(
+            "apps/billing/tests/test_self_hosted_is_unlimited.py::TestStripeUnconfigured",
+            "apps/billing/tests/test_settings_switch.py::TestTheSwitch",
+            "apps/billing/tests/test_webhook.py::TestUnconfigured",
+        ),
+        note=(
+            "SPEC §1.1's promise, as a gate rather than a README claim. This is the property the whole "
+            "optional-billing arrangement rests on, and the one a reader of an AGPL project is entitled to "
+            "verify rather than take on trust: with Stripe unconfigured every organization reads as paid — "
+            "including one carrying a cancelled subscription row, which is the case a naive implementation "
+            "gets wrong — no limit is counted, no meter row is written, and the checkout, portal and webhook "
+            "routes 404. The switch itself is derived at import, so it is asserted in real subprocesses: the "
+            "trap it guards is that every one-click deploy target sets an EMPTY config variable for a prompt "
+            "the operator left blank, and `STRIPE_SECRET_KEY=` must read as off rather than as on with a "
+            "blank key. The first target discovers its guards by introspection rather than listing them, so "
+            "a sixth limit added later is covered the day it lands."
+        ),
+    ),
+    Criterion(
         id="sec-idor-sweep",
         phase=SECURITY_PHASE,
         clause="IDOR fuzz sweep across all registered endpoints as a foreign-workspace user",

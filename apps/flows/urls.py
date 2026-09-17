@@ -25,18 +25,20 @@ urlpatterns = [
     # wizard whose only write before the confirm is its own FlowImport row.
     path("flows/<uuid:flow_id>/export/", views_portability.flow_export, name="export"),
     path("flows/<uuid:flow_id>/export/bundle/", views_portability.flow_export_bundle, name="export_bundle"),
-    # The shipped templates, and installing one. `template_slug`, not
-    # `template_id`: that kwarg already belongs to the WhatsApp template manager
-    # and resolves to a WhatsAppTemplate pk, so reusing the name would send the
-    # IDOR sweep a value of the wrong shape at this route and it would 404 for
-    # that reason instead of for tenancy — the trap tests/idor.py warns about.
+    path("flows/import/", views_portability.import_start, name="import_start"),
+    # Step zero of the same wizard: pick one of the templates this
+    # installation ships instead of uploading a file. ``template_slug`` is a
+    # filename stem, identical for every tenant and resolved against a
+    # whitelist — see ``template_for_slug`` and ``tests/idor.py``. It is
+    # deliberately not spelled ``template_id``: that kwarg already belongs to
+    # the WhatsApp template manager and resolves to a WhatsAppTemplate pk, so
+    # reusing it would hand the IDOR sweep a value of the wrong shape here.
     path("flows/templates/", views_portability.template_gallery, name="template_gallery"),
     path(
-        "flows/templates/<slug:template_slug>/install/",
-        views_portability.template_install,
-        name="template_install",
+        "flows/templates/<slug:template_slug>/start/",
+        views_portability.template_start,
+        name="template_start",
     ),
-    path("flows/import/", views_portability.import_start, name="import_start"),
     path(
         "flows/imports/<uuid:flow_import_id>/",
         views_portability.import_review,

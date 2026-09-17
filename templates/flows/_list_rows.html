@@ -21,7 +21,16 @@ refresh, so the gallery lands in both without a second template to keep in step.
         Each one installs as an unpublished draft with its triggers off, so you can read it
         before anything runs. Create one above instead to start from a blank canvas.
     </p>
-    {% include "flows/_template_cards.html" with cards=template_cards %}
+    <div class="grid gap-3 sm:grid-cols-2">
+        {% comment %}
+          The loop variable must be `entry` — flows/_template_card.html reads
+          entry.card.*. No `searchable`, so the card leaves off the Alpine
+          filter that only the gallery page's scope defines.
+        {% endcomment %}
+        {% for entry in template_cards %}
+        {% include "flows/_template_card.html" %}
+        {% endfor %}
+    </div>
     {% if template_total > template_cards|length %}
     <p class="text-sm mt-3" style="color: var(--text-tertiary);">
         <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"

@@ -1,0 +1,232 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Engage",
+      "graph": {
+        "edges": [
+          {
+            "id": "hub-qr-pricing-pricing",
+            "source": "hub",
+            "sourceHandle": "qr:pricing",
+            "target": "pricing"
+          },
+          {
+            "id": "hub-qr-shipping-shipping",
+            "source": "hub",
+            "sourceHandle": "qr:shipping",
+            "target": "shipping"
+          },
+          {
+            "id": "hub-qr-returns-returns",
+            "source": "hub",
+            "sourceHandle": "qr:returns",
+            "target": "returns"
+          },
+          {
+            "id": "hub-qr-human-human",
+            "source": "hub",
+            "sourceHandle": "qr:human",
+            "target": "human"
+          },
+          {
+            "id": "human-default-handoff",
+            "source": "human",
+            "sourceHandle": "default",
+            "target": "handoff"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi {{first_name}}! Here are the things people ask most.",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "pricing",
+                  "label": "What does it cost?"
+                },
+                {
+                  "id": "shipping",
+                  "label": "Shipping"
+                },
+                {
+                  "id": "returns",
+                  "label": "Returns"
+                },
+                {
+                  "id": "human",
+                  "label": "Something else"
+                }
+              ]
+            },
+            "id": "hub",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Plans start at $19 a month, and the annual one saves two months.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Every plan side by side.",
+                  "title": "Pricing",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Compare plans",
+                    "url": "https://example.com/pricing"
+                  }
+                }
+              ]
+            },
+            "id": "pricing",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Orders leave within two working days, and you get a tracking link the moment they do.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "shipping",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thirty days, no questions. Message here and I will send a returns label.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "returns",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "verb": "open_conversation"
+                }
+              ]
+            },
+            "id": "human",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Passing this to a person now. You will hear back shortly.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "handoff",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "One trigger, one hub, four answers. A trigger cannot pick which node a flow starts at, so 'one keyword per question' would mean one flow per question. The hub is the shape that works.\n\nMatching is literal: exact, contains, or whole-word. There is no fuzzy or semantic matching, so add the spellings people actually type rather than hoping for the best.\n\nFour quick replies because four fit on a phone. Instagram allows thirteen; nobody reads thirteen.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "one_trigger",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Answer the usual questions",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "FAQ"
+              },
+              {
+                "mode": "exact",
+                "text": "HELP"
+              },
+              {
+                "mode": "exact",
+                "text": "QUESTION"
+              },
+              {
+                "mode": "exact",
+                "text": "SUPPORT"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

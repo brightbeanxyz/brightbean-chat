@@ -50,8 +50,9 @@ from apps.flows import portability
 from apps.flows.compat import installed_model
 from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.picklists import picklists
-from apps.flows.portability import gallery, library
+from apps.flows.portability.cards import REQUIREMENT_KIND_LABELS, card_contexts
 from apps.flows.portability.envelope import MAX_DOCUMENT_BYTES
+from apps.flows.portability.library import read_template, template_cards, template_for_slug
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
 
@@ -63,7 +64,7 @@ __all__ = [
     "import_review",
     "import_start",
     "template_gallery",
-    "template_install",
+    "template_start",
 ]
 
 logger = logging.getLogger(__name__)
@@ -143,97 +144,29 @@ def import_start(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if document is None:
         return _upload_failed(request, workspace_id, [issue.message for issue in issues])
 
+    return _begin_import(request, workspace_id, document, str(upload.name or ""))
+
+
+def _begin_import(
+    request: WorkspaceRequest, workspace_id: str, document: dict[str, Any], filename: str
+) -> HttpResponse:
+    """Store the validated document and send the user to the mapping step.
+
+    The tail of an upload, and the whole of starting from a shipped template —
+    which is the point of it being one function. A template skips exactly one
+    thing an upload does, reading the bytes off the wire; everything after that
+    has to be identical, and the cheapest way to keep a promise like that is to
+    have only one place that can break it.
+    """
     record = FlowImport(
         workspace=request.workspace,
         document=document,
         mapping=portability.default_mapping(request.workspace, document, user=request.user),
-        original_filename=str(upload.name or "")[:255],
+        original_filename=filename[:255],
         created_by=request.user,
     )
     record.save()
     return _redirect_to_review(workspace_id, record)
-
-
-# ---------------------------------------------------------------------------
-# Import, step zero: the templates that ship with the app
-# ---------------------------------------------------------------------------
-
-
-@login_required
-@require_permission("edit_flows")
-@require_GET
-def template_gallery(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    """The shipped templates, with what each one needs before you install it.
-
-    ``edit_flows`` like the rest of this module, so a Viewer never reaches a
-    page of buttons they cannot press. Browsing templates is the first half of
-    an authoring action; the module docstring argues the one-gate position for
-    export and it holds here for the same reason.
-    """
-    cards = gallery.gallery()
-    return render(
-        request,
-        "flows/templates.html",
-        {
-            "groups": gallery.by_category(cards),
-            "template_total": len(cards),
-            "connected_platforms": gallery.connected_platforms(request.workspace),
-            "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
-            "import_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
-        },
-    )
-
-
-@login_required
-@require_permission("edit_flows")
-@require_POST
-def template_install(request: WorkspaceRequest, workspace_id: str, template_slug: str) -> HttpResponse:
-    """Load a shipped template into the review page. Creates nothing else.
-
-    POST because it writes a ``FlowImport`` row; a GET would be a link any page
-    could fire. The file is re-read and re-validated here rather than trusting
-    the card the gallery cached, so a file that changed on disk since this
-    process booted cannot slip past the front door an upload goes through.
-    """
-    path = gallery.template_for_slug(template_slug)
-    if path is None:
-        raise Http404("No such template.")
-
-    document, issues = library.read_template(path)
-    if document is None:
-        logger.error("Shipped template %s failed to validate at install time.", path.name)
-        return _install_failed(request, workspace_id, [issue.message for issue in issues])
-
-    record = FlowImport(
-        workspace=request.workspace,
-        document=document,
-        mapping=portability.default_mapping(request.workspace, document, user=request.user),
-        # The template's own filename, which is what this column documents
-        # itself as holding and what tells the review page which one you picked.
-        original_filename=path.name[:255],
-        created_by=request.user,
-    )
-    record.save()
-    logger.info("Workspace %s started an import from template %r.", request.workspace.pk, path.name)
-    return _redirect_to_review(workspace_id, record)
-
-
-def _install_failed(request: WorkspaceRequest, workspace_id: str, errors: list[str]) -> HttpResponse:
-    """Re-render the gallery with what was wrong. Nothing was stored."""
-    cards = gallery.gallery()
-    return render(
-        request,
-        "flows/templates.html",
-        {
-            "groups": gallery.by_category(cards),
-            "template_total": len(cards),
-            "connected_platforms": gallery.connected_platforms(request.workspace),
-            "errors": errors[:20],
-            "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
-            "import_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
-        },
-        status=400,
-    )
 
 
 def _upload_failed(request: WorkspaceRequest, workspace_id: str, errors: list[str]) -> HttpResponse:
@@ -252,6 +185,79 @@ def _upload_failed(request: WorkspaceRequest, workspace_id: str, errors: list[st
 
 def _redirect_to_review(workspace_id: str, record: FlowImport) -> HttpResponse:
     return redirect("flows:import_review", workspace_id=workspace_id, flow_import_id=record.pk)
+
+
+# ---------------------------------------------------------------------------
+# Import, step zero: the shipped template gallery
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("edit_flows")
+@require_GET
+def template_gallery(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """The templates this installation ships, as something you can pick from.
+
+    Until this existed the library had no UI at all: the files sat in the
+    repository and the only door into them was downloading one and uploading it
+    again. Nothing here is workspace data — every card is the same for everyone
+    on this installation — which is why there is no object to scope and why the
+    slug is not a tenant identifier.
+    """
+    return render(request, "flows/template_gallery.html", _gallery_context(request.workspace, workspace_id))
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def template_start(request: WorkspaceRequest, workspace_id: str, template_slug: str) -> HttpResponse:
+    """Begin an import from a shipped template.
+
+    Joins the wizard the upload path already walks, one step in. POST and not
+    GET because it writes the ``FlowImport`` row — the same row an upload
+    writes, and still the only thing that exists before the confirm.
+    """
+    path = template_for_slug(template_slug)
+    if path is None:
+        raise Http404("No such template.")
+
+    document, issues = read_template(path)
+    if document is None:
+        # A file this repository ships failing its own importer is our bug, not
+        # the user's, so it is logged at error and the page says so plainly
+        # rather than blaming whatever they clicked.
+        logger.error(
+            "shipped flow template %s does not validate: %s",
+            path.name,
+            "; ".join(issue.message for issue in issues[:5]),
+        )
+        errors = [f"{path.name} could not be read. This is a problem with the template, not with you."]
+        return render(
+            request,
+            "flows/template_gallery.html",
+            _gallery_context(request.workspace, workspace_id, errors=errors),
+            status=400,
+        )
+
+    return _begin_import(request, workspace_id, document, path.name)
+
+
+def _gallery_context(workspace: Any, workspace_id: str, *, errors: list[str] | None = None) -> dict[str, Any]:
+    """Everything the gallery page renders, built in one place.
+
+    One builder rather than one per view: the 400 that a broken shipped template
+    produces renders the same page, and a second copy of this dict is a second
+    thing to keep in step — which is how that copy came to pass an empty
+    ``categories`` and silently drop the filter chips.
+    """
+    cards = template_cards()
+    return {
+        "cards": card_contexts(workspace, workspace_id, cards),
+        "categories": list(dict.fromkeys(card.category for card in cards if card.category)),
+        "errors": errors or [],
+        "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
+        "upload_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +322,7 @@ def _groups(workspace: Any, plan: portability.ImportPlan) -> list[dict[str, Any]
     return [
         {
             "kind": kind,
-            "label": _KIND_LABELS.get(kind, kind),
+            "label": REQUIREMENT_KIND_LABELS.get(kind, kind),
             "help": _KIND_HELP.get(kind, ""),
             "field_types": _field_types() if kind == "custom_field" else [],
             "questions": [
@@ -387,22 +393,6 @@ def _field_types() -> list[tuple[str, str]]:
 
     return list(CustomFieldType.choices)
 
-
-_KIND_LABELS: dict[str, str] = {
-    "tag": "Tags",
-    "custom_field": "Custom fields",
-    "sequence": "Sequences",
-    "segment": "Segments",
-    "member": "Members",
-    "flow": "Other flows",
-    "media": "Media",
-    "platform": "Channels",
-    "request_header": "Request headers",
-    "whatsapp_template": "WhatsApp templates",
-    "link_handle": "Ref link handles",
-    "from_override": "Email sender addresses",
-    "comment_posts": "Comment trigger posts",
-}
 
 _KIND_HELP: dict[str, str] = {
     "tag": "Create them here, or point each one at a tag you already use.",

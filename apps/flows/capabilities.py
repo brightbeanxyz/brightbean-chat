@@ -210,11 +210,15 @@ def capabilities_for(platform: str) -> Any | None:
 def connected_platforms(workspace: Any) -> tuple[str, ...]:
     """Which platforms this workspace has a live connection on.
 
-    **Documented stub until #4.** ``channels.ChannelConnection`` is that issue's
-    model; until it exists there is nothing to ask, so this returns an empty
-    tuple and no capability warning is ever emitted in a running deployment. The
+    **Live** means ``ACTIVE``: a ``DISABLED`` or ``NEEDS_REAUTH`` connection
+    cannot deliver a message, so counting it would let a flow validate — and a
+    template card read as ready — on a channel that would refuse the first send.
+
+    Resolved through ``installed_model`` rather than imported, so this module
+    still loads in a deployment that has not installed ``apps.channels``; there
+    it returns an empty tuple and no capability warning is ever emitted. The
     validator takes the platform set as an argument precisely so the rules can
-    be — and are — tested against real capability data today
+    be — and are — tested against real capability data
     (``apps/flows/tests/test_capabilities.py``).
     """
     from apps.flows.compat import installed_model

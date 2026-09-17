@@ -354,7 +354,12 @@ class TestWorkspaceSwitcher:
     because the branch never ran.
     """
 
-    def _render(self, tenancy, **overrides):
+    # The anchor's own text, not the bare phrase: "Workspace settings" is also
+    # the <title> of every page under layouts/workspace_settings.html, so a
+    # substring check would pass or fail for the wrong reason there.
+    SETTINGS_LINK = "<span>Workspace settings</span>"
+
+    def _render(self, tenancy, *, user=None, **overrides):
         """Render the shell for a real signed-in owner, then override.
 
         The switcher reads real membership data since issue #31 merged, so the
@@ -365,13 +370,19 @@ class TestWorkspaceSwitcher:
         from django.template.loader import render_to_string
 
         from apps.common.context_processors import navigation_context
+        from apps.members.models import WorkspaceMembership
 
         path = f"/w/{tenancy.workspace.id}/"
         request = RequestFactory().get(path)
         request.resolver_match = resolve(path)
         request.workspace = tenancy.workspace
         request.org_membership = None
-        request.user = tenancy.owner
+        request.user = user or tenancy.owner
+        # Must be this user's own row. `tenancy.membership_for("admin")` belongs
+        # to a *different* person (members["admin"]), and pairing it with
+        # request.user is a state RBACMiddleware can never build — it only ever
+        # attaches the membership it resolved for the signed-in user.
+        request.workspace_membership = WorkspaceMembership.objects.get(user=request.user, workspace=tenancy.workspace)
         context = navigation_context(request)
         context["can_create_workspace"] = True
         context.update(overrides)
@@ -409,6 +420,48 @@ class TestWorkspaceSwitcher:
         html = self._render(tenancy, sidebar_workspaces=[], can_create_workspace=False)
 
         assert "New workspace" not in html
+
+    def test_the_dropdown_is_the_way_into_the_workspace_settings_section(self, tenancy):
+        """The reason this link exists: before it, the nine workspace-settings
+        pages were reachable only by typing a URL. One row is enough of a
+        target — layouts/workspace_settings.html carries the rest."""
+        html = self._render(tenancy)
+
+        assert self.SETTINGS_LINK in html
+        assert f'href="/w/{tenancy.workspace.id}/settings/"' in html
+
+    def test_an_editor_is_sent_to_the_first_page_they_may_actually_open(self, tenancy):
+        """An Editor lacks manage_workspace_settings, so General would 403. The
+        link is not hidden from them — it points at the first row of their own
+        filtered nav instead."""
+        html = self._render(tenancy, user=tenancy.user_for("editor"))
+
+        assert self.SETTINGS_LINK in html
+        assert f'href="/w/{tenancy.workspace.id}/settings/"' not in html
+        assert f'href="/w/{tenancy.workspace.id}/inbox/settings/labels/"' in html
+
+    def test_the_glyph_sizes_are_pinned_so_an_ambient_context_var_cannot_move_them(self, tenancy):
+        """`partials/_nav_icon.html` takes an optional `icon_size`, and
+        `{% include %}` without `only` inherits the whole parent context — so a
+        view adding an `icon_size` key, or a change to the `default:18` filter,
+        would silently resize every glyph in the shell. Pin both halves: the
+        18px default everywhere, and the single 14px override in the dropdown.
+        """
+        html = self._render(tenancy)
+
+        glyph = 'class="flex-shrink-0" width='
+
+        assert html.count(f'{glyph}"14" height="14"') == 1, "only the switcher's gear overrides the default"
+        assert f'{glyph}"18" height="18"' in html
+
+    def test_the_link_is_absent_for_someone_with_no_row_in_the_section(self, tenancy):
+        """A Viewer holds use_inbox and view_analytics and nothing else, so
+        every row in the section is gated away and there is nowhere to send
+        them. Rendered through the real context processor rather than by
+        overriding the flag, so the guard and the nav are proved to agree."""
+        html = self._render(tenancy, user=tenancy.user_for("viewer"))
+
+        assert self.SETTINGS_LINK not in html
 
 
 @pytest.mark.django_db

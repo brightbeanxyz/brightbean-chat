@@ -1,0 +1,224 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Grow",
+      "graph": {
+        "edges": [
+          {
+            "id": "intro-qr-brand-ask_details",
+            "source": "intro",
+            "sourceHandle": "qr:brand",
+            "target": "ask_details"
+          },
+          {
+            "id": "intro-qr-creator-creator_reply",
+            "source": "intro",
+            "sourceHandle": "qr:creator",
+            "target": "creator_reply"
+          },
+          {
+            "id": "ask_details-default-tag_collab",
+            "source": "ask_details",
+            "sourceHandle": "default",
+            "target": "tag_collab"
+          },
+          {
+            "id": "tag_collab-default-wrap",
+            "source": "tag_collab",
+            "sourceHandle": "default",
+            "target": "wrap"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks for replying! Quick one so I send this the right way.",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "brand",
+                  "label": "I am a brand"
+                },
+                {
+                  "id": "creator",
+                  "label": "I am a creator"
+                }
+              ]
+            },
+            "id": "intro",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "Tell me the brand and roughly what you have in mind. A sentence is plenty.",
+              "reply_type": "text",
+              "retry": {
+                "invalid_text": "Did not catch that. One more go?",
+                "max": 1
+              },
+              "target": {
+                "key": "Collab brief",
+                "type": "custom_field"
+              },
+              "timeout": {
+                "delay": 12,
+                "enabled": true,
+                "unit": "hours"
+              }
+            },
+            "id": "ask_details",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Collab request",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_collab",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Got it. I go through these on Fridays and will come back to you.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "Everything in one place.",
+                  "title": "Rates and audience",
+                  "type": "card",
+                  "url_button": {
+                    "label": "See the media kit",
+                    "url": "https://example.com/media-kit"
+                  }
+                }
+              ]
+            },
+            "id": "wrap",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Always up for a creator collab. Tell me what you are thinking and I will reply here.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "creator_reply",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "The brief lands in a contact field, so it is on the contact record when you open the conversation rather than buried in the thread.\n\nStory replies only count while the Story is live. Once it expires the trigger has nothing to fire on, so post the prompt on a schedule you can keep.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "one_field",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Sort collab requests from Stories",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "collab"
+              },
+              {
+                "mode": "any_word",
+                "text": "partner"
+              },
+              {
+                "mode": "contains",
+                "text": "work together"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "story_reply"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "collab brief",
+        "name": "Collab brief",
+        "used_by": [
+          "flow-1:ask_details"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "collab request",
+        "name": "Collab request",
+        "used_by": [
+          "flow-1:tag_collab"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

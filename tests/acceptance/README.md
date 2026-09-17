@@ -93,6 +93,7 @@ leave one unguarded.
 
 | | Gate | Verified by |
 |---|---|---|
+| ✅ | Billing off by default: no provider configured means no limits and no endpoints | `sec-billing-off-by-default` — `apps/billing/tests/test_self_hosted_is_unlimited.py` |
 | ✅ | IDOR fuzz sweep across every registered endpoint | `sec-idor-sweep` — `tests/test_idor.py::TestCrossTenantIsolation` |
 | ✅ | Opt-out enforced at the adapter boundary, every send source | `sec-optout-adapter-boundary` — [`test_send_boundary.py`](test_send_boundary.py) |
 | ✅ | Hostile webhook storm: repeated, oversized, malformed | `sec-hostile-webhook` — the channels suite, plus the cross-app slice in [`test_integration_chain.py`](test_integration_chain.py) |

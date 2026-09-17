@@ -1,0 +1,133 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Convert",
+      "graph": {
+        "edges": [
+          {
+            "id": "pitch-default-tag_interest",
+            "source": "pitch",
+            "sourceHandle": "default",
+            "target": "tag_interest"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "That is the one from the Reel. Here it is.",
+                  "type": "text"
+                },
+                {
+                  "subtitle": "In stock now.",
+                  "title": "The thing from the Reel",
+                  "type": "card",
+                  "url_button": {
+                    "label": "Buy it",
+                    "url": "https://example.com/reel-product"
+                  }
+                }
+              ]
+            },
+            "id": "pitch",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Reel interest",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_interest",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "Reel comments arrive on the same Instagram comments field as post comments, so this is an ordinary comment trigger — there is no separate Reel trigger. If you only want it on Reels, narrow the trigger to specific posts once the Reel is live.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "same_field",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Sell from Reel comments",
+      "triggers": [
+        {
+          "config": {
+            "include_keywords": [
+              "price",
+              "how much",
+              "link"
+            ],
+            "like_comment": true,
+            "once_per_contact_per_post": true,
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "random",
+              "texts": [
+                "Just sent it!",
+                "Check your DMs."
+              ]
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "reel interest",
+        "name": "Reel interest",
+        "used_by": [
+          "flow-1:tag_interest"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}
