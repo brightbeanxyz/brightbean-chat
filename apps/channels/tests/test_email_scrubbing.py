@@ -191,7 +191,7 @@ class TestNothingLogsThemInPractice:
         assert SES_SECRET not in caplog.text
 
     def test_the_admin_never_renders_credentials(self, tenancy: Any) -> None:
-        """``masked_credentials`` exists for this (CONTRIBUTING)."""
+        """``mask_credentials`` exists for this (CONTRIBUTING)."""
         from django.contrib import admin
 
         from apps.channels.models import ChannelConnection as Model

@@ -1,20 +1,20 @@
-"""Encrypted platform app credentials, at organization and workspace level.
+"""Encrypted platform app credentials, at organization level.
 
-Ported from BrightBean Studio's ``apps/credentials/models.py``. SPEC §4 requires
-resolution in the order **workspace override → organization → deployment env**,
-which is the *inverse* of Studio's env-dominant chain; the chain itself lives in
-:mod:`apps.credentials.resolution`.
+Ported from BrightBean Studio's ``apps/credentials/models.py``. The resolution
+order is **deployment env → organization**; the chain itself lives in
+:mod:`apps.credentials.resolution`. Environment variables are the way these are
+set; this table is the fallback for one deployment serving several
+organizations, and is editable only by a superuser in the Django admin.
 
 **These rows are never looked up by their contents.** ``credentials`` is an
 ``EncryptedJSONField``, and every write encrypts under a fresh random nonce, so
 ``.filter(credentials=...)`` compares two unrelated ciphertexts and silently
 matches nothing — no exception, just an empty result that reads like "no such
-row" (see the module docstring on ``apps.common.encryption``). Both models are
-keyed on plaintext columns instead: ``(organization, platform)`` and
-``(workspace, platform)``, both unique. Nothing here needs the deterministic
-HMAC sidecar that docstring prescribes; the first thing that will is issue #4's
-webhook-secret lookup, which resolves an inbound request to a connection by a
-secret it was given.
+row" (see the module docstring on ``apps.common.encryption``). The table is
+keyed on plaintext columns instead: ``(organization, platform)``, unique.
+Nothing here needs the deterministic HMAC sidecar that docstring prescribes; the
+first thing that will is issue #4's webhook-secret lookup, which resolves an
+inbound request to a connection by a secret it was given.
 
 ``is_configured`` is the other consequence: it is the only queryable projection
 of an encrypted payload, so it is recomputed on every save and never settable.
@@ -28,7 +28,6 @@ from apps.common.encryption import EncryptedJSONField
 from apps.common.managers import OrgScopedManager
 from apps.common.models import BaseModel
 from apps.common.platforms import Platform
-from apps.common.scoping import WorkspaceScopedModel
 
 # Per-platform required credential keys. Each inner tuple is an "any of these
 # aliases" group; a platform counts as configured only when EVERY group has a
@@ -74,7 +73,14 @@ def missing_key_groups(platform: str, credentials: Any) -> list[tuple[str, ...]]
 
 
 def mask_credentials(credentials: Any) -> dict[str, str]:
-    """Show the last four characters of each value and nothing else."""
+    """Show the last four characters of each value and nothing else.
+
+    The helper CONTRIBUTING.md points at for rendering a credential anywhere.
+    Nothing in the product displays one today — the settings page that did was
+    removed with the workspace override — so this has no caller but its tests.
+    It is kept rather than deleted because the next surface that needs to show a
+    credential should reach for a tested masker instead of writing another.
+    """
     masked: dict[str, str] = {}
     for key, value in (credentials or {}).items():
         if isinstance(value, str) and len(value) > 4:
@@ -84,8 +90,13 @@ def mask_credentials(credentials: Any) -> dict[str, str]:
     return masked
 
 
-class CredentialMixin(models.Model):
-    """Shared behaviour for both credential tables."""
+class PlatformCredential(BaseModel):
+    """Organization-level credentials, entered in the Django admin.
+
+    The lower level of the resolution chain: a self-hoster who runs one
+    deployment for several orgs sets each org's own Meta app here, for the
+    platforms the environment does not already answer for.
+    """
 
     platform = models.CharField(max_length=30, choices=Platform.choices)
     credentials = EncryptedJSONField(
@@ -93,39 +104,6 @@ class CredentialMixin(models.Model):
         help_text="Encrypted JSON of platform-specific credential fields.",
     )
     is_configured = models.BooleanField(default=False)
-
-    class Meta:
-        abstract = True
-
-    def save(self, *args: Any, **kwargs: Any) -> None:
-        """Keep ``is_configured`` a pure function of the credential values.
-
-        A caller never sets it. The ``update_fields`` branch is the half that is
-        easy to miss: ``save(update_fields=["credentials"])`` would otherwise
-        write new secrets and leave the stale flag behind, so a row that just
-        became complete would stay switched off (or vice versa).
-        """
-        self.is_configured = derive_is_configured(self.platform, self.credentials)
-        update_fields = kwargs.get("update_fields")
-        if update_fields is not None:
-            kwargs["update_fields"] = {*update_fields, "is_configured"}
-        super().save(*args, **kwargs)
-
-    @property
-    def masked_credentials(self) -> dict[str, str]:
-        return mask_credentials(self.credentials)
-
-    @property
-    def missing_key_groups(self) -> list[tuple[str, ...]]:
-        return missing_key_groups(self.platform, self.credentials)
-
-
-class PlatformCredential(CredentialMixin, BaseModel):
-    """Organization-level credentials, entered in the Django admin.
-
-    The middle level of the resolution chain: a self-hoster who runs one
-    deployment for several orgs sets each org's own Meta app here.
-    """
 
     organization = models.ForeignKey(
         "organizations.Organization",
@@ -142,28 +120,19 @@ class PlatformCredential(CredentialMixin, BaseModel):
             models.UniqueConstraint(fields=["organization", "platform"], name="platformcredential_unique_org_platform"),
         ]
 
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """Keep ``is_configured`` a pure function of the credential values.
+
+        A caller never sets it. The ``update_fields`` branch is the half that is
+        easy to miss: ``save(update_fields=["credentials"])`` would otherwise
+        write new secrets and leave the stale flag behind, so a row that just
+        became complete would stay switched off (or vice versa).
+        """
+        self.is_configured = derive_is_configured(self.platform, self.credentials)
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            kwargs["update_fields"] = {*update_fields, "is_configured"}
+        super().save(*args, **kwargs)
+
     def __str__(self) -> str:
         return f"{self.organization.name} - {self.get_platform_display()}"
-
-
-class WorkspaceCredentialOverride(CredentialMixin, WorkspaceScopedModel):
-    """Workspace-level override — the top of the resolution chain (SPEC §4).
-
-    The first tenant model in the project, and therefore the first thing to go
-    through the enforcing manager from ``apps.common.scoping``:
-    ``WorkspaceCredentialOverride.objects.all()`` raises rather than returning
-    every workspace's secrets.
-    """
-
-    class Meta:
-        db_table = "credentials_workspace_credential_override"
-        ordering = ["platform"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["workspace", "platform"],
-                name="workspacecredentialoverride_unique_workspace_platform",
-            ),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.workspace.name} - {self.get_platform_display()}"

@@ -250,9 +250,9 @@ Credentials and tokens go in `EncryptedTextField` / `EncryptedJSONField` from
 nothing — no exception, just an empty result that reads like "no such row". To
 look a row up *by* a secret, store a deterministic HMAC of it in a separate
 column and query that. To look one up by tenant and kind, use plaintext columns
-(which is what the credential tables do).
+(which is what the credential table does).
 
-Never render a stored secret. `masked_credentials` exists for that.
+Never render a stored secret. `apps.credentials.models.mask_credentials()` exists for that — it keeps the last four characters and nothing else.
 
 **A credential that arrives in a request is not stored either.** An invitation
 token, an API key, a webhook secret — anything a caller presents to prove they

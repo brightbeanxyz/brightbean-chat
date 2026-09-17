@@ -5,8 +5,8 @@ from django.contrib.admin.sites import AdminSite
 from django.test import RequestFactory
 
 from apps.credentials.admin import PlatformCredentialAdmin
-from apps.credentials.forms import PlatformCredentialAdminForm, WorkspaceCredentialOverrideForm
-from apps.credentials.models import CONFIGURABLE_PLATFORMS, PlatformCredential, WorkspaceCredentialOverride
+from apps.credentials.forms import PlatformCredentialAdminForm
+from apps.credentials.models import CONFIGURABLE_PLATFORMS, PlatformCredential
 from tests.support import create_user
 
 COMPLETE = {"client_id": "id-12345", "client_secret": "secret-67890"}
@@ -100,29 +100,6 @@ class TestFormValidation:
 
 
 @pytest.mark.django_db
-class TestWorkspaceOverrideForm:
-    def test_it_validates_completeness_against_the_url_platform(self, tenancy):
-        instance = WorkspaceCredentialOverride(workspace=tenancy.workspace, platform="instagram")
-        form = WorkspaceCredentialOverrideForm(
-            {"credentials": '{"client_id": "a"}'}, instance=instance, platform="instagram"
-        )
-
-        assert not form.is_valid()
-
-    def test_a_complete_set_saves(self, tenancy):
-        import json
-
-        instance = WorkspaceCredentialOverride(workspace=tenancy.workspace, platform="instagram")
-        form = WorkspaceCredentialOverrideForm(
-            {"credentials": json.dumps(COMPLETE)}, instance=instance, platform="instagram"
-        )
-
-        assert form.is_valid(), form.errors
-        saved = form.save()
-        assert saved.is_configured is True
-
-
-@pytest.mark.django_db
 class TestAdminIsSuperuserOnly:
     """Opening the change page decrypts secrets into an HTML response, so
     is_staff — which the admin already requires — is not a high enough bar."""
@@ -162,10 +139,3 @@ class TestAdminIsSuperuserOnly:
         request.user = create_user("root@example.test", is_staff=True, is_superuser=True)
 
         assert getattr(admin, hook)(request) is True
-
-    def test_workspace_overrides_are_not_registered_in_the_admin(self):
-        """They are tenant data with their own permission-gated UI; an admin
-        listing would be a cross-tenant view of every workspace's secrets."""
-        from django.contrib import admin as django_admin
-
-        assert WorkspaceCredentialOverride not in django_admin.site._registry

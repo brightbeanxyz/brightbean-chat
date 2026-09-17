@@ -1,4 +1,4 @@
-"""Forms for the credential stores.
+"""Forms for the organization credential store.
 
 The admin form override is not cosmetic — see :class:`PlatformCredentialAdminForm`.
 """
@@ -12,7 +12,6 @@ from apps.credentials.models import (
     CONFIGURABLE_PLATFORMS,
     REQUIRED_CREDENTIAL_KEYS,
     PlatformCredential,
-    WorkspaceCredentialOverride,
     derive_is_configured,
 )
 
@@ -36,7 +35,7 @@ class CredentialsJSONFormMixin(forms.ModelForm):
     with **no edits at all** cleans that back to a ``str``, which
     ``get_prep_value`` then ``json.dumps``es into a JSON *string literal*. The
     next read returns a ``str`` where every consumer expects a mapping:
-    ``derive_is_configured`` raises ``AttributeError``, ``masked_credentials``
+    ``derive_is_configured`` raises ``AttributeError``, ``mask_credentials``
     raises, and the row stops working. Opening a credential page and pressing
     Save is enough to do it.
 
@@ -98,21 +97,3 @@ class PlatformCredentialAdminForm(CredentialsJSONFormMixin):
         platform_field.choices = [
             choice for choice in platform_field.choices if choice[0] == "" or choice[0] in CONFIGURABLE_PLATFORMS
         ]
-
-
-class WorkspaceCredentialOverrideForm(CredentialsJSONFormMixin):
-    """The workspace-settings form. Same JSON contract as the admin form."""
-
-    class Meta:
-        model = WorkspaceCredentialOverride
-        fields = ("credentials",)
-
-    def __init__(self, *args: Any, platform: str = "", **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._platform = platform
-
-    def clean(self) -> dict[str, Any]:
-        # The platform is fixed by the URL rather than posted, so inject it
-        # before the mixin's completeness check reads it.
-        self.cleaned_data["platform"] = self._platform
-        return super().clean()

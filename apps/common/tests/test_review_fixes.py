@@ -5,7 +5,7 @@ from django.core.cache import caches
 from django.http import Http404
 
 from apps.common.shortcuts import get_scoped_object_or_404
-from apps.credentials.models import WorkspaceCredentialOverride
+from apps.contacts.models import Tag
 
 
 class TestTheNonEnforcingTwinIsGone:
@@ -35,30 +35,26 @@ class TestScopedShortcut:
         nothing. Turning it into a 404 here would hide the bug it exists to
         surface."""
         with pytest.raises(ValueError, match="needs a workspace"):
-            get_scoped_object_or_404(WorkspaceCredentialOverride, None, platform="instagram")
+            get_scoped_object_or_404(Tag, None, name="nope")
 
     def test_a_genuine_miss_is_still_a_404(self, tenancy):
         with pytest.raises(Http404):
-            get_scoped_object_or_404(WorkspaceCredentialOverride, tenancy.workspace, platform="instagram")
+            get_scoped_object_or_404(Tag, tenancy.workspace, name="nope")
 
     def test_a_malformed_pk_is_a_404(self, tenancy):
         with pytest.raises(Http404):
-            get_scoped_object_or_404(WorkspaceCredentialOverride, tenancy.workspace, pk="not-a-uuid")
+            get_scoped_object_or_404(Tag, tenancy.workspace, pk="not-a-uuid")
 
     def test_a_hit_is_returned(self, tenancy):
-        override = WorkspaceCredentialOverride.objects.create(
-            workspace=tenancy.workspace, platform="instagram", credentials={"client_id": "a"}
-        )
+        tag = Tag.objects.create(workspace=tenancy.workspace, name="mine")
 
-        assert get_scoped_object_or_404(WorkspaceCredentialOverride, tenancy.workspace, pk=override.pk) == override
+        assert get_scoped_object_or_404(Tag, tenancy.workspace, pk=tag.pk) == tag
 
     def test_another_workspaces_object_is_a_404(self, tenancy, other_tenancy):
-        override = WorkspaceCredentialOverride.objects.create(
-            workspace=other_tenancy.workspace, platform="instagram", credentials={"client_id": "a"}
-        )
+        tag = Tag.objects.create(workspace=other_tenancy.workspace, name="theirs")
 
         with pytest.raises(Http404):
-            get_scoped_object_or_404(WorkspaceCredentialOverride, tenancy.workspace, pk=override.pk)
+            get_scoped_object_or_404(Tag, tenancy.workspace, pk=tag.pk)
 
 
 @pytest.mark.django_db

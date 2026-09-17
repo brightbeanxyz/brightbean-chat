@@ -18,7 +18,7 @@ from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEve
 from apps.channels.providers.meta_common import SIGNATURE_HEADER
 from apps.channels.tests.instagram_support import APP_SECRET, at_now, load_delivery, sign
 from apps.common.platforms import Platform
-from tests.support import Tenancy
+from tests.support import Tenancy, org_platform_credential
 
 pytestmark = pytest.mark.django_db
 
@@ -90,24 +90,39 @@ class TestSignature:
         body = json.dumps(payload).encode()
         assert deliver(client, body, signature=sign(body)).status_code == 403
 
-    def test_a_workspace_override_secret_is_used(
+    def test_the_env_secret_beats_an_organization_row(
         self, client: Client, tenancy: Tenancy, instagram_connection: ChannelConnection, collected: list[Any]
     ) -> None:
-        """SPEC §4's chain: the most specific *usable* level wins, and rotating
-        an app secret in the admin has to take effect on the next delivery."""
-        from apps.credentials.models import WorkspaceCredentialOverride
+        """SPEC §4's chain at the HTTP layer, in its new direction.
 
-        override = WorkspaceCredentialOverride(workspace=tenancy.workspace, platform=Platform.INSTAGRAM.value)
-        # EncryptedJSONField subclasses TextField, so django-stubs types the
-        # attribute as str even though the column holds json — the same
-        # suppression ``instagram_oauth.store_credentials`` carries.
-        override.credentials = {"client_id": "override", "client_secret": "workspace-level-secret"}  # type: ignore[assignment]
-        override.save()
+        The ``instagram_app`` fixture supplies the deployment's app secret in the
+        environment. An organization that also entered its own in the admin does
+        not shift what deliveries are verified against — env wins outright.
+        """
+        org_platform_credential(tenancy, Platform.INSTAGRAM.value, client_id="org", client_secret="org-level-secret")
+        payload = at_now(load_delivery("message_text"))
+        body = json.dumps(payload).encode()
+
+        assert deliver(client, body, signature=sign(body, "org-level-secret")).status_code == 403
+        assert deliver(client, body, signature=sign(body, APP_SECRET)).status_code == 200
+
+    def test_an_organization_row_is_used_when_no_env_var_is_set(
+        self,
+        client: Client,
+        tenancy: Tenancy,
+        instagram_connection: ChannelConnection,
+        collected: list[Any],
+        settings: Any,
+    ) -> None:
+        """The fallback still reaches the database, and rotating the row there
+        takes effect on the next delivery rather than at the next restart."""
+        org_platform_credential(tenancy, Platform.INSTAGRAM.value, client_id="org", client_secret="org-level-secret")
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {}
         payload = at_now(load_delivery("message_text"))
         body = json.dumps(payload).encode()
 
         assert deliver(client, body, signature=sign(body, APP_SECRET)).status_code == 403
-        assert deliver(client, body, signature=sign(body, "workspace-level-secret")).status_code == 200
+        assert deliver(client, body, signature=sign(body, "org-level-secret")).status_code == 200
 
 
 @pytest.mark.usefixtures("instagram_app")

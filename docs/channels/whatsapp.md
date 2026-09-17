@@ -31,15 +31,23 @@ direct integration, so the credential is one you generate yourself.
 4. **Set the app credentials** on this deployment. Both are needed:
 
    ```
-   PLATFORM_WHATSAPP_APP_ID=...
-   PLATFORM_WHATSAPP_APP_SECRET=...
+   PLATFORM_WHATSAPP_CLIENT_ID=...
+   PLATFORM_WHATSAPP_CLIENT_SECRET=...
    PLATFORM_WHATSAPP_VERIFY_TOKEN=...   # any random string you also paste into Meta
    ```
+
+   Meta's console labels these *App ID* and *App Secret*, and
+   `PLATFORM_WHATSAPP_APP_ID` / `_APP_SECRET` are accepted as aliases — pick one
+   spelling and keep it.
 
    The credential chain only uses a level that is **complete** (`docs/SPEC.md`
    §4), so setting the secret without the id leaves the deployment with no
    credentials at all and every delivery failing signature verification. An
-   organization can override both in the admin instead.
+   organization can supply its own *id and secret* in the admin, but only where
+   the environment is silent for them — what is set here wins.
+   `PLATFORM_WHATSAPP_VERIFY_TOKEN` is always deployment-level: the
+   verification `GET` names no organization, so it is read from the environment
+   alone and the webhook cannot be subscribed without it.
 
 5. **Paste the ids and the token** into *Settings → Channels → WhatsApp → set it
    up* (`/w/<workspace>/settings/channels/whatsapp/connect/`).

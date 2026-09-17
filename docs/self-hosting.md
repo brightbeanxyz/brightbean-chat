@@ -588,7 +588,7 @@ deployment actually decides:
 
 | Variable | What it is |
 |---|---|
-| `PLATFORM_<PLATFORM>_CLIENT_ID` / `_CLIENT_SECRET` | Deployment-level app credentials, the last step of the resolution chain (workspace override → organization → here). Meta platforms only. |
+| `PLATFORM_<PLATFORM>_CLIENT_ID` / `_CLIENT_SECRET` | The Meta app credentials, and the first step of the resolution chain — an organization row in the Django admin is the fallback below them. Meta platforms only. |
 | `PLATFORM_<PLATFORM>_VERIFY_TOKEN` | The token Meta checks when you subscribe a webhook URL. Unset means that platform's verification GET answers 404. |
 | `TICK_TOKEN` | Shared secret for `/internal/tick`. Unset means the route does not exist. |
 | `EXTERNAL_REQUEST_ALLOW_PRIVATE` | Lets the External Request node reach private address ranges, for an on-prem deployment calling services on its own network. It relaxes *only* the private-range rule — loopback, cloud metadata, multicast and this deployment's own host stay denied ([`SECURITY-BASELINE.md`](SECURITY-BASELINE.md) §6). |

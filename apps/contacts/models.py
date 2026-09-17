@@ -193,7 +193,7 @@ class ContactScopedModel(WorkspaceScopedModel):
     is a tenancy bug no test stumbles over by accident.
 
     So ``workspace`` is **derived, never set by a caller** — the same discipline
-    ``CredentialMixin.save()`` uses for ``is_configured``, ``update_fields``
+    ``PlatformCredential.save()`` uses for ``is_configured``, ``update_fields``
     branch and all — and the peer foreign key is checked against the same
     contact.
 

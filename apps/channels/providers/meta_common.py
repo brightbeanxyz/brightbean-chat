@@ -79,12 +79,11 @@ MAX_ITEMS_PER_ENTRY = 100
 def app_secret(connection: "ChannelConnection") -> str:
     """The Meta app secret in force for ``connection``'s workspace, or "".
 
-    Resolved through SPEC §4's chain — workspace override → organization →
-    deployment env — which is the same resolution the connect flow used to
-    obtain the token in the first place. Reading it per request rather than
-    caching it on the connection is deliberate: an operator who rotates a
-    compromised app secret in the admin expects the next delivery to be verified
-    against the new one.
+    Resolved through SPEC §4's chain — deployment env → organization — which is
+    the same resolution the connect flow used to obtain the token in the first
+    place. Reading it per request rather than caching it on the connection is
+    deliberate: an operator who rotates a compromised app secret expects the next
+    delivery to be verified against the new one.
 
     Returns "" rather than raising when nothing is configured, because the caller
     turns that into a failed signature check — which is the correct outcome and

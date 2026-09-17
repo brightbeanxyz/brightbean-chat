@@ -133,7 +133,7 @@ DEFAULT_TOKEN_LIFETIME = timedelta(days=50)
 
 
 class InstagramCredentialsMissingError(Exception):
-    """This workspace has no Instagram app credentials configured (SPEC §4)."""
+    """This deployment has no Instagram app credentials configured (SPEC §4)."""
 
 
 def _client() -> "httpx.Client | None":
@@ -176,9 +176,9 @@ def app_credentials(workspace: Any) -> tuple[str, str]:
     client_secret = _first(resolution.credentials, "client_secret", "app_secret")
     if not client_id or not client_secret:
         raise InstagramCredentialsMissingError(
-            "This workspace has no Instagram app credentials. Add them under "
-            "Settings -> Credentials, or set PLATFORM_INSTAGRAM_CLIENT_ID and "
-            "PLATFORM_INSTAGRAM_CLIENT_SECRET on the deployment."
+            "This deployment has no Instagram app credentials. Set "
+            "PLATFORM_INSTAGRAM_CLIENT_ID and PLATFORM_INSTAGRAM_CLIENT_SECRET "
+            "in the environment."
         )
     return client_id, client_secret
 

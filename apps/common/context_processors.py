@@ -285,14 +285,6 @@ SETTINGS_NAV: list[NavGroup] = [
                 workspace_scoped=True,
             ),
             NavItem(
-                key="ws_credentials",
-                permission="manage_workspace_settings",
-                label="Platform credentials",
-                icon="key",
-                url_name="credentials:list",
-                workspace_scoped=True,
-            ),
-            NavItem(
                 key="ws_email_tracking",
                 permission="manage_workspace_settings",
                 label="Email tracking",
