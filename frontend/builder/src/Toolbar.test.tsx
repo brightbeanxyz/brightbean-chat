@@ -141,6 +141,26 @@ describe("Publish and a flush that did not land", () => {
     await waitFor(() => expect(screen.getByText("Live · v2")).toBeTruthy(), SETTLE);
   });
 
+  it("stops saying Archived once the publish that un-archived it lands", async () => {
+    /**
+     * services.publish() moves an archived flow back to ACTIVE and the response
+     * carries the status it landed on. The handler used to update only the save
+     * slice, so the store kept the stale `archived` and this header went on
+     * offering Publish for a flow that was already live.
+     */
+    http.route("/publish/", { body: published });
+    const detail = makeDetail(makeSampleGraph());
+    const store = makeStore({ ...detail, flow: { ...detail.flow, status: "archived" } });
+
+    renderWith(store, <Toolbar autosave={null} />);
+    expect(screen.getByText("Archived")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() => expect(screen.queryByText("Archived")).toBeNull(), SETTLE);
+    expect(screen.getByText("Live · v2")).toBeTruthy();
+    expect(store.getState().flow?.status).toBe("active");
+  });
+
   it("says Live on load when the latest version is already published", () => {
     /**
      * The reload case, and the one that made this worth fixing: it reaches the

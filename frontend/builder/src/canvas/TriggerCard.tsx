@@ -22,9 +22,14 @@ export function TriggerCard({ data }: { data: TriggerCardData }) {
   return (
     <button
       type="button"
-      className={["fb-trigger", trigger.enabled ? "" : "fb-trigger-paused"].filter(Boolean).join(" ")}
-      // React Flow's own class hooks. Without them a mousedown on this button
-      // starts a pane drag on some pointer paths.
+      // `nodrag nopan` are React Flow's own class hooks, and the comment used
+      // to sit here without them: without the classes a mousedown on this
+      // button starts a pane drag on some pointer paths, so pressing a trigger
+      // moved the canvas instead of opening it. AddTriggerCard below has had
+      // them all along.
+      className={["fb-trigger", "nodrag", "nopan", trigger.enabled ? "" : "fb-trigger-paused"]
+        .filter(Boolean)
+        .join(" ")}
       onClick={() => openTriggerDrawer(trigger.id)}
       data-trigger-id={trigger.id}
       title="Open this trigger"

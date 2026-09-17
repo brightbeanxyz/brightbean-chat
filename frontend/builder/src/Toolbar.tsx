@@ -58,6 +58,12 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       }
       const result = await publishFlow(store.getState().env);
       store.getState().applyValidation(result.validation, store.getState().revision);
+      // The flow itself, not just the save slice. services.publish() moves a
+      // draft *or an archived* flow to active, and the response carries the
+      // status it landed on — dropping it left the store reading "archived",
+      // so the header this button sits in went on offering Publish for a flow
+      // that had just gone live.
+      store.getState().setFlow(result.flow);
       store.getState().setSave({
         state: "saved",
         version: result.version,

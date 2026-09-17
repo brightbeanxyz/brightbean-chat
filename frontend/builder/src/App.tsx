@@ -16,6 +16,7 @@ import type { BuilderEnv } from "./env";
 import { Inspector } from "./inspector/Inspector";
 import { Palette } from "./palette/Palette";
 import { installAutosave, type Autosave } from "./persistence/autosave";
+import { refreshApplies } from "./refreshState";
 import { useStats } from "./stats/useStats";
 import { BuilderStoreProvider, useBuilder, useBuilderStore } from "./store/context";
 import { createBuilderStore } from "./store/store";
@@ -106,20 +107,24 @@ function Shell() {
         return;
       }
       last = now;
-      // The clean-store guard applies to what the *server derived from the
-      // graph* — a verdict about a draft the server has not seen would be a
-      // verdict about the wrong graph, and versions move with it. Triggers are
-      // not the graph: they live in their own table, the drawer edits them
-      // while the canvas is dirty, and refusing them here meant a trigger you
-      // just saved never reached the cards until you saved the flow too.
-      const clean = store.getState().save.state === "clean";
+      // The guard applies to what the *server derived from the graph* — a
+      // verdict about a draft the server has not seen would be a verdict about
+      // the wrong graph, and versions move with it. Triggers are not the graph:
+      // they live in their own table, the drawer edits them while the canvas is
+      // dirty, and refusing them here meant a trigger you just saved never
+      // reached the cards until you saved the flow too.
+      //
+      // refreshApplies() is the rule, with its cases in refreshState.test.ts.
+      // The revision is captured here and compared *after* the response.
+      const revision = store.getState().revision;
       void loadFlow(store.getState().env)
         .then((detail) => {
           store.getState().setTriggers(detail.triggers);
-          if (!clean) {
+          const state = store.getState();
+          if (!refreshApplies(state.save.state, revision, state.revision)) {
             return;
           }
-          store.getState().applyValidation(detail.validation, store.getState().revision);
+          store.getState().applyValidation(detail.validation, revision);
           store.getState().setFlow(detail.flow);
           store.getState().setSave({ version: detail.version, publishedVersion: detail.published_version });
         })

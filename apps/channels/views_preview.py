@@ -34,7 +34,7 @@ from apps.channels.registry import connect_route_for
 from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows.models import Flow
-from apps.flows.triggers.platforms import platforms_for_flow
+from apps.flows.triggers.platforms import declared_platforms_for_flow
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
 
@@ -60,7 +60,12 @@ def flow_preview(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     """
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
 
-    wanted = platforms_for_flow(flow)
+    # declared_platforms_for_flow, not platforms_for_flow: the latter is the
+    # capability validator's input and falls back to whatever the workspace has
+    # connected, which would hand this view a channel the flow never mentioned.
+    # An Instagram flow in a Telegram-only workspace has to be told to connect
+    # Instagram, not offered a Telegram chat.
+    wanted = declared_platforms_for_flow(flow)
     testable = _testable(wanted)
     if not testable:
         return JsonResponse(_unsupported(wanted))
@@ -99,11 +104,15 @@ _PREFERENCE: tuple[str, ...] = (Platform.TELEGRAM, Platform.MESSENGER, Platform.
 def _testable(wanted: tuple[str, ...]) -> list[str]:
     """The platforms worth trying, in the order to try them.
 
-    ``platforms_for_flow`` returns the workspace's connected platforms when the
-    flow names none of its own — so on a workspace with nothing connected it
-    returns nothing at all, which is "we cannot tell", not "this flow runs on a
-    channel with no live test". Those need different answers, and conflating
-    them told a brand-new workspace its Telegram flow was untestable.
+    ``declared_platforms_for_flow`` returns nothing when the flow names no
+    channel of its own — a channel-independent trigger, or no trigger yet. That
+    is "we cannot tell", not "this flow runs on a channel with no live test", so
+    it means try them all rather than refuse. Conflating the two told a
+    brand-new workspace its flow was untestable.
+
+    A non-empty ``wanted`` is the flow's own answer and is honoured exactly: if
+    none of it is testable the caller says so, and if it is testable but
+    unconnected the caller names the channel to connect.
     """
     if not wanted:
         return list(_PREFERENCE)

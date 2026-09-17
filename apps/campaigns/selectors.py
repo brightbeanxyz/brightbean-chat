@@ -118,10 +118,18 @@ def subscriber_count(sequence: Sequence) -> int:
     active" line needs and exactly the wrong number for deciding whether an
     empty panel means an empty sequence or an empty *view*. Called only when a
     filter came back empty, so no page pays for it twice.
+
+    **People, not rows.** ``enrollment_one_active_per_contact`` is a *partial*
+    unique index — it holds only while ``status='active'`` — so one contact may
+    carry a completed or unsubscribed row from a previous walk alongside a
+    current one. Counting rows made the panel say "2 on this sequence in all"
+    about one person, which reads as a second subscriber the filter is hiding.
     """
     return (
         SequenceEnrollment.objects.for_workspace(sequence.workspace_id)
         .filter(sequence=sequence, contact__status=ContactStatus.ACTIVE)
+        .values("contact_id")
+        .distinct()
         .count()
     )
 

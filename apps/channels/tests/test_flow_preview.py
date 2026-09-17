@@ -231,14 +231,51 @@ class TestTheHonestEmptyStates:
     def test_a_workspace_with_nothing_connected_is_told_to_connect_something(
         self, tenancy: Tenancy, client_for: Any, drafted_flow: Any
     ) -> None:
-        """platforms_for_flow answers with the workspace's connected platforms
-        when the flow names none, so on an empty workspace it answers with
-        nothing — which is "cannot tell", not "no live test exists". Conflating
-        the two told a brand-new workspace its flow was untestable."""
+        """A flow that names no channel of its own answers with nothing, which
+        is "cannot tell", not "no live test exists" — so every previewable
+        platform is tried and the reader is told to connect one. Conflating the
+        two told a brand-new workspace its flow was untestable."""
         payload = client_for(tenancy.user_for(WorkspaceRole.EDITOR)).post(url(tenancy, drafted_flow)).json()
 
         assert payload["reason"] == "no_connection"
         assert payload["settings_url"]
+
+    def test_a_flow_is_not_offered_a_channel_it_does_not_run_on(
+        self, tenancy: Tenancy, client_for: Any, drafted_flow: Any
+    ) -> None:
+        """The flow names Instagram; the workspace has only Telegram. The
+        capability validator's platform set falls back to the connected
+        platforms here, which would mint a Telegram link for a flow that says
+        nothing about Telegram. What the reader needs is the missing channel.
+        """
+        connection_for(tenancy, Platform.TELEGRAM, display_name="@acme_bot", external_id="tg-1")
+        # story_reply is Instagram and nothing else, and it is left *unbound* —
+        # which is the case the fallback used to swallow. A bound trigger names
+        # its connection's platform outright and never reaches it.
+        Trigger(flow=drafted_flow, type=TriggerType.STORY_REPLY, config_json={"match": {"mode": "any"}}).save()
+
+        payload = client_for(tenancy.user_for(WorkspaceRole.EDITOR)).post(url(tenancy, drafted_flow)).json()
+
+        assert payload["ok"] is False
+        assert payload["reason"] == "no_connection"
+        assert "Instagram" in payload["message"]
+        assert "Telegram" not in payload["message"]
+
+    def test_a_flow_that_names_no_channel_still_uses_what_is_connected(
+        self, tenancy: Tenancy, client_for: Any, drafted_flow: Any
+    ) -> None:
+        """The other half, which the fix must not break: no enabled trigger
+        means the flow names nothing, so any previewable connection will do.
+
+        Messenger rather than Telegram only to keep this about the *choice* —
+        it links by page id and needs no stored token to resolve a handle.
+        """
+        connection_for(tenancy, Platform.MESSENGER, display_name="Acme Inc", external_id="123456")
+
+        payload = client_for(tenancy.user_for(WorkspaceRole.EDITOR)).post(url(tenancy, drafted_flow)).json()
+
+        assert payload["ok"] is True
+        assert payload["platform"] == Platform.MESSENGER
 
     def test_a_viewer_may_not_mint_one(self, tenancy: Tenancy, client_for: Any, drafted_flow: Any) -> None:
         response = client_for(tenancy.user_for(WorkspaceRole.VIEWER)).post(url(tenancy, drafted_flow))
