@@ -50,8 +50,14 @@
             <div class="plan-card-actions">
               {% comment %}
                 The Customer Portal. A plain POST, not a link: it mints a
-                single-use session server-side, and CSP is form-action 'self' so
-                the form could not point at Stripe even if we wanted it to.
+                single-use session server-side, so the URL cannot be written
+                here in advance.
+
+                The redirect it answers with lands on billing.stripe.com, and
+                Chrome and Safari check form-action against every hop of a form
+                submission's navigation — so that origin is named in the policy.
+                See OAUTH_FORM_ACTION in config/settings/base.py, and issue #115
+                for the flow where this was found the hard way.
               {% endcomment %}
               <form method="post" action="{% url 'billing:portal' %}">
                 {% csrf_token %}

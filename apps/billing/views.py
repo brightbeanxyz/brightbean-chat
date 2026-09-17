@@ -54,10 +54,17 @@ class HttpResponseSeeOther(HttpResponseRedirect):
 def checkout(request: OrgRequest) -> HttpResponse:
     """Start a subscription and hand the browser to Stripe's hosted Checkout.
 
-    A server-side redirect rather than a form posting straight at Stripe: CSP is
-    ``form-action 'self'``, so the direct form would be blocked outright. A
-    top-level navigation is unrestricted by any directive in force, which is why
-    this integration needs **no CSP change at all**.
+    A server-side redirect rather than a form posting straight at Stripe, so the
+    session is minted here and the price never travels through the browser —
+    ``services.price_id_for`` is the whole security property of this flow.
+
+    That redirect still needs Stripe named in ``form-action``. This docstring
+    used to claim otherwise, and it was wrong: Chrome and Safari check the
+    directive against **every hop** of the navigation a form submission starts,
+    against the policy of the page that held the form. A 303 off a POST is one
+    of those hops. Issue #115 is the same mistake found in the Messenger flow;
+    ``config/settings/base.py``'s ``OAUTH_FORM_ACTION`` is where both are fixed,
+    and ``tests/test_form_action_destinations.py`` is what keeps them fixed.
     """
     _require_configured()
 

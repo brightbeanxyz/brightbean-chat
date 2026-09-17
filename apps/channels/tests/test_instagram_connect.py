@@ -27,6 +27,7 @@ from apps.channels.models import ChannelConnection, ConnectionStatus
 from apps.channels.tests.instagram_support import ACCESS_TOKEN, IG_ACCOUNT_ID
 from apps.common.platforms import Platform
 from apps.notifications.models import Notification
+from tests.form_action import assert_page_permits_its_redirect
 from tests.support import Tenancy
 
 pytestmark = pytest.mark.django_db
@@ -112,6 +113,17 @@ class TestConnectPage:
         assert response.status_code == 302
         assert response["Location"].startswith(oauth.AUTHORIZE_URL)
         assert "instagram_business_manage_comments" in response["Location"]
+
+    def test_the_pages_own_policy_permits_the_redirect_it_answers_with(
+        self, tenancy: Tenancy, client_for: Any, instagram_app: Any
+    ) -> None:
+        """The Messenger bug (#115) in its Instagram spelling.
+
+        A correct redirect to Meta is still a button that does nothing unless
+        the page that carried the form allowed the origin it points at — see
+        ``tests/form_action.py``.
+        """
+        assert_page_permits_its_redirect(client_for(tenancy.owner), connect_url(tenancy))
 
     def test_without_app_credentials_it_says_so_rather_than_redirecting(
         self, tenancy: Tenancy, client_for: Any, settings: Any

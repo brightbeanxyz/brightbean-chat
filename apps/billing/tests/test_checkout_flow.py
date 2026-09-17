@@ -12,6 +12,7 @@ from django.urls import reverse
 
 from apps.billing.models import BillingCustomer
 from apps.billing.tests.stripe_support import SECRET_KEY, fake_stripe
+from tests.form_action import permits, sources_of
 
 pytestmark = pytest.mark.django_db
 
@@ -50,6 +51,35 @@ class TestSubscribing:
 
         assert response.status_code == 303
         assert response["Location"] == STRIPE_CHECKOUT
+
+    def test_the_billing_pages_own_policy_permits_both_redirects(self, client_for: Any, tenancy: Any) -> None:
+        """Issue #115, arriving through billing rather than through a channel.
+
+        The two forms live on the billing page, so it is *that* page's
+        ``form-action`` a browser checks the 303 against — Chrome and Safari
+        apply the directive to every hop of the navigation a form submission
+        starts. This docstring's predecessor in ``apps/billing/views.py`` claimed
+        a server-side redirect was exempt, which is how both Stripe flows came to
+        be shipped blocked. ``tests/form_action.py`` has the reasoning.
+
+        Both buttons, because Checkout and the Customer Portal answer with
+        different Stripe subdomains and the policy has to cover both.
+        """
+        client = client_for(tenancy.owner)
+        page = client.get(reverse("organizations:billing"))
+        assert page.status_code == 200, "the policy has to be read off the page that carries the forms"
+        allowed = sources_of(page)
+
+        with fake_stripe(sessions):
+            checkout = client.post(CHECKOUT_URL, {"interval": "monthly"})["Location"]
+        # open_portal needs a Stripe customer to manage; checkout above created
+        # the row, so this is the one field it is still missing.
+        BillingCustomer.objects.update(stripe_customer_id="cus_new")
+        with fake_stripe(sessions):
+            portal = client.post(PORTAL_URL)["Location"]
+
+        assert permits(allowed, checkout), f"{checkout} is not permitted by {' '.join(allowed)}"
+        assert permits(allowed, portal), f"{portal} is not permitted by {' '.join(allowed)}"
 
     def test_the_price_cannot_be_chosen_by_the_caller(self, client_for: Any, tenancy: Any) -> None:
         """The security property of this flow.

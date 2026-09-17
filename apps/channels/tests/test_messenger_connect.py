@@ -33,6 +33,7 @@ from apps.channels.views_messenger import PENDING_SESSION_KEY
 from apps.common import signing
 from apps.common.platforms import Platform
 from apps.members.roles import WorkspaceRole
+from tests.form_action import assert_page_permits_its_redirect
 from tests.support import Tenancy, create_tenancy
 
 pytestmark = pytest.mark.django_db
@@ -113,6 +114,17 @@ class TestStartingTheFlow:
         assert query["redirect_uri"] == [messenger_oauth.callback_url()]
         assert set(query["scope"][0].split(",")) == set(messenger_oauth.SCOPES)
         assert messenger_oauth.read_state(query["state"][0]) == str(tenancy.workspace.pk)
+
+    def test_the_pages_own_policy_permits_the_redirect_it_answers_with(
+        self, tenancy: Tenancy, client_for: Any, app_secret: str
+    ) -> None:
+        """Issue #115, and the half a 302 assertion cannot see.
+
+        A correct redirect to Facebook is still a button that does nothing
+        unless the page that carried the form said that origin was allowed. Why
+        that is, and what else it applies to, is in ``tests/form_action.py``.
+        """
+        assert_page_permits_its_redirect(admin(tenancy, client_for), connect_url(tenancy))
 
     def test_a_deployment_with_no_app_configured_says_so(self, tenancy: Tenancy, client_for: Any) -> None:
         response = admin(tenancy, client_for).post(connect_url(tenancy), follow=True)

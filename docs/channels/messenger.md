@@ -105,6 +105,17 @@ Messenger is not offered in the generic "Add a channel" form. That form creates 
 connection row and nothing else, which here would be a page with no token whose
 every send fails.
 
+### A note for self-hosters who write their own CSP
+
+The connect page starts the flow with a POST, so that the outbound leg carries a
+CSRF token, and answers a redirect to `www.facebook.com`. Chrome and Safari check
+`form-action` against every hop of the navigation a form submission starts, so
+that origin has to be listed in the directive or **Continue with Facebook**
+silently does nothing — no error, no console message the operator will look for.
+The application ships it listed (`OAUTH_FORM_ACTION` in
+`config/settings/base.py`); a proxy or a hand-written policy that replaces the
+app's own header has to list it too. Issue #115.
+
 ### Permissions requested
 
 | Scope | Why |

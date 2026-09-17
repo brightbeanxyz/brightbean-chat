@@ -112,6 +112,19 @@ Pro Chat, open Manage billing, cancel, and confirm the page shows the end date.
 Finally set `STRIPE_SECRET_KEY=` empty and confirm the product is unlimited
 again.
 
+## A note for self-hosters who write their own CSP
+
+Both buttons on the billing page start with a POST, so that the session is
+minted server-side and the price never travels through the browser, and each
+answers a redirect to Stripe — `checkout.stripe.com` for **Subscribe**,
+`billing.stripe.com` for **Manage billing**. Chrome and Safari check
+`form-action` against every hop of the navigation a form submission starts, so
+those origins have to be listed in the directive or the buttons silently do
+nothing — no error, no console message the operator will look for. The
+application ships them listed (`OAUTH_FORM_ACTION` in
+`config/settings/base.py`); a proxy or a hand-written policy that replaces the
+app's own header has to list them too. Issue #115.
+
 ## Switching billing on for an existing deployment
 
 **Every existing organization becomes a free one the moment you set these

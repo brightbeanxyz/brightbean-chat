@@ -27,7 +27,12 @@ INTERVALS = ("monthly", "yearly")
 #: Hosts a Stripe-issued URL may point at. Checkout and the portal are on
 #: different subdomains and Stripe has changed them before, so this matches the
 #: registrable domain rather than a fixed pair of hostnames.
-_STRIPE_HOST_SUFFIX = ".stripe.com"
+#:
+#: Public, because ``config/settings/base.py``'s ``form-action`` allowlist has to
+#: cover exactly the same set: a URL this accepts and the policy refuses is a
+#: redirect the browser silently drops (issue #115), and
+#: ``tests/form_action.py`` holds the two together.
+STRIPE_HOST_SUFFIX = ".stripe.com"
 
 
 class BillingError(Exception):
@@ -196,7 +201,7 @@ def _stripe_url(session: Any) -> str:
     url = str(getattr(session, "url", "") or "")
     parsed = urlparse(url)
     host = parsed.hostname or ""
-    if parsed.scheme != "https" or not (host == "stripe.com" or host.endswith(_STRIPE_HOST_SUFFIX)):
+    if parsed.scheme != "https" or not (host == "stripe.com" or host.endswith(STRIPE_HOST_SUFFIX)):
         logger.error("Stripe returned an unusable redirect URL for host %r", host)
         raise BillingError("We could not start checkout. Try again in a minute.")
     return url
