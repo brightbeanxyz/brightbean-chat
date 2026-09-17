@@ -1,0 +1,139 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "thanks-default-tag_fan",
+            "source": "thanks",
+            "sourceHandle": "default",
+            "target": "tag_fan"
+          },
+          {
+            "id": "tag_fan-default-hold",
+            "source": "tag_fan",
+            "sourceHandle": "default",
+            "target": "hold"
+          },
+          {
+            "id": "hold-default-offer",
+            "source": "hold",
+            "sourceHandle": "default",
+            "target": "offer"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thank you for the mention, {{first_name}}! That genuinely helps.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "thanks",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Mentioned us",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_fan",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "duration": {
+                "unit": "days",
+                "value": 1
+              },
+              "mode": "duration"
+            },
+            "id": "hold",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "If you ever want to collaborate properly, just reply here.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "offer",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Thank someone for a story mention",
+      "triggers": [
+        {
+          "config": {},
+          "platform": "instagram",
+          "type": "story_mention"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "mentioned us",
+        "name": "Mentioned us",
+        "used_by": [
+          "flow-1:tag_fan"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

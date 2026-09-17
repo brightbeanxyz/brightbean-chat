@@ -503,6 +503,69 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
     }
 
 
+#: The four saved views across the top of the inbox, as (key, label, state,
+#: assignee). The inbox used to open on four dropdowns — state, channel,
+#: assignee, label — and every one of them had to be opened before it could tell
+#: you anything. In practice people want four answers: everything, nothing
+#: claimed yet, mine, and done. Those are the same two parameters
+#: ``conversations_for`` already takes, asked as the questions rather than as
+#: the fields, so this is a re-presentation and not a new query language.
+#: Channel and label stay as selects beside them, because those genuinely are
+#: long lists.
+INBOX_VIEWS: tuple[tuple[str, str, str, str], ...] = (
+    ("all", "All", "", ""),
+    ("unassigned", "Unassigned", "", selectors.ASSIGNEE_UNASSIGNED),
+    ("mine", "Mine", "", selectors.ASSIGNEE_ME),
+    ("done", "Done", ConversationState.DONE, ""),
+)
+
+
+def _views(request: WorkspaceRequest) -> list[dict[str, Any]]:
+    """:data:`INBOX_VIEWS`, each with the number of conversations behind it.
+
+    **No `active` flag.** There was one, and it was wrong twice over: nothing
+    rendered it — the template derives the highlight from Alpine's own `state`
+    and `assignee`, which are what the chips actually write to — and the
+    ``thread()`` call site passed a context dict that had not been merged with
+    the filters yet, so every chip but "All" computed False. A flag that is both
+    unread and incorrect is worse than no flag; the one source of truth for
+    "which chip is lit" is the Alpine state the chips themselves set.
+
+    Four counts per call. The three-second poll fetches ``inbox:rows``, which
+    renders the rows and not this strip, so polling costs nothing — but a full
+    page render does pay them, and opening a thread is a full page render. See
+    the cache in :func:`_views_cached`.
+    """
+    workspace, viewer = request.workspace, request.user
+    return [
+        {
+            "key": key,
+            "label": label,
+            "state": state,
+            "assignee": assignee,
+            "count": selectors.conversations_for(workspace, viewer=viewer, state=state, assignee=assignee).count(),
+        }
+        for key, label, state, assignee in INBOX_VIEWS
+    ]
+
+
+def _views_cached(request: WorkspaceRequest) -> list[dict[str, Any]]:
+    """:func:`_views`, computed at most once per request.
+
+    ``thread()`` renders the same shell the list does, so without this a reader
+    working through an inbox pays four aggregate counts over the whole
+    workspace's conversation table on every conversation they open. Cached on
+    the request rather than in the cache framework: the numbers have to be
+    right for this render, and a stale count beside a live list is the kind of
+    small lie that makes somebody stop trusting the rest of the page.
+    """
+    cached = getattr(request, "_inbox_views", None)
+    if cached is None:
+        cached = _views(request)
+        request._inbox_views = cached  # type: ignore[attr-defined]
+    return cached
+
+
 # --- pages and polled partials ----------------------------------------------
 
 
@@ -520,6 +583,7 @@ def inbox(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "assignee_options": _assignee_options(request),
         "label_options": _label_options(request),
         "can_reply": _can_reply(request),
+        "views": _views_cached(request),
     }
     return render(request, "inbox/list.html", context)
 
@@ -587,6 +651,7 @@ def thread(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
             "state_options": list(ConversationState.choices),
             "assignee_options": _assignee_options(request),
             "label_options": _label_options(request),
+            "views": _views_cached(request),
         }
     )
     return render(request, "inbox/list.html", context)

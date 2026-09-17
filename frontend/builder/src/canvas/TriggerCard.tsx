@@ -1,73 +1,89 @@
 /**
- * What starts this flow, on the canvas where the flow is.
+ * What starts the flow, as the first card on the canvas.
  *
- * A distinct component rather than a variant of FlowNodeCard: that one
- * subscribes to `nodeType`, `config`, `validation.byNode`, `selectEntryIds` and
- * `stats.nodes` for its own id, every one of which is undefined for a synthetic
- * id — its first guard would blank the card. Retrofitting it means five
- * `if (synthetic)` branches in the hottest component in the bundle, to save a
- * component that subscribes to nothing.
+ * A flow reads as one sentence — this happens, then this — and the canvas used
+ * to start halfway through it: the card badged "Starts here" was a step that
+ * answers something, with no sign of what.
+ *
+ * **It looks like a step on purpose.** An earlier cut gave it its own chrome to
+ * say "this is not a step", and what that actually communicated was "this is
+ * not part of the flow" — which is the opposite of why it is here. It uses
+ * `.fb-node` and the same header/title/body structure, so it stays identical to
+ * a step card by construction rather than by two sets of values kept in step.
+ * The one difference is the accent, which comes from `--flow-accent` like every
+ * other card's does.
+ *
+ * **It is not a node, and must never become one.** Triggers are `Trigger` rows,
+ * not graph nodes: they carry a platform binding, a priority that is
+ * workspace-wide, and an enabled flag, none of which a graph node has. So this
+ * card is injected into the *projection* in store/selectors.ts and never into
+ * `nodeType` / `nodeOrder`, which is what `toGraph()` serializes.
+ *
+ * Clicking it selects it, exactly as clicking a step does, and the left column
+ * shows what can be changed — see editor/StepEditor.tsx. The fields themselves
+ * still belong to the Django drawer: a second trigger editor in React would be
+ * a second place for the platform gate to be wrong.
  */
 import { Handle, Position as HandlePosition } from "@xyflow/react";
+import { memo } from "react";
 
-import { openTriggerDrawer } from "./triggerEvents";
-import type { TriggerCardData } from "./triggerNodes";
+import { TRIGGER_PHRASE } from "../schema/plain";
+import { useBuilder, useBuilderStore } from "../store/context";
 
-export function TriggerCard({ data }: { data: TriggerCardData }) {
-  const trigger = data.trigger;
-  if (!trigger) {
-    return null;
-  }
+/** The id the synthetic node and its edge are addressed by, and its React Flow type. */
+export const TRIGGER_NODE_ID = "__trigger__";
+export const TRIGGER_CARD_TYPE = TRIGGER_NODE_ID;
+
+function TriggerCardInner() {
+  const store = useBuilderStore();
+  const triggers = useBuilder((state) => state.triggers);
+  const selected = useBuilder((state) => state.triggerSelected);
+  const enabled = triggers.filter((trigger) => trigger.enabled);
+  const off = triggers.length > 0 && enabled.length === 0;
 
   return (
-    <button
-      type="button"
-      // `nodrag nopan` are React Flow's own class hooks, and the comment used
-      // to sit here without them: without the classes a mousedown on this
-      // button starts a pane drag on some pointer paths, so pressing a trigger
-      // moved the canvas instead of opening it. AddTriggerCard below has had
-      // them all along.
-      className={["fb-trigger", "nodrag", "nopan", trigger.enabled ? "" : "fb-trigger-paused"]
+    <div
+      className={["fb-node", "fb-node-trigger", selected ? "is-selected" : "", off ? "is-quiet" : ""]
         .filter(Boolean)
         .join(" ")}
-      onClick={() => openTriggerDrawer(trigger.id)}
-      data-trigger-id={trigger.id}
-      title="Open this trigger"
+      data-node-type={TRIGGER_NODE_ID}
+      onClick={() => store.getState().selectTrigger()}
     >
-      <div className="fb-trigger-header">
-        <span className="truncate">{trigger.type_label}</span>
-        {!trigger.enabled ? <span className="fb-trigger-flag ml-auto">OFF</span> : null}
+      <div className="fb-node-header">
+        <span className="fb-node-kind">
+          <span className="fb-node-dot" aria-hidden="true" />
+          {TRIGGER_PHRASE}
+        </span>
       </div>
-      <div className="fb-trigger-body">{trigger.summary}</div>
-      {trigger.connection ? <div className="fb-trigger-foot">{trigger.connection.label}</div> : null}
-      <Handle type="source" position={HandlePosition.Right} id="out" isConnectable={false} />
-    </button>
+
+      {/* The title is the sentence, not the type name. "Keyword" over "quote,
+          estimate, how much" was two fragments that read as one mashed line;
+          `plain` is the whole thing — "When someone sends “quote”" — and it is
+          the same sentence the flow list shows. */}
+      <div className="fb-node-title">
+        {triggers.length === 0 ? "Nothing starts this flow yet" : triggers[0]?.plain}
+      </div>
+
+      <div className="fb-node-body">
+        {triggers.length === 0 ? (
+          <span className="fb-empty">Click to choose what starts it.</span>
+        ) : (
+          <>
+            {triggers.length > 1 ? (
+              <span className="fb-empty">
+                and {triggers.length - 1} other way{triggers.length === 2 ? "" : "s"} in
+              </span>
+            ) : null}
+            {off ? <span className="fb-node-warn">Switched off, so nothing reaches this flow</span> : null}
+          </>
+        )}
+      </div>
+
+      {/* Source only. Nothing routes *into* what starts the flow, and
+          Canvas.tsx refuses a connection at either end of this id anyway. */}
+      <Handle type="source" position={HandlePosition.Right} id="starts" isConnectable={false} />
+    </div>
   );
 }
 
-/**
- * The empty state, in the place the missing thing would be.
- *
- * A viewer gets the same card as a statement rather than a disabled button:
- * they cannot add a trigger, and "this will not run" is the useful half of that
- * anyway.
- */
-export function AddTriggerCard({ data }: { data: TriggerCardData }) {
-  if (!data.canEdit) {
-    return (
-      <div className="fb-trigger fb-trigger-add">
-        <div className="fb-trigger-body">No triggers — this flow will not run when published.</div>
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className="fb-trigger fb-trigger-add nodrag nopan"
-      onClick={() => openTriggerDrawer(null)}
-    >
-      <div className="fb-trigger-header">Add a trigger</div>
-      <div className="fb-trigger-body">Nothing starts this flow yet, so publishing it would run nothing.</div>
-    </button>
-  );
-}
+export const TriggerCard = memo(TriggerCardInner);

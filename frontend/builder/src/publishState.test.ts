@@ -28,14 +28,14 @@ describe("publishView", () => {
     expect(view.label).toBe("Live · v2");
     expect(view.tone).toBe("success");
     expect(view.publishDisabled).toBe(true);
-    expect(view.publishLabel).toBe("Published");
+    expect(view.publishLabel).toBe("Set live");
   });
 
   it("offers Publish again the moment an edit is pending", () => {
     const view = publishView(save({ state: "dirty", version: version(2, true), publishedVersion: version(2, true) }), "active");
 
     expect(view.publishDisabled).toBe(false);
-    expect(view.publishLabel).toBe("Publish");
+    expect(view.publishLabel).toBe("Set live");
   });
 
   it("drops the version number while an edit is in flight, because the next save opens a new one", () => {

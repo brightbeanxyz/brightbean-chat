@@ -1,0 +1,119 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "dm-default-flag",
+            "source": "dm",
+            "sourceHandle": "default",
+            "target": "flag"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi! You asked on the post, so here are the details.\nAnything else, just reply here.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "dm",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Came from a comment",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "flag",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Reply to a Facebook comment privately",
+      "triggers": [
+        {
+          "config": {
+            "exclude_keywords": [],
+            "include_keywords": [
+              "info",
+              "details",
+              "send"
+            ],
+            "like_comment": false,
+            "once_per_contact_per_post": true,
+            "post_ids": [],
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "none",
+              "texts": []
+            },
+            "top_level_only": true
+          },
+          "platform": "messenger",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [
+      {
+        "key": "flow-1:trigger-0",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "messenger",
+        "name": "messenger",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "came from a comment",
+        "name": "Came from a comment",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

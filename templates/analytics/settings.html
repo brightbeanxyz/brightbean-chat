@@ -18,7 +18,7 @@ click count is the number the builder's overlay shows.
   <p class="muted">
     Click and open tracking for email. Both are off until you turn them on.
     Neither affects the click counters on flow buttons, which are always
-    recorded — a button is a link somebody added on purpose.
+    recorded. A button is a link somebody added on purpose.
   </p>
 
   <form method="post" action="{% url 'analytics:update_tracking_settings' workspace_id=request.workspace.id %}">

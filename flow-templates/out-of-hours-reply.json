@@ -1,0 +1,112 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "shut-cond-true-after_hours",
+            "source": "shut",
+            "sourceHandle": "cond:true",
+            "target": "after_hours"
+          },
+          {
+            "id": "after_hours-default-flag",
+            "source": "after_hours",
+            "sourceHandle": "default",
+            "target": "flag"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "match": "all",
+              "rules": [
+                {
+                  "key": "instagram",
+                  "op": "outside",
+                  "source": "window"
+                }
+              ]
+            },
+            "id": "shut",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "condition"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks for your message. We are away until 9am, and you are first in the queue in the morning.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "after_hours",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Arrived out of hours",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "flag",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Reply outside opening hours",
+      "triggers": [
+        {
+          "config": {},
+          "platform": null,
+          "type": "default_reply"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "arrived out of hours",
+        "name": "Arrived out of hours",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

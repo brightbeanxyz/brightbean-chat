@@ -116,7 +116,7 @@ export function placeholderFor(key: string, schema: JsonSchema): string {
     target: "field",
     key: "field",
     flow_id: "",
-    invalid_text: "That did not look right — try again.",
+    invalid_text: "That did not look right. Try again.",
   };
   const candidate = copy[key] ?? "Text";
   const max = schema.maxLength;

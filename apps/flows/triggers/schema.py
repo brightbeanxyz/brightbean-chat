@@ -62,7 +62,7 @@ _KEYWORD = f.obj(
 KEYWORD = f.obj(
     {"keywords": f.array(_KEYWORD, min_items=1, max_items=MAX_KEYWORDS)},
     required=["keywords"],
-    description="SPEC §10 keyword trigger.",
+    description="Runs when a message matches one of these words.",
 )
 
 REF_URL = f.obj(
@@ -82,13 +82,13 @@ REF_URL = f.obj(
         ),
     },
     required=["ref"],
-    description="SPEC §10 ref-URL trigger.",
+    description="Runs when somebody arrives through a link or a QR code.",
 )
 
 #: SPEC §10: "optional keywords". No keywords means every story reply matches.
 STORY_REPLY = f.obj(
     {"keywords": f.array(_KEYWORD, max_items=MAX_KEYWORDS)},
-    description="SPEC §10 story-reply trigger.",
+    description="Runs when somebody replies to one of your stories.",
 )
 
 COMMENT = f.obj(
@@ -111,16 +111,16 @@ COMMENT = f.obj(
         "once_per_contact_per_post": f.boolean(),
     },
     required=["post_scope"],
-    description="SPEC §10 comment trigger. L5-A and L5-B add the platform matcher and the reply/like calls.",
+    description="Runs when somebody comments on a post, and answers them privately.",
 )
 
 #: SPEC §10 says "none" for all four of these. An empty object rather than
 #: ``any_json()``: "no configuration" and "any configuration" are opposites, and
 #: only one of them refuses a key somebody typed by mistake.
-WELCOME = f.obj({}, description="SPEC §10 welcome trigger. No configuration.")
-STORY_MENTION = f.obj({}, description="SPEC §10 story-mention trigger. No configuration.")
-FOLLOW = f.obj({}, description="SPEC §10 follow trigger. No configuration.")
-DEFAULT_REPLY = f.obj({}, description="SPEC §10 default reply. The 24-hour guard is fixed, not configured.")
+WELCOME = f.obj({}, description="Runs the first time somebody messages you. Nothing to set up.")
+STORY_MENTION = f.obj({}, description="Runs when somebody mentions you in a story. Nothing to set up.")
+FOLLOW = f.obj({}, description="Runs when somebody follows you. Nothing to set up.")
+DEFAULT_REPLY = f.obj({}, description="Runs when nothing else matched, at most once a day per person.")
 API = f.obj(
     {
         "key": f.string(
@@ -128,7 +128,7 @@ API = f.obj(
             description="Optional name the API names this trigger by, when a flow has more than one.",
         )
     },
-    description="SPEC §10 API trigger. Fired only by the public flow-start endpoint (#25).",
+    description="Runs only when another system asks it to, through the API.",
 )
 
 #: The id shape both event filters take. Same pattern the condition engine uses
@@ -168,7 +168,7 @@ RULE = f.obj(
         "filters": f.ref("condition_filter"),
     },
     required=["event"],
-    description="SPEC §10 rule trigger. L6-A binds it to the internal event catalogue.",
+    description="Runs when something happens in this workspace, such as a tag being added.",
 )
 
 

@@ -1,0 +1,36 @@
+{% comment %}
+One template, in the compact shape. The tile IS the submit button: picking a
+template is an act that creates a FlowImport row, so it posts rather than
+linking.
+
+The Home dashboard's four-up strip is the only thing that renders this. The
+Flows list and the full gallery both use flows/_template_card.html, which is the
+taller card — it carries the summary, the requirement badges and whether the
+channel is connected, none of which fit a tile this size.
+{% endcomment %}
+<form method="post" action="{% url 'flows:template_start' workspace_id=request.workspace.id template_slug=template.slug %}">
+    {% csrf_token %}
+    <button type="submit" class="tile p-4 block w-full h-full text-left cursor-pointer">
+        <span class="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center mb-3"
+              style="background: var(--primary-tint); color: var(--brand-700);">
+            {% include "partials/_nav_icon.html" with name="flows" icon_size=17 %}
+        </span>
+        <span class="block text-sm font-semibold" style="color: var(--text-primary);">{{ template.name }}</span>
+        {% comment %}
+          The platform, not the category: four categories over forty-odd
+          templates means a category subtitle repeats itself down the strip,
+          and the channel is what a reader is choosing by anyway. The colour
+          chips stay as the quick visual scan and the words carry the meaning —
+          a chip alone says nothing to anyone not already fluent in the palette.
+        {% endcomment %}
+        <span class="block text-xs leading-relaxed mt-1" style="color: var(--text-tertiary);">
+            {{ template.steps }} step{{ template.steps|pluralize }} · {{ template.platform_label }}
+        </span>
+        <span class="flex gap-1 mt-3" aria-hidden="true">
+            {% for platform in template.platforms %}
+            <span class="w-[18px] h-[18px] rounded-md"
+                  style="background: var(--platform-{{ platform }}, var(--neutral-300));"></span>
+            {% endfor %}
+        </span>
+    </button>
+</form>

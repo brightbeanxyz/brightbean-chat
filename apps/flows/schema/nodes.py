@@ -51,12 +51,6 @@ class NodeSpec:
 
     type: str
     label: str
-
-    #: One sentence, shown to the author as the palette item's tooltip. It is
-    #: exported and rendered verbatim, so it is user-facing copy: no §-numbers,
-    #: no layer names, nothing that can only be looked up inside this repo. The
-    #: spec reference for a node belongs in a comment beside its ``type``, where
-    #: whoever is reading this file will see it and nobody else has to.
     description: str
     config: dict[str, Any]
 
@@ -106,17 +100,10 @@ class NodeSpec:
 #: The palette drawers, in the order the builder shows them (issue #10). Both
 #: the order and the labels are exported, so the frontend reads one file rather
 #: than one file plus a hard-coded table.
-#:
-#: Grouped by what the node *is* to the person building, not by how it is
-#: implemented. Send SMS and Send Email are messages, whatever adapter carries
-#: them; a Note is furniture on the canvas and is never sent to anyone, so it
-#: does not belong beside things that are.
 GROUPS: tuple[tuple[str, str], ...] = (
-    ("messages", "Messages"),
+    ("content", "Content"),
     ("logic", "Logic"),
-    ("contact", "Contact"),
-    ("integrations", "Integrations"),
-    ("canvas", "Canvas"),
+    ("actions", "Actions"),
     ("other", "Other"),
 )
 
@@ -293,7 +280,7 @@ register_defs(
             "unit": f.enum("minutes", "hours", "days"),
         },
         required=["enabled"],
-        description="Routes to the `timeout` handle when the wait expires (SPEC §11.1).",
+        description="Where the flow goes if nobody answers in time.",
     ),
     retry_unmatched=f.obj(
         {
@@ -422,7 +409,9 @@ for _verb_name, _verb_schema in (
             "set_field",
             {
                 "field": f.string(min_length=1, max_length=200),
-                "value": f.string(max_length=4096, description="May carry {{placeholders}} (SECURITY-BASELINE §3)."),
+                "value": f.string(
+                    max_length=4096, description="Can include {{placeholders}}, filled in when the message is sent."
+                ),
             },
             ["field", "value"],
         ),
@@ -464,11 +453,10 @@ for _verb_name, _verb_schema in (
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.1.
         type="send_message",
-        label="Send Message",
-        description="Send a message. Waits for a reply when it offers buttons or quick replies.",
-        group="messages",
+        label="Send a message",
+        description="Sends a message. If it offers buttons or quick replies, the flow waits for an answer.",
+        group="content",
         config=f.obj(
             {
                 "blocks": f.array(f.ref("message_block"), min_items=1, max_items=20),
@@ -492,11 +480,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.2.
         type="action",
-        label="Update contact",
-        description="Tag someone, set a field, start or stop a sequence, hand the chat to a teammate.",
-        group="contact",
+        label="Tag, save or assign",
+        description="Tags a contact, saves a detail, assigns the conversation. Several at once, in order.",
+        group="actions",
         # The verb union is built at export time from ACTION_VERBS, so a verb a
         # later issue registers appears without this line changing.
         config=f.obj({"actions": f.array(f.ref("action_step"), min_items=1, max_items=20)}, required=["actions"]),
@@ -506,10 +493,9 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.3. Terminal in-graph: ends this execution, starts the target.
         type="start_flow",
-        label="Start Flow",
-        description="Hand over to another flow. This one stops here.",
+        label="Hand over to another flow",
+        description="Hands over to another flow. This one stops here.",
         group="logic",
         config=f.obj({"flow_id": f.string(min_length=1, max_length=64)}, required=["flow_id"]),
         handles=(),
@@ -519,11 +505,9 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.4. The filter is contract 8's CONDITION_SCHEMA, embedded here
-        # rather than re-declared.
         type="condition",
-        label="Condition",
-        description="Send people down different paths based on what you know about them.",
+        label="Branch on a condition",
+        description="Splits the flow in two, on what you know about the contact.",
         group="logic",
         config=f.ref("condition_filter"),
         handles=("cond:true", "cond:false"),
@@ -532,10 +516,9 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.5. Schedules a resume, adjusted into the next allowed window.
         type="smart_delay",
-        label="Smart Delay",
-        description="Wait before carrying on, and only continue inside the hours you allow.",
+        label="Wait",
+        description="Waits, then carries on. Picks up at the next hour you allow sending.",
         group="logic",
         # Discriminated on `mode` rather than a flat object with everything
         # optional. With only `mode` required, {"mode": "duration"} published
@@ -550,15 +533,16 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.6. Splits by weight; sticky by default, remembered in variables.
         type="randomizer",
-        label="A/B split",
-        description="Split people between paths by percentage. The same person keeps their path.",
+        label="Split the traffic",
+        description="Splits people down different paths, to compare two versions. Each person keeps the path they got.",
         group="logic",
         config=f.obj(
             {
                 "paths": f.array(f.ref("randomizer_path"), min_items=2, max_items=10),
-                "sticky": f.boolean(description="Default true (SPEC §11.6)."),
+                "sticky": f.boolean(
+                    description="On by default, so somebody who comes back takes the path they had before."
+                ),
             },
             required=["paths"],
         ),
@@ -569,12 +553,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.7. Runtime is L4-E and goes through the shared SSRF guard
-        # (SECURITY-BASELINE §6); nothing in this app fetches the URL.
         type="external_request",
-        label="External Request",
-        description="Call your own API and use what it sends back.",
-        group="integrations",
+        label="Call another system",
+        description="Calls another system and can save what it sends back.",
+        group="actions",
         config=f.obj(
             {
                 "method": f.enum("GET", "POST", "PUT", "PATCH", "DELETE"),
@@ -594,12 +576,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.8. Validated reply capture; email and phone answers also
-        # record consent.
         type="data_collection",
         label="Ask a question",
-        description="Ask for an email, a phone number or anything else, and check the answer before saving it.",
-        group="messages",
+        description="Asks a question and saves the answer on the contact. Checks emails and phone numbers look real.",
+        group="content",
         config=f.obj(
             {
                 "question": f.string(min_length=1, max_length=4096),
@@ -632,11 +612,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.9. Runtime is L5-D.
         type="send_sms",
-        label="Send SMS",
-        description="Send a text message. Needs an SMS channel and a phone number on file.",
-        group="messages",
+        label="Send a text",
+        description="Sends a text message. Needs an SMS account connected and a phone number for the contact.",
+        group="actions",
         config=f.obj(
             {
                 "text": f.string(min_length=1, max_length=1600),
@@ -650,11 +629,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.10. Runtime is L5-E.
         type="send_email",
-        label="Send Email",
-        description="Send an email. Needs an email channel and an address on file.",
-        group="messages",
+        label="Send an email",
+        description="Sends an email. Needs an email account connected and an address for the contact.",
+        group="actions",
         config=f.obj(
             {
                 "subject": f.string(min_length=1, max_length=300),
@@ -671,12 +649,10 @@ register_node_type(
 
 register_node_type(
     NodeSpec(
-        # SPEC §11.11. Builder-only annotation, ignored at runtime and never
-        # an edge endpoint.
         type="note",
-        label="Note",
-        description="A note for you and your team. Nobody in a chat ever sees it.",
-        group="canvas",
+        label="Note to yourself",
+        description="A note to yourself on the canvas. It never runs and never connects to anything.",
+        group="content",
         config=f.obj({"text": f.string(max_length=5000)}, required=["text"]),
         handles=(),
         annotation=True,

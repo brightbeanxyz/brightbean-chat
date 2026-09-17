@@ -130,7 +130,7 @@ are until they are sniffed at fetch time.
       </div>
 
       <div class="ib-bubble-meta flex items-center gap-2">
-        {% if item.is_note %}<span class="ib-chip">Internal note — never sent</span>{% endif %}
+        {% if item.is_note %}<span class="ib-chip">Internal note: never sent</span>{% endif %}
         {% if item.button_id %}<span class="ib-chip">Pressed: {{ item.button_id }}</span>{% endif %}
         {% if item.ref %}<span class="ib-chip">Ref: {{ item.ref }}</span>{% endif %}
         <span>{{ item.message.created_at|date:"j M H:i" }}</span>

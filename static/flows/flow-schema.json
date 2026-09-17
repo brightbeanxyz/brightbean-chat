@@ -149,7 +149,7 @@
           "type": "string"
         },
         "value": {
-          "description": "May carry {{placeholders}} (SECURITY-BASELINE §3).",
+          "description": "Can include {{placeholders}}, filled in when the message is sent.",
           "maxLength": 4096,
           "type": "string"
         },
@@ -375,7 +375,7 @@
       "$id": "https://brightbean.chat/schemas/condition-filter.json",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "description": "SPEC §11.4. Dates are day-granular and resolve in the workspace's timezone, never the contact's — §11.5's use_contact_timezone flag is deliberately absent here.",
+      "description": "Dates are whole days, in this workspace's timezone rather than the contact's.",
       "properties": {
         "match": {
           "default": "all",
@@ -993,7 +993,7 @@
     },
     "followup": {
       "additionalProperties": false,
-      "description": "Routes to the `timeout` handle when the wait expires (SPEC §11.1).",
+      "description": "Where the flow goes if nobody answers in time.",
       "properties": {
         "delay": {
           "maximum": 10000,
@@ -1224,7 +1224,7 @@
     },
     "node_action": {
       "additionalProperties": false,
-      "description": "Tag someone, set a field, start or stop a sequence, hand the chat to a teammate.",
+      "description": "Tags a contact, saves a detail, assigns the conversation. Several at once, in order.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1267,7 +1267,7 @@
     },
     "node_condition": {
       "additionalProperties": false,
-      "description": "Send people down different paths based on what you know about them.",
+      "description": "Splits the flow in two, on what you know about the contact.",
       "properties": {
         "config": {
           "$ref": "#/$defs/condition_filter"
@@ -1296,7 +1296,7 @@
     },
     "node_data_collection": {
       "additionalProperties": false,
-      "description": "Ask for an email, a phone number or anything else, and check the answer before saving it.",
+      "description": "Asks a question and saves the answer on the contact. Checks emails and phone numbers look real.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1411,7 +1411,7 @@
     },
     "node_external_request": {
       "additionalProperties": false,
-      "description": "Call your own API and use what it sends back.",
+      "description": "Calls another system and can save what it sends back.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1487,7 +1487,7 @@
     },
     "node_note": {
       "additionalProperties": false,
-      "description": "A note for you and your team. Nobody in a chat ever sees it.",
+      "description": "A note to yourself on the canvas. It never runs and never connects to anything.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1526,7 +1526,7 @@
     },
     "node_randomizer": {
       "additionalProperties": false,
-      "description": "Split people between paths by percentage. The same person keeps their path.",
+      "description": "Splits people down different paths, to compare two versions. Each person keeps the path they got.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1540,7 +1540,7 @@
               "type": "array"
             },
             "sticky": {
-              "description": "Default true (SPEC §11.6).",
+              "description": "On by default, so somebody who comes back takes the path they had before.",
               "type": "boolean"
             }
           },
@@ -1573,7 +1573,7 @@
     },
     "node_send_email": {
       "additionalProperties": false,
-      "description": "Send an email. Needs an email channel and an address on file.",
+      "description": "Sends an email. Needs an email account connected and an address for the contact.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1623,7 +1623,7 @@
     },
     "node_send_message": {
       "additionalProperties": false,
-      "description": "Send a message. Waits for a reply when it offers buttons or quick replies.",
+      "description": "Sends a message. If it offers buttons or quick replies, the flow waits for an answer.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1689,7 +1689,7 @@
     },
     "node_send_sms": {
       "additionalProperties": false,
-      "description": "Send a text message. Needs an SMS channel and a phone number on file.",
+      "description": "Sends a text message. Needs an SMS account connected and a phone number for the contact.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -1734,7 +1734,7 @@
     },
     "node_smart_delay": {
       "additionalProperties": false,
-      "description": "Wait before carrying on, and only continue inside the hours you allow.",
+      "description": "Waits, then carries on. Picks up at the next hour you allow sending.",
       "properties": {
         "config": {
           "discriminator": {
@@ -1778,7 +1778,7 @@
     },
     "node_start_flow": {
       "additionalProperties": false,
-      "description": "Hand over to another flow. This one stops here.",
+      "description": "Hands over to another flow. This one stops here.",
       "properties": {
         "config": {
           "additionalProperties": false,
@@ -2116,24 +2116,16 @@
   "x-brightbean": {
     "groups": [
       {
-        "key": "messages",
-        "label": "Messages"
+        "key": "content",
+        "label": "Content"
       },
       {
         "key": "logic",
         "label": "Logic"
       },
       {
-        "key": "contact",
-        "label": "Contact"
-      },
-      {
-        "key": "integrations",
-        "label": "Integrations"
-      },
-      {
-        "key": "canvas",
-        "label": "Canvas"
+        "key": "actions",
+        "label": "Actions"
       },
       {
         "key": "other",
@@ -2150,7 +2142,7 @@
     "node_types": [
       {
         "annotation": false,
-        "description": "Send a message. Waits for a reply when it offers buttons or quick replies.",
+        "description": "Sends a message. If it offers buttons or quick replies, the flow waits for an answer.",
         "dynamic_handles": [
           {
             "config_key": "buttons",
@@ -2161,65 +2153,65 @@
             "prefix": "qr"
           }
         ],
-        "group": "messages",
+        "group": "content",
         "handles": [
           "default",
           "timeout"
         ],
-        "label": "Send Message",
+        "label": "Send a message",
         "terminal": false,
         "type": "send_message"
       },
       {
         "annotation": false,
-        "description": "Tag someone, set a field, start or stop a sequence, hand the chat to a teammate.",
+        "description": "Tags a contact, saves a detail, assigns the conversation. Several at once, in order.",
         "dynamic_handles": [],
-        "group": "contact",
+        "group": "actions",
         "handles": [
           "default"
         ],
-        "label": "Update contact",
+        "label": "Tag, save or assign",
         "terminal": false,
         "type": "action"
       },
       {
         "annotation": false,
-        "description": "Hand over to another flow. This one stops here.",
+        "description": "Hands over to another flow. This one stops here.",
         "dynamic_handles": [],
         "group": "logic",
         "handles": [],
-        "label": "Start Flow",
+        "label": "Hand over to another flow",
         "terminal": true,
         "type": "start_flow"
       },
       {
         "annotation": false,
-        "description": "Send people down different paths based on what you know about them.",
+        "description": "Splits the flow in two, on what you know about the contact.",
         "dynamic_handles": [],
         "group": "logic",
         "handles": [
           "cond:true",
           "cond:false"
         ],
-        "label": "Condition",
+        "label": "Branch on a condition",
         "terminal": false,
         "type": "condition"
       },
       {
         "annotation": false,
-        "description": "Wait before carrying on, and only continue inside the hours you allow.",
+        "description": "Waits, then carries on. Picks up at the next hour you allow sending.",
         "dynamic_handles": [],
         "group": "logic",
         "handles": [
           "default"
         ],
-        "label": "Smart Delay",
+        "label": "Wait",
         "terminal": false,
         "type": "smart_delay"
       },
       {
         "annotation": false,
-        "description": "Split people between paths by percentage. The same person keeps their path.",
+        "description": "Splits people down different paths, to compare two versions. Each person keeps the path they got.",
         "dynamic_handles": [
           {
             "config_key": "paths",
@@ -2228,28 +2220,28 @@
         ],
         "group": "logic",
         "handles": [],
-        "label": "A/B split",
+        "label": "Split the traffic",
         "terminal": false,
         "type": "randomizer"
       },
       {
         "annotation": false,
-        "description": "Call your own API and use what it sends back.",
+        "description": "Calls another system and can save what it sends back.",
         "dynamic_handles": [],
-        "group": "integrations",
+        "group": "actions",
         "handles": [
           "default",
           "error"
         ],
-        "label": "External Request",
+        "label": "Call another system",
         "terminal": false,
         "type": "external_request"
       },
       {
         "annotation": false,
-        "description": "Ask for an email, a phone number or anything else, and check the answer before saving it.",
+        "description": "Asks a question and saves the answer on the contact. Checks emails and phone numbers look real.",
         "dynamic_handles": [],
-        "group": "messages",
+        "group": "content",
         "handles": [
           "default",
           "timeout"
@@ -2260,37 +2252,37 @@
       },
       {
         "annotation": false,
-        "description": "Send a text message. Needs an SMS channel and a phone number on file.",
+        "description": "Sends a text message. Needs an SMS account connected and a phone number for the contact.",
         "dynamic_handles": [],
-        "group": "messages",
+        "group": "actions",
         "handles": [
           "default",
           "error"
         ],
-        "label": "Send SMS",
+        "label": "Send a text",
         "terminal": false,
         "type": "send_sms"
       },
       {
         "annotation": false,
-        "description": "Send an email. Needs an email channel and an address on file.",
+        "description": "Sends an email. Needs an email account connected and an address for the contact.",
         "dynamic_handles": [],
-        "group": "messages",
+        "group": "actions",
         "handles": [
           "default",
           "error"
         ],
-        "label": "Send Email",
+        "label": "Send an email",
         "terminal": false,
         "type": "send_email"
       },
       {
         "annotation": true,
-        "description": "A note for you and your team. Nobody in a chat ever sees it.",
+        "description": "A note to yourself on the canvas. It never runs and never connects to anything.",
         "dynamic_handles": [],
-        "group": "canvas",
+        "group": "content",
         "handles": [],
-        "label": "Note",
+        "label": "Note to yourself",
         "terminal": false,
         "type": "note"
       }

@@ -24,9 +24,13 @@ _WS_SETTINGS_LAYOUT = "workspace_settings"
 # apps.members.roles.PERMISSION_KEYS. A placeholder under /w/<uuid>/ is a real
 # endpoint: SECURITY-BASELINE §1 requires it to 404 for a member of another
 # workspace, and tests/idor.py walks it automatically.
-# Empty since Layer 6: #22 took the sequences placeholder and #23 the broadcasts
-# one, each replacing it with a real include below. The machinery stays — the
-# next stubbed destination adds a row here and nothing else.
+# #22 took the sequences placeholder and #23 the broadcasts one, each replacing
+# it with a real include below. The redesign briefly added a third for the
+# flow-template gallery, which was a mistake in two directions: the Templates
+# tab shipped pointing at it, so the tab was dead on arrival, and what it
+# answered was "Templates is not built yet. Lands with issue #redesign." — an
+# issue number, to a customer. The gallery is a real page now
+# (apps/flows/views.py's flow_templates), and this list is empty again.
 _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = []
 
 # Not workspace-scoped, so login is the whole gate.

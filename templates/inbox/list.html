@@ -26,11 +26,9 @@ inert.
 {% block title %}Inbox · BrightBean Chat{% endblock %}
 
 {% block page_header %}
-  <div class="flex items-start justify-between gap-4 mb-4">
-    <div>
-      <h1>Inbox</h1>
-      <p class="muted">Every conversation across your connected channels.</p>
-    </div>
+  <div class="mb-5">
+    <h1 class="page-title">Inbox</h1>
+    <p class="page-lede mt-1.5">Every conversation across your connected channels.</p>
   </div>
 {% endblock %}
 
@@ -82,9 +80,24 @@ inert.
     <input type="hidden" name="assignee" x-model="assignee">
     <input type="hidden" name="label" x-model="label">
     <input type="hidden" name="open" value="{{ open_conversation_id }}">
-    {% ui_select model="state" options=state_options placeholder="All states" icon="status" onchange="reload()" %}
+    {% comment %}
+      Four dropdowns became four views. The state and assignee selects are gone:
+      between them they answered "everything / nothing claimed yet / mine /
+      done", and each had to be opened before it could say anything. These are
+      the same two parameters conversations_for already takes, asked as the
+      questions instead of as the fields.
+
+      Channel and label stay as selects — those are genuinely long lists, and a
+      chip per channel would be a second nav.
+    {% endcomment %}
+    {% for view in views %}
+    <button type="button" class="chip-filter flex-shrink-0"
+            :class="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') && 'active'"
+            @click="state = '{{ view.state|escapejs }}'; assignee = '{{ view.assignee|escapejs }}'; reload()">
+      {{ view.label }}{% if view.count %}<span style="opacity: .65;">{{ view.count }}</span>{% endif %}
+    </button>
+    {% endfor %}
     {% ui_select model="connection" options=connections placeholder="All channels" icon="channel" value_field="id" label_field="display_name" icon_field="platform" onchange="reload()" %}
-    {% ui_select model="assignee" options=assignee_options placeholder="Anyone" icon="tag" onchange="reload()" %}
     {% ui_select model="label" options=label_options placeholder="Any label" icon="tag" onchange="reload()" %}
   </form>
 

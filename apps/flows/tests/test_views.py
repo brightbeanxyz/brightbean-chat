@@ -76,7 +76,10 @@ class TestTheList:
     def test_the_empty_state_says_which_empty_it_is(self, tenancy, client_for):
         client = client_for(tenancy.owner)
 
-        assert "Create one above" in client.get(list_url(tenancy)).content.decode()
+        # The empty state's own wording, not the page lede: the lede renders
+        # for a full workspace too, so asserting it would pass with no empty
+        # state on the page at all.
+        assert "No flows here yet" in client.get(list_url(tenancy)).content.decode()
         create_flow(workspace=tenancy.workspace, name="Welcome")
         assert "Nothing matches these filters" in client.get(list_url(tenancy), {"q": "zzz"}).content.decode()
 
@@ -94,14 +97,14 @@ class TestTemplatesInTheEmptyState:
         response = client_for(tenancy.owner).get(list_url(tenancy))
 
         assert response.context["template_cards"], "an empty workspace got no cards"
-        assert "start with a template" in response.content.decode()
+        assert "Start from a template" in response.content.decode()
 
     def test_it_links_to_the_full_gallery(self, tenancy, client_for):
         response = client_for(tenancy.owner).get(list_url(tenancy))
         total = response.context["template_total"]
 
         assert total > len(response.context["template_cards"])
-        assert f"Browse all {total} templates" in response.content.decode()
+        assert f"Browse all {total}" in response.content.decode()
 
     def test_a_workspace_with_a_flow_is_not(self, tenancy, client_for):
         create_flow(workspace=tenancy.workspace, name="Welcome")
@@ -128,13 +131,19 @@ class TestTemplatesInTheEmptyState:
 
         assert response.context["template_cards"] == []
 
-    def test_the_htmx_refresh_carries_the_same_panel(self, tenancy, client_for):
-        """_list_rows.html is the only renderer of the rows, so the cards have
-        to survive the partial fetch the filters and every mutation trigger."""
+    def test_the_htmx_refresh_answers_with_rows_alone(self, tenancy, client_for):
+        """The panel sits in the page, above #flow-rows, not inside the partial
+        the filters re-fetch. So an HTMX refresh answers with rows and nothing
+        else — and the consequence, which is the reason to write it down: the
+        panel stays on screen until the next full load, including just after
+        the Create that made it wrong."""
         response = client_for(tenancy.owner).get(list_url(tenancy), headers={"hx-request": "true"})
         body = response.content.decode()
 
-        assert "start with a template" in body
+        # "Browse all", not the heading: the rows partial's own empty state
+        # points *at* the panel ("Start from a template above"), so the heading
+        # appears either way. The link only exists inside the panel.
+        assert "Browse all" not in body
         assert "<html" not in body
 
     def test_the_cards_say_which_channel_they_need(self, tenancy, client_for):
@@ -163,7 +172,7 @@ class TestTemplatesInTheEmptyState:
         render of the core Flows page — silent apart from the console."""
         body = client_for(tenancy.owner).get(list_url(tenancy)).content.decode()
 
-        assert "start with a template" in body, "the panel did not render, so this asserts nothing"
+        assert "Start from a template" in body, "the panel did not render, so this asserts nothing"
         assert "matches(" not in body
 
     def test_a_populated_list_asks_the_library_for_nothing(self, tenancy, client_for, monkeypatch):

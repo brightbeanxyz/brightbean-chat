@@ -12,7 +12,7 @@ import type { ConfigPath } from "../store/paths";
 import { formatPath } from "../store/paths";
 import { issuesForField } from "../validation/normalize";
 import { useField } from "./FieldContext";
-import { labelFor } from "./copy";
+import { labelFor, variantLabel } from "./copy";
 
 export interface FieldProps {
   /** Already dereferenced. */
@@ -166,9 +166,11 @@ export function SelectField(props: FieldProps) {
         onChange={(event) => set(path, event.target.value, `enum:${path.join(".")}`)}
       >
         {required && typeof value === "string" && options.includes(value) ? null : <option value="">Choose…</option>}
+        {/* The label, not the wire value. These rendered verbatim, so a select
+            offered `system_field` and `has_no_value` — see ENUM_LABELS. */}
         {options.map((option) => (
           <option key={option} value={option}>
-            {option}
+            {variantLabel(option)}
           </option>
         ))}
       </select>

@@ -45,25 +45,38 @@ REQUIREMENT_KIND_LABELS: dict[str, str] = {
 #: new kind that got one and not the other would render a bare slug as a heading
 #: or a heading with nothing under it.
 REQUIREMENT_KIND_HELP: dict[str, str] = {
-    "tag": "Create them here, or point each one at a tag you already use.",
-    "custom_field": "A new field needs a type; pick the one the template expects.",
-    "sequence": "A new sequence arrives empty — add its steps afterwards.",
-    "segment": "A segment is a saved filter and cannot be created from a template. Pick one you already have.",
-    "member": "Who the flow assigns conversations to and notifies. Defaults to you.",
-    "flow": "Flows this one hands over to. A bundle export carries them with it.",
-    "media": "Pick an asset from your library, or paste a URL to use instead.",
-    "platform": (
-        "Which connection each trigger should watch. Leaving one unbound does not mean "
-        "“every connection of this platform” — it means every platform that trigger type supports "
-        "(SPEC §5), so a Telegram keyword trigger would also listen on SMS."
+    "tag": (
+        "This flow labels people with the tags below, and your workspace does not have "
+        "them yet. For each one: create it under this name, or point it at a tag you "
+        "already use. (A tag is a label on a person — “VIP”, “Newsletter” — that you can "
+        "search and filter by later.)"
     ),
-    "request_header": "Header values were removed on export so no credential could travel. Supply your own.",
+    "custom_field": (
+        "This flow saves these details onto a contact, and your workspace does not have "
+        "them yet. For each one: create it, or point it at a field you already have. "
+        "(A custom field is a detail that is not built in — a size, a booking date, an "
+        "order number. Its type decides what you can store, and cannot be changed later.)"
+    ),
+    "sequence": (
+        "A sequence is a series of messages sent over days. A new one arrives empty, so add its messages afterwards."
+    ),
+    "segment": "A segment is a saved contact filter and cannot be created from a file. Pick one you already have.",
+    "member": "Who the flow assigns conversations to and notifies. Defaults to you.",
+    "flow": "Flows this one hands over to. A file exported with everything it uses carries them along.",
+    "media": "Pick an image or file from your library, or paste a link to use instead.",
+    "platform": (
+        "Which connected account each trigger should watch. Letting one watch every account "
+        "is wider than it sounds: it covers every platform that kind of trigger works on, not "
+        "just this one, so a Telegram keyword trigger would answer SMS as well."
+    ),
+    "request_header": "These were stripped when the file was made, so no password could travel in it. Supply your own.",
     "whatsapp_template": "The flow sends these approved templates. Nothing to answer — make sure you have them.",
-    "link_handle": "The public handle a ref link is built from was removed on export.",
-    "from_override": "The sending address was removed on export.",
+    "link_handle": "The public @handle a link was built from was stripped when the file was made.",
+    "from_override": "The sending address was stripped when the file was made.",
     "comment_posts": (
-        "The trigger watched specific posts and their ids were removed on export. List your own — "
-        "leaving it blank keeps the trigger scoped to specific posts with none listed, so it matches nothing."
+        "The trigger watched particular posts, and which posts was stripped when the file was made. "
+        "List your own — leaving this blank does not mean every post, it means no posts, so the "
+        "trigger would never fire."
     ),
 }
 

@@ -29,7 +29,9 @@ describe("ProblemsRail", () => {
 
     const { container } = renderWith(store, <ProblemsRail />);
 
-    expect(container.querySelector('[data-issue-code="no_entry_node"]')).toBeTruthy();
+    // `data-code`, not in the sentence: the redesign took the code out of the
+    // prose and left it on the element, which is what support actually reads.
+    expect(container.querySelector('[data-code="no_entry_node"]')).toBeTruthy();
   });
 
   it("still shows one line for an issue that arrives once per offending node", () => {

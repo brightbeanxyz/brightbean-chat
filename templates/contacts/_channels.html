@@ -60,7 +60,7 @@ attacker-controlled (SECURITY-BASELINE §2): rendered escaped, never as a link.
         <form class="mb-0"
               hx-post="{% url 'contacts:identity_opt_out' workspace_id=request.workspace.id contact_id=contact.id identity_id=channel.identity.id %}"
               hx-swap="none"
-              hx-confirm="Opt this contact out on {{ channel.platform }}? This cannot be undone from here — only the contact can re-subscribe.">
+              hx-confirm="Opt this contact out on {{ channel.platform }}? This cannot be undone from here. Only the contact can re-subscribe.">
           <button type="submit" class="btn-outline btn-inline btn-danger-soft">Opt out</button>
         </form>
       {% endif %}
@@ -68,7 +68,7 @@ attacker-controlled (SECURITY-BASELINE §2): rendered escaped, never as a link.
   {% empty %}
     <p class="muted text-xs">
       No channels yet. A contact becomes reachable when they message one of this
-      workspace's connections — importing an address does not create one.
+      workspace's connections. Importing an address does not create one.
     </p>
   {% endfor %}
 </section>

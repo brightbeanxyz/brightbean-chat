@@ -1,20 +1,54 @@
 {% extends "layouts/settings.html" %}
-{% block title %}Account · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Account</h1>{% endblock %}
+{% comment %}
+Profile — "how you appear to your team and in internal notes".
+
+Was a bare form leaning on the @layer base defaults in .app-content. The
+redesign gives it the card-and-label treatment the rest of the product now has,
+and splits the one page into three cards along the lines somebody actually
+thinks in: who you are, how you sign in, and where you are signed in.
+
+{% block content_wrap %} is cleared because this page brings its own cards; the
+settings layout only wraps pages that are still bare HTML.
+{% endcomment %}
+{% block title %}Profile · BrightBean Chat{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <form method="post" action="{% url 'accounts:settings' %}">
-    {% csrf_token %}
-    <p>
-      <label for="account-name">Display name</label><br />
-      <input id="account-name" type="text" name="name" value="{{ request.user.name }}" maxlength="255" />
-    </p>
-    <p class="muted">Signed in as {{ request.user.email }}.</p>
-    <button type="submit">Save</button>
-  </form>
+<div class="max-w-[620px] w-full">
+    <h1 class="page-title">Profile</h1>
+    <p class="page-lede mt-1.5 mb-6">How you appear to your team and in internal notes.</p>
 
-  <ul>
-    <li><a href="{% url 'account_change_password' %}">Change password</a></li>
-    <li><a href="{% url 'account_email' %}">Email addresses</a></li>
-  </ul>
+    <form class="card p-6 mb-5" method="post" action="{% url 'accounts:settings' %}">
+        {% csrf_token %}
+        <div class="flex items-center gap-4 mb-6">
+            <span class="avatar avatar-lg avatar-brand">{{ request.user.display_name|make_list|first|upper }}</span>
+            <div>
+                <div class="text-sm font-semibold" style="color: var(--text-primary);">{{ request.user.display_name }}</div>
+                <div class="text-[13px]" style="color: var(--text-tertiary);">{{ request.user.email }}</div>
+            </div>
+        </div>
+
+        <label class="block text-[13px] font-semibold mb-1.5" for="account-name" style="color: var(--text-primary);">Name</label>
+        <input id="account-name" class="form-input-styled w-full" type="text" name="name"
+               value="{{ request.user.name }}" maxlength="255" placeholder="Marta Kovács">
+        <p class="text-[13px] mt-1.5 mb-5" style="color: var(--text-tertiary);">
+            What your team sees on assignments and internal notes.
+        </p>
+
+        <div class="flex items-center gap-2">
+            <button type="submit" class="btn-pill-primary">Save changes</button>
+        </div>
+    </form>
+
+    <section class="card p-6 mb-5">
+        <h2 class="section-title">Signing in</h2>
+        <p class="text-sm mt-1 mb-4" style="color: var(--text-tertiary);">
+            You sign in with a password, as {{ request.user.email }}.
+        </p>
+        <div class="flex flex-wrap gap-2">
+            <a class="btn-pill-secondary btn-pill-sm" href="{% url 'account_change_password' %}">Change password</a>
+            <a class="btn-pill-secondary btn-pill-sm" href="{% url 'account_email' %}">Add another email</a>
+        </div>
+    </section>
+</div>
 {% endblock %}

@@ -81,7 +81,7 @@ Message text and platform usernames are attacker-controlled
     </form>
     {% else %}
     <p class="muted text-xs">
-      No sequences yet — <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}">create one</a>
+      No sequences yet. <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}">create one</a>
       to enrol this contact.
     </p>
     {% endif %}

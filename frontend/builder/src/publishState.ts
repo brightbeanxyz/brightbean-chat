@@ -55,7 +55,7 @@ export function publishView(save: SaveSlice, flowStatus: string | undefined): Pu
       tone: "warning",
       liveChip: live ? `v${live.version} live` : null,
       publishDisabled: false,
-      publishLabel: "Publish",
+      publishLabel: "Set live",
       publishHint: null,
     };
   }
@@ -66,8 +66,11 @@ export function publishView(save: SaveSlice, flowStatus: string | undefined): Pu
       tone: "success",
       liveChip: null,
       publishDisabled: true,
-      publishLabel: "Published",
-      publishHint: "This version is already live. Make a change to publish again.",
+      // Still "Set live", not "Live": the status beside it already says
+      // `Live · v2`, and a button repeating the word says nothing about what
+      // pressing it would do. Disabled plus the hint carries that.
+      publishLabel: "Set live",
+      publishHint: "This version is already live. Make a change to set it live again.",
     };
   }
 
@@ -79,7 +82,7 @@ export function publishView(save: SaveSlice, flowStatus: string | undefined): Pu
     tone: "plain",
     liveChip: live ? `v${live.version} live` : null,
     publishDisabled: false,
-    publishLabel: "Publish",
+    publishLabel: "Set live",
     publishHint: null,
   };
 }

@@ -28,32 +28,49 @@ guaranteed flash of an unstyled canvas.
 {% endif %}
 {% endblock %}
 
+{% comment %}
+  The header. No flow id and no version numbers — the redesign's fifth
+  principle, and this page was the worst offender: it printed
+  "flow_id 4f0c2a91-… · draft v12 · published v11" above the canvas.
+
+  What a reader needs from that line is two answers, not three numbers: is this
+  live, and are my changes saved. The first is the pill below; the second is the
+  builder's own save indicator, which is inside the island because only the
+  island knows. Versions remain available through the Versions view for the
+  people who genuinely work in them.
+{% endcomment %}
 {% block page_header %}
-<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-    <div class="min-w-0">
-        <a href="{{ list_url }}" class="btn-link text-xs">← All flows</a>
-        <h1 class="text-lg font-semibold truncate" style="color: var(--text-primary);">{{ flow.name }}</h1>
-    </div>
-    <div class="flex items-center gap-2 text-xs" style="color: var(--text-tertiary);">
-        {% comment %}
-        No version or status here. This block is rendered once and cannot
-        re-render, so it spent a release saying "Draft v1" at a flow that had
-        just been published — and kept saying it through a reload, because the
-        server had no way to tell it otherwise. The toolbar inside the island
-        owns both: it re-reads them from the flow API on load and after every
-        publish. "Read-only" stays, because a permission is not a status and
-        does not change under the user's feet.
-        {% endcomment %}
+<div class="flex flex-wrap items-center gap-3 mb-4">
+    <a href="{{ list_url }}" class="text-[13px] font-semibold inline-flex items-center gap-1.5 flex-shrink-0"
+       style="color: var(--text-tertiary);">
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+        Flows
+    </a>
+    <h1 class="text-base font-bold truncate min-w-0" style="color: var(--text-primary);">{{ flow.name }}</h1>
+    {% if flow.status == "active" %}
+    <span class="status-pill status-pill-active inline-flex items-center gap-1.5 flex-shrink-0">
+        <span class="status-pill-dot"></span>Live
+    </span>
+    {% elif flow.status == "archived" %}
+    <span class="status-pill status-pill-archived flex-shrink-0">Archived</span>
+    {% else %}
+    <span class="status-pill status-pill-draft flex-shrink-0">Draft</span>
+    {% endif %}
+    <div class="ml-auto flex items-center gap-2 text-xs" style="color: var(--text-tertiary);">
         {% if not can_edit %}<span>Read-only</span>{% endif %}
         {% comment %}
-        The header and the drawer live in different template blocks, so one
-        Alpine x-data cannot span them. $dispatch's CustomEvent bubbles to
-        window, which the drawer catches with @toggle-triggers.window. An
-        onclick= would silently do nothing: CSP grants 'unsafe-eval' for Alpine
-        but never 'unsafe-inline'.
+          "When it runs" used to be a button here, and it was the wrong place
+          for it: the single most important fact about a flow — whether
+          anything will ever reach it — was behind a header button, invisible
+          until you went looking, and a flow with no trigger looked exactly
+          like a flow with one.
+
+          The builder's left column shows the triggers permanently now and
+          opens this same drawer to edit them
+          (frontend/builder/src/editor/TriggerSection.tsx), by dispatching the
+          `toggle-triggers` event the drawer below still listens for. One door,
+          where the thing itself is.
         {% endcomment %}
-        <button type="button" class="btn-outline btn-inline" x-data
-                @click="$dispatch('toggle-triggers')">Triggers</button>
         {% comment %}
           Export from the builder as well as from the list (issue #27). Plain
           links outside the mount div: the response is a file download, and the
@@ -61,9 +78,9 @@ guaranteed flash of an unstyled canvas.
           as a data attribute, so an action it does not take belongs here.
         {% endcomment %}
         {% if can_edit %}
-        <a href="{{ export_url }}" class="btn-outline btn-inline">Export</a>
-        <a href="{{ export_bundle_url }}" class="btn-outline btn-inline"
-           title="This flow and every flow it hands over to, as one file">Bundle</a>
+        <a href="{{ export_url }}" class="btn-pill-secondary btn-pill-sm">Download a copy</a>
+        <a href="{{ export_bundle_url }}" class="btn-pill-secondary btn-pill-sm"
+           title="This flow and every flow it hands over to, as one file">With everything it uses</a>
         {% endif %}
     </div>
 </div>
@@ -82,29 +99,9 @@ fetch lazy: most visits to the builder never touch the drawer, and `load once`
 made every one of them pay for the panel query plus a channel query per ref
 trigger.
 {% endcomment %}
-{% comment %}
-`open-trigger` is the canvas asking for one trigger's form. React dispatches it
-on document.body with bubbles:true; Alpine catches it here and *re-dispatches*
-`triggers-opened`, which is what htmx is actually listening for.
-
-Two things about this are load-bearing.
-
-The indirection, and the statement order inside the handler. The id must be set
-before `$dispatch('triggers-opened')`: htmx listens on body (target phase) and
-Alpine on window (bubble phase), so if `open-trigger` were itself in the
-hx-trigger list htmx would fire first and request with no id. Going through
-Alpine makes the ordering program order rather than DOM phase order.
-
-And the id is written **straight to the input's .value**, not through a `:value`
-binding. Alpine flushes reactive bindings on its own scheduler, so a bound value
-is still the old one when htmx reads hx-include in this same tick — the drawer
-opened on the list rather than the form, with nothing to say why.
-{% endcomment %}
 <div class="flex-1 min-h-0 relative"
-     x-data="{ triggersOpen: false, focus(id) { this.$refs.triggerFocus.value = id || ''; } }"
-     @toggle-triggers.window="focus(''); triggersOpen = !triggersOpen; if (triggersOpen) $dispatch('triggers-opened')"
-     @open-trigger.window="focus($event.detail?.triggerId); triggersOpen = true; $dispatch('triggers-opened')"
-     @htmx:after-swap="focus('')"
+     x-data="{ triggersOpen: false }"
+     @toggle-triggers.window="triggersOpen = !triggersOpen; if (triggersOpen) $dispatch('triggers-opened')"
      @keydown.escape.window="triggersOpen = false">
 {% comment %}
 x-ignore keeps Alpine out of the React island entirely. Alpine 3 observes the
@@ -150,23 +147,9 @@ attacker-authored HTML.
 
 <aside x-show="triggersOpen" x-cloak aria-label="Triggers"
        class="bb-drawer anim-collapse absolute inset-y-0 right-0 w-96 max-w-full z-30 overflow-y-auto">
-    {% comment %}
-    Outside #flow-triggers, which every refetch replaces wholesale — an input
-    inside it would be swapped away mid-request. Cleared on after-swap so the
-    refetch that follows a save reopens the list, not the form the user just
-    submitted.
-    {% endcomment %}
-    <input type="hidden" id="trigger-focus" name="trigger" x-ref="triggerFocus" value="">
     <div id="flow-triggers"
          hx-get="{% url 'flows:trigger_panel' workspace_id=request.workspace.id flow_id=flow.id %}"
-         {% comment %}
-         No `once`: an explicit open now refetches, because the panel may need
-         to come back focused on a different trigger than last time. The
-         laziness that mattered — not fetching at page load — is unaffected,
-         since `triggers-opened` only fires when somebody opens the drawer.
-         {% endcomment %}
-         hx-trigger="triggers-opened from:body, triggersChanged from:body"
-         hx-include="#trigger-focus"
+         hx-trigger="triggers-opened from:body once, triggersChanged from:body"
          hx-swap="outerHTML">
         <p class="p-4 text-sm" style="color: var(--text-secondary);">Loading triggers…</p>
     </div>

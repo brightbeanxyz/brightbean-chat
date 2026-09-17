@@ -9,9 +9,10 @@
 import { screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AddStep } from "./canvas/AddStep";
 import { Canvas } from "./canvas/Canvas";
-import { Inspector } from "./inspector/Inspector";
-import { Palette } from "./palette/Palette";
+import { TRIGGER_NODE_ID } from "./canvas/TriggerCard";
+import { StepEditor } from "./editor/StepEditor";
 import { installAutosave } from "./persistence/autosave";
 import { makeDetail, makeSampleGraph } from "./test/fixtures";
 import { installCsrfToken, stubHttp, type HttpStub } from "./test/http";
@@ -38,10 +39,10 @@ function viewer() {
 }
 
 describe("a read-only canvas", () => {
-  it("offers no palette", () => {
-    const { container } = renderWith(viewer(), <Palette />);
+  it("offers no way to add a step", () => {
+    const { container } = renderWith(viewer(), <AddStep />);
 
-    expect(container.querySelector(".fb-palette")).toBeNull();
+    expect(container.querySelector(".fb-addstep-button")).toBeNull();
   });
 
   it("still renders the graph, so a Viewer can read it", () => {
@@ -66,9 +67,13 @@ describe("a read-only canvas", () => {
 
   it("marks them all draggable again for a member who can edit", () => {
     // The negative above would pass against a projection that hard-coded false.
+    // The trigger card is excluded: it is pinned to the step the flow starts at
+    // and is never draggable for anybody, because it is not in the graph.
     const nodes = selectRfNodes(makeStore(makeDetail(makeSampleGraph())).getState());
+    const steps = nodes.filter((node) => node.id !== TRIGGER_NODE_ID);
 
-    expect(nodes.every((node) => node.draggable)).toBe(true);
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.every((node) => node.draggable)).toBe(true);
   });
 
   it("leaves every edge undeletable too", () => {
@@ -79,7 +84,7 @@ describe("a read-only canvas", () => {
   });
 
   it("shows the config but disables every control", () => {
-    renderWith(viewer(), <Inspector />);
+    renderWith(viewer(), <StepEditor />);
 
     const controls = screen.getAllByRole("textbox", { hidden: true });
     expect(controls.length).toBeGreaterThan(0);
@@ -89,10 +94,22 @@ describe("a read-only canvas", () => {
   });
 
   it("offers no way to add or remove a list item", () => {
-    renderWith(viewer(), <Inspector />);
+    renderWith(viewer(), <StepEditor />);
 
     expect(screen.queryByRole("button", { name: /^Add$/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Remove /i })).toBeNull();
+  });
+
+  it("offers no way to delete the step it is showing", () => {
+    renderWith(viewer(), <StepEditor />);
+
+    expect(screen.queryByRole("button", { name: /Delete this step/i })).toBeNull();
+  });
+
+  it("shows what starts the flow but never a way to change it", () => {
+    renderWith(viewer(), <StepEditor />);
+
+    expect(screen.queryByRole("button", { name: /what starts it/i })).toBeNull();
   });
 });
 

@@ -1,0 +1,170 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "code-default-tag_shopper",
+            "source": "code",
+            "sourceHandle": "default",
+            "target": "tag_shopper"
+          },
+          {
+            "id": "tag_shopper-default-hold",
+            "source": "tag_shopper",
+            "sourceHandle": "default",
+            "target": "hold"
+          },
+          {
+            "id": "hold-default-nudge",
+            "source": "hold",
+            "sourceHandle": "default",
+            "target": "nudge"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Here you go: SAVE10 takes 10% off your first order.\nIt works until the end of the month.",
+                  "type": "text"
+                }
+              ],
+              "buttons": [
+                {
+                  "action": "url",
+                  "id": "shop",
+                  "label": "Shop now",
+                  "url": "https://example.com/shop"
+                }
+              ]
+            },
+            "id": "code",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Wants a discount",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_shopper",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "duration": {
+                "unit": "days",
+                "value": 2
+              },
+              "mode": "duration"
+            },
+            "id": "hold",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "smart_delay"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Still thinking it over, {{first_name}}? SAVE10 is good until the end of the month.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "nudge",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Comment for a discount code",
+      "triggers": [
+        {
+          "config": {
+            "exclude_keywords": [],
+            "include_keywords": [
+              "code",
+              "CODE",
+              "discount"
+            ],
+            "like_comment": false,
+            "once_per_contact_per_post": true,
+            "post_ids": [],
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "none",
+              "texts": []
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [
+      {
+        "key": "flow-1:trigger-0",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "wants a discount",
+        "name": "Wants a discount",
+        "used_by": [
+          "flow-1:tag_shopper"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

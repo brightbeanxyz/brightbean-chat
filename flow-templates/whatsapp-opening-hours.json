@@ -1,0 +1,127 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "is_open-cond-true-open_now",
+            "source": "is_open",
+            "sourceHandle": "cond:true",
+            "target": "open_now"
+          },
+          {
+            "id": "is_open-cond-false-closed",
+            "source": "is_open",
+            "sourceHandle": "cond:false",
+            "target": "closed"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "match": "all",
+              "rules": [
+                {
+                  "key": "whatsapp",
+                  "op": "inside",
+                  "source": "window"
+                }
+              ]
+            },
+            "id": "is_open",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "condition"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "We are open right now - Monday to Friday, 9am to 6pm.\nAsk away and someone will reply shortly.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "open_now",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "We are closed at the moment. We are open Monday to Friday, 9am to 6pm.\nLeave your question here and we will answer first thing.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "closed",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Answer when you are open",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "open"
+              },
+              {
+                "mode": "any_word",
+                "text": "hours"
+              },
+              {
+                "mode": "any_word",
+                "text": "opening"
+              }
+            ]
+          },
+          "platform": "whatsapp",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "whatsapp",
+        "name": "whatsapp",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

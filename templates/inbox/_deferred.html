@@ -20,7 +20,7 @@ code, never a provider's own text.
         <span class="ib-chip">Reminder</span>
         <span>
           {% if reminder.is_mine %}You{% else %}{{ reminder.who }}{% endif %}
-          {{ reminder.due_in }} from now{% if reminder.note %} — {{ reminder.note }}{% endif %}
+          {{ reminder.due_in }} from now{% if reminder.note %} · {{ reminder.note }}{% endif %}
         </span>
         {% if can_reply %}
           <form class="ml-auto"
@@ -36,7 +36,7 @@ code, never a provider's own text.
     {% for reply in pending_replies %}
       <li class="ib-deferred-item">
         <span class="ib-chip">Scheduled</span>
-        <span>Sending {{ reply.due_in }} from now — {{ reply.preview }}</span>
+        <span>Sending {{ reply.due_in }} from now · {{ reply.preview }}</span>
         {% if can_reply %}
           <form class="ml-auto"
                 hx-post="{% url 'inbox:cancel_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id scheduled_reply_id=reply.id %}"
@@ -51,7 +51,7 @@ code, never a provider's own text.
     {% for reply in failed_replies %}
       <li class="ib-deferred-item ib-deferred-failed">
         <span class="ib-chip">Not sent</span>
-        <span>{{ reply.reason }} — {{ reply.preview }}</span>
+        <span>{{ reply.reason }} · {{ reply.preview }}</span>
         {% if can_reply %}
           <form class="ml-auto"
                 hx-post="{% url 'inbox:cancel_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id scheduled_reply_id=reply.id %}"

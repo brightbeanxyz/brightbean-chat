@@ -32,7 +32,7 @@ import { ID_PATTERN } from "../schema/handles";
 import type { JsonSchema } from "../schema/types";
 import { formatPath, type ConfigPath } from "../store/paths";
 import { useField } from "./FieldContext";
-import { labelFor, variantLabel } from "./copy";
+import { ADD_GROUPS, ADD_ONE, labelFor, variantLabel } from "./copy";
 import { JsonField, NumberField, ScalarField, SelectField, TextField, ToggleField, fieldId, type FieldProps } from "./fields";
 import { lookupOverride } from "./overrides";
 
@@ -155,23 +155,18 @@ export function ObjectField({
     ...entries.filter(([key]) => !requiredKeys.has(key)),
   ];
 
-  const body = ordered.map(([key, property]) => {
-    const childPath = [...path, key];
-    const present = record[key] !== undefined;
-    const optional = !requiredKeys.has(key);
+  // Absent optional sections leave the form's flow and collect at the bottom.
+  //
+  // They used to render in place, as `+ Label` text links in schema order, so a
+  // step's settings ended in a stack of sentences that looked like prose and
+  // read as one — and the reader had to tell "a thing you can add" apart from
+  // "a thing that is there" by noticing a plus sign at 12px.
+  const absent = ordered.filter(([key]) => !requiredKeys.has(key) && record[key] === undefined);
+  const shown = ordered.filter(([key]) => requiredKeys.has(key) || record[key] !== undefined);
 
-    if (optional && !present) {
-      return readOnly ? null : (
-        <button
-          key={key}
-          type="button"
-          className="btn-link text-xs block mb-1"
-          onClick={() => set(childPath, defaultFor(property, key), `add:${formatPath(childPath)}`)}
-        >
-          + {labelFor(key, deref(property)?.title)}
-        </button>
-      );
-    }
+  const body = shown.map(([key, property]) => {
+    const childPath = [...path, key];
+    const optional = !requiredKeys.has(key);
 
     return (
       <div key={key}>
@@ -193,6 +188,35 @@ export function ObjectField({
     );
   });
 
+  const chip = ([key, property]: [string, JsonSchema]) => (
+    <button
+      key={key}
+      type="button"
+      className="fb-add-chip"
+      onClick={() => set([...path, key], defaultFor(property, key), `add:${formatPath([...path, key])}`)}
+    >
+      + {labelFor(key, deref(property)?.title)}
+    </button>
+  );
+
+  // Grouped only at the root, where the section is the step's own "what else
+  // can this do". A nested object — a card, a button — gets the same chips
+  // without headings: three labels over one chip each is furniture.
+  const adders =
+    readOnly || absent.length === 0 ? null : path.length === 0 ? (
+      <div className="fb-adders">
+        <p className="fb-adders-label">Add to this step</p>
+        {groupAdders(absent).map(([label, group]) => (
+          <div key={label} className="fb-adder-group">
+            <p className="fb-adder-group-label">{label}</p>
+            <div className="fb-add-chips">{group.map(chip)}</div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="fb-add-chips mt-2">{absent.map(chip)}</div>
+    );
+
   // The panel root has no label of its own, and neither does an array item —
   // its numbered subgroup is the label.
   if (path.length === 0 || hideLabel) {
@@ -200,6 +224,7 @@ export function ObjectField({
       <>
         {unmet ? <p className="fb-field-error">Fill in one of: {alternatives.map((g) => g.join(" + ")).join(" or ")}.</p> : null}
         {body}
+        {adders}
       </>
     );
   }
@@ -211,9 +236,30 @@ export function ObjectField({
       <div className="fb-subgroup">
         {unmet ? <p className="fb-field-error">Fill in one of: {alternatives.map((g) => g.join(" or ")).join(", ")}.</p> : null}
         {body}
+        {adders}
       </div>
     </div>
   );
+}
+
+/**
+ * The absent optional sections, under the headings from ADD_GROUPS.
+ *
+ * Empty groups are dropped rather than rendered blank, and a key no group
+ * claims falls into the last one — so a property registered by a later layer
+ * appears under "More" instead of vanishing off the panel, which is the failure
+ * that would be hardest to notice.
+ */
+function groupAdders(absent: [string, JsonSchema][]): [string, [string, JsonSchema][]][] {
+  const claimed = new Set(ADD_GROUPS.flatMap((group) => group.keys));
+  const fallback = ADD_GROUPS[ADD_GROUPS.length - 1]?.label ?? "More";
+
+  return ADD_GROUPS.map((group): [string, [string, JsonSchema][]] => [
+    group.label,
+    absent.filter(([key]) =>
+      group.keys.length > 0 ? group.keys.includes(key) : !claimed.has(key) && group.label === fallback,
+    ),
+  ]).filter(([, entries]) => entries.length > 0);
 }
 
 /**
@@ -251,10 +297,13 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
           <div className="flex items-center gap-1 mb-1">
             <span className="fb-empty">#{index + 1}</span>
             {readOnly ? null : (
-              <span className="ml-auto flex gap-1">
+              // One group of icon buttons, not three underlined words. The
+              // accessible names are unchanged and are what the suite asserts;
+              // what changes is that a control now looks like one.
+              <span className="fb-row-controls">
                 <button
                   type="button"
-                  className="btn-link text-xs"
+                  className="fb-row-btn"
                   onClick={() => move(index, index - 1)}
                   aria-label={`Move ${labelFor(propertyName, schema.title)} ${index + 1} up`}
                 >
@@ -262,7 +311,7 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
                 </button>
                 <button
                   type="button"
-                  className="btn-link text-xs"
+                  className="fb-row-btn"
                   onClick={() => move(index, index + 1)}
                   aria-label={`Move ${labelFor(propertyName, schema.title)} ${index + 1} down`}
                 >
@@ -270,12 +319,12 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
                 </button>
                 <button
                   type="button"
-                  className="btn-link text-xs"
+                  className="fb-row-btn is-danger"
                   disabled={items.length <= min}
                   onClick={() => set(path, items.filter((_unused, at) => at !== index), `remove:${formatPath(path)}`)}
                   aria-label={`Remove ${labelFor(propertyName, schema.title)} ${index + 1}`}
                 >
-                  Remove
+                  ✕
                 </button>
               </span>
             )}
@@ -294,13 +343,15 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
       {readOnly || (max !== undefined && items.length >= max) ? null : (
         <button
           type="button"
-          className="btn-outline-sm mt-1"
-          // Named after the list: a panel can hold several arrays, and three
-          // buttons all called "Add" say nothing about what they add.
+          className="fb-add-wide"
+          // The accessible name is unchanged, because it was already right — a
+          // panel can hold several arrays and three controls called "Add" say
+          // nothing about what they add. What changes is that the *visible*
+          // label now says the same thing: it read "Add", full stop.
           aria-label={`Add to ${labelFor(propertyName, schema.title)}`}
           onClick={() => set(path, [...items, defaultFor(schema.items, propertyName)], `append:${formatPath(path)}`)}
         >
-          Add
+          + {ADD_ONE[propertyName] ?? `Add to ${labelFor(propertyName, schema.title)}`}
         </button>
       )}
     </div>

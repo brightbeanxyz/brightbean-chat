@@ -1,15 +1,17 @@
 {% extends "layouts/workspace_settings.html" %}
 {% load static %}
 {% block title %}Inbox rules · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Inbox rules</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title">Inbox rules</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
-    A rule reads each inbound message and files, assigns or closes the
-    conversation. Rules run after the message is stored and before any flow
-    replies, they keep running while an agent has paused automation, and —
-    unlike triggers — <strong>every</strong> matching rule applies, in the order
-    below.
+    A rule reads every message that arrives and files, assigns or closes the
+    conversation it belongs to. It runs before any flow replies, and it keeps
+    running even where somebody has paused automation on a thread.
+  </p>
+  <p class="muted">
+    Triggers stop at the first match. Rules do not: <strong>every</strong> rule
+    that matches applies, in the order below.
   </p>
 
   <button type="button"

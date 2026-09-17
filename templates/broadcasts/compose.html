@@ -18,24 +18,29 @@ flatpickr since L1-B in anticipation.
   <link rel="stylesheet" href="{% static 'js/vendor/flatpickr.min.css' %}">
 {% endblock %}
 
+{% comment %}
+  A breadcrumb and the broadcast's own name, rather than a page title beside an
+  "All broadcasts" button: this is one broadcast inside a list, and saying so in
+  the shape of the header is cheaper than a button that says it in words.
+{% endcomment %}
 {% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
-        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">{{ broadcast.name }}</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
-            Draft broadcast. Nothing sends until you finish the last step.
-        </p>
-    </div>
-    <div class="flex items-center gap-2">
-        <a class="btn-outline btn-inline" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">All broadcasts</a>
-        <form hx-post="{% url 'broadcasts:delete' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
-              hx-swap="none"
-              @htmx:after-request="if (event.detail.successful) window.location = '{% url 'broadcasts:list' workspace_id=request.workspace.id %}'"
-              x-data>
-            {% csrf_token %}
-            <button type="submit" class="btn-outline btn-inline">Delete</button>
-        </form>
-    </div>
+<div class="flex flex-wrap items-center gap-3 mb-6">
+    <a class="text-[13px] font-semibold inline-flex items-center gap-1.5" style="color: var(--text-tertiary);"
+       href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+        Broadcasts
+    </a>
+    <h1 class="text-base font-bold" style="color: var(--text-primary);">{{ broadcast.name }}</h1>
+    <span class="status-pill status-pill-{{ broadcast.status }}">{{ broadcast.get_status_display }}</span>
+    <form class="ml-auto"
+          hx-post="{% url 'broadcasts:delete' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+          hx-swap="none"
+          hx-confirm="Delete this draft? Nothing has been sent, and this cannot be undone."
+          @htmx:after-request="if (event.detail.successful) window.location = '{% url 'broadcasts:list' workspace_id=request.workspace.id %}'"
+          x-data>
+        {% csrf_token %}
+        <button type="submit" class="btn-pill-secondary btn-pill-sm" style="color: var(--error-700);">Delete draft</button>
+    </form>
 </div>
 {% endblock %}
 

@@ -351,7 +351,7 @@ class TestUntrustedContent:
 
         assert not portability.requirements_for(parsed)
         plan = portability.plan_import(tenancy.workspace, parsed, {})
-        assert any("nothing in it actually references" in note for note in plan.notes)
+        assert any("nothing in it actually uses" in note for note in plan.notes)
 
     def test_two_references_claiming_one_name_are_both_rewritten(self, tenancy: Any) -> None:
         """A hostile manifest folds two references onto one question — both must move.
@@ -453,7 +453,7 @@ class TestUntrustedContent:
             tenancy.workspace, parsed, {"platform": {"telegram": {"id": portability.ANY_CONNECTION}}}
         )
         assert plan.can_apply
-        assert any("every connection their trigger type supports" in note for note in plan.notes)
+        assert any("every account their kind works on" in note for note in plan.notes)
 
     def test_an_external_request_url_is_surfaced_before_the_import_can_run(self, tenancy: Any) -> None:
         """The importer did not choose this address, so they are shown it."""

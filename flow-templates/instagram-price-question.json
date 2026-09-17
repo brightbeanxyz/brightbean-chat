@@ -1,0 +1,193 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "answer-default-ask_which",
+            "source": "answer",
+            "sourceHandle": "default",
+            "target": "ask_which"
+          },
+          {
+            "id": "ask_which-default-tag_warm",
+            "source": "ask_which",
+            "sourceHandle": "default",
+            "target": "tag_warm"
+          },
+          {
+            "id": "tag_warm-default-handover",
+            "source": "tag_warm",
+            "sourceHandle": "default",
+            "target": "handover"
+          },
+          {
+            "id": "ask_which-timeout-tag_warm",
+            "source": "ask_which",
+            "sourceHandle": "timeout",
+            "target": "tag_warm"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Prices start at £39 and depend on the size you need.\nThe full list is on the site:",
+                  "type": "text"
+                }
+              ],
+              "buttons": [
+                {
+                  "action": "url",
+                  "id": "pricing",
+                  "label": "See prices",
+                  "url": "https://example.com/pricing"
+                }
+              ]
+            },
+            "id": "answer",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "Which one were you looking at?",
+              "reply_type": "text",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "Interested in",
+                "type": "custom_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_which",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Asked about price",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_warm",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Got it. Someone will come back to you shortly with an exact price.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "handover",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Answer price questions on Instagram",
+      "triggers": [
+        {
+          "config": {
+            "exclude_keywords": [],
+            "include_keywords": [
+              "price",
+              "cost",
+              "how much"
+            ],
+            "like_comment": false,
+            "once_per_contact_per_post": true,
+            "post_ids": [],
+            "post_scope": "all",
+            "public_reply": {
+              "mode": "none",
+              "texts": []
+            },
+            "top_level_only": true
+          },
+          "platform": "instagram",
+          "type": "comment"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [
+      {
+        "key": "flow-1:trigger-0",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "custom_field": [
+      {
+        "key": "interested in",
+        "name": "Interested in",
+        "used_by": [
+          "flow-1:ask_which"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "asked about price",
+        "name": "Asked about price",
+        "used_by": [
+          "flow-1:tag_warm"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

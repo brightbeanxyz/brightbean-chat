@@ -22,10 +22,25 @@ media_library/_asset_detail.html states.
     {% csrf_token %}
     <input type="hidden" name="type" value="{{ spec.type }}">
 
+    {% comment %}
+      The label is quoted rather than folded into the sentence. Lower-casing it
+      into "{verb} {label} trigger" produced "New new follower trigger", and any
+      future label starting with a verb or an article would read the same way.
+    {% endcomment %}
     <h3 class="text-sm font-semibold" style="color: var(--text-primary);">
-        {% if trigger %}Edit{% else %}New{% endif %} {{ spec.label|lower }} trigger
+        {% if trigger %}Edit{% else %}Add{% endif %} “{{ spec.label }}”
     </h3>
     <p class="text-xs mt-0.5 mb-3" style="color: var(--text-secondary);">{{ spec.description }}</p>
+
+    {% comment %}
+      Saving is deliberately still allowed. The trigger is real, it is stored,
+      and it starts working by itself the day the platform delivers the event —
+      so this warns rather than blocks. See TriggerSpec.unavailable.
+    {% endcomment %}
+    {% if spec.unavailable %}
+    <p class="text-xs mb-3 rounded-lg p-2.5"
+       style="color: var(--text-secondary); background: rgba(var(--warning-500-rgb), 0.1);">{{ spec.unavailable }}</p>
+    {% endif %}
 
     {% if spec.bindable %}
     <label class="block text-xs font-medium mb-1" for="trigger-connection" style="color: var(--text-primary);">Channel</label>

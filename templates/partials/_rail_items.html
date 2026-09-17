@@ -1,0 +1,34 @@
+{% comment %}
+One run of rail rows. Same data as partials/_nav_groups.html renders for the
+settings nav — the NavGroup/NavItem structure from
+apps.common.context_processors, with `active` already resolved in Python.
+
+Two renderers rather than one with a variant flag, because the markup shares
+nothing: a rail row is an icon over a 10px label with the count pinned to the
+icon's corner, a settings row is a 15px label beside an icon. A single template
+branching on a flag would be two templates wearing one name.
+
+The rail has no group headings, so `group.label` is ignored here. It is still
+carried in the data because the settings nav needs it.
+
+Args:
+  groups: rendered nav groups (each {label, items: [...]}).
+{% endcomment %}
+{% for group in groups %}{% for item in group.items %}
+<a href="{{ item.url }}"
+   class="rail-item{% if item.active %} active{% endif %}"
+   {% if item.active %}aria-current="page"{% endif %}
+   title="{{ item.label }}">
+    {% comment %}
+      The badge is positioned against this wrapper, not against the row: it
+      belongs to the glyph's top-right corner, and .rail-icon-wrap is what
+      gives it a containing block. See partials/_nav_badge.html for why the
+      slot is rendered even at zero.
+    {% endcomment %}
+    <span class="rail-icon-wrap">
+        {% include "partials/_nav_icon.html" with name=item.icon icon_size=20 %}
+        {% if item.badge_slot %}{% include "partials/_nav_badge.html" with key=item.key count=item.badge only %}{% endif %}
+    </span>
+    <span>{{ item.label }}</span>
+</a>
+{% endfor %}{% endfor %}

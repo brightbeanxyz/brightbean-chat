@@ -54,7 +54,10 @@ class TestRead:
         assert payload["version"]["version"] == 1
         assert payload["graph"] == graph_for("send_message")
         assert payload["published_version"] is None
-        assert payload["validation"] == {"errors": [], "warnings": []}
+        assert payload["validation"]["errors"] == []
+        # This fixture flow has no trigger, and the builder is told so rather
+        # than shown a clean bill of health for something that cannot run.
+        assert [issue["code"] for issue in payload["validation"]["warnings"]] == ["flow_has_no_trigger"]
 
     def test_it_reports_the_published_version_separately(self, tenancy, client_for, flow):
         save_draft(flow, graph_for("send_message"), user=tenancy.owner)

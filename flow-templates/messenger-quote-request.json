@@ -1,0 +1,268 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "intro-default-ask_job",
+            "source": "intro",
+            "sourceHandle": "default",
+            "target": "ask_job"
+          },
+          {
+            "id": "ask_job-default-ask_where",
+            "source": "ask_job",
+            "sourceHandle": "default",
+            "target": "ask_where"
+          },
+          {
+            "id": "ask_where-default-ask_email",
+            "source": "ask_where",
+            "sourceHandle": "default",
+            "target": "ask_email"
+          },
+          {
+            "id": "ask_email-default-flag",
+            "source": "ask_email",
+            "sourceHandle": "default",
+            "target": "flag"
+          },
+          {
+            "id": "flag-default-done",
+            "source": "flag",
+            "sourceHandle": "default",
+            "target": "done"
+          },
+          {
+            "id": "ask_job-timeout-flag",
+            "source": "ask_job",
+            "sourceHandle": "timeout",
+            "target": "flag"
+          },
+          {
+            "id": "ask_where-timeout-flag",
+            "source": "ask_where",
+            "sourceHandle": "timeout",
+            "target": "flag"
+          },
+          {
+            "id": "ask_email-timeout-flag",
+            "source": "ask_email",
+            "sourceHandle": "timeout",
+            "target": "flag"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Happy to quote. Three questions and I will pass it to the team.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "intro",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "What is the job?",
+              "reply_type": "text",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "Job description",
+                "type": "custom_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_job",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "question": "Which town or postcode?",
+              "reply_type": "text",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "Postcode",
+                "type": "custom_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_where",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "question": "Where should we send the quote?",
+              "reply_type": "email",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "email",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_email",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Quote requested",
+                  "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "Messenger",
+                  "verb": "set_field"
+                }
+              ]
+            },
+            "id": "flag",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Thanks. You will have a quote within one working day.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "done",
+            "position": {
+              "x": 0,
+              "y": 200
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Collect the details for a quote",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "quote"
+              },
+              {
+                "mode": "any_word",
+                "text": "estimate"
+              },
+              {
+                "mode": "any_word",
+                "text": "how much"
+              }
+            ]
+          },
+          "platform": "messenger",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "job description",
+        "name": "Job description",
+        "used_by": [
+          "flow-1:ask_job"
+        ]
+      },
+      {
+        "key": "postcode",
+        "name": "Postcode",
+        "used_by": [
+          "flow-1:ask_where"
+        ]
+      },
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "messenger",
+        "name": "messenger",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "quote requested",
+        "name": "Quote requested",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

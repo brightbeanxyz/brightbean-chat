@@ -36,10 +36,12 @@ exception that undoes that.
 import logging
 from typing import Any
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.text import slugify
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.campaigns.errors import CampaignsError
@@ -50,6 +52,7 @@ from apps.flows import portability
 from apps.flows.compat import installed_model
 from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.picklists import picklists
+from apps.flows.portability import library
 from apps.flows.portability.cards import REQUIREMENT_KIND_HELP, REQUIREMENT_KIND_LABELS, card_contexts
 from apps.flows.portability.envelope import MAX_DOCUMENT_BYTES
 from apps.flows.portability.library import read_template, template_cards, template_for_slug
@@ -281,10 +284,106 @@ def import_review(request: WorkspaceRequest, workspace_id: str, flow_import_id: 
     if request.method == "POST":
         record.mapping = _mapping_from(request, record)
         record.save(update_fields=["mapping", "updated_at"])
+
+        # "Import" is a submit button on this same form, not a separate step.
+        #
+        # It used to be an htmx POST straight to the confirm endpoint, which
+        # made the page a trap: answering a question changed the control but not
+        # the stored mapping, so the button stayed disabled from the last render
+        # and clicking it did nothing at all — no error, no toast, no movement.
+        # The two-step was never explained and there was no reason for it.
+        #
+        # Saving first and applying in the same request means the answers the
+        # importer acts on are the answers on screen. A plan that still is not
+        # ready falls through to the redirect below, where the page now names
+        # what is missing.
+        if request.POST.get("then") == "import":
+            plan = portability.plan_import(request.workspace, record.document, record.mapping)
+            if plan.can_apply:
+                return _apply_and_redirect(request, workspace_id, record)
+
         return _redirect_to_review(workspace_id, record)
 
     plan = portability.plan_import(request.workspace, record.document, record.mapping)
     return render(request, "flows/import_review.html", _review_context(request, workspace_id, record, plan))
+
+
+def _source_label(record: FlowImport) -> str:
+    """Where this import came from, in words a reader recognises.
+
+    A file somebody chose is named by its filename, which is the reassurance
+    that the right one was picked. A shipped template is not: its filename is a
+    slug, and "instagram-comment-to-dm-lead-magnet.json" is the repository's
+    name for it, not the product's. Those are matched back to the gallery so the
+    page says what the tile the person clicked said.
+    """
+    filename = record.original_filename or ""
+    if filename.endswith(".json"):
+        # Resolved against the whitelist directly rather than by scanning the
+        # gallery: template_for_slug is the same lookup the install route uses,
+        # and it answers one question instead of building forty-odd cards.
+        path = library.template_for_slug(filename[: -len(".json")])
+        card = library.template_card(path) if path is not None else None
+        if card is not None:
+            return f"From the {card.name} template."
+    return f"From {filename}." if filename else "From an uploaded file."
+
+
+def _apply_and_redirect(request: WorkspaceRequest, workspace_id: str, record: FlowImport) -> HttpResponse:
+    """Create the flows, then land on the list with a toast.
+
+    Shares every refusal path with :func:`import_confirm` by calling the same
+    service: ``confirm_import`` takes the row's lock and commits the flows and
+    the status transition together, so a double-submitted form imports once.
+    """
+    try:
+        flows = portability.confirm_import(record, user=request.user)
+    except portability.ImportNotReadyError as exc:
+        messages.error(request, _first_problem(exc.plan))
+        return _redirect_to_review(workspace_id, record)
+    except (portability.ImportRefusedError, ContactsError, CampaignsError) as exc:
+        logger.info("Workspace %s could not apply import %s: %s", request.workspace.pk, record.pk, exc)
+        messages.error(request, f"Nothing was imported. {exc}")
+        return _redirect_to_review(workspace_id, record)
+
+    if flows is None:
+        messages.info(request, "This file has already been imported.")
+        return redirect("flows:list", workspace_id=workspace_id)
+
+    record.refresh_from_db()
+    logger.info("Workspace %s imported %s flow(s) from %r", request.workspace.pk, len(flows), record.original_filename)
+
+    # One flow: open it. The toast used to land on the list saying "Open it to
+    # read the messages before anything goes live" — an instruction for a click
+    # the product was already in a position to make. Reading the messages is the
+    # whole reason a template arrives as a draft, so the import ends where that
+    # happens.
+    #
+    # More than one: the list, because there is no single flow to open and what
+    # a bundle brought with it is the thing worth seeing first.
+    if len(flows) == 1:
+        messages.success(request, _imported_body(1))
+        return redirect("flows:edit", workspace_id=workspace_id, flow_id=flows[0].pk)
+
+    messages.success(request, _imported_body(len(flows)))
+    return redirect("flows:list", workspace_id=workspace_id)
+
+
+def _imported_body(count: int) -> str:
+    """What landed, said once, for both the form path and the htmx one.
+
+    The singular is written for a reader who is now looking at the flow, because
+    that is where :func:`_apply_and_redirect` leaves them.
+    """
+    if count == 1:
+        return (
+            "Imported as a draft, with its trigger switched off. Read the messages below, "
+            "then switch the trigger on and set it live."
+        )
+    return (
+        f"{count} flows arrived as drafts, with their triggers switched off. "
+        f"Open each one to read the messages before anything goes live."
+    )
 
 
 def _review_context(
@@ -293,17 +392,26 @@ def _review_context(
     return {
         "record": record,
         "plan": plan,
+        "source_label": _source_label(record),
+        # What is still missing, by name and with the anchor of the control that
+        # answers it. "1 answer still needed" on its own sent people hunting
+        # through eight questions for the one that was blank.
+        "unanswered": [
+            {
+                "label": REQUIREMENT_KIND_LABELS.get(resolution.requirement.kind, resolution.requirement.kind),
+                "name": resolution.requirement.name or resolution.requirement.key,
+                "anchor": f"ask-{resolution.requirement.kind}-{slugify(resolution.requirement.key)}",
+            }
+            for resolution in plan.unanswered
+        ],
         "applied": record.status == FlowImportStatus.APPLIED,
         # Grouped for rendering: one section per kind, in the manifest's order,
         # each question already carrying the options it may be answered with.
         # Computing them here rather than in the template is what keeps the
         # template free of per-kind branching over six different querysets.
-        "groups": _groups(request.workspace, plan),
+        "groups": _groups(request.workspace, workspace_id, plan),
         "review_url": reverse(
             "flows:import_review", kwargs={"workspace_id": workspace_id, "flow_import_id": record.pk}
-        ),
-        "confirm_url": reverse(
-            "flows:import_confirm", kwargs={"workspace_id": workspace_id, "flow_import_id": record.pk}
         ),
         "discard_url": reverse(
             "flows:import_discard", kwargs={"workspace_id": workspace_id, "flow_import_id": record.pk}
@@ -312,12 +420,60 @@ def _review_context(
     }
 
 
-def _groups(workspace: Any, plan: portability.ImportPlan) -> list[dict[str, Any]]:
+def _flow_names(document: dict[str, Any]) -> dict[str, str]:
+    """Flow key -> the name the file gives that flow."""
+    return {
+        str(flow.get("key") or ""): str(flow.get("name") or "")
+        for flow in document.get("flows") or []
+        if isinstance(flow, dict)
+    }
+
+
+def _needed_by(requirement: Any, names: dict[str, str]) -> str:
+    """Which flows in this file need this answer, by name.
+
+    ``Requirement.used_by`` holds ``<flow key>:<node id>`` — the coordinates the
+    importer rewrites by, and the string this page used to print verbatim.
+    "Used by flow-1:tag_lead" tells a reader nothing they can act on and reads
+    like a stack trace on a page whose whole job is to be answerable.
+
+    Empty when the file holds one flow: naming it on every question is noise,
+    and the card above already says which flow is being imported.
+    """
+    if len(names) < 2:
+        return ""
+    seen = [names.get(location.split(":", 1)[0], "") for location in requirement.used_by]
+    # dict.fromkeys, not a set: these are read in the file's own flow order.
+    return ", ".join(name for name in dict.fromkeys(seen) if name)
+
+
+def _connect_url(workspace_id: str, platform: str) -> str:
+    """Where to go and connect an account of this platform.
+
+    An import that asks "which Instagram account?" of a workspace with no
+    Instagram account is a form whose only visible answer is an empty dropdown.
+    The wide "every account" option still applies, but nobody reads that as the
+    answer to a question they cannot otherwise answer, so the page has to name
+    the missing step and offer the route to it.
+
+    Falls back to the channel list for a platform with no connect page of its
+    own, which is the right destination either way.
+    """
+    from django.urls import NoReverseMatch
+
+    try:
+        return reverse(f"channels:{platform}_connect", kwargs={"workspace_id": workspace_id})
+    except NoReverseMatch:
+        return reverse("channels:list", kwargs={"workspace_id": workspace_id})
+
+
+def _groups(workspace: Any, workspace_id: str, plan: portability.ImportPlan) -> list[dict[str, Any]]:
     """The resolutions, one section per kind, in the manifest's fixed order."""
     by_kind: dict[str, list[Any]] = {}
     for resolution in plan.resolutions:
         by_kind.setdefault(resolution.requirement.kind, []).append(resolution)
 
+    names = _flow_names(plan.document)
     lists = picklists(workspace)
     return [
         {
@@ -326,7 +482,12 @@ def _groups(workspace: Any, plan: portability.ImportPlan) -> list[dict[str, Any]
             "help": REQUIREMENT_KIND_HELP.get(kind, ""),
             "field_types": _field_types() if kind == "custom_field" else [],
             "questions": [
-                {"resolution": resolution, "options": _options(workspace, lists, resolution.requirement)}
+                {
+                    "resolution": resolution,
+                    "options": _options(workspace, lists, resolution.requirement),
+                    "needed_by": _needed_by(resolution.requirement, names),
+                    "connect_url": _connect_url(workspace_id, resolution.requirement.key) if kind == "platform" else "",
+                }
                 for resolution in by_kind[kind]
             ],
         }
@@ -470,7 +631,7 @@ def import_confirm(request: WorkspaceRequest, workspace_id: str, flow_import_id:
     return toast_response(
         tone="success",
         title="Imported as drafts",
-        body=f"{len(flows)} flow(s) arrived unpublished, with their triggers switched off.",
+        body=_imported_body(len(flows)),
         events={"flowsChanged": True, "flowImportApplied": True},
     )
 

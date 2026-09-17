@@ -18,9 +18,9 @@ import { useField } from "../FieldContext";
 type ListKey = keyof Picklists;
 
 const EMPTY_COPY: Partial<Record<ListKey, string>> = {
-  tags: "Tags arrive with the contacts app — type a name to use it now.",
-  custom_fields: "Custom fields arrive with the contacts app — type a name to use it now.",
-  sequences: "Sequences arrive with the sequences app — type a name to use it now.",
+  tags: "Tags arrive with the contacts app. Type a name to use it now.",
+  custom_fields: "Custom fields arrive with the contacts app. Type a name to use it now.",
+  sequences: "Sequences arrive with the sequences app. Type a name to use it now.",
   flows: "This workspace has no other flows yet.",
   members: "No workspace members to choose from.",
   connections: "No channels are connected yet.",
@@ -76,8 +76,14 @@ export function picklistSelect(list: ListKey, { creatable }: { creatable: boolea
           ))}
           {/* A value the list no longer offers — an archived flow, a member who
               left. Kept selectable so opening the panel does not silently drop
-              it from the config. */}
-          {current && !known ? <option value={current}>{current} (no longer available)</option> : null}
+              it from the config.
+
+              The id is the option's value and no longer its label: it read
+              "01a0…7e3f (no longer available)", or in a test fixture
+              "flow_id (no longer available)", and an id tells the reader
+              nothing they can act on. What they need to know is that this one
+              points at something gone, and to pick again. */}
+          {current && !known ? <option value={current}>Whatever this pointed at has gone</option> : null}
         </select>
         {options.length === 0 ? <p className="fb-field-help">{EMPTY_COPY[list]}</p> : null}
       </FieldShell>

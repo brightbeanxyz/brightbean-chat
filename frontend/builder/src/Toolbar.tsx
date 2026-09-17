@@ -42,6 +42,8 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const warningCount = useBuilder((state) => state.validation.warnings.length);
   const flowStatus = useBuilder((state) => state.flow?.status);
   const view = publishView(save, flowStatus);
+  const triggerCount = useBuilder((state) => state.triggers.length);
+  const loaded = useBuilder((state) => state.flow !== null);
   const [publishing, setPublishing] = useState(false);
 
   const publish = async () => {
@@ -52,7 +54,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       // success, which is worse than doing nothing.
       if (autosave && !(await autosave.flush())) {
         store.getState().setSave({
-          message: "Publish stopped: your latest changes could not be saved. Fix the problems below and try again.",
+          message: "Not set live: your latest changes could not be saved. Fix the problems below and try again.",
         });
         return;
       }
@@ -84,7 +86,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         if (payload?.validation) {
           store.getState().applyValidation(payload.validation, store.getState().revision);
         }
-        store.getState().setSave({ message: "Publish blocked — fix the errors below." });
+        store.getState().setSave({ message: "Not set live: fix the problems below and try again." });
       } else if (error instanceof ApiError) {
         store.getState().setSave({ message: error.message });
       }
@@ -128,6 +130,21 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       <span className="ml-auto flex items-center gap-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
         {errorCount > 0 ? <span className="fb-badge fb-badge-error">{errorCount} to fix</span> : null}
         {warningCount > 0 ? <span className="fb-badge fb-badge-warning">{warningCount} to check</span> : null}
+        {/*
+          A published flow with no trigger never runs, and the canvas gives no
+          hint of that — so it is the one thing worth saying about triggers from
+          an island that does not own them. Editing happens in the HTMX drawer
+          behind the header's Triggers button.
+        */}
+        {loaded ? (
+          triggerCount > 0 ? (
+            <span className="fb-badge">
+              {triggerCount} trigger{triggerCount === 1 ? "" : "s"}
+            </span>
+          ) : (
+            <span className="fb-badge fb-badge-warning">No triggers</span>
+          )
+        ) : null}
         {view.liveChip ? <span className="fb-badge fb-badge-success">{view.liveChip}</span> : null}
         <span data-save-state={save.state} data-publish-tone={view.tone}>
           {view.label}
@@ -140,7 +157,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
             title={view.publishHint ?? undefined}
             onClick={() => void publish()}
           >
-            {publishing ? "Publishing…" : view.publishLabel}
+            {publishing ? "Setting live…" : view.publishLabel}
           </button>
         ) : null}
       </span>

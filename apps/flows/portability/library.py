@@ -50,6 +50,7 @@ from typing import Any
 __all__ = [
     "LIBRARY_RELATIVE_PATH",
     "STARTER_CATEGORY",
+    "gallery_entries",
     "SLUG_PATTERN",
     "TEMPLATE_COPY",
     "TemplateCard",
@@ -156,6 +157,30 @@ STARTER_CATEGORY = "Starters"
 #: entry and a missing one are both caught by a test that compares this against
 #: the directory in both directions.
 TEMPLATE_COPY: dict[str, TemplateCopy] = {
+    "collect-an-email-address": TemplateCopy(
+        category="Grow",
+        summary=("Asks for an email address, checks it looks real, and saves it to the contact before replying."),
+    ),
+    "event-reminder": TemplateCopy(
+        category="Engage",
+        summary=("Signs someone up for an event over Telegram, then messages them again nearer the time."),
+    ),
+    "feedback-after-a-purchase": TemplateCopy(
+        category="Engage",
+        summary=("Waits until the order has landed, asks how it went, and routes the answer by what they say."),
+    ),
+    "first-message-welcome": TemplateCopy(
+        category="Starters",
+        summary=("The first thing a new Telegram contact hears, with a follow-up a little later."),
+    ),
+    "follow-up-an-unanswered-enquiry": TemplateCopy(
+        category="Convert",
+        summary=("Chases an enquiry that went quiet twice, spaced out, then tags it so you can see who never replied."),
+    ),
+    "hand-over-to-a-person": TemplateCopy(
+        category="Engage",
+        summary=("Takes the conversation off automation and assigns it to a teammate, with a note saying why."),
+    ),
     "instagram-comment-affiliate-picks": TemplateCopy(
         category="Convert",
         summary=(
@@ -183,6 +208,10 @@ TEMPLATE_COPY: dict[str, TemplateCopy] = {
         summary=(
             "Turn \u201ccomment to join\u201d into a confirmed RSVP with a calendar link and a tag to broadcast to later."
         ),
+    ),
+    "instagram-comment-to-discount-code": TemplateCopy(
+        category="Convert",
+        summary=("A comment sends the discount code by DM, then follows up in case it went unused."),
     ),
     "instagram-comment-to-dm-lead-magnet": TemplateCopy(
         category="Starters",
@@ -232,6 +261,14 @@ TEMPLATE_COPY: dict[str, TemplateCopy] = {
         category="Grow",
         summary=("Send your Instagram audience to the long version on YouTube."),
     ),
+    "instagram-link-in-bio-capture": TemplateCopy(
+        category="Grow",
+        summary=("The link in your bio opens a chat that already knows where they came from."),
+    ),
+    "instagram-price-question": TemplateCopy(
+        category="Convert",
+        summary=("Answers “how much?” in the comments by DM, and asks what they are after before quoting."),
+    ),
     "instagram-story-collab-requests": TemplateCopy(
         category="Grow",
         summary=("Sort collab replies into brands and creators, capture a brief and tag the request."),
@@ -240,13 +277,65 @@ TEMPLATE_COPY: dict[str, TemplateCopy] = {
         category="Convert",
         summary=("Send the code from your Story, then nudge once before the window closes."),
     ),
+    "instagram-story-mention-thank-you": TemplateCopy(
+        category="Engage",
+        summary=("Thanks somebody who mentioned you in a story, and comes back later with an offer."),
+    ),
+    "instagram-story-reply-to-conversation": TemplateCopy(
+        category="Engage",
+        summary=("Turns a story reply into a real conversation instead of a notification you never answer."),
+    ),
+    "messenger-comment-to-dm": TemplateCopy(
+        category="Convert",
+        summary=("Replies to a Facebook comment privately, which is the reply that can actually ask for something."),
+    ),
+    "messenger-quote-request": TemplateCopy(
+        category="Convert",
+        summary=("Collects the three details you need to quote, one question at a time, and saves each one."),
+    ),
+    "messenger-welcome": TemplateCopy(
+        category="Starters",
+        summary=("What a first-time Messenger contact hears, in four short messages rather than one wall."),
+    ),
+    "out-of-hours-reply": TemplateCopy(
+        category="Engage",
+        summary=("Answers outside opening hours with when you are next open, so nobody is left waiting."),
+    ),
+    "sms-appointment-reminder": TemplateCopy(
+        category="Engage",
+        summary=("Texts a reminder before the appointment, and again when it is close."),
+    ),
     "sms-keyword-opt-in": TemplateCopy(
         category="Starters",
         summary=("Keyword opt-in over SMS that records consent and tags the subscriber."),
     ),
+    "sms-review-request": TemplateCopy(
+        category="Engage",
+        summary=("Waits a few days, asks for a review, and stops asking the people who already left one."),
+    ),
+    "telegram-booking-enquiry": TemplateCopy(
+        category="Convert",
+        summary=("Takes a booking enquiry over Telegram and saves the date, the size and the contact."),
+    ),
+    "telegram-support-triage": TemplateCopy(
+        category="Engage",
+        summary=("Sorts an incoming support message into the right queue and tags it for whoever picks it up."),
+    ),
     "telegram-welcome-and-faq": TemplateCopy(
         category="Starters",
         summary=("Telegram welcome message with a three-way FAQ menu behind quick replies."),
+    ),
+    "waitlist-signup": TemplateCopy(
+        category="Grow",
+        summary=("Collects an email for the waitlist and tags the person so you can message the list later."),
+    ),
+    "whatsapp-opening-hours": TemplateCopy(
+        category="Engage",
+        summary=("Answers “are you open?” with the real answer for the day it is asked."),
+    ),
+    "whatsapp-order-status": TemplateCopy(
+        category="Engage",
+        summary=("Asks for the order number, looks it up, and says where it is."),
     ),
 }
 
@@ -374,3 +463,89 @@ def _steps_in(graph: dict[str, Any]) -> int:
     from apps.flows.schema import node_spec
 
     return sum(1 for node in graph["nodes"] if not (spec := node_spec(node["type"])) or not spec.annotation)
+
+
+# ---------------------------------------------------------------------------
+# The compact tile shape
+# ---------------------------------------------------------------------------
+
+
+def gallery_entries() -> list[dict[str, Any]]:
+    """The shipped templates as the Home and flow-list tiles read them.
+
+    A projection of :func:`template_cards`, not a second walk of the directory.
+    The tiles want five facts and the gallery card wants nine, but there is only
+    one library and only one definition of what a card says about it — deriving
+    the smaller shape from the larger is what stops the two pages disagreeing
+    about how many templates ship.
+
+    Cached on the directory's own fingerprint rather than recomputed. Home and
+    the import review page both call this per render, and ``template_cards()``
+    reads and digests every file on disk *before* it can consult the per-card
+    cache — so without this the two most-visited pages in the product paid
+    forty-odd file reads each time. Keyed on (name, mtime, size) per file rather
+    than held for the life of the process, so a template edited on disk still
+    shows through, which the library's own cache guarantees and the tests rely
+    on.
+
+    Dicts rather than the dataclass because the tile template indexes them and
+    a caller may sort or slice, which a shared frozen instance would make
+    everybody's business.
+    """
+    # A fresh dict *and* a fresh platforms list per call: dict() is shallow, so
+    # handing back the cached list would let one caller's sort or append reach
+    # every later render.
+    return [{**entry, "platforms": list(entry["platforms"])} for entry in _gallery_entries(_library_fingerprint())]
+
+
+def _library_fingerprint() -> tuple[Any, ...]:
+    """What the gallery cache keys on: every file's name, mtime and size.
+
+    Cheap next to reading and hashing each file, and it moves for the edits that
+    matter — a new template, a deleted one, or a changed one. A same-size
+    same-mtime rewrite is invisible here, which is exactly the case
+    :func:`_card` keys on a content digest to catch; this cache sits in front of
+    that one rather than replacing it.
+    """
+    entries: list[Any] = []
+    for path in template_paths():
+        try:
+            stat = path.stat()
+        except OSError:
+            entries.append((path.name, None))
+        else:
+            entries.append((path.name, stat.st_mtime_ns, stat.st_size))
+    return tuple(entries)
+
+
+@lru_cache(maxsize=4)
+def _gallery_entries(fingerprint: tuple[Any, ...]) -> tuple[dict[str, Any], ...]:
+    """The projection itself, computed once per state of the directory."""
+    return tuple(
+        {
+            "slug": card.slug,
+            "name": card.name,
+            "category": card.category,
+            "platforms": tuple(card.platforms),
+            "platform_label": _platform_label(list(card.platforms)),
+            "steps": card.step_count,
+        }
+        for card in template_cards()
+    )
+
+
+def _platform_label(platforms: list[str]) -> str:
+    """ "instagram" -> "Instagram"; two -> "Instagram and Messenger"; none -> "Any channel"."""
+    from apps.common.platforms import Platform
+
+    names = []
+    for platform in platforms:
+        try:
+            names.append(str(Platform(platform).label))
+        except ValueError:
+            names.append(platform)
+    if not names:
+        return "Any channel"
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
