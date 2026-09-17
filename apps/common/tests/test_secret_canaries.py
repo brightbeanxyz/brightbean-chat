@@ -38,7 +38,7 @@ from apps.api.tests.conftest import bearer, make_key
 from apps.channels.models import ChannelConnection
 from apps.common.encryption import EncryptedJSONField, EncryptedTextField
 from apps.common.platforms import Platform
-from apps.credentials.models import PlatformCredential, WorkspaceCredentialOverride
+from apps.credentials.models import PlatformCredential
 
 pytestmark = pytest.mark.django_db
 
@@ -49,7 +49,6 @@ pytestmark = pytest.mark.django_db
 #: ambiguous, and these cannot appear by accident.
 CANARIES: dict[str, str] = {
     "credentials.PlatformCredential.credentials": "kanarie-QPZM-platformcred-7f21",
-    "credentials.WorkspaceCredentialOverride.credentials": "kanarie-QPZM-wsoverride-2c94",
     "channels.ChannelConnection.credentials": "kanarie-QPZM-connectioncreds-4b0e",
     "channels.ChannelConnection.webhook_secret": "kanarie-QPZM-webhooksecret-8d55",
     "api.OutboundWebhook.secret": "kanarie-QPZM-outboundsecret-1a73",
@@ -101,11 +100,6 @@ def seeded(tenancy: Any) -> dict[str, Any]:
         platform=Platform.TELEGRAM,
         credentials={"app_secret": CANARIES["credentials.PlatformCredential.credentials"]},  # type: ignore[misc]
     )
-    override = WorkspaceCredentialOverride.objects.create(
-        workspace=workspace,
-        platform=Platform.MESSENGER,
-        credentials={"app_secret": CANARIES["credentials.WorkspaceCredentialOverride.credentials"]},  # type: ignore[misc]
-    )
     webhook = OutboundWebhook.objects.create(
         workspace=workspace,
         url="https://receiver.example.test/hook",
@@ -115,7 +109,6 @@ def seeded(tenancy: Any) -> dict[str, Any]:
     return {
         "connection": connection,
         "platform_credential": platform_credential,
-        "override": override,
         "webhook": webhook,
     }
 
@@ -128,11 +121,13 @@ def leaked(body: bytes) -> list[str]:
 
 class TestTheSweepIsComplete:
     def test_every_encrypted_column_has_a_canary(self) -> None:
-        """A sixth encrypted column cannot be added outside this sweep.
+        """A new encrypted column cannot be added outside this sweep.
 
-        This assertion earned its place on the first run: the issue named four
-        columns and there are five — ``WorkspaceCredentialOverride.credentials``
-        was missed by the hand-written list.
+        The count is deliberately not written down here, because it has already
+        gone stale twice. ``covered`` is derived from the field registry rather
+        than a hand-written list, which is what earned this assertion its place:
+        on the first run the issue named four columns and the hand-maintained
+        list had missed one.
         """
         covered = set(CANARIES) | EXEMPT_FROM_CANARIES
 
@@ -174,9 +169,8 @@ class TestTheAdminNeverShowsASecret:
         """The change form is where an encrypted field would render as an input value.
 
         Only the seeded models the admin actually registers have a change page.
-        ``WorkspaceCredentialOverride`` deliberately has none — ``credentials/admin.py``
-        says so — and reversing a URL for it raises rather than 404s, so the
-        registry is consulted rather than assumed.
+        Reversing a URL for an unregistered model raises rather than 404s, so
+        the registry is consulted rather than assumed.
         """
         registered = set(admin.site._registry)
         offenders: list[str] = []

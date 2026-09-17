@@ -56,12 +56,12 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["instagram_callback", "instagram_connect", "instagram_posts"]
 
-#: Shown when this workspace has no Meta app credentials to start an OAuth flow
-#: with. Names the two ways to supply them and neither of the values.
+#: Shown when this deployment has no Meta app credentials to start an OAuth flow
+#: with. Names where they go and never a value.
 NO_CREDENTIALS = (
-    "This workspace has no Instagram app credentials yet. Add them under Settings -> "
-    "Credentials, or set PLATFORM_INSTAGRAM_CLIENT_ID and PLATFORM_INSTAGRAM_CLIENT_SECRET "
-    "on the deployment. See docs/channels/instagram.md."
+    "This deployment has no Instagram app credentials yet. Set "
+    "PLATFORM_INSTAGRAM_CLIENT_ID and PLATFORM_INSTAGRAM_CLIENT_SECRET in the "
+    "environment. See docs/channels/instagram.md."
 )
 
 #: Shown when Meta refuses the code, the token exchange fails, or the profile

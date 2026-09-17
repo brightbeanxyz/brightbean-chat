@@ -1101,15 +1101,23 @@ class MessengerAdapter(Adapter):
         The rule is credential identity and nothing looser. If both connections
         resolve to the same app secret then whoever produced a valid signature over
         this body holds the key for both, so the delivery genuinely authenticates
-        both. If either workspace has overridden the app with its own credentials
-        the secrets differ and the answer is False, which is what keeps SPEC §4's
-        per-workspace override a real tenant boundary.
+        both.
 
-        It grants nothing new to an attacker: a workspace that could set its
-        override *to another tenant's secret* would have to know that secret
-        already, and knowing it is enough to forge a delivery for that tenant
-        directly. Compared with ``compare_digest`` out of habit rather than need —
-        both values are ours, and neither is attacker-supplied.
+        **What separates two tenants here is the chain, not this method.** Since
+        credentials resolve environment-first, a deployment-wide
+        ``PLATFORM_MESSENGER_CLIENT_SECRET`` is every connection's effective app
+        secret, and batched entries are kept for all of them — which is the case
+        this exists for. An organization only differs when it is the *only*
+        configuration there is: no env var for the platform, and its own
+        ``PlatformCredential`` row. Then the secrets differ and the answer is
+        False. Setting an org row while an env var is present changes nothing,
+        here or anywhere else; see :mod:`apps.credentials.resolution`.
+
+        It grants nothing new to an attacker: whoever could make two connections
+        resolve to one secret would have to know that secret already, and knowing
+        it is enough to forge a delivery for either directly. Compared with
+        ``compare_digest`` out of habit rather than need — both values are ours,
+        and neither is attacker-supplied.
         """
         if verified.platform != other.platform:
             return False
@@ -1828,8 +1836,8 @@ class MessengerAdapter(Adapter):
         Overridden rather than inherited so the reason is written where an
         operator's question lands: rotating a Messenger connection's webhook secret
         changes a value this platform never presents, and does **not** break
-        delivery the way it would for Telegram. The app secret lives in
-        Settings → Credentials and is rotated in Meta's console.
+        delivery the way it would for Telegram. The app secret is
+        ``PLATFORM_MESSENGER_CLIENT_SECRET`` and is rotated in Meta's console.
         """
 
     def on_disconnect(self, connection: ChannelConnection) -> None:

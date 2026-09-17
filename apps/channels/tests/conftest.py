@@ -54,12 +54,13 @@ def secret(connection: ChannelConnection) -> str:
 
 @pytest.fixture
 def app_secret(settings: Any) -> str:
-    """Configure the deployment-level Meta app — the bottom of SPEC §4's chain.
+    """Configure the deployment-level Meta app — the top of SPEC §4's chain.
 
     The environment level rather than a credential row, because it is the level
-    every test can set without building an organization's settings, and because
-    it is the one a self-hoster actually uses. A test that needs the *chain*
-    exercised (a workspace override beating this) says so and builds the rows.
+    every test can set without building an organization's settings, because it
+    is the one a self-hoster actually uses, and because it is the one that wins.
+    A test that needs the organization level exercised clears this first and
+    builds the row.
     """
     settings.PLATFORM_CREDENTIALS_FROM_ENV = {
         **getattr(settings, "PLATFORM_CREDENTIALS_FROM_ENV", {}),
@@ -132,9 +133,9 @@ def _clean_processors() -> Iterator[None]:
 
 @pytest.fixture
 def instagram_app(settings: Any) -> dict[str, str]:
-    """Deployment-level Instagram app credentials, the bottom of SPEC §4's chain.
+    """Deployment-level Instagram app credentials, the top of SPEC §4's chain.
 
-    The env level rather than a workspace override, because that is the shape a
+    The env level rather than an organization row, because that is the shape a
     self-hoster uses and because it exercises ``env_credentials`` — which is also
     what the ``hub.challenge`` verification reads.
     """

@@ -4,18 +4,20 @@ import pytest
 from django.db import models
 
 from apps.common.scoping import UnscopedQueryError, WorkspaceScopedManager, WorkspaceScopedModel
-from apps.credentials.models import WorkspaceCredentialOverride
+from apps.contacts.models import Tag
 from tests.support import create_tenancy
 
-MODEL = WorkspaceCredentialOverride
+#: Any ``WorkspaceScopedModel`` proves the manager; ``Tag`` is the cheapest to
+#: build (a workspace and a name), so the fixtures below stay about scoping.
+MODEL = Tag
 
 
 @pytest.fixture
 def two_workspaces(db):
     mine = create_tenancy("mine")
     theirs = create_tenancy("theirs")
-    MODEL.objects.create(workspace=mine.workspace, platform="instagram", credentials={"client_id": "a"})
-    MODEL.objects.create(workspace=theirs.workspace, platform="instagram", credentials={"client_id": "b"})
+    MODEL.objects.create(workspace=mine.workspace, name="mine-tag")
+    MODEL.objects.create(workspace=theirs.workspace, name="theirs-tag")
     return mine, theirs
 
 
@@ -32,7 +34,7 @@ class TestUnscopedAccessRaises:
             pytest.param(lambda qs: qs.first(), id="first"),
             pytest.param(lambda qs: list(qs.iterator()), id="iterator"),
             pytest.param(lambda qs: qs.aggregate(n=models.Count("id")), id="aggregate"),
-            pytest.param(lambda qs: qs.update(platform="whatsapp"), id="update"),
+            pytest.param(lambda qs: qs.update(name="renamed"), id="update"),
             pytest.param(lambda qs: qs.delete(), id="delete"),
             pytest.param(lambda qs: qs.in_bulk(), id="in_bulk"),
         ],
@@ -44,11 +46,11 @@ class TestUnscopedAccessRaises:
     def test_the_guard_survives_chaining(self, two_workspaces):
         """.filter() must not look like scoping."""
         with pytest.raises(UnscopedQueryError):
-            list(MODEL.objects.filter(platform="instagram").order_by("platform"))
+            list(MODEL.objects.filter(name="mine-tag").order_by("name"))
 
     def test_get_is_guarded_too(self, two_workspaces):
         with pytest.raises(UnscopedQueryError):
-            MODEL.objects.get(platform="instagram")
+            MODEL.objects.get(name="mine-tag")
 
     def test_the_error_names_the_way_out(self, two_workspaces):
         with pytest.raises(UnscopedQueryError) as caught:
@@ -66,7 +68,7 @@ class TestScopedAccess:
 
         rows = list(MODEL.objects.for_workspace(mine.workspace))
 
-        assert [row.credentials["client_id"] for row in rows] == ["a"]
+        assert [row.name for row in rows] == ["mine-tag"]
 
     def test_for_workspace_accepts_an_id(self, two_workspaces):
         mine, _ = two_workspaces
@@ -84,7 +86,7 @@ class TestScopedAccess:
     def test_scope_survives_further_filtering(self, two_workspaces):
         mine, _ = two_workspaces
 
-        assert MODEL.objects.for_workspace(mine.workspace).filter(platform="instagram").count() == 1
+        assert MODEL.objects.for_workspace(mine.workspace).filter(name="mine-tag").count() == 1
 
 
 @pytest.mark.django_db
@@ -94,9 +96,9 @@ class TestDjangoInternalsStillWork:
     def test_reverse_related_access_is_already_scoped(self, two_workspaces):
         mine, _ = two_workspaces
 
-        # workspace.workspacecredentialoverrides is scoped by construction, so
-        # it goes through the plain default manager and must not raise.
-        assert mine.workspace.workspacecredentialoverrides.count() == 1
+        # workspace.tags is scoped by construction, so it goes through the
+        # plain default manager and must not raise.
+        assert mine.workspace.tags.count() == 1
 
     def test_default_manager_is_the_plain_one(self):
         assert not isinstance(MODEL._meta.default_manager, WorkspaceScopedManager)

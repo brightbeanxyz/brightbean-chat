@@ -14,25 +14,65 @@
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
 
     {% comment %}
-      There used to be a three-part anti-flash contract here — a pre-paint
-      script reading localStorage.sidebarCollapsed, a .sidebar-initial block
-      mirroring every collapsed rule in plain CSS, and an x-init handover on
-      <aside> — because the 240px sidebar could start the page in either of two
-      widths and the wrong one flashed before Alpine booted.
+      **Leg 1 of the anti-flash contract.** The sidebar can start a page at
+      either of two widths, and the stored one has to be known before first
+      paint — so this runs synchronously, ahead of the stylesheet's effect and
+      long before Alpine. Legs 2 and 3 are the <style> below and the x-init on
+      <aside> in partials/_app_sidebar.html. All three ship together: leg 1
+      without leg 2 flashes 240px at every collapsed user, leg 2 without leg 3
+      freezes the sidebar at its pre-paint width forever.
 
-      The redesign's rail is a fixed 76px with no collapsed state, so there is
-      no persisted width to restore and nothing to flash. All three legs were
-      removed together, as their own note required. If a collapse ever comes
-      back, all three come back with it — see git history for the shape.
+      The value is parked on `window` as well as on <html> so the Alpine
+      component below can read it without a second `try`: localStorage throws
+      outright in some privacy modes, and a throw inside x-data leaves the
+      whole shell component uninitialised.
     {% endcomment %}
+    {% if show_app_shell %}
+    <script nonce="{{ request.csp_nonce }}">
+        window.__bbSidebarCollapsed = false;
+        try {
+            window.__bbSidebarCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        } catch (e) { /* storage disabled: render expanded, which is the default */ }
+        if (window.__bbSidebarCollapsed) {
+            document.documentElement.classList.add('sidebar-is-collapsed');
+        }
+    </script>
+    {% endif %}
     <style nonce="{{ request.csp_nonce }}">
         {% comment %}
-          Still needed, and needed globally: the workspace switcher, the user
-          menu and the bell panel are all Alpine dropdowns, and issue #31's
-          auth templates use Alpine too. Without this every one of them renders
-          open on first paint, on every page.
+          Needed globally: the workspace switcher, the user menu and the bell
+          panel are all Alpine dropdowns, and issue #31's auth templates use
+          Alpine too. Without this every one of them renders open on first
+          paint, on every page.
         {% endcomment %}
         [x-cloak] { display: none !important; }
+        {% if show_app_shell %}
+        {% comment %}
+          **Leg 2.** Only the width is here; every other collapsed rule lives
+          in styles.css beside the rule it mirrors, where the pair cannot drift
+          apart, and applies pre-paint anyway because the stylesheet is a
+          render-blocking <link>. The width is the exception because its real
+          value comes from a Tailwind utility (`lg:w-60` / `lg:w-[60px]`) that
+          Alpine binds once it boots — and this file is unlayered, so a width
+          in styles.css would beat that utility and the collapse would never
+          move. Scoped to .sidebar-initial, which leg 3 strips at handover, so
+          it stops applying at exactly the moment the utility starts.
+        {% endcomment %}
+        .sidebar-initial { width: 240px; }
+        html.sidebar-is-collapsed .sidebar-initial { width: 60px; }
+        @media (max-width: 1023px) {
+            .sidebar-initial {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                transform: translateX(-100%);
+                z-index: 40;
+                width: 240px !important;
+            }
+            /* There is no collapsed state on a phone: the drawer is either
+               open at full width or off-screen. */
+            html.sidebar-is-collapsed .sidebar-initial { width: 240px !important; }
+        }
+        {% endif %}
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -67,27 +107,69 @@
 
 {% if show_app_shell %}
 {% comment %}
-  `wsOpen` is declared here rather than on the switcher because two controls
-  open that one panel: the header's workspace button and the rail's logo mark.
-  Shared state has to sit above both.
+  Two pieces of shell state. `sidebarCollapsed` is desktop-only and persisted —
+  x-effect writes it back on every change, and the pre-paint script in the head
+  reads it before Alpine exists. `mobileMenuOpen` is the drawer and is
+  deliberately NOT persisted: a drawer that reopens itself on the next page is
+  a drawer covering the page you asked for.
+
+  `wsOpen` used to be here because two controls opened one panel. There is one
+  trigger now, so it lives on the switcher — see partials/_app_sidebar.html.
 {% endcomment %}
 <div class="flex h-screen overflow-hidden"
      style="background: var(--surface-page);"
-     x-data="{ wsOpen: false }">
+     x-data="{ sidebarCollapsed: window.__bbSidebarCollapsed === true, mobileMenuOpen: false }"
+     x-effect="try { localStorage.setItem('sidebarCollapsed', sidebarCollapsed) } catch (e) {}"
+     @keydown.escape.window="mobileMenuOpen = false">
 
-    {% include "partials/_app_rail.html" %}
+    {% comment %}
+      `lg:hidden`, never a bare `hidden`: Alpine shows an element by clearing
+      its inline display, after which an unconditional display:none utility
+      reasserts itself and the element stays invisible forever. A responsive
+      variant is fine, and
+      test_no_element_combines_x_show_with_a_display_none_utility splits on
+      tokens for exactly that reason.
+    {% endcomment %}
+    <div x-show="mobileMenuOpen" x-cloak x-transition.opacity
+         @click="mobileMenuOpen = false"
+         class="sidebar-backdrop fixed inset-0 z-30 lg:hidden"></div>
+
+    {% include "partials/_app_sidebar.html" %}
 
     {% comment %}
       The 232px settings column, when a settings layout fills it. It sits
-      BESIDE the rail rather than replacing it — which is why no layout
+      BESIDE the sidebar rather than replacing it — which is why no layout
       overrides the main nav any more, and why partials/_nav_badge_sinks.html
-      could be deleted: with the rail on every page, no archetype strands the
+      could be deleted: with the sidebar on every page, no archetype strands the
       out-of-band badge targets the bell's poll aims at.
     {% endcomment %}
     {% block secondary_nav %}{% endblock %}
 
     <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {% block app_header %}{% include "partials/_app_header.html" %}{% endblock %}
+        {% comment %}
+          The only chrome above the page, and only below `lg`. On a desktop the
+          sidebar names the workspace and there is nothing else a bar would
+          carry — the search that used to sit in one is on the page it searched
+          (templates/contacts/list.html) and the bell is a nav row.
+
+          Not a {% templatetag openblock %} block {% templatetag closeblock %}:
+          it is shell furniture, and the header block it replaces was never
+          overridden by anything.
+        {% endcomment %}
+        <div class="mobile-topbar">
+            <button type="button" class="sidebar-toggle" @click="mobileMenuOpen = !mobileMenuOpen"
+                    title="Toggle menu" aria-label="Toggle menu"
+                    :aria-expanded="mobileMenuOpen ? 'true' : 'false'">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
+            <div class="flex items-center gap-2 min-w-0">
+                {% include "partials/_logo.html" with workspace=current_workspace size="sm" only %}
+                <span class="text-sm font-semibold truncate" style="color: var(--text-primary);">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
+            </div>
+            {% comment %}Spacer, so the name reads as centred against the hamburger.{% endcomment %}
+            <span class="w-7 flex-shrink-0"></span>
+        </div>
         {% block sub_nav %}{% endblock %}
 
         {% comment %}
@@ -95,9 +177,10 @@
           that every page rendered inside; the redesign puts the ground at
           --surface-page and lets each screen supply its own .card sections.
 
-          {% block main_pad %} is the seam for the two screens that go
-          full-bleed to the viewport edges — the inbox's three panes and the
-          flow builder — which need no page padding at all.
+          {% block main_pad %} is the seam for a screen that wants to go
+          full-bleed to the viewport edges. Nothing overrides it today — the
+          inbox's three panes and the flow builder were both meant to and
+          neither does — so treat it as an offer, not a description.
         {% endcomment %}
         <main class="app-shell-main flex-1 overflow-y-auto flex flex-col {% block main_pad %}p-4 lg:p-6{% endblock %}">
             {% block page_header %}{% endblock %}

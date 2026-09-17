@@ -111,28 +111,92 @@ class TestContentSecurityPolicy:
 
 
 @pytest.mark.django_db
-class TestTheRail:
-    """The rail replaced a collapsible sidebar, and with it a whole mechanism.
+class TestTheSidebar:
+    """The sidebar collapses, so the anti-flash mechanism is back — whole.
 
-    The old sidebar could start a page at either of two widths, so three pieces
-    had to ship together to stop the wrong one flashing: a pre-paint script
-    reading localStorage, a .sidebar-initial block mirroring every collapsed
-    rule in plain CSS, and an x-init handover on <aside>. The rail is a fixed
-    76px with nothing persisted, so all three were removed rather than reduced.
-    These tests pin that they stay gone — a half-restored mechanism is worse
-    than either state.
+    It can start a page at either of two widths, and three pieces have to ship
+    together to stop the wrong one flashing: a pre-paint script reading
+    localStorage, a `.sidebar-initial` block mirroring the collapsed width in
+    plain CSS, and an x-init handover on <aside> that strips both markers when
+    Alpine takes over. A half-restored mechanism is worse than either state —
+    leg 1 without leg 2 flashes 240px at every collapsed user, leg 2 without
+    leg 3 freezes the sidebar at its pre-paint width forever — so this asserts
+    all three, and asserts them at source level because a rendered body cannot
+    see whether the handover actually removes anything.
     """
 
-    def test_nothing_persists_or_restores_a_sidebar_width(self, tenant_client, shell_urls, shell_url):
+    def test_all_three_legs_of_the_anti_flash_contract_are_present(self, tenant_client, shell_urls, shell_url):
         body = tenant_client.get(shell_url).content.decode()
 
-        for ghost in [
-            "sidebarCollapsed",
-            "sidebar-is-collapsed",
-            "sidebar-initial",
-            "sidebar-collapsed",
-        ]:
-            assert ghost not in body, f"{ghost} came back without the rest of the mechanism"
+        for leg in ["sidebarCollapsed", "sidebar-is-collapsed", "sidebar-initial"]:
+            assert leg in body, f"{leg} went missing and took a third of the mechanism with it"
+
+    def test_each_leg_does_the_job_its_partner_assumes(self):
+        """The rendered page shows the three names; only the source shows that
+        each one is wired to the other two."""
+        root = Path(__file__).parents[3] / "templates"
+        base = (root / "base.html").read_text()
+        sidebar = (root / "partials" / "_app_sidebar.html").read_text()
+
+        # Leg 1: read before paint, stamped on <html>.
+        assert "localStorage.getItem('sidebarCollapsed')" in base
+        assert "document.documentElement.classList.add('sidebar-is-collapsed')" in base
+        # Leg 2: the mirror keyed on what leg 1 stamps, and only the width —
+        # every other collapsed rule lives beside its real counterpart.
+        assert "html.sidebar-is-collapsed .sidebar-initial { width: 60px; }" in base
+        # Leg 3: the handover strips both markers, so the Tailwind width
+        # utilities Alpine binds start applying at exactly that moment.
+        assert "$el.classList.remove('sidebar-initial')" in sidebar
+        assert "document.documentElement.classList.remove('sidebar-is-collapsed')" in sidebar
+
+    def test_the_collapse_is_persisted_rather_than_reset_on_every_page(self, tenant_client, shell_urls, shell_url):
+        body = tenant_client.get(shell_url).content.decode()
+
+        assert "localStorage.setItem('sidebarCollapsed', sidebarCollapsed)" in body
+
+    def test_the_collapse_never_reaches_inside_a_popover(self):
+        """A row rule scoped to the whole sidebar hits the switcher's panel.
+
+        The workspace switcher draws its options with .sidebar-nav-item, and
+        its panel is an absolutely-positioned child of .sidebar-ws — inside the
+        element that carries .sidebar-collapsed. So an unscoped
+        `.sidebar-collapsed .sidebar-nav-label { display: none }` hid every
+        workspace NAME in it: the panel kept the 220px width it is given for
+        exactly this state and showed a column of bare marks, with "New
+        workspace" reduced to a lone plus sign.
+
+        Scoping every row rule to .sidebar-nav or .sidebar-footer fixes it and
+        keeps fixing it for the next popover someone puts in the sidebar. Read
+        from the compiled bundle rather than the source so a selector that only
+        Tailwind emits cannot slip past.
+        """
+        from django.contrib.staticfiles import finders
+
+        bundle = Path(finders.find("css/dist/styles.css")).read_text()
+
+        # Every selector that collapses a row, in the order the minifier left
+        # them. Each must name the subtree it applies to.
+        row_selectors = re.findall(r"\.sidebar-collapsed [^,{]*\.sidebar-nav-(?:item|label)\b", bundle)
+
+        assert row_selectors, "the collapsed row rules vanished entirely"
+        for selector in row_selectors:
+            assert ".sidebar-nav " in selector or ".sidebar-footer " in selector, selector
+
+    def test_the_collapsed_rules_keep_their_pre_paint_twin(self):
+        """Leg 2 mirrors leg 1's class, and a rule added to one and not the
+        other is a flash nobody sees in review. Counting the pair is the
+        cheapest way to notice a single-sided edit."""
+        from django.contrib.staticfiles import finders
+
+        bundle = Path(finders.find("css/dist/styles.css")).read_text()
+
+        alpine_side = len(re.findall(r"\.sidebar-collapsed [^,{]+", bundle))
+        prepaint_side = len(re.findall(r"html\.sidebar-is-collapsed \.sidebar-initial [^,{]+", bundle))
+
+        assert alpine_side == prepaint_side, (
+            f"{alpine_side} collapsed selectors but {prepaint_side} pre-paint mirrors — "
+            "every collapsed rule ships in both halves or neither"
+        )
 
     def test_the_cloak_rule_survives_on_every_page(self, tenant_client, shell_urls, shell_url, client):
         """The one line of the old pre-paint <style> that is still load-bearing.
@@ -148,33 +212,35 @@ class TestTheRail:
         ]:
             assert "[x-cloak]" in body
 
-    def test_the_rail_renders_its_rows(self, tenant_client, shell_urls, shell_url):
+    def test_the_sidebar_renders_its_rows(self, tenant_client, shell_urls, shell_url):
         body = tenant_client.get(shell_url).content.decode()
-        rail = body[body.index("<aside") : body.index("</aside>")]
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
 
-        assert "rail-item" in rail
+        assert "sidebar-nav-item" in sidebar
         # Labels track the design, keys track the route — see MAIN_NAV.
         for label in ["Home", "Inbox", "Flows", "Broadcasts", "Contacts"]:
-            assert f">{label}</span>" in rail, label
+            assert f">{label}</span>" in sidebar, label
 
-    def test_sequences_and_notifications_left_the_rail(self, tenant_client, shell_urls, shell_url):
-        """Both moved rather than vanished: Sequences is a tab on the flows
-        page, Notifications is the header bell. A row for either here would be
-        a second way to reach one destination."""
+    def test_notifications_is_a_row_again_and_sequences_still_is_not(self, tenant_client, shell_urls, shell_url):
+        """Notifications came back when the header it had moved to was deleted:
+        the sidebar is the surface on every page now, and one row carries both
+        the count and the panel the appbar bell used to open. Sequences did not
+        — it is still a tab on the flows page, and a row for it here would be a
+        second way to reach one destination."""
         body = tenant_client.get(shell_url).content.decode()
-        rail = body[body.index("<aside") : body.index("</aside>")]
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
 
-        assert ">Sequences</span>" not in rail
-        assert ">Notifications</span>" not in rail
+        assert ">Notifications</span>" in sidebar
+        assert ">Sequences</span>" not in sidebar
 
-    def test_the_rail_survives_a_missing_optional_app(self, tenant_client, shell_urls, shell_url):
+    def test_the_sidebar_survives_a_missing_optional_app(self, tenant_client, shell_urls, shell_url):
         """apps.analytics is an optional install, so the Insights row reverses
-        to "#" and _render_nav drops it. The rail must not assume six items —
-        it is laid out with flex for exactly this."""
+        to "#" and _render_nav drops it. The nav must not assume a fixed number
+        of rows — it is laid out with flex for exactly this."""
         body = tenant_client.get(shell_url).content.decode()
-        rail = body[body.index("<aside") : body.index("</aside>")]
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
 
-        assert 'href="#"' not in rail
+        assert 'href="#"' not in sidebar
 
     def test_no_element_combines_x_show_with_a_display_none_utility(self):
         """`class="hidden" x-show="..."` is a trap that cannot be seen in a
@@ -343,7 +409,7 @@ class TestTheWorkspaceSettingsAreReachable:
 
     Before #130 the nine workspace-settings pages were reachable only by typing
     a URL, and the fix then was a "Workspace settings" link in the sidebar's
-    workspace switcher. The redesign removed that sidebar: the rail's Settings
+    workspace switcher. The redesign removed that sidebar: the nav's Settings
     row lands on the account settings page, and the settings nav is one list
     gated per row rather than two filtered ones. That is a different answer to
     the same question, so the guard moves rather than going away — what must
@@ -491,7 +557,7 @@ class TestStyleGuide:
         nobody can open is a design system nobody reviews."""
         body = client.get("/ui/").content.decode()
 
-        assert "rail-item" in body
+        assert "sidebar-nav-item" in body
 
     def test_it_exercises_ui_select_outside_the_page_it_was_written_for(self, client):
         body = client.get("/ui/").content.decode()
@@ -565,14 +631,32 @@ class TestLogoSizing:
     def test_the_default_variant_carries_no_modifier(self):
         assert "sidebar-logo-mark-sm" not in self._render(size="md")
 
-    def test_the_modifier_exists_in_the_compiled_stylesheet(self):
+    def test_every_modifier_the_partial_emits_exists_in_the_compiled_stylesheet(self):
         """A class the template emits and the bundle never defines is the same
-        no-op in a different place."""
+        no-op in a different place — and that is not hypothetical. The old rail
+        asked this partial for size="lg" for its whole life against a partial
+        that only branched on "sm", so `.sidebar-logo-mark-lg` was written,
+        compiled and never once applied. Discovering the modifiers from the
+        source rather than naming one is what makes that shape catchable.
+        """
         from django.contrib.staticfiles import finders
 
         bundle = Path(finders.find("css/dist/styles.css")).read_text()
+        partial = (Path(__file__).parents[3] / "templates" / "partials" / "_logo.html").read_text()
+        modifiers = set(re.findall(r"sidebar-logo-mark-\w+", partial))
 
-        assert ".sidebar-logo-mark-sm{" in bundle
+        assert modifiers, "the partial stopped emitting any size modifier at all"
+        for name in modifiers:
+            assert f".{name}{{" in bundle, name
+
+    def test_a_size_the_partial_does_not_know_falls_back_to_the_default(self):
+        """It cannot raise — Django templates do not — so the contract is that
+        an unknown size renders the default mark rather than a class the
+        stylesheet has never heard of."""
+        html = self._render(size="lg")
+
+        assert "sidebar-logo-mark" in html
+        assert "sidebar-logo-mark-" not in html
 
     def test_ambient_context_cannot_resize_the_mark(self):
         """The include passes `only`; without it a stray `size` in the page
@@ -583,47 +667,10 @@ class TestLogoSizing:
 
         assert "sidebar-logo-mark-sm" not in html
 
-    def test_every_size_a_caller_asks_for_reaches_the_stylesheet(self):
-        """The sizes are discovered from the call sites rather than listed here.
-
-        Listing them is how `lg` was lost: the partial branched on `sm` alone
-        while both of the rail's includes passed `size="lg"`, so every mark in
-        the product drew at the unmodified 30px and .sidebar-logo-mark-lg — the
-        26px rule the stylesheet comment calls "the rail's workspace button" —
-        was emitted nowhere. Naming the sizes in the test would have agreed with
-        the bug; asking the templates what they pass does not.
-
-        Read from the source stylesheet, not the compiled bundle: this is about
-        the rule existing at all, which the tracked file answers, and the two
-        tests above already cover the bundle and the cascade.
-        """
-        from django.conf import settings
-
-        root = Path(settings.BASE_DIR) / "templates"
-        sizes = set()
-        for path in root.rglob("*.html"):
-            for include in re.finditer(r"{%\s*include\s+\"partials/_logo\.html\".*?%}", path.read_text()):
-                sizes.update(re.findall(r"""\bsize=["'](\w+)["']""", include.group(0)))
-
-        assert sizes, "no caller passes a size — has the partial been inlined?"
-
-        stylesheet = (Path(settings.BASE_DIR) / "theme" / "static_src" / "src" / "styles.css").read_text()
-        missing = []
-        for size in sorted(sizes):
-            modifier = re.search(r"\bsidebar-logo-mark-\w+", self._render(size=size))
-            if size == "md":
-                assert modifier is None, "md is the base class's own size and takes no modifier"
-                continue
-            assert modifier, f'size="{size}" emitted no modifier, so it silently renders at the default'
-            if f".{modifier.group(0)} {{" not in stylesheet:
-                missing.append(f'size="{size}" emits .{modifier.group(0)}')
-
-        assert missing == [], "emitted with no rule behind it, so the size is a no-op: " + "; ".join(missing)
-
 
 @pytest.mark.django_db
 class TestSettingsLayouts:
-    def test_the_settings_nav_sits_beside_the_rail_rather_than_replacing_it(self, tenant_client, shell_urls):
+    def test_the_settings_nav_sits_beside_the_sidebar_rather_than_replacing_it(self, tenant_client, shell_urls):
         """The redesign's structural change, and the reason the badge sinks
         could be deleted.
 
@@ -631,13 +678,13 @@ class TestSettingsLayouts:
         the product's whole navigation out, which took the bell's out-of-band
         badge targets with it and left its poll aiming at nothing — every
         settings page logged htmx:oobErrorNoTarget once a minute. A second
-        column leaves the rail in place, so no archetype strands an id.
+        column leaves the sidebar in place, so no archetype strands an id.
         """
         body = tenant_client.get("/accounts/settings/").content.decode()
 
         assert 'class="setnav"' in body
-        # The rail is still there, with the rest of the product on it.
-        assert "rail-item" in body
+        # The sidebar is still there, with the rest of the product on it.
+        assert "sidebar-nav-item" in body
         assert ">Broadcasts</span>" in body
         # And so there is nothing to go "back" to.
         assert "Back to app" not in body
@@ -648,7 +695,7 @@ class TestSettingsLayouts:
 
         The intent was right and the mechanism was too coarse both ways. It hid
         every Workspace row from the account settings page, which is where the
-        rail's Settings row lands, so Channels, Tags, Labels and five more had
+        nav's Settings row lands, so Channels, Tags, Labels and five more had
         no entry point in the product at all. And inside a group it filtered
         nothing, so the Editor still saw rows they would be refused at. Each row
         is now gated on the key its own view is gated on, so one list is both
@@ -664,7 +711,7 @@ class TestSettingsLayouts:
             assert "Profile" in body
 
     def test_no_view_supplied_settings_active_string_is_needed(self, tenant_client, shell_urls):
-        """Deviation 4: the layouts read the same nav structure the rail does.
+        """Deviation 4: the layouts read the same nav structure the sidebar does.
         Studio needs 11 views to each remember a `settings_active` key.
 
         Asks /accounts/settings/ rather than /accounts/preferences/: the

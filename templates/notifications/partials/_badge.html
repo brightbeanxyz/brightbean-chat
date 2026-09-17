@@ -1,24 +1,25 @@
 {% comment %}
-The unread signal as an htmx **response** fragment. Never included in a page's
-first render — see _bell.html, which renders the dot inline instead. Including
-this one at page load would put a second `id="notification-badge"` in the
-document beside the bell's own, and an out-of-band swap resolves its target by
-id: it would find the wrong one, forever.
+The unread count as an htmx **response** fragment. Never included in a page's
+first render — partials/_sidebar_items.html renders the same slot inline via
+the nav's own badge partial, and including this one at page load would put a
+second `id="nav-badge-notifications"` in the document beside it. An
+out-of-band swap resolves its target by id: it would find the wrong one,
+forever.
 
 `hx-swap-oob` lets this ride along inside any other notification response and
 update the count wherever it is rendered, without the responding view knowing
 where that is. That is why this is HTML and Studio's equivalent is JSON: htmx
 swaps markup, and Studio needed a JS callback to turn its number into some.
 
-**One target, where there used to be three.** The count used to appear in the
-sidebar footer's bell, in the mobile top bar, and on the nav's Notifications
-row, and leaving any of them stale after "mark all read" showed one indicator
-contradicting another. The redesign removed two of those surfaces outright: the
-mobile bar became the rail's bottom tab strip, and Notifications left the nav
-for the header bell. One bell, on every page including settings, so one id.
+**One target.** The count used to appear in three places — a sidebar footer
+bell, a mobile top bar, and the nav's Notifications row — and leaving any of
+them stale after "mark all read" showed one indicator contradicting another.
+There is one surface again, and it is the nav row, so this uses the nav's own
+badge partial rather than a second convention: the markup one swap puts in is
+exactly the markup the next swap has to find.
 
 If a second surface ever wants the count again, it gets its own id and a line
 here — never a second element sharing this one.
 {% endcomment %}{% spaceless %}
-{% include "notifications/partials/_dot_slot.html" with key="notification-badge" oob=True %}
+{% include "partials/_nav_badge.html" with key="notifications" count=unread_notification_count oob=True only %}
 {% endspaceless %}

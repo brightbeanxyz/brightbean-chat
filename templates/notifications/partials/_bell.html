@@ -1,51 +1,105 @@
 {% comment %}
-The notification bell, mounted in the app header (partials/_app_header.html).
+The notification bell — now a row in the sidebar's nav, rendered from
+MAIN_NAV's `notifications` entry via its `partial` field (see
+partials/_sidebar_items.html).
 
-**Why the header now:** the redesign gave the shell a real 60px top bar, and
-the bell is the only unread indicator in the product. It used to live in the
-sidebar footer because there was nowhere else; it used to have a second copy in
-the mobile top bar for the same reason. Both of those are gone, and so is the
-Notifications row in the nav — the header renders on every page including
-settings, so one bell now covers every archetype.
+**Why a row again.** It lived in the sidebar footer, then in the appbar, for
+one reason each time: it is the only unread indicator in the product, so it has
+to be somewhere every page renders. With the header deleted the sidebar is that
+surface, and a nav row can carry both the count and the panel — so there is
+still exactly one way in, and notifications/partials/_badge.html still swaps
+exactly one id. Adding a second copy of this anywhere would put two elements on
+the same id, and an out-of-band swap only ever finds the first.
 
-That is why notifications/partials/_badge.html swaps ONE id rather than three.
-Adding a second copy of this bell anywhere would put two elements on the same
-id, and an out-of-band swap only ever finds the first.
+**Why the panel is `position: fixed`, teleported, and anchored on open.** Three
+things have to be true at once and each one rules out the obvious answer.
 
-**Why no `{% block alpine_components %}` and no inline script:** `x-data` on a
-wrapper is the workspace switcher's pattern (base.html:140) — there is no
-`Alpine.data()` to register, so nothing has to slot into base.html's
-load-bearing htmx → components → Alpine script order, and there is no inline
-script to carry a CSP nonce. Inline `x-*` needs `unsafe-eval`, which
+`.sidebar-nav` is `overflow-y: auto`, so an absolutely positioned panel
+escaping to the right is cut off at the sidebar's edge — and `overflow-x:
+visible` cannot be expressed alongside `overflow-y: auto`. Hence fixed:
+templates/components/ui_select.html hit the same wall against a horizontally
+scrolling toolbar and answered it the same way.
+
+But fixed alone is not enough here, and this is the part that looks like it
+works and does not. The <aside> carries a transform — `-translate-x-full` /
+`translate-x-0`, which is how the drawer slides — and **a transformed ancestor
+becomes the containing block for `position: fixed`**. The panel is then laid
+out inside the sidebar and clipped by that same `overflow-y` after all.
+`getBoundingClientRect()` reports plausible coordinates throughout, because the
+sidebar starts at x=0, so the symptom is a panel that is open, has a sensible
+rect, and paints nothing. Teleporting to <body> takes it out of the transformed
+subtree; nothing else does, short of dropping the slide animation.
+
+The coordinates are captured once, so scrolling the page or the nav closes the
+panel rather than letting it drift — scrolling the panel's own list does not,
+see the guard below. One expression covers every width the trigger can have:
+expanded (right edge 240 → panel at 248), collapsed (60 → 68), and the mobile
+drawer, where the clamp against `window.innerWidth` pulls a 320px panel back
+onto a 375px screen instead of off the side of it. Both clamps are two-sided:
+`Math.min` alone went negative on a short or narrow viewport — a landscape
+phone computed `375 - 420 = -45` and put "Mark all read" above the top of the
+window, where a fixed panel cannot be scrolled to.
+
+**Why no `{% templatetag openblock %} block alpine_components {% templatetag closeblock %}`
+and no inline script:** `x-data` on a wrapper is the workspace switcher's
+pattern — there is no `Alpine.data()` to register, so nothing has to slot into
+base.html's load-bearing htmx → components → Alpine script order, and there is
+no inline script to carry a CSP nonce. Inline `x-*` needs `unsafe-eval`, which
 config/settings/base.py already grants for exactly this reason.
+
+Args:
+  item: the resolved nav row (label, active, badge). Supplied by the renderer.
 {% endcomment %}
-<div class="relative flex-shrink-0"
-     x-data="{ bellOpen: false }"
-     @click.away="bellOpen = false"
-     @keydown.escape.window="bellOpen = false">
+<div class="relative"
+     x-data="{
+        bellOpen: false, top: 0, left: 0,
+        bellToggle(e){ if (this.bellOpen) { this.bellOpen = false; return; } const r = e.currentTarget.getBoundingClientRect(); this.left = Math.max(8, Math.min(r.right + 8, window.innerWidth - 328)); this.top = Math.max(8, Math.min(r.top, window.innerHeight - 420)); this.bellOpen = true; }
+     }"
+     {% comment %}
+       A guarded window listener rather than `@click.away`, and the guard is
+       load-bearing. `away` asks whether the click landed inside THIS element,
+       and the panel is teleported out of it — so every click inside the panel
+       read as a click outside and closed it. "Mark all read" marked everything
+       read and shut the panel in the same gesture.
+
+       Marking the panel and the trigger and skipping both is the same shape
+       the workspace switcher used while it had two triggers (`data-ws-toggle`,
+       now retired). Any future element that belongs to this panel needs one of
+       these attributes.
+     {% endcomment %}
+     @click.window="if (!$event.target.closest('[data-bell-panel]') && !$event.target.closest('[data-bell-toggle]')) { bellOpen = false }"
+     @keydown.escape.window="bellOpen = false"
+     {% comment %}
+       `.capture` because the thing most worth reacting to — a scroll of
+       `.sidebar-nav` — does not bubble; a capture-phase listener on window is
+       the only one that hears it. The cost is that it hears EVERY scroll in
+       the document, including the panel's own list, which is
+       `max-h-96 overflow-y-auto` and overflows past about five notifications.
+       Unguarded, the first scroll gesture inside the panel closed it and reset
+       the list to the top, so anything below the fold was unreachable. Same
+       guard as the click listener, for the same reason.
+     {% endcomment %}
+     @scroll.window.capture="if (!$event.target.closest || !$event.target.closest('[data-bell-panel]')) { bellOpen = false }">
 
     <button type="button"
-            @click="bellOpen = !bellOpen"
+            data-bell-toggle
+            @click="bellToggle($event)"
             hx-get="{% url 'notifications:bell' %}"
             hx-target="#notification-panel-body"
             hx-swap="innerHTML"
-            class="appbar-bell"
-            title="Notifications"
+            class="sidebar-nav-item{% if item.active %} active{% endif %}"
+            title="{{ item.label|default:'Notifications' }}"
             aria-haspopup="true"
             :aria-expanded="bellOpen ? 'true' : 'false'">
         {% include "partials/_nav_icon.html" with name="bell" %}
-        {% comment %}The dot, not _badge.html: that partial is the out-of-band
-        *response* fragment and carries a second id for the nav row's badge,
-        which would collide with the nav row's own on a first render.{% endcomment %}
-        {% include "notifications/partials/_dot_slot.html" with key="notification-badge" %}
+        <span class="sidebar-nav-label">{{ item.label|default:"Notifications" }}</span>
+        {% comment %}The nav's own badge partial, keyed to match the id
+        notifications/partials/_badge.html swaps out of band. The two ends have
+        to name the same id or the 60s poll lands nowhere, silently.{% endcomment %}
+        {% include "partials/_nav_badge.html" with key="notifications" count=item.badge only %}
     </button>
 
     {% comment %}
-      Opens downward (`top-full`), and right-aligned. The bell sits at the
-      top-right of the header now, not at the bottom of a sidebar — a panel
-      opening upward from here would run off the top of the window, and one
-      left-aligned would run off the right edge.
-
       A separate polling element rather than `hx-trigger="every 60s"` on the
       button: the button's own request fills the panel, and one element cannot
       have two targets. `hx-swap="none"` means only the out-of-band badge in the
@@ -55,8 +109,22 @@ config/settings/base.py already grants for exactly this reason.
     {% endcomment %}
     <div hx-get="{% url 'notifications:badge' %}" hx-trigger="every 60s" hx-swap="none"></div>
 
+    {% comment %}
+      :style, not a utility pair — and the chrome is .bb-select-panel rather
+      than an inline style, because Alpine's :style REPLACES the whole style
+      attribute and an inline background would vanish the moment the panel was
+      anchored.
+
+      x-teleport keeps the panel in this component's scope while moving it out
+      of the sidebar's transformed subtree. It does NOT keep it inside the
+      wrapper for `@click.away` — see the guarded listener up there, which is
+      what this `data-bell-panel` marks the panel for.
+    {% endcomment %}
+    <template x-teleport="body">
     <div x-show="bellOpen" x-cloak
-         class="bb-select-panel anim-collapse absolute top-full right-0 mt-2 z-50 w-80 py-1">
+         data-bell-panel
+         :style="`top:${top}px; left:${left}px;`"
+         class="bb-select-panel anim-collapse fixed z-50 w-80 py-1">
         {% comment %}
           Two triggers, one target: the button's hx-get fills this on open, and
           `notificationsChanged from:body` refills it after anything is marked
@@ -71,4 +139,5 @@ config/settings/base.py already grants for exactly this reason.
             <div class="px-4 py-6 text-center text-xs" style="color: var(--text-tertiary);">Loading…</div>
         </div>
     </div>
+    </template>
 </div>

@@ -296,196 +296,320 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   APP SHELL — rail, header, sub-nav, settings nav
+   APP SHELL — sidebar, sub-nav, settings nav
    ═══════════════════════════════════════════════════════════════
 
-   The 240px collapsible sidebar is gone and so is every trace of its
-   collapse: no persisted width, no pre-paint mirror, no x-init handover.
-   The rail is a fixed 76px at every breakpoint down to `lg`, below which it
-   becomes a bottom tab bar. Because there is no second, narrower state to
-   mirror, there is nothing here for a flash-of-wrong-width to happen to.
+   There is no top header any more. One sidebar carries the workspace
+   switcher, the whole primary navigation, notifications and the account
+   menu: 240px on a desktop, collapsing to 60px, and an off-canvas drawer
+   below `lg`.
+
+   The collapse is persisted, so the three-part anti-flash contract is back in
+   base.html's head — a pre-paint script stamping `sidebar-is-collapsed` on
+   <html>, the `.sidebar-initial` width mirror, and the x-init handover on
+   <aside>. All three ship together or none of them do; every collapsed rule
+   below is therefore written twice, once for each half.
+
+   NOTHING HERE SETS THE <aside>'s WIDTH. Everything in this file is unlayered
+   and Tailwind's utilities live in @layer utilities, so a `.sidebar { width }`
+   would beat `lg:w-60` / `lg:w-[60px]` and the collapse would never move.
+   Width is the utilities' job, plus the one inline rule on .sidebar-initial
+   that x-init removes.
    ═══════════════════════════════════════════════════════════════ */
-.rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 76px;
-  flex: 0 0 76px;
+:root {
+  /* Shared by .mobile-topbar's height and .setnav's mobile offset, which have
+     to agree or the settings strip slides under the bar. */
+  --mobile-bar-h: 60px;
+}
+
+.sidebar {
   background: var(--surface-0);
   border-right: 1px solid var(--border);
-  padding: 12px 0 10px;
 }
-.rail-logo-btn {
+
+/* --- The workspace button ------------------------------------------------ */
+.sidebar-ws { border-bottom: 1px solid var(--divider); }
+.sidebar-ws-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  padding: 0;
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border);
-  background: var(--surface-0);
-  cursor: pointer;
-}
-.rail-logo-btn:hover { border-color: var(--border-hover); }
-.rail-items,
-.rail-footer {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  gap: 10px;
   width: 100%;
+  padding: 14px 16px;
+  border: none;
+  background: transparent;
+  border-bottom-right-radius: var(--radius-lg);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
 }
-.rail-items {
+.sidebar-ws-btn:hover { background: rgba(var(--scrim-rgb), 0.04); }
+.sidebar-ws-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-body-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-ws-chevron {
+  flex-shrink: 0;
+  color: var(--text-ghost);
+  transition: transform var(--dur-fast) ease;
+}
+.sidebar-ws-chevron.open { transform: rotate(180deg); }
+
+/* --- Nav rows ------------------------------------------------------------ */
+.sidebar-nav {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  margin-top: 14px;
+  padding: 8px 12px;
 }
-.rail-footer {
-  flex-shrink: 0;
-  padding-top: 8px;
-}
-.rail-item {
+.sidebar-nav-item {
+  /* The badge's containing block. It is the row rather than a wrapper round
+     the glyph because the expanded badge is pushed to the row's far end with
+     margin-left:auto — inside a wrapper that auto margin has nothing to push
+     against and the pill lands on the icon. */
+  position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 5px;
-  width: 60px;
-  flex-shrink: 0;
-  padding: 8px 0;
-  border-radius: var(--radius-xl);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-tertiary);
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  margin-bottom: 1px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: left;
   text-decoration: none;
-  text-align: center;
   cursor: pointer;
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
-.rail-item:hover { background: var(--surface-page); color: var(--text-primary); }
-.rail-item.active { background: var(--primary-tint); color: var(--brand-700); }
-/* The badge's containing block. Without position:relative here the count
-   would be placed against the rail itself and drift as items scroll. */
-.rail-icon-wrap { position: relative; display: flex; }
-.rail-avatar {
-  width: 32px;
-  height: 32px;
-  margin-top: 8px;
-  flex-shrink: 0;
-  border-radius: var(--radius-full);
-  background: var(--brand-green-500);
-  color: var(--text-inverse);
-  font-size: var(--fs-sm);
+.sidebar-nav-item:hover {
+  background: rgba(var(--scrim-rgb), 0.04);
+  color: var(--text-primary);
+}
+.sidebar-nav-item.active {
+  background: var(--primary-tint);
+  color: var(--brand-700);
+  font-weight: 600;
+}
+.sidebar-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-section-label {
+  font-size: var(--fs-2xs);
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-ghost);
+  padding: 14px 10px 4px;
+}
+
+/* --- Footer: account, collapse toggle ------------------------------------ */
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 12px;
+  border-top: 1px solid var(--divider);
+}
+.sidebar-footer-expanded { display: flex; align-items: center; gap: 4px; }
+.sidebar-footer-collapsed { display: none; flex-direction: column; align-items: center; gap: 8px; }
+.sidebar-account {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-lg);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+.sidebar-account:hover { background: rgba(var(--scrim-rgb), 0.04); }
+.sidebar-account-name {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-account-meta {
+  font-size: var(--fs-2xs);
+  color: var(--text-ghost);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
   border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-ghost);
   cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
+.sidebar-toggle:hover { background: var(--surface-2); color: var(--text-secondary); }
 
 /* The unread count.
    Kept under its old name on purpose. This class and the markup around it are
    asserted as literal strings by apps/inbox/tests/test_read_state.py, and the
    same partial is both the shell's first render and the out-of-band response
-   fragment the bell's poll swaps in — the two ends have to agree exactly.
-   Restyling in place costs one block; renaming would cost three test rewrites
-   and a real chance of desynchronising the swap. */
+   fragment the poll swaps in — the two ends have to agree exactly. Restyling
+   in place costs one block; renaming would cost three test rewrites and a real
+   chance of desynchronising the swap. */
 .sidebar-badge {
-  position: absolute;
-  top: -4px;
-  right: -9px;
+  margin-left: auto;
+  flex-shrink: 0;
   min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  padding: 1px 6px;
   box-sizing: border-box;
   border-radius: var(--radius-full);
   background: var(--brand-500);
   color: var(--text-inverse);
   font-size: var(--fs-2xs);
   font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  line-height: 1.4;
+  text-align: center;
 }
 
-/* --- App header ---------------------------------------------------------- */
-.appbar {
+/* --- Collapsed, desktop only ---------------------------------------------
+   Each rule is written twice: once for the class Alpine toggles, once for the
+   pre-paint mirror keyed on <html>. They are adjacent on purpose — the pair
+   IS the contract, and a rule added to one and not the other is a flash
+   nobody sees in review.
+
+   THE ROW RULES ARE SCOPED TO .sidebar-nav AND .sidebar-footer, never to the
+   whole sidebar. The workspace switcher's panel is an absolutely-positioned
+   child of .sidebar-ws and it draws its options with .sidebar-nav-item too —
+   so an unscoped `.sidebar-collapsed .sidebar-nav-label { display: none }`
+   reached inside it and hid every workspace NAME. The panel kept its 220px
+   width and showed a column of bare marks, and "New workspace" became a lone
+   plus sign: the switcher was unusable in exactly the state it was widened
+   for. Anything that is a row in the nav or the footer collapses; anything in
+   a popover does not, whatever classes it shares. */
+@media (min-width: 1024px) {
+  .sidebar-collapsed .sidebar-nav .sidebar-nav-item,
+  .sidebar-collapsed .sidebar-footer .sidebar-nav-item,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-nav .sidebar-nav-item,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-footer .sidebar-nav-item {
+    justify-content: center;
+    padding: 8px;
+    gap: 0;
+  }
+
+  /* Descendant, not child: the Notifications row is a <button> inside its own
+     Alpine wrapper, so `>` would leave it uncollapsed. */
+  .sidebar-collapsed .sidebar-nav .sidebar-nav-label,
+  .sidebar-collapsed .sidebar-footer .sidebar-nav-label,
+  .sidebar-collapsed .sidebar-section-label,
+  .sidebar-collapsed .sidebar-ws-name,
+  .sidebar-collapsed .sidebar-ws-chevron,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-nav .sidebar-nav-label,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-footer .sidebar-nav-label,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-section-label,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-name,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-chevron { display: none; }
+
+  .sidebar-collapsed .sidebar-ws-btn,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-btn {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+    gap: 0;
+  }
+
+  .sidebar-collapsed .sidebar-nav,
+  .sidebar-collapsed .sidebar-footer,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-nav,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-footer { padding: 8px; }
+
+  .sidebar-collapsed .sidebar-footer-expanded,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-footer-expanded { display: none; }
+  .sidebar-collapsed .sidebar-footer-collapsed,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-footer-collapsed { display: flex; }
+
+  /* The label is gone, so margin-left:auto has nothing to push against and
+     the pill would sit on the glyph. It becomes the corner count the rail
+     used to draw — same element, same id, one presentation per width. Studio
+     hides the badge outright here and shows no unread count at all in its
+     collapsed state. */
+  .sidebar-collapsed .sidebar-nav .sidebar-badge,
+  .sidebar-collapsed .sidebar-footer .sidebar-badge,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-nav .sidebar-badge,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-footer .sidebar-badge {
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    margin-left: 0;
+    height: 15px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+}
+
+/* --- Mobile: the off-canvas drawer ---------------------------------------
+   This replaced a bottom tab bar. The objection that bar existed for — a
+   drawer needs a second copy of the nav, a second copy means a second
+   `nav-badge-inbox`, and an out-of-band swap only ever finds the first — does
+   not apply to this one: it is the SAME <aside>, repositioned by this media
+   query and slid in with a transform. One nav in the DOM, as before.
+
+   The drawer's own positioning (fixed/inset-y-0/-translate-x-full) stays in
+   utilities on the element, where nothing in this file competes with it. */
+@media (max-width: 1023px) {
+  .sidebar { box-shadow: var(--shadow-xl); }
+  .sidebar-nav-item { min-height: 44px; padding: 10px 12px; }
+  /* Desktop-only control: a `hidden lg:flex` at the call site would lose to
+     .sidebar-toggle's own display, this file being unlayered. */
+  .sidebar-footer .sidebar-toggle { display: none; }
+}
+.sidebar-backdrop { background: rgba(var(--scrim-rgb), 0.3); }
+
+/* --- The mobile top bar -------------------------------------------------- */
+.mobile-topbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  height: 60px;
+  height: var(--mobile-bar-h);
   flex-shrink: 0;
-  padding: 0 16px;
+  padding: 0 12px;
   background: var(--surface-0);
   border-bottom: 1px solid var(--border);
 }
-.appbar-ws {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 10px;
-  border-radius: var(--radius-control);
-  border: 1px solid var(--border);
-  background: var(--surface-0);
-  font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-.appbar-ws:hover { border-color: var(--border-hover); }
-.appbar-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 260px;
-  height: 36px;
-  padding: 0 14px;
-  border-radius: var(--radius-full);
-  background: var(--surface-page);
-  border: 1px solid transparent;
-  font-size: var(--fs-body);
-  color: var(--text-primary);
-}
-.appbar-search::placeholder { color: var(--text-ghost); }
-.appbar-search:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-ring);
-}
-.appbar-bell {
-  position: relative;
-  width: 36px;
-  height: 36px;
-  flex-shrink: 0;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border);
-  background: var(--surface-0);
-  color: var(--text-secondary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-.appbar-bell:hover { background: var(--surface-page); color: var(--text-primary); }
-/* Reuses .notif-dot and notifications/partials/_dot_slot.html rather than
-   inventing a second unread indicator — that partial owns the id the
-   out-of-band swap targets, and a second one would be a second thing to keep
-   in step. Only the placement is new. */
-.appbar-bell .notif-dot { position: absolute; top: 6px; right: 8px; }
-/* The search is the first thing to go on a narrow screen. A rule here rather
-   than `hidden sm:block` at the call site: this file is unlayered and beats
-   @layer utilities, so a display utility next to .appbar-search would lose. */
-@media (max-width: 639px) {
-  .appbar-search { display: none; }
+/* Same trap as .sidebar-toggle above: `lg:hidden` next to a component class
+   that sets display is a utility that never applies. */
+@media (min-width: 1024px) {
+  .mobile-topbar { display: none; }
 }
 
-/* --- Sub-nav (the tab strip under the header) ---------------------------- */
+/* --- Sub-nav (the tab strip at the top of a page that has one) ----------- */
+/* It used to sit under the app header. With the header gone it is the first
+   thing on the page on a desktop, and sits directly under .mobile-topbar on a
+   phone — which is why it keeps its own bottom border and white ground: it is
+   reading as the page's own top bar now, not as a second strip below one. */
 .subnav {
   display: flex;
   align-items: stretch;
@@ -559,7 +683,10 @@ body {
 @media (max-width: 1023px) {
   .setnav {
     position: absolute;
-    top: 60px;
+    /* Clears .mobile-topbar, which is the only chrome above it now — the
+       appbar this offset was originally written for is gone. Both read the
+       same token so they cannot drift. */
+    top: var(--mobile-bar-h);
     left: 0;
     right: 0;
     z-index: 20;
@@ -589,73 +716,6 @@ body {
   .setnav ~ div .app-shell-main { padding-top: 48px; }
 }
 
-/* --- Mobile: the rail becomes a bottom tab bar --------------------------- */
-/* Not an off-canvas drawer, deliberately. A drawer needs a second copy of the
-   nav, and a second copy means a second `nav-badge-inbox` — which is exactly
-   how notification-badge-mobile came to exist, and what the "each id appears
-   exactly once" tests forbid. One rail, repositioned. */
-@media (max-width: 1023px) {
-  .rail {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 40;
-    width: 100%;
-    flex: none;
-    flex-direction: row;
-    justify-content: space-around;
-    height: 60px;
-    padding: 0 4px;
-    border-right: none;
-    border-top: 1px solid var(--border);
-  }
-  .rail-items {
-    flex-direction: row;
-    justify-content: space-around;
-    margin-top: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-  }
-  /* The workspace mark goes: the header already names the workspace, and the
-     bar needs the width. The FOOTER STAYS. Hiding it took Library, Settings and
-     the avatar's Sign out with it, and nothing else on a phone offers them —
-     the header has no menu and the tab strip has no room — so a mobile reader
-     could not reach settings or sign out of the product at all.
-
-     It becomes the right-hand end of the bar instead: the avatar, whose menu
-     carries Library, Settings and Sign out (see partials/_app_rail.html). Its
-     own two rail rows are hidden because they are in that menu. */
-  .rail-logo-btn { display: none; }
-  .rail-footer {
-    flex-direction: row;
-    width: auto;
-    flex: 0 0 auto;
-    padding-top: 0;
-    padding-left: 4px;
-    border-left: 1px solid var(--border);
-    margin-left: 2px;
-  }
-  .rail-footer .rail-item { display: none; }
-  .rail-avatar { margin-top: 0; }
-  .rail-item {
-    width: auto;
-    min-width: 54px;
-    padding: 6px 4px;
-    gap: 3px;
-  }
-  /* Six items in 375px is tight by design — the alternative was hiding two
-     behind a "more", which is the drawer problem again in miniature. They
-     shrink to fit and the strip scrolls if a seventh ever arrives. */
-  .rail-item span:last-child {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Clear the bar so the last row of any scrolling page stays reachable. */
-  .app-shell-main { padding-bottom: 60px; }
-}
 .sidebar-logo-mark {
   width: 30px;
   height: 30px;
@@ -686,14 +746,6 @@ img.sidebar-logo-mark {
   width: 28px;
   height: 28px;
 }
-/* The rail's workspace button. Same reason as -sm: a caller cannot shrink or
-   grow this from the outside, so each size is its own modifier. */
-.sidebar-logo-mark-lg {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-lg);
-}
-
 /* ═══════════════════════════════════════════════════════════════
    SURFACES — the shared card, and the page furniture on top of it
    ═══════════════════════════════════════════════════════════════
@@ -1916,21 +1968,6 @@ span.flatpickr-weekday {
    Studio hard-codes bg-green-50 / text-green-600 / bg-orange-50 for these,
    which is a second palette living outside the design system. Same shapes,
    token values. */
-
-/* The unread dot on the bell. Absolutely positioned, so it survives the 60px
-   collapsed rail where .sidebar-badge — which is `margin-left: auto` and is
-   display:none when collapsed — could not. */
-.notif-dot {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--primary);
-  /* Punches the dot out of whatever it overlaps, so it reads at 8px. */
-  box-shadow: 0 0 0 2px var(--surface-0);
-}
 
 /* One row in the bell panel or the history list. */
 .notif-item {

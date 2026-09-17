@@ -1,25 +1,28 @@
-"""The SPEC §4 resolution chain: workspace override → organization → env.
+"""The resolution chain: deployment env → organization.
 
-Studio's ``resolve_platform_credentials`` runs the other way (env dominant with
-an org fallback), which makes the most specific configuration the least
-authoritative. Deviation 4 inverts it.
+Environment-first, which is BrightBean Studio's direction and the inverse of
+what this project shipped first. Platform app credentials are developer
+credentials, so the deployment's own environment is the authoritative level and
+the organization row is the fallback for a deployment serving several
+organizations. The workspace-level override that used to sit on top is gone
+along with its settings page.
 """
+
+import logging
 
 import pytest
 
-from apps.credentials.models import PlatformCredential, WorkspaceCredentialOverride
+from apps.credentials.models import PlatformCredential
 from apps.credentials.resolution import (
     SOURCE_ENV,
     SOURCE_NONE,
     SOURCE_ORGANIZATION,
-    SOURCE_WORKSPACE,
     resolve_platform_credentials,
 )
 
 PLATFORM = "instagram"
 ENV_SET = {"client_id": "env-id", "client_secret": "env-secret"}
 ORG_SET = {"client_id": "org-id", "client_secret": "org-secret"}
-WS_SET = {"client_id": "ws-id", "client_secret": "ws-secret"}
 
 
 @pytest.fixture
@@ -28,21 +31,20 @@ def env_credentials(settings):
     return ENV_SET
 
 
+@pytest.fixture
+def no_env(settings):
+    settings.PLATFORM_CREDENTIALS_FROM_ENV = {}
+
+
 def _org(tenancy, credentials):
     return PlatformCredential.objects.create(
         organization=tenancy.organization, platform=PLATFORM, credentials=credentials
     )
 
 
-def _workspace(tenancy, credentials):
-    return WorkspaceCredentialOverride.objects.create(
-        workspace=tenancy.workspace, platform=PLATFORM, credentials=credentials
-    )
-
-
 @pytest.mark.django_db
-class TestTheThreeLevels:
-    def test_nothing_configured_anywhere(self, tenancy):
+class TestTheTwoLevels:
+    def test_nothing_configured_anywhere(self, tenancy, no_env):
         resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
 
         assert resolution.source == SOURCE_NONE
@@ -55,7 +57,7 @@ class TestTheThreeLevels:
         assert resolution.source == SOURCE_ENV
         assert resolution.credentials == ENV_SET
 
-    def test_the_organization_beats_env(self, tenancy, env_credentials):
+    def test_organization_only(self, tenancy, no_env):
         _org(tenancy, ORG_SET)
 
         resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
@@ -63,37 +65,49 @@ class TestTheThreeLevels:
         assert resolution.source == SOURCE_ORGANIZATION
         assert resolution.credentials == ORG_SET
 
-    def test_the_workspace_beats_both(self, tenancy, env_credentials):
+    def test_env_beats_the_organization(self, tenancy, env_credentials):
+        """The headline of this change, and the inverse of what shipped first.
+
+        A self-hoster who sets an env var is not silently overridden by a row
+        somebody entered in the admin.
+        """
         _org(tenancy, ORG_SET)
-        _workspace(tenancy, WS_SET)
 
         resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
 
-        assert resolution.source == SOURCE_WORKSPACE
-        assert resolution.credentials == WS_SET
+        assert resolution.source == SOURCE_ENV
+        assert resolution.credentials == ENV_SET
 
-    def test_removing_a_level_falls_back_to_the_next(self, tenancy, env_credentials):
+    def test_removing_env_falls_back_to_the_organization(self, tenancy, settings, env_credentials):
         _org(tenancy, ORG_SET)
-        override = _workspace(tenancy, WS_SET)
 
-        override.delete()
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {}
+
         assert resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace).source == SOURCE_ORGANIZATION
 
-        PlatformCredential.objects.for_org(tenancy.organization.pk).delete()
-        assert resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace).source == SOURCE_ENV
+    def test_a_complete_env_level_issues_no_query(self, tenancy, env_credentials, django_assert_num_queries):
+        """Env-first is also a query saved on every inbound delivery.
 
-    def test_organization_only_resolution_ignores_workspace_overrides(self, tenancy):
+        ``meta_common.app_secret`` runs this per webhook, so the common
+        self-hosted shape — one app in the environment — must not touch the
+        credential table at all.
+        """
         _org(tenancy, ORG_SET)
-        _workspace(tenancy, WS_SET)
+
+        with django_assert_num_queries(0):
+            resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
+
+    def test_the_organization_is_inferred_from_the_workspace(self, tenancy, no_env):
+        _org(tenancy, ORG_SET)
+
+        assert resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace).source == SOURCE_ORGANIZATION
+
+    def test_an_explicit_organization_resolves_without_a_workspace(self, tenancy, no_env):
+        _org(tenancy, ORG_SET)
 
         resolution = resolve_platform_credentials(PLATFORM, organization=tenancy.organization)
 
         assert resolution.source == SOURCE_ORGANIZATION
-
-    def test_the_organization_is_inferred_from_the_workspace(self, tenancy):
-        _org(tenancy, ORG_SET)
-
-        assert resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace).source == SOURCE_ORGANIZATION
 
 
 @pytest.mark.django_db
@@ -101,27 +115,25 @@ class TestIncompleteLevelsFallThrough:
     """A level wins only if it satisfies REQUIRED_CREDENTIAL_KEYS.
 
     The alternatives were both worse: merging keys across levels assembles
-    credential sets no provider will accept, and letting an incomplete override
-    win means one blank field silently disables a working organization.
+    credential sets no provider will accept, and letting an incomplete level win
+    means one blank value silently disables a working configuration below it.
     """
 
-    def test_an_incomplete_workspace_override_is_skipped(self, tenancy, env_credentials):
+    def test_an_incomplete_env_level_is_skipped(self, tenancy, settings):
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {PLATFORM: {"client_id": "env-id"}}
         _org(tenancy, ORG_SET)
-        _workspace(tenancy, {"client_id": "ws-id"})
 
         resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
 
         assert resolution.source == SOURCE_ORGANIZATION
         assert resolution.credentials == ORG_SET
 
-    def test_an_incomplete_organization_is_skipped(self, tenancy, env_credentials):
+    def test_an_incomplete_organization_is_skipped(self, tenancy, no_env):
         _org(tenancy, {"client_secret": "org-secret"})
 
-        resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
+        assert resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace).source == SOURCE_NONE
 
-        assert resolution.source == SOURCE_ENV
-
-    def test_incomplete_env_resolves_to_nothing(self, tenancy, settings):
+    def test_incomplete_env_with_no_organization_resolves_to_nothing(self, tenancy, settings):
         settings.PLATFORM_CREDENTIALS_FROM_ENV = {PLATFORM: {"client_id": "env-id"}}
 
         assert resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace).source == SOURCE_NONE
@@ -129,41 +141,91 @@ class TestIncompleteLevelsFallThrough:
     def test_every_level_incomplete_resolves_to_nothing(self, tenancy, settings):
         settings.PLATFORM_CREDENTIALS_FROM_ENV = {PLATFORM: {"client_id": "env-id"}}
         _org(tenancy, {"client_id": "org-id"})
-        _workspace(tenancy, {"client_id": "ws-id"})
 
         assert resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace).source == SOURCE_NONE
 
-    def test_keys_are_never_merged_across_levels(self, tenancy):
+    def test_keys_are_never_merged_across_levels(self, tenancy, settings):
+        """An env client_id must not be paired with an org client_secret."""
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {PLATFORM: {"client_id": "env-id"}}
         _org(tenancy, ORG_SET)
-        _workspace(tenancy, {"client_id": "ws-id"})
 
         resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
 
-        assert resolution.credentials["client_id"] == "org-id"
+        assert resolution.credentials == ORG_SET
 
-    def test_the_skip_is_logged_without_the_values(self, tenancy, caplog, env_credentials):
-        import logging
-
-        _workspace(tenancy, {"client_id": "ws-id"})
+    def test_the_skip_is_logged_without_the_values(self, tenancy, settings, caplog):
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {PLATFORM: {"client_id": "env-only-id"}}
 
         with caplog.at_level(logging.DEBUG, logger="apps.credentials.resolution"):
             resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
 
         text = caplog.text
         assert "client_secret/app_secret" in text
-        assert "ws-id" not in text
+        assert "env-only-id" not in text
+
+    def test_a_verify_token_alone_is_not_reported_as_a_skip(self, tenancy, settings, caplog):
+        """The shape a deployment using an organization row actually has.
+
+        ``PLATFORM_<P>_VERIFY_TOKEN`` must be set in the environment even when
+        the app id and secret come from the admin, so this env level is
+        permanently "incomplete" — and it is resolved on every inbound
+        delivery. Reporting it would be a log line per webhook for a correct
+        configuration.
+        """
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {PLATFORM: {"verify_token": "hub-token"}}
+        _org(tenancy, ORG_SET)
+
+        with caplog.at_level(logging.DEBUG, logger="apps.credentials.resolution"):
+            resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
+
+        assert resolution.source == SOURCE_ORGANIZATION
+        assert "Skipping" not in caplog.text
+
+    def test_nothing_configured_is_not_reported_as_a_skip(self, tenancy, no_env, caplog):
+        with caplog.at_level(logging.DEBUG, logger="apps.credentials.resolution"):
+            resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
+
+        assert "Skipping" not in caplog.text
+
+    def test_unrecognised_keys_are_still_reported(self, tenancy, settings, caplog):
+        """The failure this log exists for: key names that are simply wrong.
+
+        ``PLATFORM_INSTAGRAM_CLIENTID`` (no underscore) parses into a key the
+        chain does not know. The operator believes the platform is configured
+        and nothing works, so silence here is the worst possible answer — the
+        guard above must not widen into it.
+        """
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {
+            PLATFORM: {"clientid": "typo-id-value", "clientsecret": "typo-secret-value"}
+        }
+
+        with caplog.at_level(logging.DEBUG, logger="apps.credentials.resolution"):
+            resolution = resolve_platform_credentials(PLATFORM, workspace=tenancy.workspace)
+
+        assert resolution.source == SOURCE_NONE
+        assert "client_id/app_id" in caplog.text
+        assert "client_secret/app_secret" in caplog.text
+        # Key names only, never the values the operator actually typed.
+        assert "typo-id-value" not in caplog.text
+        assert "typo-secret-value" not in caplog.text
+
+    def test_a_platform_with_no_app_credentials_is_never_reported(self, tenancy, settings, caplog):
+        """Telegram, SMS and email have no required keys, so nothing they carry
+        is a half-finished credential set."""
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {"telegram": {"token": "bot-token"}}
+
+        with caplog.at_level(logging.DEBUG, logger="apps.credentials.resolution"):
+            resolve_platform_credentials("telegram", workspace=tenancy.workspace)
+
+        assert "Skipping" not in caplog.text
 
 
 @pytest.mark.django_db
 class TestTenantIsolation:
-    def test_one_workspaces_override_does_not_leak_into_another(self, tenancy, other_tenancy):
-        _workspace(tenancy, WS_SET)
-
-        assert resolve_platform_credentials(PLATFORM, workspace=other_tenancy.workspace).source == SOURCE_NONE
-
-    def test_one_orgs_credentials_do_not_leak_into_another(self, tenancy, other_tenancy):
+    def test_one_orgs_credentials_do_not_leak_into_another(self, tenancy, other_tenancy, no_env):
         _org(tenancy, ORG_SET)
 
+        assert resolve_platform_credentials(PLATFORM, workspace=other_tenancy.workspace).source == SOURCE_NONE
         assert resolve_platform_credentials(PLATFORM, organization=other_tenancy.organization).source == SOURCE_NONE
 
 

@@ -361,8 +361,10 @@ pinned `local` would silently overwrite your switch to `s3` on the next deploy
 and imports would start failing again. (Render does not allow `sync: false`
 inside an environment group, which is why these cannot be shared declaratively
 the way the crypto secrets are — move them into a shared environment group from
-the dashboard once you have deployed.) On Railway, use a shared variable rather
-than typing them into each service.
+the dashboard once you have deployed.) On Railway, set them on `web` and
+reference them from the worker (`${{web.S3_BUCKET_NAME}}` and so on), or hold
+them in a project shared variable; a template has no project-level variables at
+all, so references are the only option there.
 
 Leave `S3_REGION_NAME` at `auto` unless your provider needs a real region —
 AWS does, R2 does not.
@@ -449,70 +451,236 @@ per-service `railway.json` files were removed because Railway no longer allows
 new services to opt into that format. Existing Railway services that used those
 files need their settings migrated before the next deployment, and before
 Railway's December 1, 2026 cutoff. See [Railway's Infrastructure as Code
-guide](https://docs.railway.com/infrastructure-as-code).
+guide](https://docs.railway.com/infrastructure-as-code). A `railway.toml` added
+to this repository today would be read by nothing.
 
-1. Create a project with a **Postgres** service. Add a private S3-compatible
-   bucket (Railway Bucket or another provider) for uploaded media and queued
-   contact-import files.
-2. Add **web** from this repository. Railway detects the root Dockerfile. Enable
-   public HTTP networking and generate a domain. Keep the Dockerfile's default
-   Gunicorn start command. Set the pre-deploy command to
-   `python manage.py migrate --noinput`, the health-check path to `/healthz`,
-   and a health-check timeout of at least 120 seconds.
-3. Add **worker** from the same repository and Dockerfile. Set its start command
-   to `python manage.py process_tasks`. Keep it running as a persistent service;
-   give it no public domain or HTTP health check. The worker runs the
-   PostgreSQL-backed queue; Redis and a separate scheduler are unnecessary.
-4. Set these variables on **both** app services. Use Railway shared variables
-   for the secrets and storage configuration so web and worker receive identical
-   values. Create `SECRET_KEY` and `ENCRYPTION_KEY_SALT` once each with distinct
-   random values and retain them for database recovery.
+The layout is three services — `Postgres`, `web`, `worker` — plus a private
+S3-compatible bucket. Cloudflare R2 is the worked example below; AWS S3,
+Backblaze B2 and Railway Bucket differ only in how you fill the same five
+`S3_*` variables.
 
-   | Variable | Value |
-   |---|---|
-   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (if the database service is named `Postgres`) |
-   | `DJANGO_SETTINGS_MODULE` | `config.settings.production` |
-   | `DJANGO_ENV_FILE` | `/nonexistent` |
-   | `SECRET_KEY`, `ENCRYPTION_KEY_SALT` | Two distinct, shared random secrets |
-   | `ALLOWED_HOSTS` | The web service's public hostname **and** `healthcheck.railway.app`, comma-separated; add custom domains when attached |
-   | `APP_URL` | `https://` plus the web service's public hostname |
-   | `TRUSTED_PROXIES` | `127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
-   | `STORAGE_BACKEND` | `s3` |
-   | `S3_BUCKET_NAME`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT_URL`, `S3_REGION_NAME` | The same private bucket's settings on both services |
+### Before you start
 
-   Railway Bucket exposes `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY`,
-   `ENDPOINT` and `REGION`; reference those from the application's corresponding
-   `S3_*` variables. Use the bucket's `BUCKET` value, not its display name or
-   `RAILWAY_BUCKET_NAME`. For AWS S3, leave `S3_ENDPOINT_URL` empty and use its
-   actual region. Do not set `S3_CUSTOM_DOMAIN` for a private bucket without a
-   CloudFront signer.
+**Install Railway's GitHub App on the account that owns the repository.** For a
+repository under an organisation, an installation on your personal account is
+not enough. Railway's repository field validates any public repository's URL and
+reports "Valid GitHub repo", but creating the service needs an installation that
+covers it — so without one the button simply does nothing, with no error.
+Install it at `https://github.com/apps/railway-app/installations/new`, select the
+owning organisation, and grant access to this repository. The repository
+appearing in Railway's picker *by name* is the confirmation; having to paste a
+URL means the installation landed on the wrong account.
 
-Railway sends the health probe with `Host: healthcheck.railway.app`. Without
-that exact entry in `ALLOWED_HOSTS`, Django returns `400` and the deployment
-fails even while Gunicorn is running. The public hostname alone is insufficient.
-After deployment, check the web service's `/healthz`, confirm the worker remains
-running, and sign up at `/accounts/signup/`.
+**Generate the two crypto secrets** now, with distinct values:
+
+```console
+$ python -c "import secrets; [print(secrets.token_urlsafe(64)) for _ in range(2)]"
+```
+
+The first is `SECRET_KEY`, the second `ENCRYPTION_KEY_SALT`. Both are enforced
+at import time by `apps/common/checks.py` (`common.E001`, `common.E002`), and
+both are needed to read a database backup — keep them wherever you keep the
+backups.
+
+### Cloudflare R2
+
+1. **R2 → Create bucket.** One bucket per environment; `…-prod` and `…-staging`
+   keep a staging deploy from writing into production's media.
+2. **Leave it private.** Do not enable the `r2.dev` public URL and do not attach
+   a custom domain. Delivery is by presigned URL with a one-hour expiry, and
+   [`SECURITY-BASELINE.md`](SECURITY-BASELINE.md) §9 is why: a public bucket
+   hands out every uploaded file to anyone who guesses a key.
+3. **R2 → API → Create Account API token**, permission **Object Read & Write**,
+   scoped to that one bucket. One token per bucket, so a staging leak cannot
+   reach production media.
+
+| Variable | R2 value |
+|---|---|
+| `S3_BUCKET_NAME` | The bucket name |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | From the API token |
+| `S3_ENDPOINT_URL` | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` — account-level, no bucket in the path |
+| `S3_REGION_NAME` | `auto` |
+| `S3_CUSTOM_DOMAIN` | **Unset.** |
+
+No CORS rules are needed: uploads go through Django with boto3, and the browser
+only ever loads the resulting URLs in `<img>` and `<video>`.
+
+`S3_CUSTOM_DOMAIN` has to stay unset because django-storages only signs
+custom-domain URLs when a CloudFront key pair is configured too, so a private
+bucket behind one serves unsigned URLs that 403 at delivery (`common.W001`
+explains this at boot). Leaving it unset is also what makes the Content Security
+Policy line up without further configuration: boto3 builds **path-style** URLs
+for a custom `endpoint_url` — `https://<account>.r2.cloudflarestorage.com/<bucket>/<key>` —
+so the origin `config/settings/base.py` derives from `S3_ENDPOINT_URL` and adds
+to `img-src` and `media-src` is the same origin the media is actually served
+from.
+
+### The services
+
+1. **Postgres.** `+ New → Database → Add PostgreSQL`. Leave it named `Postgres`;
+   the variable references below assume that name.
+2. **`web`**, from this repository. Railway detects the root Dockerfile.
+   - Public networking on, domain generated.
+   - Custom start command **empty** — the Dockerfile's `CMD` already binds
+     Gunicorn to `$PORT`.
+   - Pre-deploy command `python manage.py migrate --noinput`.
+   - Health-check path `/healthz`, timeout at least 120 seconds. `/healthz` does
+     a real database round-trip and answers 503 until Postgres is reachable, so
+     a short timeout fails the first deploy of an otherwise healthy app.
+3. **`worker`**, from the same repository and Dockerfile.
+   - Custom start command `python manage.py process_tasks`.
+   - No public domain, no health check, **no pre-deploy command** — migrations
+     belong to `web` alone. Two services migrating in parallel race on the same
+     DDL, which is also why `migrate && process_tasks` is the wrong start
+     command.
+   - **Cron Schedule empty.** A schedule turns the service into a cron job:
+     Railway runs the start command on that schedule and expects it to exit.
+     `process_tasks` never exits, so a schedule of, say, `0 0 * * *` leaves the
+     queue dead until midnight, after which every later execution is skipped
+     because the previous one is still running.
+   - **Serverless off** (Settings → Deploy → Serverless), if your plan offers
+     it. It is opt-in, so a new service already has it off. A sleeping worker
+     would never wake: Railway wakes a service on inbound traffic, and nothing
+     ever calls this one.
+   - Restart policy **Always** rather than On Failure. The worker exits *zero*
+     on SIGTERM, by design, so that a redeploy drains the batch in flight — and
+     On Failure does not restart a zero exit.
+   - Replicas can go past one. The claim statement uses `FOR UPDATE SKIP
+     LOCKED`, so concurrent workers take disjoint batches ([`SPEC.md`](SPEC.md)
+     §15). Redis and a separate scheduler are unnecessary.
+
+### Variables
+
+Set these on **both** app services. Project Settings → Shared Variables holds
+the values one service is not the natural owner of; either way `web` and
+`worker` must end up with *identical* values for the secrets and the storage
+configuration.
+
+| Variable | `web` | `worker` |
+|---|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | `${{Postgres.DATABASE_URL}}` |
+| `DJANGO_SETTINGS_MODULE` | `config.settings.production` | same |
+| `DJANGO_ENV_FILE` | `/nonexistent` | same |
+| `SECRET_KEY`, `ENCRYPTION_KEY_SALT` | The two generated secrets | `${{web.SECRET_KEY}}`, `${{web.ENCRYPTION_KEY_SALT}}` |
+| `ALLOWED_HOSTS` | `${{RAILWAY_PUBLIC_DOMAIN}},healthcheck.railway.app` | `${{web.RAILWAY_PUBLIC_DOMAIN}}` |
+| `APP_URL` | `https://${{RAILWAY_PUBLIC_DOMAIN}}` | `https://${{web.RAILWAY_PUBLIC_DOMAIN}}` |
+| `TRUSTED_PROXIES` | `127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | same |
+| `STORAGE_BACKEND` | `s3` | `s3` |
+| `S3_*` | The bucket's five values | `${{web.S3_BUCKET_NAME}}` and so on |
+
+Reference `web`'s values from `worker` rather than typing them twice. A typo in
+`SECRET_KEY`, `ENCRYPTION_KEY_SALT` or the bucket credentials does not fail
+anything at boot: the worker starts, and then cannot decrypt the channel
+credentials `web` wrote, or writes media into a bucket `web` does not read.
+Both surface days later as one broken feature. `${{RAILWAY_PUBLIC_DOMAIN}}` and
+`${{web.RAILWAY_PUBLIC_DOMAIN}}` also mean the hostnames configure themselves,
+including in a duplicated environment.
+
+The service Variables tab has a **Raw Editor** that accepts `.env` format, which
+is quicker and less error-prone than adding a dozen rows by hand.
+
+Two Railway-specific traps are worth stating outright:
+
+- **`healthcheck.railway.app` is not optional.** Railway sends the health probe
+  with that exact `Host` header. Without the entry, Django answers 400 and the
+  deployment fails while Gunicorn is running perfectly. The public hostname
+  alone is insufficient.
+- **Attaching a custom domain needs both `ALLOWED_HOSTS` and `APP_URL` updated**
+  by hand — the `${{RAILWAY_PUBLIC_DOMAIN}}` reference keeps resolving to the
+  `.up.railway.app` name. Do it before inviting anyone: migration
+  `accounts.0002_site_from_app_url` reads `APP_URL` once, when it first runs, to
+  set the Django `Site` that allauth puts in account emails. Correcting
+  `APP_URL` later does not rewrite that row; the admin does.
+
+### First deploy
+
+Deploy **`web` first and let it go green**, then deploy `worker`. Railway has no
+cross-service ordering, and until `web`'s pre-deploy migration has run, the
+worker is talking to a database with no tables: it raises on the first claim,
+exits non-zero, and restarts. That self-heals — but a fresh environment can burn
+the whole restart budget before the first migration lands, and a worker that has
+exhausted its retries stays down silently. Raising the retry count is the other
+way round it.
+
+Then check the three things that fail independently:
+
+```console
+$ curl -fsS https://<your-web-domain>/healthz
+```
+
+the worker's logs (it should be claiming batches, not exiting), and an actual
+upload — a media file that renders after a reload proves the presigning, the
+bucket policy and the CSP origin all agree.
+
+### Staging and production environments
+
+A Railway environment is an isolated copy of every service in the project, and
+all variables are scoped to one. `production` exists already.
+
+1. **Environment dropdown → `+ New Environment` → Duplicate Environment**, from
+   `production`. Services, configuration and variables are copied as *staged*
+   changes, which nothing applies until you approve them.
+2. **While they are still staged**, change what must not be shared:
+   - **Source branch** on `web` and `worker` — point staging at a `staging`
+     branch. Per-environment deploy triggers live in Project Settings →
+     Environments.
+   - **New `SECRET_KEY` and `ENCRYPTION_KEY_SALT`.** One exception, and it
+     inverts the rule: if you ever restore a *production* database dump into
+     staging, staging needs production's two values or every encrypted
+     credential in that dump is unreadable.
+   - **The staging bucket and its own token** in the `S3_*` variables.
+   - **SMTP** pointed at a sandbox, or `EMAIL_BACKEND_TYPE=console`, so staging
+     cannot email real contacts.
+   - A generated domain for staging's `web`. The `${{RAILWAY_PUBLIC_DOMAIN}}`
+     references above pick it up on their own.
+3. **Deploy.** The duplicated Postgres is a new, empty instance — no data is
+   copied, and `web`'s pre-deploy migration builds the schema. Which means the
+   [First deploy](#first-deploy) ordering applies again here.
+
+Channel credentials do **not** duplicate usefully. Every platform registers one
+callback URL per app or number, so staging needs its own Telegram bot and its
+own Meta test app. Pointing production's credentials at a staging domain
+redirects live traffic.
 
 ### Create a Railway template
 
 Deploy and verify the three-service project first. In the project canvas, open
-**Settings → Generate Template from Project → Create Template**. In the template
-composer, check the GitHub source for both app services, the worker start
-command, web-only public networking and health check, the web pre-deploy
-migration, the Postgres reference, and all required variables. Replace your
-project's actual secret values in the template with generated values (for
-example `${{secret(50)}}` once per secret), then reference each from the worker
-or share it between services. Generating each secret separately on web and
-worker breaks encrypted credentials. To make the generated domain reusable,
-set web's `ALLOWED_HOSTS` to `${{RAILWAY_PUBLIC_DOMAIN}},healthcheck.railway.app`
-and `APP_URL` to `https://${{RAILWAY_PUBLIC_DOMAIN}}`. On the worker, use
-`${{web.RAILWAY_PUBLIC_DOMAIN}}` in place of the same-service reference (assuming
-the web service is named `web`). If your storage bucket is not included in
-the template, prompt for the `S3_*` variables and require a private bucket
-before users start uploading files. Create the template, deploy
-one copy to verify it, then publish it from your Railway workspace if you want
-it listed in the marketplace. Railway provides a shareable template URL before
-marketplace publication. See [Railway's template guide](https://docs.railway.com/templates/create).
+**Settings → Generate Template from Project → Create Template**.
+
+The template composer is not the project dashboard: there are no project-level
+shared variables in it, and Template Settings carries only the name, icon and
+description. Variables belong to each service card — click one, then its
+**Variables** tab. A card reading "No config required" has no variables at all,
+which deploys a copy that cannot boot.
+
+Check the GitHub source for both app services, the worker start command,
+web-only public networking and health check, the web pre-deploy migration, the
+Postgres reference, and all required variables. Then:
+
+- **Generate each secret exactly once.** Put `${{secret(50)}}` on `web` for
+  `SECRET_KEY` and `ENCRYPTION_KEY_SALT`, and reference them from the worker as
+  `${{web.SECRET_KEY}}` and `${{web.ENCRYPTION_KEY_SALT}}`. The function runs at
+  deploy time and substitutes its result, so `${{secret(50)}}` written on both
+  services produces two *different* values — a copy that deploys green and
+  cannot read its own encrypted credentials.
+- **Make the domain self-configuring**: `ALLOWED_HOSTS` =
+  `${{RAILWAY_PUBLIC_DOMAIN}},healthcheck.railway.app` and `APP_URL` =
+  `https://${{RAILWAY_PUBLIC_DOMAIN}}` on `web`, with
+  `${{web.RAILWAY_PUBLIC_DOMAIN}}` in place of the same-service reference on the
+  worker (assuming the web service is named `web`). Both resolve during
+  provisioning — but only if `web` generates a domain, so confirm public
+  networking is enabled in the composer. Without it `ALLOWED_HOSTS` deploys
+  empty and every copy stops at `common.E003`.
+- **Prompt for the bucket, do not ship one.** Leave `S3_BUCKET_NAME`,
+  `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_ENDPOINT_URL` empty on
+  `web` so they become deploy-time inputs, give each a description naming the
+  format, and reference them from the worker. Say in the template description
+  that the bucket must be private.
+
+Create the template, deploy one copy to verify it, then publish it from your
+Railway workspace if you want it listed in the marketplace. Railway provides a
+shareable template URL before marketplace publication. See [Railway's template
+guide](https://docs.railway.com/templates/create).
 
 ---
 
@@ -588,7 +756,7 @@ deployment actually decides:
 
 | Variable | What it is |
 |---|---|
-| `PLATFORM_<PLATFORM>_CLIENT_ID` / `_CLIENT_SECRET` | Deployment-level app credentials, the last step of the resolution chain (workspace override → organization → here). Meta platforms only. |
+| `PLATFORM_<PLATFORM>_CLIENT_ID` / `_CLIENT_SECRET` | The Meta app credentials, and the first step of the resolution chain — an organization row in the Django admin is the fallback below them. Meta platforms only. |
 | `PLATFORM_<PLATFORM>_VERIFY_TOKEN` | The token Meta checks when you subscribe a webhook URL. Unset means that platform's verification GET answers 404. |
 | `TICK_TOKEN` | Shared secret for `/internal/tick`. Unset means the route does not exist. |
 | `EXTERNAL_REQUEST_ALLOW_PRIVATE` | Lets the External Request node reach private address ranges, for an on-prem deployment calling services on its own network. It relaxes *only* the private-range rule — loopback, cloud metadata, multicast and this deployment's own host stay denied ([`SECURITY-BASELINE.md`](SECURITY-BASELINE.md) §6). |

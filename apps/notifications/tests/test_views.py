@@ -83,24 +83,28 @@ class TestTheBell:
 
 @pytest.mark.django_db
 class TestTheBadge:
-    def test_it_shows_a_dot_when_something_is_unread(self, tenancy, client_for):
+    def test_it_shows_the_count_when_something_is_unread(self, tenancy, client_for):
+        """A number, not a dot. The bell used to be a 36px circle in a header
+        with no room for one; a nav row has a whole label's width to spare, so
+        the row carries the same pill every other nav row carries."""
         make_notification(tenancy.owner)
 
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
-        assert "notif-dot" in body
+        assert "sidebar-badge" in body
+        assert ">1</span>" in body
 
     def test_it_renders_nothing_when_everything_is_read(self, tenancy, client_for):
         make_notification(tenancy.owner, is_read=True)
 
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
-        assert "notif-dot" not in body
+        assert "sidebar-badge" not in body
 
     def test_it_is_an_out_of_band_swap_so_it_can_ride_any_response(self, tenancy, client_for):
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
-        assert 'id="notification-badge"' in body
+        assert 'id="nav-badge-notifications"' in body
         assert 'hx-swap-oob="true"' in body
 
     def test_the_shell_renders_the_count_on_an_ordinary_page(self, tenancy, client_for):
@@ -108,9 +112,10 @@ class TestTheBadge:
 
         body = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.id}/").content.decode()
 
-        assert "notif-dot" in body
-        # The history page is reached from inside the bell's panel now, which is
-        # fetched on open — the shell carries the bell, not the link.
+        assert "sidebar-badge" in body
+        # The history page is reached from the row itself or from inside the
+        # panel it opens, which is fetched on open — the shell carries the
+        # trigger, not the panel.
         assert reverse("notifications:bell") in body
 
 
@@ -134,8 +139,8 @@ class TestMarkRead:
             .content.decode()
         )
 
-        assert 'id="notification-badge"' in body
-        assert "notif-dot" not in body
+        assert 'id="nav-badge-notifications"' in body
+        assert "sidebar-badge" not in body
 
     def test_another_users_notification_is_a_404_not_a_403(self, tenancy, client_for):
         """A 403 would confirm the id names something real, which over a UUID
@@ -317,8 +322,8 @@ class TestWriteViewsDoNotRenderASurface:
 
         body = client_for(tenancy.owner).post(reverse("notifications:mark_all_read"), headers=HTMX).content.decode()
 
-        assert 'id="notification-badge"' in body
-        assert "notif-dot" not in body
+        assert 'id="nav-badge-notifications"' in body
+        assert "sidebar-badge" not in body
 
     def test_marking_read_from_the_history_page_leaves_the_list_intact(self, tenancy, client_for):
         """The concrete regression: the history page posts these too."""
@@ -339,7 +344,7 @@ class TestTheHistoryPageCarriesNoResponseOnlyMarkup:
     out-of-band badge carrying ids the shell already renders — is a duplicate
     id on the full page."""
 
-    @pytest.mark.parametrize("element_id", ["notification-badge", "nav-badge-notifications"])
+    @pytest.mark.parametrize("element_id", ["nav-badge-notifications", "nav-badge-inbox"])
     def test_the_full_page_carries_each_badge_id_at_most_once(self, tenancy, client_for, element_id):
         make_notification(tenancy.owner)
 
@@ -526,11 +531,17 @@ class TestTheRefreshKeepsTheReadersPlace:
 
 @pytest.mark.django_db
 class TestOneIndicatorOnEveryViewport:
-    """The mobile bar had its own dot because the shell had no header and its
-    sidebar was off-canvas on a phone, so a phone reader could see neither the
-    footer bell nor the nav row. The redesign's header renders at every width —
-    the rail is what changes shape, becoming a bottom tab bar — so there is one
-    bell, one id, and nothing to keep in step with anything else.
+    """One id, at every width, and the mobile copy stays gone.
+
+    A second `notification-badge-mobile` existed once, because the sidebar was
+    off-canvas on a phone and the count went with it. The sidebar is a drawer
+    again, so that is true again — on a phone the count is behind the
+    hamburger, which is what Studio does too — and the answer is still not a
+    second element. An out-of-band swap resolves its target by id and finds
+    only the first, so two copies do not mean two live counts; they mean one
+    live count and one that silently freezes at whatever it said when the page
+    was built. If a phone-visible indicator is wanted, it gets its own id and
+    its own line in _badge.html.
     """
 
     def test_the_shell_carries_exactly_one_indicator(self, tenancy, client_for):
@@ -538,7 +549,7 @@ class TestOneIndicatorOnEveryViewport:
 
         body = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.id}/").content.decode()
 
-        assert body.count('id="notification-badge"') == 1
+        assert body.count('id="nav-badge-notifications"') == 1
         assert 'id="notification-badge-mobile"' not in body
 
     def test_marking_read_clears_it(self, tenancy, client_for):
@@ -546,6 +557,6 @@ class TestOneIndicatorOnEveryViewport:
 
         body = client_for(tenancy.owner).post(reverse("notifications:mark_all_read"), headers=HTMX).content.decode()
 
-        assert 'id="notification-badge"' in body
+        assert 'id="nav-badge-notifications"' in body
         assert body.count("hx-swap-oob") == 1
-        assert "notif-dot" not in body
+        assert "sidebar-badge" not in body

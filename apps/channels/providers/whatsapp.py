@@ -1063,8 +1063,9 @@ class WhatsAppAdapter(Adapter):
         The secret is the **Meta app secret**, not anything on the connection:
         Meta signs with the app's secret, and one app serves every number a
         deployment has connected. It is resolved through the standard chain
-        (workspace override → organization → environment), so a workspace that
-        brought its own Meta app is verified against its own secret.
+        (environment → organization), so an organization that brought its own
+        Meta app — and set no env var for the platform — is verified against its
+        own secret.
 
         Fails closed on everything — no secret configured, no header, a wrong
         prefix, a non-hex digest — and every one of those is indistinguishable
@@ -1090,8 +1091,8 @@ class WhatsAppAdapter(Adapter):
                 return value
         logger.warning(
             "WhatsApp: no Meta app secret resolved for workspace %s, so no delivery can be verified. "
-            "The credential chain only uses a level that is complete, so PLATFORM_WHATSAPP_APP_SECRET "
-            "needs PLATFORM_WHATSAPP_APP_ID beside it (apps.credentials.models.REQUIRED_CREDENTIAL_KEYS).",
+            "The credential chain only uses a level that is complete, so PLATFORM_WHATSAPP_CLIENT_SECRET "
+            "needs PLATFORM_WHATSAPP_CLIENT_ID beside it (apps.credentials.models.REQUIRED_CREDENTIAL_KEYS).",
             connection.workspace_id,
         )
         return ""

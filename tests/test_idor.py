@@ -4,7 +4,7 @@ import pytest
 from django.test import override_settings
 
 from tests.idor import (
-    TENANT_KWARG_RESOLVERS,
+    NEUTRAL_KWARG_VALUES,
     WAIVED_ROUTES,
     UnnamedTenantRouteError,
     UnregisteredRouteKwargError,
@@ -32,9 +32,6 @@ class TestCrossTenantIsolation:
             "workspaces:switch",
             "workspaces:settings",
             "workspaces:update_settings",
-            "credentials:list",
-            "credentials:edit",
-            "credentials:clear",
             "members:update_role",
             "members:remove",
             "members:manage_workspaces",
@@ -290,15 +287,24 @@ class TestTheSuiteActuallyCatchesLeaks:
         assert "200" in message
 
     def test_an_unregistered_tenant_kwarg_is_an_error_not_a_skip(self, monkeypatch):
-        """A new endpoint must extend the registry, not slip past it."""
-        monkeypatch.delitem(TENANT_KWARG_RESOLVERS, "platform", raising=False)
-        monkeypatch.setitem(TENANT_KWARG_RESOLVERS, "workspace_id", lambda t: t.workspace.pk)
-        monkeypatch.setattr("tests.idor.NEUTRAL_KWARG_VALUES", {})
+        """A new endpoint must extend the registry, not slip past it.
+
+        One kwarg is withdrawn rather than the whole table: which route trips
+        first depends on URL-conf order, and naming the kwarg we removed is what
+        makes the assertion mean something. ``index`` belongs to ``inbox:media``,
+        which also takes a registered ``message_id`` — so the route is reached
+        rather than skipped as untenanted.
+        """
+        monkeypatch.setattr(
+            "tests.idor.NEUTRAL_KWARG_VALUES",
+            {key: value for key, value in NEUTRAL_KWARG_VALUES.items() if key != "index"},
+        )
 
         with pytest.raises(UnregisteredRouteKwargError) as caught:
             iter_tenant_routes()
 
-        assert "platform" in str(caught.value)
+        assert "index" in str(caught.value)
+        assert "inbox:media" in str(caught.value)
 
     def test_an_unnamed_tenant_route_is_an_error_not_a_skip(self):
         """A route nothing reverses is exactly the kind that gets registered

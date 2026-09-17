@@ -4,9 +4,11 @@ apps.common.context_processors; an unknown name renders a neutral dot rather
 than nothing, so a mistyped key is visible instead of silently collapsing the
 row's layout.
 
-`icon_size` is the pixel box, defaulting to 18. The rail passes 20: its glyph is the
-whole affordance with only a 10px label under it, where a settings row has a
-15px label beside it doing most of the work.
+`icon_size` is the pixel box, defaulting to 18 — which is what both navs use.
+It was a parameter because the rail's glyph carried a row on its own, at 20
+against a 10px label; a sidebar row reads its label instead, so the two sizes
+converged. Kept as an argument for the next surface that needs a different
+one, not because anything passes it today.
 
 Named `icon_size` rather than `size` so an ambient `size` in a parent context
 cannot resize a glyph by accident: `{% include %}` without `only` inherits

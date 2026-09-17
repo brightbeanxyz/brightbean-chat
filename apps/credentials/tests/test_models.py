@@ -1,4 +1,4 @@
-"""PlatformCredential / WorkspaceCredentialOverride invariants."""
+"""PlatformCredential invariants."""
 
 import pytest
 
@@ -7,7 +7,6 @@ from apps.common.platforms import Platform
 from apps.credentials.models import (
     REQUIRED_CREDENTIAL_KEYS,
     PlatformCredential,
-    WorkspaceCredentialOverride,
     derive_is_configured,
     mask_credentials,
     missing_key_groups,
@@ -149,28 +148,3 @@ class TestTheEncryptedColumnIsNotFilterable:
         assert "never looked up by their contents" in (
             __import__("apps.credentials.models", fromlist=["x"]).__doc__ or ""
         )
-
-
-@pytest.mark.django_db
-class TestWorkspaceOverrideIsTenantScoped:
-    def test_it_uses_the_enforcing_manager(self, tenancy):
-        from apps.common.scoping import UnscopedQueryError
-
-        WorkspaceCredentialOverride.objects.create(
-            workspace=tenancy.workspace, platform="instagram", credentials=COMPLETE
-        )
-
-        with pytest.raises(UnscopedQueryError):
-            WorkspaceCredentialOverride.objects.count()
-
-    def test_one_row_per_workspace_and_platform(self, tenancy):
-        from django.db import IntegrityError
-
-        WorkspaceCredentialOverride.objects.create(
-            workspace=tenancy.workspace, platform="instagram", credentials=COMPLETE
-        )
-
-        with pytest.raises(IntegrityError):
-            WorkspaceCredentialOverride.objects.create(
-                workspace=tenancy.workspace, platform="instagram", credentials=COMPLETE
-            )
