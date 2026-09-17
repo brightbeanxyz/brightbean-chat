@@ -439,9 +439,9 @@ django==5.2.17 \
     #   django-ninja
     #   django-storages
     #   sentry-sdk
-django-allauth==65.19.1 \
-    --hash=sha256:5c507b53c45d2b7cbfcac7643d0123d5f0a7df7d43a882edcdbedb5f6b396421 \
-    --hash=sha256:999d01d5c422a82734cf5804df9f5a0d1d4ddd6acbb2f807db976ed7d49f9cb3
+django-allauth==65.19.3 \
+    --hash=sha256:2267b66c3212645ef2f1b26bc46ca220abea6281cd78c7014a427a1f759137a3 \
+    --hash=sha256:5dc1936001bd33771d453032366af25fc16fcd35a93789f46206d5d2a7cc83e0
     # via -r requirements.in
 django-csp==4.0 \
     --hash=sha256:b27010bb702eb20a3dad329178df2b61a2b82d338b70fbdc13c3a3bd28712833 \
