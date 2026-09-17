@@ -1,5 +1,5 @@
 /**
- * The island's shell: load once, then palette / canvas / inspector.
+ * The island's shell: load once, then step editor / canvas / preview.
  *
  * Autosave is installed only when the page says this member may edit. Not
  * disabled inside — never installed, so there is no subscription and no timer
@@ -12,9 +12,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError } from "./api/client";
 import { loadFlow } from "./api/flows";
 import { Canvas } from "./canvas/Canvas";
+import { StepEditor } from "./editor/StepEditor";
 import type { BuilderEnv } from "./env";
-import { Inspector } from "./inspector/Inspector";
-import { Palette } from "./palette/Palette";
+import { Preview } from "./preview/Preview";
 import { installAutosave, type Autosave } from "./persistence/autosave";
 import { refreshApplies } from "./refreshState";
 import { useStats } from "./stats/useStats";
@@ -27,8 +27,8 @@ export function App({ env }: { env: BuilderEnv }) {
   const store = useMemo(() => createBuilderStore(env), [env]);
   return (
     <BuilderStoreProvider store={store}>
-      {/* Above the shell, not inside the canvas, so the palette can place a
-          node at the centre of the pane rather than only by drag. */}
+      {/* Above the shell, not inside the canvas, so "Add a step" can place a
+          node and bring it into view rather than only by drag. */}
       <ReactFlowProvider>
         <Shell />
       </ReactFlowProvider>
@@ -167,10 +167,13 @@ function Shell() {
   return (
     <>
       <Toolbar autosave={autosave} />
+      {/* Three columns, not four panels. The palette and the inspector were one
+          job split either side of the canvas; they are the left column now, and
+          steps are added from the canvas itself. */}
       <div className="fb-shell">
-        <Palette />
+        <StepEditor />
         <Canvas />
-        <Inspector />
+        <Preview />
       </div>
       <ProblemsRail />
     </>

@@ -15,6 +15,7 @@ from typing import Any
 
 from django.apps import apps as django_apps
 from django.contrib.auth.decorators import login_required
+from django.db.models import Count
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -29,6 +30,7 @@ from apps.flows.portability.cards import card_contexts
 from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.portability.library import template_cards as shipped_templates
 from apps.flows.starter import starter_graph
+from apps.flows.triggers.phrasing import describe_triggers
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
 from apps.members.roles import WorkspaceRole
@@ -101,7 +103,32 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
 
 
 def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
-    flows = list(_visible_flows(request))
+    # prefetch_related here rather than a second pass: the summaries below read
+    # every flow's triggers, and re-fetching the same rows by pk to prefetch
+    # them cost an extra query plus a dict that existed only to join the answer
+    # back onto objects already in hand.
+    flows = list(_visible_flows(request).prefetch_related("triggers"))
+
+    # The redesign's filter chips carry counts, so a reader can see there are
+    # two drafts without selecting the filter to find out. One grouped query
+    # rather than four counts, and "all" deliberately excludes archived — the
+    # chip means "everything you would normally be looking at", which is what
+    # the unfiltered list shows.
+    by_status = dict(
+        Flow.objects.for_workspace(request.workspace)
+        .values_list("status")
+        .annotate(total=Count("id"))
+        .values_list("status", "total")
+    )
+    status_counts = {
+        "": sum(total for status, total in by_status.items() if status != FlowStatus.ARCHIVED),
+        **{str(status): by_status.get(status, 0) for status in FlowStatus.values},
+    }
+
+    # One sentence per flow saying when it runs, in the reader's words rather
+    # than SPEC §10's. Reads the prefetch above, so this is no queries at all.
+    for flow in flows:
+        flow.trigger_summary = describe_triggers(list(flow.triggers.all()))
 
     # Runs are detected on the folder value, not on the label it renders under:
     # a workspace holding both unfiled flows and a folder literally named
@@ -140,11 +167,13 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     # first Create lands, since the HTMX refresh re-renders with groups.
     #
     # shipped_templates() digests every file on disk even on a cache hit, so it
-    # stays inside the guard — do not hoist it.
+    # stays inside the guard — do not hoist it. `by_status` above already counts
+    # every flow in the workspace, archived included, so the emptiness question
+    # costs no query of its own.
     template_cards: list[dict[str, Any]] = []
     template_total = 0
     if not groups and not filtered and can_edit:
-        has_no_flows = not Flow.objects.for_workspace(request.workspace).exists()
+        has_no_flows = sum(by_status.values()) == 0
         if has_no_flows:
             cards = shipped_templates()
             template_total = len(cards)
@@ -159,6 +188,19 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         # the "Unfiled" row's value distinct from a folder of the same name.
         "folder_options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
         "status_options": list(FlowStatus.choices),
+        # The chips, in the order a reader scans them, each carrying its own
+        # count so nobody has to select a filter to find out it is empty.
+        # Labels rather than the enum's: "Live" says what an active flow is
+        # doing, "Active" says what a column holds.
+        "status_chips": [
+            {"value": value, "label": label, "count": status_counts.get(str(value), 0)}
+            for value, label in (
+                ("", "All"),
+                (FlowStatus.ACTIVE, "Live"),
+                (FlowStatus.DRAFT, "Draft"),
+                (FlowStatus.ARCHIVED, "Archived"),
+            )
+        ],
         "query": request.GET.get("q", ""),
         "status": request.GET.get("status", ""),
         "folder": request.GET.get("folder", ""),

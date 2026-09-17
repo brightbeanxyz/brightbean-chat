@@ -1,0 +1,146 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "hello-qr-buy-order",
+            "source": "hello",
+            "sourceHandle": "qr:buy",
+            "target": "order"
+          },
+          {
+            "id": "hello-qr-ask-question",
+            "source": "hello",
+            "sourceHandle": "qr:ask",
+            "target": "question"
+          },
+          {
+            "id": "hello-qr-hours-hours",
+            "source": "hello",
+            "sourceHandle": "qr:hours",
+            "target": "hours"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Hi {{first_name}}! Thanks for messaging.\nWhat brings you here?",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "buy",
+                  "label": "I want to order"
+                },
+                {
+                  "id": "ask",
+                  "label": "I have a question"
+                },
+                {
+                  "id": "hours",
+                  "label": "Are you open?"
+                }
+              ]
+            },
+            "id": "hello",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Great. Tell me what you are after and I will check stock.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "order",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Go ahead - what would you like to know?",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "question",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "We are open Monday to Saturday, 9am to 6pm.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "hours",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Messenger welcome",
+      "triggers": [
+        {
+          "config": {},
+          "platform": "messenger",
+          "type": "welcome"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "messenger",
+        "name": "messenger",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

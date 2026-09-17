@@ -425,7 +425,10 @@ class TestEntryNodes:
         result = validate_graph(graph)
 
         assert [issue.code for issue in result.errors] == ["no_entry_node"]
-        assert "break the loop" in result.errors[0].message
+        # The sentence still names the fix — find the connection that loops
+        # back and delete it — rather than only stating the rule.
+        assert "loops back" in result.errors[0].message
+        assert "delete it" in result.errors[0].message
 
     def test_a_cycle_downstream_of_the_entry_is_allowed(self):
         """SPEC §9.1 allows cycles outright — the runtime's blocks_since_pause

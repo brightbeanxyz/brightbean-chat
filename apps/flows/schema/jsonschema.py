@@ -159,14 +159,22 @@ def _issue(code: str, message: str, path: str, node_id: str | None) -> Issue:
     return Issue(code=code, message=message, stage="document", node_id=node_id, path=path)
 
 
+def _s(count: int) -> str:
+    """ "" or "s". These sentences sit beside the field they are about, where
+    "1 character(s)" is the kind of thing that makes a product feel unfinished."""
+    return "" if count == 1 else "s"
+
+
 def _check_string(schema: dict[str, Any], value: str, path: str, node_id: str | None) -> list[Issue]:
     issues: list[Issue] = []
     minimum = schema.get("minLength")
     maximum = schema.get("maxLength")
     if isinstance(minimum, int) and len(value) < minimum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Must be at least {minimum} character(s).", path, node_id))
+        issues.append(
+            _issue(CODE_INVALID_VALUE, f"Too short: {minimum} character{_s(minimum)} at least.", path, node_id)
+        )
     if isinstance(maximum, int) and len(value) > maximum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Must be at most {maximum} character(s).", path, node_id))
+        issues.append(_issue(CODE_INVALID_VALUE, f"Too long: {maximum} character{_s(maximum)} at most.", path, node_id))
     expression = schema.get("pattern")
     if isinstance(expression, str) and not _pattern(expression).search(value):
         issues.append(_issue(CODE_INVALID_VALUE, "Does not match the required format.", path, node_id))
@@ -191,9 +199,9 @@ def _check_array(
     minimum = schema.get("minItems")
     maximum = schema.get("maxItems")
     if isinstance(minimum, int) and len(value) < minimum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Needs at least {minimum} item(s).", path, node_id))
+        issues.append(_issue(CODE_INVALID_VALUE, f"Add at least {minimum} more.", path, node_id))
     if isinstance(maximum, int) and len(value) > maximum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Takes at most {maximum} item(s).", path, node_id))
+        issues.append(_issue(CODE_INVALID_VALUE, f"{maximum} at most.", path, node_id))
     items = schema.get("items")
     if isinstance(items, dict):
         for index, item in enumerate(value):

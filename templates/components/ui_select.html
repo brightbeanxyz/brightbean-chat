@@ -47,7 +47,13 @@ page except that one.
                 class="btn-surface-1 w-full text-left px-3 py-1.5 text-xs font-semibold border-b"
                 style="border-color: var(--border);"
                 :class="({% if multiple %}!{{ model }}.length{% else %}!{{ model }}{% endif %}) ? 'bb-option-reset-active' : 'bb-option-reset-idle'">
-            {{ placeholder }} — all
+            {% comment %}
+              The placeholder alone. "All channels: all" and "Any label: all"
+              read as a stutter, and the placeholder already means "not
+              filtered" — it is what the closed control shows when nothing is
+              picked, so this row is that state, named the same way.
+            {% endcomment %}
+            {{ placeholder }}
         </button>
         {% for opt in options %}
         {% if multiple %}

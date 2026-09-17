@@ -210,7 +210,7 @@ script tag out of its own comment for its extractor.
         <span class="bc-hint">Required for contacts outside the {{ composer.window_hours }}-hour window.</span>
       </div>
       <select class="bb-filter-select" x-model="tag">
-        <option value="">No tag — in-window contacts only</option>
+        <option value="">No tag: in-window contacts only</option>
         {% for choice in composer.tag_choices %}
         <option value="{{ choice }}">{{ choice }}</option>
         {% endfor %}

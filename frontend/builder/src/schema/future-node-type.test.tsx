@@ -11,7 +11,7 @@
  * Nothing in src/ is changed for it. If this test ever needs a source edit to
  * pass, the data-driven claim has stopped being true.
  */
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@flow-schema", async () => {
@@ -80,8 +80,8 @@ const { NODE_TYPES, configSchema, nodeSpec } = await import("./artifact");
 const { sourceHandles } = await import("./handles");
 const { sampleConfig } = await import("./sample");
 const { validateNode } = await import("../test/ajv");
-const { Palette } = await import("../palette/Palette");
-const { Inspector } = await import("../inspector/Inspector");
+const { AddStep } = await import("../canvas/AddStep");
+const { StepEditor } = await import("../editor/StepEditor");
 const { Canvas } = await import("../canvas/Canvas");
 const { makeDetail } = await import("../test/fixtures");
 const { makeStore, renderWith } = await import("../test/render");
@@ -125,16 +125,18 @@ describe("a node type this bundle has never seen", () => {
     ]);
   });
 
-  it("appears in the palette, under the fallback drawer rather than vanishing", () => {
-    // Its group is one no drawer declares. A palette that silently dropped it
-    // would be worse than one with an "Other" heading.
+  it("is offered in Add a step, under the fallback group rather than vanishing", async () => {
+    // Its group is one no drawer declares. A menu that silently dropped it
+    // would be worse than one with an "Also" heading.
     const store = makeStore(graphWithEscalate());
 
-    renderWith(store, <Palette />);
+    renderWith(store, <AddStep />);
+    fireEvent.click(screen.getByRole("button", { name: /add a step/i }));
 
-    const item = screen.getByRole("button", { name: /escalate/i });
+    const item = await screen.findByRole("menuitem", { name: /escalate/i });
     expect(item).toBeInTheDocument();
-    expect(item.closest("div")?.querySelector("p")?.textContent).toBe("Other");
+    // GROUP_PHRASE's reader-facing word for the fallback group, not "Other".
+    expect(item.closest("div")?.querySelector("p")?.textContent).toBe("Also");
   });
 
   it("draws a card on the canvas", () => {
@@ -149,11 +151,14 @@ describe("a node type this bundle has never seen", () => {
     const store = makeStore(graphWithEscalate());
     store.getState().setSelection({ nodes: ["x1"], edges: [] });
 
-    renderWith(store, <Inspector />);
+    const { container } = renderWith(store, <StepEditor />);
 
     expect(screen.getByLabelText("Policy")).toBeInTheDocument();
     expect(screen.getByLabelText(/after minutes/i)).toBeInTheDocument();
-    expect(screen.getByText("Steps")).toBeInTheDocument();
+    // Scoped to the form: the left column's own step list is headed "Steps"
+    // too, so an unscoped query now matches two nodes.
+    const form = container.querySelector(".fb-editor-section:last-of-type") as HTMLElement;
+    expect(within(form).getByText("Steps")).toBeInTheDocument();
     // `humanize()` is the fallback when the copy table has no entry.
     expect(screen.getByLabelText("Note")).toBeInTheDocument();
   });

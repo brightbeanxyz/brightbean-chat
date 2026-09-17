@@ -60,7 +60,7 @@ export function WeightEditor(props: FieldProps) {
       ))}
 
       <p className={total === 100 ? "fb-field-help" : "fb-empty"}>
-        Total {total}%{total === 100 ? "" : " — weights are shares, so they do not have to add up to 100."}
+        Total {total}%{total === 100 ? "" : ". Weights are shares, so they do not have to add up to 100."}
       </p>
 
       {readOnly || (max !== undefined && paths.length >= max) ? null : (

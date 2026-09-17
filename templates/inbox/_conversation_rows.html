@@ -43,10 +43,19 @@ renders under Django's default autoescaping and none of it is marked safe.
        data-conversation="{{ row.conversation.id }}"
        class="ib-row{% if row.unread %} is-unread{% endif %}{% if open_conversation_id == row.conversation.id|stringformat:'s' %} is-current{% endif %}"
        aria-current="{% if open_conversation_id == row.conversation.id|stringformat:'s' %}true{% else %}false{% endif %}">
-      <span class="flex items-center gap-2">
-        <span class="pi-chip {{ row.conversation.channel_connection.platform|platform_class }}" aria-hidden="true">
+      {% comment %}
+        The person first, the channel as a badge on their avatar. The row used
+        to lead with a platform square, which meant a list of conversations
+        scanned as a list of channels — and the channel is the least useful
+        thing about a row when you are deciding which one to open.
+      {% endcomment %}
+      <span class="ib-row-avatar" aria-hidden="true">
+        <span class="avatar avatar-sm">{{ row.conversation.contact.display_name|make_list|first|upper }}</span>
+        <span class="ib-row-channel pi-chip {{ row.conversation.channel_connection.platform|platform_class }}">
           {% include "partials/_platform_icon.html" with platform=row.conversation.channel_connection.platform size="sm" %}
         </span>
+      </span>
+      <span class="flex items-center gap-2">
         <span class="ib-row-name flex-1 min-w-0 truncate">{{ row.conversation.contact.display_name }}</span>
         {% if row.unread %}<span class="ib-dot" role="img" aria-label="Unread"></span>{% endif %}
       </span>

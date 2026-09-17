@@ -15,6 +15,13 @@ list.html, which exists only because htmx has to serialise a form first.
 
 {% block title %}Start from a template · BrightBean Chat{% endblock %}
 
+{% comment %}
+The Templates tab lands here, so the strip it was clicked in has to survive the
+click — without this block the tab that was just selected, and Flows and
+Sequences with it, vanish from the page they lead to.
+{% endcomment %}
+{% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
+
 {% block page_header %}
 <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
     <div>

@@ -24,26 +24,37 @@ def shell_body(tenancy, client_for):
 
 @pytest.mark.django_db
 class TestTheBellInTheShell:
-    def test_it_renders_in_the_sidebar_footer(self, shell_body):
-        footer = shell_body[shell_body.index("sidebar-org-footer") :]
+    def test_it_renders_in_the_app_header(self, shell_body):
+        """The bell moved out of the sidebar footer when the header arrived.
 
-        assert reverse("notifications:bell") in footer
+        It is now the only unread indicator in the product — there is no nav
+        row and no mobile-bar copy — so it has to be somewhere every page
+        renders. The header is, including on settings pages.
+        """
+        header = shell_body[shell_body.index('class="appbar"') : shell_body.index("</header>")]
 
-    def test_the_nav_row_points_at_the_history_page(self, shell_body):
-        assert 'href="/notifications/"' in shell_body
+        assert reverse("notifications:bell") in header
+        assert "appbar-bell" in header
 
-    def test_the_nav_row_is_not_workspace_scoped(self):
-        """A notification is addressed to a person. Scoping the row to a
-        workspace would make it vanish for a user whose workspaces are all
-        archived — which is exactly when a channel alert matters most."""
-        item = next(i for group in MAIN_NAV for i in group.items if i.key == "notifications")
+    def test_the_bell_is_the_only_way_in_and_is_not_workspace_scoped(self, shell_body):
+        """A notification is addressed to a person, and the feed spans every
+        workspace they belong to. Nothing about reaching it may be scoped to a
+        workspace — that would make it vanish for a user whose workspaces are
+        all archived, which is exactly when a channel alert matters most.
+        """
+        assert reverse("notifications:bell") == "/notifications/bell/"
+        assert reverse("notifications:badge") == "/notifications/badge/"
+        # The rail no longer carries a Notifications row.
+        assert "notifications" not in [i.key for g in MAIN_NAV for i in g.items]
 
-        assert item.workspace_scoped is False
-
-    def test_the_dropdown_opens_upward_because_the_footer_is_at_the_bottom(self):
+    def test_the_dropdown_opens_downward_because_the_bell_is_at_the_top(self):
+        """It used to open upward: it hung off the bottom of a sidebar. From
+        the top-right of a header, upward runs off the top of the window and
+        left-aligned runs off the right edge."""
         markup = (BASE_HTML.parent / "notifications" / "partials" / "_bell.html").read_text()
 
-        assert "bottom-full" in markup
+        assert "top-full" in markup
+        assert "bottom-full" not in markup
 
 
 @pytest.mark.django_db
@@ -97,9 +108,7 @@ class TestNoDuplicateIds:
     shell page shipped two `nav-badge-notifications` elements.
     """
 
-    @pytest.mark.parametrize(
-        "element_id", ["notification-badge", "nav-badge-notifications", "notification-badge-mobile"]
-    )
+    @pytest.mark.parametrize("element_id", ["notification-badge"])
     def test_the_shell_carries_each_badge_id_at_most_once(self, tenancy, client_for, element_id):
         Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Ping")
 
@@ -118,22 +127,29 @@ class TestNoDuplicateIds:
 
     @pytest.mark.parametrize("unread", [0, 1])
     def test_the_response_fragment_updates_every_place_the_count_appears(self, tenancy, client_for, unread):
-        """Three: the footer bell's dot, the sidebar nav row's badge, and the
-        mobile bar's dot — which is the only one a phone reader can see, and
-        which sits outside both desktop targets.
+        """One, where there used to be three.
 
-        Both counts, because the badge partial has a branch per count and the
-        zero one is the branch that regressed: it used to drop the nav target
-        entirely.
+        The count appeared in the sidebar footer's bell, the mobile top bar and
+        the nav's Notifications row, and leaving any of them stale after "mark
+        all read" showed one indicator contradicting another. The redesign
+        removed two of those surfaces outright — the mobile bar became the
+        rail's bottom tab strip, and Notifications left the nav for the header
+        bell — so there is one surface and one id.
+
+        This count and _badge.html have to change together: a target removed
+        from one side and not the other is htmx:oobErrorNoTarget once a minute
+        for the whole session, with no test failure and no visible symptom.
+
+        Both counts, because the partial has a branch per count and the zero one
+        is the branch that regressed before: it used to drop the target entirely.
         """
         for i in range(unread):
             Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title=f"Ping {i}")
 
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
-        for element_id in ("notification-badge", "nav-badge-notifications", "notification-badge-mobile"):
-            assert f'id="{element_id}"' in body
-        assert body.count("hx-swap-oob") == 3
+        assert 'id="notification-badge"' in body
+        assert body.count("hx-swap-oob") == 1
 
 
 @pytest.mark.django_db
@@ -144,25 +160,22 @@ class TestThePolledBadgeAlwaysHasATarget:
     renders the target, and the response keeps it.
     """
 
-    def test_the_shell_renders_the_nav_slot_with_nothing_unread(self, shell_body):
-        assert shell_body.count('id="nav-badge-notifications"') == 1
+    def test_the_shell_renders_the_slot_with_nothing_unread(self, shell_body):
+        assert shell_body.count('id="notification-badge"') == 1
 
-    def test_the_slot_shows_no_pill_and_no_zero(self, shell_body):
+    def test_the_slot_shows_no_dot_and_no_zero(self, shell_body):
         """Present in the document, invisible on the screen.
 
-        Every assertion is scoped to the slot element rather than to the page.
-        `sidebar-badge` as a bare substring matches base.html's pre-paint
-        <style> block on every page, and as a class attribute it would still
-        match a *different* row's badge — issue #14's inbox count will make one
-        non-zero — failing this test for something it is not about.
+        Scoped to the slot element rather than to the page: `notif-dot` as a
+        bare substring would still match a different surface, failing this test
+        for something it is not about.
         """
-        slot = re.search(r'<span id="nav-badge-notifications"[^>]*>(.*?)</span>', shell_body)
+        slot = re.search(r'<span id="notification-badge"[^>]*>(.*?)</span>', shell_body)
         assert slot, "the poll has no target"
         assert slot.group(1) == ""
-        assert "sidebar-badge" not in slot.group(0)
-        assert "hidden" in slot.group(0)
+        assert "notif-dot" not in slot.group(0)
 
-    def test_reaching_zero_empties_the_nav_badge_rather_than_deleting_it(self, tenancy, client_for):
+    def test_reaching_zero_empties_the_slot_rather_than_deleting_it(self, tenancy, client_for):
         """Deleting it was the original bug: an element the response removes is
         one every later poll cannot find, and the count could then never come
         back up in the page either, because every subsequent swap was aiming at
@@ -170,7 +183,7 @@ class TestThePolledBadgeAlwaysHasATarget:
         body = client_for(tenancy.owner).get(reverse("notifications:badge")).content.decode()
 
         assert 'hx-swap-oob="delete"' not in body
-        assert 'id="nav-badge-notifications"' in body
+        assert 'id="notification-badge"' in body
         assert "notif-dot" not in body
 
     def test_every_target_the_response_swaps_is_one_the_shell_renders(self, tenancy, client_for):
@@ -205,18 +218,22 @@ class TestThePolledBadgeAlwaysHasATarget:
             for target in targets:
                 assert shell.count(f'id="{target}"') == 1, f"{target} in {url}"
 
-    def test_a_replaced_nav_never_shows_the_swapped_in_badge(self, tenancy, client_for):
-        """A settings page has no Notifications row, so the target it carries
-        for the poll must stay invisible whatever count lands in it — a bare
-        slot would turn into a stray pill the first time the count went
-        non-zero. The sink's wrapper is what guarantees that."""
+    def test_the_settings_archetype_carries_the_target_like_any_other(self, tenancy, client_for):
+        """What the sinks used to work around, now true by construction.
+
+        A settings page used to replace the whole nav, taking the badge ids with
+        it while base.html went on rendering the poll — so
+        partials/_nav_badge_sinks.html existed to put hidden copies back. The
+        settings nav is a second column beside the rail now, the header renders
+        there too, and the bell's target is simply present the way it is
+        everywhere else.
+        """
         Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Ping")
 
         body = client_for(tenancy.owner).get("/accounts/settings/").content.decode()
 
-        sink = re.search(r"<span hidden>(.*?)</span>\s*</nav>", body, re.S)
-        assert sink, "the sink is not the last thing in the replaced nav"
-        assert 'id="nav-badge-notifications"' in sink.group(1)
+        assert body.count('id="notification-badge"') == 1
+        assert "appbar-bell" in body
 
     @staticmethod
     def page_archetypes(tenancy):
@@ -228,29 +245,32 @@ class TestThePolledBadgeAlwaysHasATarget:
             reverse("workspaces:settings", kwargs={"workspace_id": tenancy.workspace.id}),
         ]
 
-    def test_every_layout_that_replaces_the_nav_renders_the_sinks(self):
-        """Discovery rather than a hand-kept list: any template overriding
-        {% block sidebar_nav %} takes the nav's badge ids out of the document
-        while base.html goes on rendering the poll that aims at them. The next
-        one to do it should fail here rather than in a console nobody reads.
+    def test_no_layout_replaces_the_navigation_any_more(self):
+        """The guard that took the sinks' place.
+
+        partials/_nav_badge_sinks.html existed because a layout could swap the
+        whole nav out and strand the badge ids the bell's poll aims at. Nothing
+        does that now — the settings nav is a second column — so the sinks were
+        deleted. Discovery rather than a hand-kept list: a template that brings
+        the override back has to bring the sinks back with it, and should fail
+        here rather than in a console nobody reads.
         """
         templates = BASE_HTML.parent
         offenders = []
         for path in sorted(templates.rglob("*.html")):
             if path == BASE_HTML:
                 continue
-            text = path.read_text()
-            # Comments stripped first: three of these templates *describe* the
-            # override in prose, and one of them is the sink partial itself.
-            # Matching prose would make the guard fire on files that render no
-            # nav at all.
-            markup = re.sub(r"{%\s*comment\s*%}.*?{%\s*endcomment\s*%}", "", text, flags=re.S)
-            if not re.search(r"{%\s*block sidebar_nav\s*%}", markup):
-                continue
-            if "_nav_badge_sinks.html" not in markup and "block.super" not in markup:
+            # Comments stripped first: several templates *describe* the old
+            # override in prose, and matching prose would fire on files that
+            # render no nav at all.
+            markup = re.sub(r"{%\s*comment\s*%}.*?{%\s*endcomment\s*%}", "", path.read_text(), flags=re.S)
+            if re.search(r"{%\s*block sidebar_nav\s*%}", markup):
                 offenders.append(path.relative_to(templates))
 
-        assert not offenders, f"replaces the sidebar nav without re-rendering the badge targets: {offenders}"
+        assert not offenders, (
+            "replaces the navigation wholesale, which strands the bell's out-of-band badge targets; "
+            f"restore partials/_nav_badge_sinks.html with it: {offenders}"
+        )
 
 
 @pytest.mark.django_db
@@ -295,12 +315,17 @@ class TestTheBadgeCount:
 
         assert context["unread_notification_count"] == 1
 
-    def test_the_nav_badge_and_the_named_count_agree(self, tenancy):
+    def test_the_count_the_bell_renders_is_the_one_the_context_names(self, tenancy):
+        """There is no nav row to compare against any more — the bell's dot is
+        the only surface — so the agreement asserted here is between the named
+        context key and what the shell actually renders from it."""
         Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Mine")
         context = navigation_context(_request_for(tenancy.owner, tenancy.workspace))
 
-        row = next(i for g in context["nav_groups"] for i in g["items"] if i["key"] == "notifications")
-        assert row["badge"] == context["unread_notification_count"] == 1
+        assert context["unread_notification_count"] == 1
+        # And no rail row claims the count, which would be a second thing to
+        # keep in step with it.
+        assert not [i for g in context["nav_groups"] for i in g["items"] if i["key"] == "notifications"]
 
 
 def _request_for(user, workspace):

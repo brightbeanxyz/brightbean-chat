@@ -41,15 +41,31 @@ pytestmark = pytest.mark.django_db
 
 #: Every template this repository ships, pinned by name so that deleting one is
 #: a deliberate act with a test to update rather than a directory that quietly
-#: empties. Sorted, because ``template_paths()`` is and the first test below
-#: compares the two directly.
+#: empties, and so that adding one without running the suite is not possible.
+#:
+#: Templates are generated rather than typed: the files come out of the real
+#: exporter, because their `requirements` manifests are derived from the graph
+#: and a hand-written one asks the importer for the wrong things.
+#:
+#: Two generators own the directory between them, and neither may claim a file
+#: the other does — test_template_script_sources.py asserts the partition.
+#: apps/flows/tests/template_sources.py holds nineteen of them and is gated by
+#: test_template_library_sources.py; scripts/make_flow_templates.py holds the
+#: other twenty-four and is gated by test_template_script_sources.py.
 EXPECTED = (
+    "collect-an-email-address.json",
+    "event-reminder.json",
+    "feedback-after-a-purchase.json",
+    "first-message-welcome.json",
+    "follow-up-an-unanswered-enquiry.json",
+    "hand-over-to-a-person.json",
     "instagram-comment-affiliate-picks.json",
     "instagram-comment-follow-to-unlock.json",
     "instagram-comment-link-in-dm.json",
     "instagram-comment-product-gallery.json",
     "instagram-comment-reel-to-product.json",
     "instagram-comment-rsvp.json",
+    "instagram-comment-to-discount-code.json",
     "instagram-comment-to-dm-lead-magnet.json",
     "instagram-default-reply-autoresponder.json",
     "instagram-keyword-course-early-access.json",
@@ -61,10 +77,25 @@ EXPECTED = (
     "instagram-keyword-sms-list.json",
     "instagram-keyword-where-is-this-from.json",
     "instagram-keyword-youtube-subscribe.json",
+    "instagram-link-in-bio-capture.json",
+    "instagram-price-question.json",
     "instagram-story-collab-requests.json",
     "instagram-story-limited-time-offer.json",
+    "instagram-story-mention-thank-you.json",
+    "instagram-story-reply-to-conversation.json",
+    "messenger-comment-to-dm.json",
+    "messenger-quote-request.json",
+    "messenger-welcome.json",
+    "out-of-hours-reply.json",
+    "sms-appointment-reminder.json",
     "sms-keyword-opt-in.json",
+    "sms-review-request.json",
+    "telegram-booking-enquiry.json",
+    "telegram-support-triage.json",
     "telegram-welcome-and-faq.json",
+    "waitlist-signup.json",
+    "whatsapp-opening-hours.json",
+    "whatsapp-order-status.json",
 )
 
 
@@ -100,9 +131,14 @@ class TestTheShippedTemplates:
         # the trigger to every platform its type supports, so nobody gets to
         # choose that by not looking. Everything *else* is answered by the
         # defaults, which is the acceptance criterion.
-        assert [r.requirement.kind for r in portability.plan_import(clean.workspace, document, mapping).unanswered] == [
-            "platform"
+        #
+        # `platform` at most once, not exactly once: a template started by `api`
+        # or `default_reply` names no channel — those types are delivered by no
+        # platform — so it has nothing left to answer at all.
+        unanswered = [
+            r.requirement.kind for r in portability.plan_import(clean.workspace, document, mapping).unanswered
         ]
+        assert set(unanswered) <= {"platform"}, unanswered
 
         answer_channels(document, mapping)
         plan = portability.plan_import(clean.workspace, document, mapping)

@@ -692,7 +692,7 @@ class TestTheWizard:
         body = b"".join(response.streaming_content).decode()
         assert response["Content-Type"].startswith("text/csv")
         assert "not an email address" in body
-        assert "8 further row error(s)" in body
+        assert "8 more rows had errors" in body
 
     def test_another_workspaces_import_is_a_404(self, tenancy, other_tenancy, client_for):
         theirs = make_run(other_tenancy.workspace, SIMPLE, mapping=MAPPING)

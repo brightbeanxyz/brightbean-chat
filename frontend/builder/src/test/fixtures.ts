@@ -104,6 +104,9 @@ export function makeTriggers(count: number, overrides: Partial<TriggerSummary> =
     enabled: true,
     priority: index,
     summary: `Comments on any post containing WORD${index + 1} · replies publicly`,
+    // Required, not optional: the canvas card reads `plain` as the sentence it
+    // shows, so a fixture without one is a card with a blank body.
+    plain: `When somebody comments WORD${index + 1} on any post`,
     connection: null,
     platforms: ["instagram"],
     ...overrides,

@@ -32,6 +32,7 @@ from django.db.models import Max
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.timesince import timesince
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.channels.capabilities import capabilities_for
@@ -241,6 +242,31 @@ def _last_event_at(connection: ChannelConnection) -> Any:
     return row["received_at"] if row else None
 
 
+def _health(row: dict[str, Any]) -> dict[str, str]:
+    """A channel's state as a sentence, not a status word.
+
+    "Needs reauth" beside a timestamp makes a reader assemble the meaning
+    themselves; "Needs reconnecting · nothing received for 2 days" is the same
+    two facts already joined up. The tone drives the dot's colour and, for
+    ``bad``, whether the page raises a banner about it.
+
+    Webhook health is genuinely two facts, which is why the sentence carries
+    both: a bot pointed at the wrong URL looks exactly like a bot nobody has
+    messaged, and only the elapsed time tells them apart.
+    """
+    connection = row["connection"]
+    last = row.get("last_event_at")
+    heard = "nothing received yet" if last is None else f"last message {timesince(last)} ago"
+
+    if connection.status == ConnectionStatus.NEEDS_REAUTH:
+        return {"tone": "bad", "text": f"Needs reconnecting · {heard}"}
+    if connection.status == ConnectionStatus.DISABLED:
+        return {"tone": "off", "text": "Turned off · no messages sent or received"}
+    if last is None:
+        return {"tone": "warn", "text": "Connected, but nothing has arrived yet"}
+    return {"tone": "ok", "text": f"Healthy · {heard}"}
+
+
 @login_required
 @require_permission("manage_channels")
 @require_GET
@@ -248,14 +274,20 @@ def connection_list(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     """Every channel this workspace has connected."""
     connections = list(ChannelConnection.objects.for_workspace(request.workspace))
     latest = _last_events_for(connections)
+    rows = [
+        _connection_context(request, connection, last_event_at=latest.get(connection.pk)) for connection in connections
+    ]
+    for row in rows:
+        row["health"] = _health(row)
     return render(
         request,
         "channels/list.html",
         {
-            "rows": [
-                _connection_context(request, connection, last_event_at=latest.get(connection.pk))
-                for connection in connections
-            ],
+            "rows": rows,
+            # The banner at the top of the page. A channel that has stopped
+            # receiving is the single most consequential thing this page can
+            # tell someone, and it used to be a word in a table cell.
+            "broken": [row for row in rows if row["health"]["tone"] == "bad"],
             "platforms": [
                 {
                     "value": value,

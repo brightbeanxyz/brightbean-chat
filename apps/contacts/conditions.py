@@ -584,10 +584,10 @@ def _build_schema() -> dict[str, Any]:
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://brightbean.chat/schemas/condition-filter.json",
         "title": "Condition filter",
-        "description": (
-            "SPEC §11.4. Dates are day-granular and resolve in the workspace's timezone, never the "
-            "contact's — §11.5's use_contact_timezone flag is deliberately absent here."
-        ),
+        # Rendered as help text under the filter in the flow builder, so it says
+        # the one thing somebody setting a date rule can get wrong. The spec
+        # reference that used to be here is in the module docstring.
+        "description": ("Dates are whole days, in this workspace's timezone rather than the contact's."),
         "type": "object",
         "additionalProperties": False,
         "required": ["match", "rules"],

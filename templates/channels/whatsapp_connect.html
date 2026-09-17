@@ -4,7 +4,7 @@
 
 {% block content %}
   <p class="muted">
-    BrightBean Chat talks to Meta's Cloud API directly — there is no messaging
+    BrightBean Chat talks to Meta's Cloud API directly. There is no messaging
     provider in between. What you need is a WhatsApp Business Account, a phone
     number registered on it, and a permanent system user token. The token is the
     whole credential, so it is stored encrypted and never shown again.
@@ -15,7 +15,7 @@
     <li>In Business Manager, open <strong>WhatsApp Accounts</strong> and copy the
       <strong>WhatsApp Business Account ID</strong>.</li>
     <li>Open the account's <strong>Phone numbers</strong> tab and copy the
-      <strong>phone number ID</strong> — the numeric API id, not the number itself.</li>
+      <strong>phone number ID</strong>: the numeric API id, not the number itself.</li>
     <li>Create a <strong>system user</strong> with access to the account, and generate a
       permanent token with <code>whatsapp_business_messaging</code> and
       <code>whatsapp_business_management</code>.</li>
@@ -36,7 +36,7 @@
     We read the phone number back from Meta to check the token and learn how the
     number displays, then subscribe this app to the account's webhooks. Nothing
     is stored until that first call succeeds, and the connection is removed again
-    if the subscription fails — a number Meta will not deliver for is not a
+    if the subscription fails. A number Meta will not deliver for is not a
     connection.
   </p>
   <p class="muted">Meta delivers every WhatsApp event in this deployment to:</p>

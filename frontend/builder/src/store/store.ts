@@ -128,6 +128,34 @@ export interface BuilderState extends GraphState {
 
   // ── view ──────────────────────────────────────────────────────────────────
   setSelection: (selection: Selection) => void;
+  /**
+   * True when the canvas's trigger card is the thing being looked at.
+   *
+   * A separate flag rather than an entry in `selection.nodes`, because every
+   * consumer of that list — delete, copy, the clipboard, the step editor —
+   * assumes an id it can look up in `nodeType`, and the trigger has no entry
+   * there. Putting it in the selection would mean guarding all of them.
+   *
+   * View state: nothing here touches `revision` or reaches `toGraph()`.
+   */
+  triggerSelected: boolean;
+  selectTrigger: () => void;
+  /**
+   * Each node's measured size, as React Flow reported it.
+   *
+   * Pure view state — `toGraph()` names four fields per node and this is not
+   * one of them, so it cannot reach a save — but React Flow needs it *back* on
+   * the node objects, and for a long time it did not get it. `onNodesChange`
+   * dropped `dimensions` changes, which is right for `revision` and wrong for
+   * everything React Flow computes from a node's box: `getFitViewNodes` skips
+   * any node without `measured`, so **Fit did nothing at all** (it found no
+   * bounds and clamped to maxZoom), and the minimap drew an empty rectangle
+   * because `MiniMapNodes` skips them too.
+   *
+   * Bumps no revision, joins no history entry, and is never restored by undo.
+   */
+  measured: Record<string, { width: number; height: number }>;
+  setMeasured: (entries: readonly { id: string; width: number; height: number }[]) => void;
   toggleStats: () => void;
 
   // ── history ───────────────────────────────────────────────────────────────
@@ -225,6 +253,8 @@ export function createBuilderStore(env: BuilderEnv) {
         limits: LIMITS,
 
         selection: { nodes: [], edges: [] },
+        triggerSelected: false,
+        measured: {},
         revision: 0,
 
         past: [],
@@ -464,7 +494,30 @@ export function createBuilderStore(env: BuilderEnv) {
           }));
         },
 
-        setSelection: (selection) => set({ selection }),
+        // Selecting a step clears the trigger, and vice versa: two things
+        // highlighted at once would leave the left column showing one and the
+        // canvas the other.
+        setSelection: (selection) => set({ selection, triggerSelected: false }),
+
+        selectTrigger: () => set({ selection: { nodes: [], edges: [] }, triggerSelected: true }),
+
+        setMeasured: (entries) =>
+          set((state) => {
+            // No-op when nothing changed. React Flow re-measures on every
+            // adoption, so without this each report would write a new object,
+            // which would rebuild the projection, which would re-adopt.
+            let changed = false;
+            const next = { ...state.measured };
+            for (const entry of entries) {
+              const was = next[entry.id];
+              if (was?.width === entry.width && was?.height === entry.height) {
+                continue;
+              }
+              next[entry.id] = { width: entry.width, height: entry.height };
+              changed = true;
+            }
+            return changed ? { measured: next } : {};
+          }),
 
         toggleStats: () => set((state) => ({ statsVisible: !state.statsVisible })),
 

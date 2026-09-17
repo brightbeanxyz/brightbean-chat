@@ -86,16 +86,46 @@ class NavItem:
     # archived, and a row linking into a workspace that is not there is worse
     # than no row.
     workspace_scoped: bool = False
-    # A permission key from apps.members.roles.PERMISSION_KEYS. Blank means the
-    # row is ungated. A gated row is dropped for a member who lacks the key,
-    # because the view behind it is decorated with the same key and would
-    # answer 403 — see apps/contacts/views.py's note that a control which
-    # renders for someone who cannot use it is worse than no control.
-    # TestNavStructure validates these against PERMISSION_KEYS; the check lives
-    # in a test rather than __post_init__ because these items are constructed at
-    # module import, which happens while the template engine is still being
-    # configured and the app registry may not be populated.
+    #: The workspace permission key the row's page is gated on, from
+    #: ``apps.members.roles.PERMISSION_KEYS``. A viewer without it does not see
+    #: the row.
+    #:
+    #: This replaced the two-list split (``ACCOUNT_SETTINGS_GROUPS`` /
+    #: ``WORKSPACE_SETTINGS_GROUPS``), which approximated the same idea at group
+    #: granularity and got both halves wrong. It hid every Workspace row from
+    #: the account settings page — the page the nav's own Settings row lands on
+    #: — so Channels, Tags, Labels and five more had no entry point in the
+    #: product at all. And within a group it hid nothing, so an Editor still saw
+    #: rows they would be refused at. Gating the row on the same key its view
+    #: gates on means one settings nav that is both complete and honest.
     permission: str = ""
+    #: The organisation role the row's page requires, "member" or "admin".
+    #: Checked against ORG_ROLE_LEVEL, so "member" passes for an admin too.
+    org_role: str = ""
+
+    def visible_to(self, request: HttpRequest) -> bool:
+        """Whether this viewer may open the page behind the row.
+
+        Advertising a page somebody is refused at is worse than omitting it:
+        they cannot tell a permission from a bug. Unset gates mean "everyone",
+        which is what every rail row and every tab uses.
+        """
+        if self.permission:
+            membership = getattr(request, "workspace_membership", None)
+            if membership is None:
+                return False
+            if not membership.effective_permissions.get(self.permission, False):
+                return False
+        if self.org_role:
+            from apps.members.roles import ORG_ROLE_LEVEL
+
+            membership = getattr(request, "org_membership", None)
+            if membership is None:
+                return False
+            held = ORG_ROLE_LEVEL.get(membership.org_role, 0)
+            if held < ORG_ROLE_LEVEL.get(self.org_role, 0):
+                return False
+        return True
 
     def resolved(self, request: HttpRequest, badges: dict[str, int], workspace_id: Any = None) -> dict[str, Any]:
         matches = self.url_names or frozenset({self.url_name})
@@ -156,130 +186,137 @@ class NavGroup:
 
     label: str
     items: tuple[NavItem, ...] = ()
+    # "bottom" pins the group to the end of the rail, past the flex spacer:
+    # Library and Settings sit against the avatar, away from the six rows that
+    # answer "what am I doing". A field on the group rather than a second
+    # module-level list, because the tests that police nav invariants — unique
+    # keys, every target reverses — iterate MAIN_NAV, and a second list would
+    # quietly fall outside all of them.
+    placement: str = "top"
 
-
-# --- The product's navigation ------------------------------------------------
-# Deviation 7: this is BrightBean Chat's nav, not Studio's. Every target is a
-# "coming soon" stub in apps/common/views.py that the owning issue replaces
-# with the real view; the entry here does not change when that happens.
-MAIN_NAV: list[NavGroup] = [
-    NavGroup(
-        label="",
-        items=(
-            NavItem(
-                key="dashboard",
-                label="Dashboard",
-                icon="dashboard",
-                url_name="workspaces:dashboard",
-                workspace_scoped=True,
-            ),
-            NavItem(
-                key="inbox",
-                label="Inbox",
-                icon="inbox",
-                url_name="inbox:list",
-                # An open thread is the same section to a reader, so the row
-                # stays lit on a deep link into one (issue #14).
-                url_names=frozenset({"inbox:list", "inbox:thread"}),
-                badge_key="unread_inbox",
-                workspace_scoped=True,
-            ),
-            NavItem(
-                key="contacts",
-                label="Contacts",
-                icon="contacts",
-                url_name="contacts:list",
-                # The detail page and the import wizard are the same section to
-                # a reader, so the row stays lit while either is open (issue #13).
-                url_names=frozenset(
-                    {"contacts:list", "contacts:detail", "contacts:import_list", "contacts:import_detail"}
-                ),
-                workspace_scoped=True,
-            ),
-            NavItem(
-                key="flows",
-                label="Flows",
-                icon="flows",
-                url_name="flows:list",
-                # The builder is the same section to a reader, so the row
-                # stays lit while it is open (issue #6).
-                url_names=frozenset({"flows:list", "flows:edit"}),
-                workspace_scoped=True,
-            ),
-            # Issue #22. The editor and the subscriber panel are the same
-            # section to a reader, so the detail page lights the same row.
-            NavItem(
-                key="sequences",
-                label="Sequences",
-                icon="sequences",
-                url_name="campaigns:list",
-                url_names=frozenset({"campaigns:list", "campaigns:detail"}),
-                workspace_scoped=True,
-            ),
-            NavItem(
-                key="broadcasts",
-                label="Broadcasts",
-                icon="broadcasts",
-                url_name="broadcasts:list",
-                # The composer and a broadcast's detail page are the same section
-                # to a reader, so the row stays lit while either is open
-                # (issue #23) — the same shape the inbox and contacts rows use.
-                url_names=frozenset({"broadcasts:list", "broadcasts:detail", "broadcasts:compose"}),
-                workspace_scoped=True,
-            ),
-            # Issue #26. The flow stats page is the same section to a reader as
-            # the overview it is reached from, so the row stays lit on both.
-            NavItem(
-                key="analytics",
-                label="Analytics",
-                icon="analytics",
-                url_name="analytics:overview",
-                url_names=frozenset({"analytics:overview", "analytics:flow_detail"}),
-                workspace_scoped=True,
-            ),
-            # Issue #16. The detail page is the same section to a reader, so it
-            # lights the same row — that is what url_names is for.
-            NavItem(
-                key="media",
-                label="Media",
-                icon="image",
-                url_name="media:library",
-                url_names=frozenset({"media:library", "media:asset_detail"}),
-                workspace_scoped=True,
-            ),
-            # Deliberately NOT workspace_scoped (issue #7): a notification is
-            # addressed to a person, and the feed spans every workspace they
-            # belong to — an alert about the workspace you are not currently
-            # looking at is precisely the one you need to see.
-            NavItem(
-                key="notifications",
-                label="Notifications",
-                icon="bell",
-                url_name="notifications:list",
-                badge_key="unread_notifications",
-            ),
-        ),
-    ),
-]
 
 SETTINGS_NAV: list[NavGroup] = [
     NavGroup(
-        label="Account",
+        label="Workspace",
         items=(
-            NavItem(key="profile", label="Profile", icon="user", url_name="accounts:settings"),
-            NavItem(key="preferences", label="Preferences", icon="sliders", url_name="settings_preferences"),
+            NavItem(
+                key="ws_general",
+                permission="manage_workspace_settings",
+                label="General",
+                icon="settings",
+                url_name="workspaces:settings",
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="ws_channels",
+                permission="manage_channels",
+                label="Channels",
+                icon="channels",
+                url_name="channels:list",
+                url_names=frozenset({"channels:list", "channels:create", "channels:detail"}),
+                workspace_scoped=True,
+            ),
+            # Two rows, not one. The redesign draws a single "Tags & labels",
+            # and collapsing them to hit that count left the Labels page with no
+            # link anywhere in the product — the row pointed at the tag list,
+            # which renders contact tags only.
+            #
+            # They are also not the same thing, and the Labels page says so in
+            # its own first paragraph: a tag like "VIP" follows a person across
+            # every channel they use, a label like "waiting on shipping" is true
+            # of one thread and stops being true when it is answered. They are
+            # different models answering to different permissions. One row would
+            # have to lead somewhere that hides half of what it promises.
+            NavItem(
+                key="ws_tags",
+                permission="manage_crm",
+                label="Tags",
+                icon="tag",
+                url_name="contacts:tag_list",
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="ws_labels",
+                permission="reply_in_inbox",
+                label="Labels",
+                icon="tag",
+                url_name="inbox:label_settings",
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="ws_inbox_rules",
+                permission="manage_workspace_settings",
+                label="Inbox rules",
+                icon="flows",
+                url_name="inbox:rule_settings",
+                workspace_scoped=True,
+            ),
+            # The redesign names four Workspace rows; the product has nine
+            # settings pages and these four have no other entry point anywhere
+            # in the app. Extra rows in a named group is a far smaller
+            # deviation than four unreachable pages.
+            NavItem(
+                key="ws_fields",
+                permission="manage_crm",
+                label="Fields",
+                icon="fields",
+                url_name="contacts:field_list",
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="ws_email_tracking",
+                permission="manage_workspace_settings",
+                label="Email tracking",
+                icon="analytics",
+                url_name="analytics:tracking_settings",
+                workspace_scoped=True,
+            ),
+            # Outbound webhooks (issue #25). Workspace-scoped, unlike the
+            # org-tier "Developers" row below: SPEC §5 gives outbound_webhook a
+            # workspace_id, so its url, secret and subscriptions belong to one
+            # workspace's data.
+            NavItem(
+                key="ws_webhooks",
+                permission="manage_workspace_settings",
+                label="Webhooks",
+                icon="channels",
+                url_name="api_webhooks:list",
+                url_names=frozenset({"api_webhooks:list", "api_webhooks:detail"}),
+                workspace_scoped=True,
+            ),
         ),
     ),
     NavGroup(
-        label="Organization",
+        label="Organisation",
         items=(
-            NavItem(key="org_general", label="General", icon="building", url_name="organizations:settings"),
-            NavItem(key="org_workspaces", label="Workspaces", icon="grid", url_name="organizations:workspaces"),
-            NavItem(key="org_members", label="Team Members", icon="users", url_name="members:list"),
-            NavItem(key="org_billing", label="Plan & billing", icon="billing", url_name="organizations:billing"),
+            NavItem(
+                key="org_general",
+                label="General",
+                icon="building",
+                url_name="organizations:settings",
+                org_role="member",
+            ),
+            NavItem(
+                key="org_workspaces",
+                label="Workspaces",
+                icon="grid",
+                url_name="organizations:workspaces",
+                org_role="member",
+            ),
+            NavItem(
+                key="org_members", label="People & roles", icon="users", url_name="members:list", org_role="member"
+            ),
+            NavItem(
+                key="org_billing",
+                label="Plan & billing",
+                icon="billing",
+                url_name="organizations:billing",
+                org_role="member",
+            ),
             NavItem(
                 key="org_api_keys",
-                label="API Keys",
+                org_role="admin",
+                label="Developers",
                 icon="key",
                 url_name="settings_org_api_keys",
                 # The issuance response is its own page, so the row has to stay
@@ -289,83 +326,161 @@ SETTINGS_NAV: list[NavGroup] = [
         ),
     ),
     NavGroup(
-        label="Workspace",
+        label="You",
+        items=(
+            NavItem(key="profile", label="Profile", icon="user", url_name="accounts:settings"),
+            # "Notifications" used to be here, pointing at the placeholder in
+            # config/urls.py's _GLOBAL_STUBS. A settings row whose whole content
+            # is "Preferences is not built yet. Lands with issue #31 follow-up."
+            # is a dead end with an issue number on it — worse than no row at
+            # all. The route stays (it is a real endpoint, and tests walk it);
+            # what is gone is the promise in the nav. Put the row back in the
+            # same commit as the page.
+        ),
+    ),
+]
+
+
+# Every route any settings row points at. The rail's Settings row lights up on
+# all of them, and deriving the set beats hand-listing seventeen route names
+# that would drift the first time a settings page is added.
+_SETTINGS_ROUTES: frozenset[str] = frozenset(
+    name for group in SETTINGS_NAV for item in group.items for name in (item.url_names or frozenset({item.url_name}))
+)
+
+
+# --- The product's navigation ------------------------------------------------
+# The rail (SPEC §16's shell, as redesigned): six rows that answer "what am I
+# doing", then a bottom group for the things you reach occasionally.
+#
+# Keys track the route; labels track the design. That is why `dashboard`,
+# `analytics` and `media` keep their keys while reading Home, Insights and
+# Library — every cross-app test that looks a row up by key keeps working, and
+# a rename in the design costs one string.
+MAIN_NAV: list[NavGroup] = [
+    NavGroup(
+        label="",
         items=(
             NavItem(
-                key="ws_general",
-                label="General",
-                icon="settings",
-                url_name="workspaces:settings",
-                permission="manage_workspace_settings",
+                key="dashboard",
+                label="Home",
+                icon="home",
+                url_name="workspaces:dashboard",
                 workspace_scoped=True,
             ),
             NavItem(
-                key="ws_channels",
-                label="Channels",
-                icon="channels",
-                url_name="channels:list",
-                url_names=frozenset({"channels:list", "channels:create", "channels:detail"}),
-                permission="manage_channels",
+                key="inbox",
+                label="Inbox",
+                icon="inbox",
+                # An open thread is the same section to a reader, so the row
+                # stays lit on a deep link into one (issue #14).
+                url_name="inbox:list",
+                url_names=frozenset({"inbox:list", "inbox:thread"}),
+                badge_key="unread_inbox",
                 workspace_scoped=True,
             ),
-            # Issue #24. Two rows rather than one "Inbox" page: they answer to
-            # different permissions — a label is inbox furniture an Agent files
-            # with, a rule is workspace-wide automation — and a single page
-            # would have to hide half of itself.
+            # Sequences left the rail and became a tab on this page, so the row
+            # stays lit while either half of "automations" is open.
             NavItem(
-                key="ws_labels",
-                label="Labels",
-                icon="tag",
-                url_name="inbox:label_settings",
-                permission="reply_in_inbox",
-                workspace_scoped=True,
-            ),
-            NavItem(
-                key="ws_inbox_rules",
-                label="Inbox rules",
+                key="flows",
+                label="Flows",
                 icon="flows",
-                url_name="inbox:rule_settings",
-                permission="manage_workspace_settings",
+                url_name="flows:list",
+                url_names=frozenset(
+                    {"flows:list", "flows:edit", "flows:template_gallery", "campaigns:list", "campaigns:detail"}
+                ),
                 workspace_scoped=True,
             ),
-            # Issue #26. Workspace configuration rather than an analytics page:
-            # it answers to manage_workspace_settings, and a reader looking for a
-            # switch looks in settings.
             NavItem(
-                key="ws_email_tracking",
-                label="Email tracking",
+                key="broadcasts",
+                label="Broadcasts",
+                icon="broadcasts",
+                url_name="broadcasts:list",
+                url_names=frozenset({"broadcasts:list", "broadcasts:detail", "broadcasts:compose"}),
+                workspace_scoped=True,
+            ),
+            NavItem(
+                key="contacts",
+                label="Contacts",
+                icon="contacts",
+                url_name="contacts:list",
+                url_names=frozenset(
+                    {"contacts:list", "contacts:detail", "contacts:import_list", "contacts:import_detail"}
+                ),
+                workspace_scoped=True,
+            ),
+            # apps.analytics is an optional install, so this row legitimately
+            # reverses to "#" and is dropped on deployments without it. The
+            # rail is laid out with flex for that reason: it must not assume
+            # six items.
+            NavItem(
+                key="analytics",
+                label="Insights",
                 icon="analytics",
-                url_name="analytics:tracking_settings",
-                permission="manage_workspace_settings",
+                url_name="analytics:overview",
+                url_names=frozenset({"analytics:overview", "analytics:flow_detail"}),
+                workspace_scoped=True,
+            ),
+        ),
+    ),
+    NavGroup(
+        label="",
+        placement="bottom",
+        items=(
+            NavItem(
+                key="media",
+                label="Library",
+                icon="image",
+                url_name="media:library",
+                url_names=frozenset({"media:library", "media:asset_detail"}),
+                workspace_scoped=True,
+            ),
+            # Lights up on every settings page, derived rather than listed.
+            NavItem(
+                key="settings",
+                label="Settings",
+                icon="settings",
+                url_name="accounts:settings",
+                url_names=_SETTINGS_ROUTES,
+            ),
+        ),
+    ),
+]
+
+
+# The tabs across the top of the automations section. Rendered through the same
+# _render_nav as every other nav, so active state stays one convention.
+FLOWS_TABS: list[NavGroup] = [
+    NavGroup(
+        label="",
+        items=(
+            NavItem(
+                key="tab_flows",
+                label="Flows",
+                icon="flows",
+                url_name="flows:list",
+                url_names=frozenset({"flows:list", "flows:edit"}),
                 workspace_scoped=True,
             ),
             NavItem(
-                key="ws_fields",
-                label="Fields",
-                icon="fields",
-                url_name="contacts:field_list",
-                permission="manage_crm",
+                key="tab_sequences",
+                label="Sequences",
+                icon="sequences",
+                url_name="campaigns:list",
+                url_names=frozenset({"campaigns:list", "campaigns:detail"}),
                 workspace_scoped=True,
             ),
             NavItem(
-                key="ws_tags",
-                label="Tags",
-                icon="tag",
-                url_name="contacts:tag_list",
-                permission="manage_crm",
-                workspace_scoped=True,
-            ),
-            # Outbound webhooks (issue #25). Workspace-scoped, unlike the
-            # org-tier "API Keys" row above: SPEC §5 gives outbound_webhook a
-            # workspace_id, so its url, secret and subscriptions belong to one
-            # workspace's data.
-            NavItem(
-                key="ws_webhooks",
-                label="Webhooks",
-                icon="channels",
-                url_name="api_webhooks:list",
-                url_names=frozenset({"api_webhooks:list", "api_webhooks:detail"}),
-                permission="manage_workspace_settings",
+                key="tab_templates",
+                label="Templates",
+                icon="grid",
+                url_name="flows:template_gallery",
+                # Unlike its two neighbours, the page behind this tab is gated:
+                # views_portability.template_gallery requires edit_flows,
+                # because picking a template writes a FlowImport row. Without
+                # the key here an Agent saw a tab that answered 403 while Flows
+                # and Sequences beside it read fine.
+                permission="edit_flows",
                 workspace_scoped=True,
             ),
         ),
@@ -373,18 +488,20 @@ SETTINGS_NAV: list[NavGroup] = [
 ]
 
 
-# Which settings groups each layout renders. One definition above, two views of
-# it: layouts/settings.html is account- and org-scoped, while
-# layouts/workspace_settings.html is scoped to the current workspace. Studio
-# splits these too, and the split is not cosmetic — once issue #31 lands RBAC an
-# Editor can reach workspace settings without being able to see organization
-# settings, so a single shared nav would advertise pages the viewer cannot open.
-ACCOUNT_SETTINGS_GROUPS = ("Account", "Organization")
-WORKSPACE_SETTINGS_GROUPS = ("Workspace",)
-
-
-def _subset(groups: list[NavGroup], labels: tuple[str, ...]) -> list[NavGroup]:
-    return [g for g in groups if g.label in labels]
+# There used to be two group lists here — one for layouts/settings.html and one
+# for layouts/workspace_settings.html — so that an Editor reaching workspace
+# settings would not be shown organisation rows they cannot open.
+#
+# The intent was right and the mechanism was too coarse, in both directions. It
+# hid every Workspace row from the account settings page, which is where the
+# nav's own Settings row lands, so Channels, Tags, Labels and five more had no
+# entry point anywhere in the product once the first-run checklist was done.
+# And inside a group it filtered nothing, so an Editor still saw the rows they
+# would be refused at.
+#
+# Both halves are fixed by gating each ROW on the key its own view is gated on
+# (NavItem.permission / NavItem.org_role). One settings nav, filtered per
+# viewer, which is what the design drew and what is now safe to draw.
 
 
 def _render_nav(
@@ -393,21 +510,16 @@ def _render_nav(
     """Render the groups, dropping rows the viewer cannot use.
 
     Two reasons a row is omitted. A workspace-scoped row with no current
-    workspace has nowhere to point: the user has no workspace to be in, so the
-    section does not exist for them yet. A row carrying a ``permission`` the
-    member does not hold would 403 on arrival, so it is hidden rather than
-    rendered and refused.
+    workspace has nowhere to point — the user has no workspace to be in, so the
+    section does not exist for them yet. And a row whose page the viewer lacks
+    the permission for is not shown at all, because a link that always answers
+    403 reads as a bug rather than as a boundary (see NavItem.visible_to).
 
-    ``effective_permissions`` is the only thing read for the second test, which
-    is the same protocol ``apps.members.decorators.require_permission`` uses —
-    keeping the nav and the decorator from ever disagreeing about a row.
+    A group whose every row is dropped renders no heading either.
     """
-    membership = getattr(request, "workspace_membership", None)
-    permissions: dict[str, bool] = membership.effective_permissions if membership is not None else {}
-
     rendered = []
     for group in groups:
-        allowed = [i for i in group.items if not i.permission or permissions.get(i.permission, False)]
+        allowed = [i for i in group.items if i.visible_to(request)]
         items = [i.resolved(request, badges, workspace_id) for i in allowed]
         items = [i for i in items if i["url"] != "#"]
         if items:
@@ -506,24 +618,20 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     channel_connections: list[Any] = []
 
     workspace_id = workspace.id if workspace is not None else None
-    # Rendered once rather than twice: the switcher's way into the section is
-    # the first row of this very nav, so asking the nav is what keeps the link
-    # and the page it opens from disagreeing. An Editor holds manage_crm but
-    # not manage_workspace_settings, so their entry point is Fields, not the
-    # General page they would be refused.
-    workspace_settings_nav_groups = _render_nav(
-        _subset(SETTINGS_NAV, WORKSPACE_SETTINGS_GROUPS), request, badges, workspace_id
-    )
-    workspace_settings_url = next(
-        (item["url"] for group in workspace_settings_nav_groups for item in group["items"]), ""
-    )
-
+    settings_nav = _render_nav(SETTINGS_NAV, request, badges, workspace_id)
     return {
-        "nav_groups": _render_nav(MAIN_NAV, request, badges, workspace_id),
-        "settings_nav_groups": _render_nav(
-            _subset(SETTINGS_NAV, ACCOUNT_SETTINGS_GROUPS), request, badges, workspace_id
+        # The rail, in two halves. One structure, filtered on placement, so the
+        # invariant tests that iterate MAIN_NAV still cover every row.
+        "nav_groups": _render_nav([g for g in MAIN_NAV if g.placement == "top"], request, badges, workspace_id),
+        "nav_footer_groups": _render_nav(
+            [g for g in MAIN_NAV if g.placement == "bottom"], request, badges, workspace_id
         ),
-        "workspace_settings_nav_groups": workspace_settings_nav_groups,
+        "flow_tab_groups": _render_nav(FLOWS_TABS, request, badges, workspace_id),
+        # One nav, two names. Both layouts render the same filtered list; the
+        # second key is kept so the fourteen templates extending either layout
+        # need no edit.
+        "settings_nav_groups": settings_nav,
+        "workspace_settings_nav_groups": settings_nav,
         "sidebar_workspaces": sidebar_workspaces,
         "current_workspace": workspace,
         "can_create_workspace": can_create_workspace,
@@ -544,12 +652,6 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         )
         or "/",
         "create_workspace_url": reverse_cached("organizations:workspaces") or "#",
-        # The switcher's one way into the workspace-settings section, and empty
-        # for anyone with no row in it — the template hides the link on exactly
-        # that, so there is one source of truth instead of a boolean that can
-        # drift from the nav it guards. One row is enough of a target:
-        # layouts/workspace_settings.html carries the rest of the section.
-        "workspace_settings_url": workspace_settings_url,
         "logout_url": reverse_cached("account_logout"),
         # The shell renders its chrome when this is true. It tracks
         # authentication, and /ui/ overrides it (see navigation_context).

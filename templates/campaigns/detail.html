@@ -17,7 +17,7 @@ per-step counts, which is why subscriber mutations fire both events.
             <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
                class="btn-text-hover-primary">Sequences</a>
         </p>
-        <h1 class="text-lg font-semibold truncate" style="color: var(--text-primary);">{{ sequence.name }}</h1>
+        <h1 class="page-title truncate">{{ sequence.name }}</h1>
         <p class="text-sm" style="color: var(--text-secondary);">
             Steps run in order. Each waits its delay from the moment the previous step actually ran,
             then opens inside its send window.

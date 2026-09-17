@@ -14,7 +14,7 @@ import { installCsrfToken, stubHttp, type HttpStub } from "../test/http";
 import { makeDetail } from "../test/fixtures";
 import { makeStore, renderWith } from "../test/render";
 import { sampleConfig } from "../schema/sample";
-import { Inspector } from "./Inspector";
+import { StepEditor } from "../editor/StepEditor";
 
 let http: HttpStub;
 
@@ -61,7 +61,7 @@ function openMessageWithImageBlock() {
     }),
   );
   store.getState().setSelection({ nodes: ["n1"], edges: [] });
-  renderWith(store, <Inspector />);
+  renderWith(store, <StepEditor />);
   return store;
 }
 

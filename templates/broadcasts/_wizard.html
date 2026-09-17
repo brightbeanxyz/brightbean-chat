@@ -5,16 +5,31 @@ The step to render is chosen in Python (apps/broadcasts/views.py::_requested_ste
 against a fixed tuple, so nothing here builds a template name out of a request
 parameter. The four includes are spelled out for the same reason.
 {% endcomment %}
+{% comment %}
+  The progress rail. `reached` — the furthest step this broadcast has got to —
+  has always been in the context and was never rendered, so the rail showed
+  where you are but not how far along. A step before `reached` is done and shows
+  a tick; the connector between two done steps fills in.
+
+  `step_labels` rather than the raw names: the fourth step is stored as
+  "content" and read as "Message".
+{% endcomment %}
 <div class="bc-rail" role="navigation" aria-label="Composer steps">
-    {% for name in steps %}
+    {% for row in step_rows %}
+    {% if not forloop.first %}<span class="bc-step-link{% if row.done %} bc-step-link-done{% endif %}"></span>{% endif %}
     <button type="button"
-            class="bc-step{% if name == step %} bc-step-current{% endif %}"
-            hx-get="{% url 'broadcasts:wizard' workspace_id=request.workspace.id broadcast_id=broadcast.id %}?step={{ name }}"
+            class="bc-step{% if row.current %} bc-step-current{% elif row.done %} bc-step-done{% endif %}"
+            hx-get="{% url 'broadcasts:wizard' workspace_id=request.workspace.id broadcast_id=broadcast.id %}?step={{ row.name }}"
             hx-target="#broadcast-wizard"
             hx-swap="innerHTML"
-            {% if name == step %}aria-current="step"{% endif %}>
-        <span class="bc-step-index">{{ forloop.counter }}</span>
-        <span class="capitalize">{{ name }}</span>
+            {% if row.current %}aria-current="step"{% endif %}>
+        <span class="bc-step-index">
+            {% if row.done %}
+            <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="sr-only">Done:</span>
+            {% else %}{{ row.index }}{% endif %}
+        </span>
+        <span>{{ row.label }}</span>
     </button>
     {% endfor %}
 </div>

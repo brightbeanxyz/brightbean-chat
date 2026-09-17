@@ -36,7 +36,7 @@ smart-delay panel uses, because it is the same object (SPEC §11.5).
             {% endfor %}
         </select>
         <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-            Only active flows are listed — a step pointing at a draft could never run.
+            Only active flows are listed. A step pointing at a draft could never run.
             <a href="{% url 'flows:list' workspace_id=request.workspace.id %}" class="btn-text-hover-primary">New flow</a>
         </p>
     </div>

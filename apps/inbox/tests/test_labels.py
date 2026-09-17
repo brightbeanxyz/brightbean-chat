@@ -8,6 +8,7 @@ has to ask an Admin before they can file anything does not have an inbox. The
 on other people's conversations. Both keys already exist; nothing is invented.
 """
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -305,3 +306,42 @@ class TestTheBulkSelectUi:
         page = viewer_client.get(url_for("list")).content.decode()
 
         assert url_for("bulk_label") not in page
+
+
+@pytest.mark.django_db
+class TestALabelledRowsLayout:
+    """The row is a two-column grid, and every part of it belongs in column 2.
+
+    This is here because a real bug shipped through a green suite: `.ib-row`
+    became `display: grid` with the avatar pinned to column 1, and the avatar was
+    given `grid-row: 1 / span 3` — one row per content child the author happened
+    to count. Labels render only when a conversation has some, and no fixture in
+    the suite had any, so the fifth child overflowed the span and auto-placed
+    into column 1, sliding underneath the avatar. Nothing failed; it was only
+    visible on screen, on a workspace with labelled conversations.
+
+    So: a rendered row with labels in it, and a stylesheet that pins the columns
+    rather than counting children.
+    """
+
+    def test_a_labelled_row_still_renders_its_chips(self, tenancy, agent_client, url_for, conversation, inbound):
+        inbound(text="hello")
+        services.apply_label(conversation, _label(tenancy.workspace, "Refunds"))
+
+        page = agent_client.get(url_for("rows")).content.decode()
+
+        assert "ib-row-labels" in page
+        assert "Refunds" in page
+
+    def test_the_grid_pins_columns_rather_than_counting_children(self):
+        """The stylesheet must not assume how many children a row has.
+
+        A row carries a name, a preview, a meta line and — sometimes — labels,
+        so any rule shaped `grid-row: 1 / span <n>` is right only for the `n`
+        the author had in front of them.
+        """
+        css = (Path(__file__).parents[3] / "theme" / "static_src" / "src" / "styles.css").read_text()
+        block = css[css.index(".ib-row {") : css.index(".ib-row:hover")]
+
+        assert "grid-column: 2" in block, "content children are not pinned to the second column"
+        assert "span 3" not in block, "the avatar's row span counts children again"

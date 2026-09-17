@@ -1,158 +1,149 @@
 {% load humanize %}{% comment %}
-The flow table, grouped by folder. Rendered both inside list.html and on its own
+The flow list, grouped by folder. Rendered both inside list.html and on its own
 for every HTMX refresh — one renderer, so a filtered view and a post-mutation
 refresh can never disagree about what a row looks like.
+
+**Seven buttons became one plus a menu.** Every row used to carry Edit, Stats,
+Rename, Duplicate, Export, Export bundle and Archive at equal weight, which made
+the action wanted on nine visits out of ten exactly as prominent as the one
+wanted twice a year. The named action is now Open — or Continue, for a draft
+somebody started and left — and the rest sit behind the "…".
+
+The menu panel is `position: fixed` and anchored on open, the same way
+components/ui_select.html does it and for the same reason: these rows live in a
+scrolling container, and an absolutely positioned panel is clipped by that
+overflow. The coordinates are captured once, so scrolling closes the menu rather
+than letting it drift away from its button.
 {% endcomment %}
 {% if not groups %}
-{% if template_cards %}
-{% comment %}
-The gallery, in the empty state. This is the exact moment somebody has nothing
-and no idea what to build, and what the page offered them was a naked text
-field. Only reached when there are no flows, no filters and the member may edit
-— apps/flows/views.py::_list_context computes the cards on that path alone, so
-the branch below is still the answer for everyone else.
-
-This partial is the only renderer of the rows, for the page and for every HTMX
-refresh, so the gallery lands in both without a second template to keep in step.
-{% endcomment %}
-<div class="rounded-xl border p-5 sm:p-6" style="border-color: var(--border); background: var(--surface-1);">
-    <p class="text-sm font-medium" style="color: var(--text-primary);">No flows here yet — start with a template</p>
-    <p class="text-sm mt-1 mb-4" style="color: var(--text-secondary);">
-        Each one installs as an unpublished draft with its triggers off, so you can read it
-        before anything runs. Create one above instead to start from a blank canvas.
-    </p>
-    <div class="grid gap-3 sm:grid-cols-2">
-        {% comment %}
-          The loop variable must be `entry` — flows/_template_card.html reads
-          entry.card.*. No `searchable`, so the card leaves off the Alpine
-          filter that only the gallery page's scope defines.
-        {% endcomment %}
-        {% for entry in template_cards %}
-        {% include "flows/_template_card.html" %}
-        {% endfor %}
-    </div>
-    {% if template_total > template_cards|length %}
-    <p class="text-sm mt-3" style="color: var(--text-tertiary);">
-        <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
-           class="btn-text-hover-primary">Browse all {{ template_total }} templates</a>
-    </p>
-    {% endif %}
-</div>
-{% else %}
-<div class="rounded-xl border p-8 text-center" style="border-color: var(--border); background: var(--surface-1);">
-    <p class="text-sm font-medium" style="color: var(--text-primary);">No flows here yet</p>
-    <p class="text-sm mt-1" style="color: var(--text-secondary);">
+<div class="empty-state">
+    <p class="empty-state-title">No flows here yet</p>
+    <p class="empty-state-body">
         {% if query or status or folder %}
             Nothing matches these filters.
         {% else %}
-            Create one above to start automating a conversation.
+            Start from a template above, or create one from scratch.
         {% endif %}
     </p>
 </div>
-{% endif %}
 {% else %}
 {% for group in groups %}
-<section class="mb-6">
-    <h2 class="text-xs font-semibold uppercase tracking-wide mb-2" style="color: var(--text-tertiary);">
-        {{ group.label }}
-    </h2>
-    <div class="rounded-xl border divide-y" style="border-color: var(--border); background: var(--surface-1);">
-        {% for flow in group.flows %}
-        <div class="p-3 sm:p-4 flex flex-wrap items-center gap-3" x-data="{ renaming: false }">
-            {% comment %}
-            min-w-[16rem], not min-w-0. The seven action buttons beside this are
-            sized by their content and take their width first, so a name column
-            allowed to shrink to nothing absorbed the whole shortfall: at 800px
-            "QA Welcome Flow" rendered as "QA Welcom…" with room to spare on the
-            row. A floor here is what makes the outer flex-wrap fire and drop
-            the buttons onto their own line instead. It is still below `auto`,
-            so `truncate` keeps working — it just stops happening first.
-            {% endcomment %}
-            <div class="flex-1 min-w-[16rem]">
-                <div class="flex items-center gap-2">
-                    <a href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}"
-                       class="text-sm font-medium truncate btn-text-hover-primary" style="color: var(--text-primary);">{{ flow.name }}</a>
-                    {% if flow.status == "active" %}
-                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                          style="background: rgba(var(--success-500-rgb), 0.12); color: var(--success-500);">Active</span>
-                    {% elif flow.status == "archived" %}
-                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                          style="background: var(--surface-2); color: var(--text-tertiary);">Archived</span>
-                    {% else %}
-                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                          style="background: var(--primary-soft); color: var(--primary);">Draft</span>
-                    {% endif %}
-                </div>
-                <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">Updated {{ flow.updated_at|naturaltime }}</p>
-            </div>
+<div class="section-eyebrow mb-2.5">{{ group.label }}</div>
+<div class="card overflow-hidden mb-6">
+    {% for flow in group.flows %}
+    <div class="list-row flex-wrap" x-data="{ renaming: false, menuOpen: false, menuTop: 0, menuLeft: 0,
+            openMenu(e){ if (this.menuOpen) { this.menuOpen = false; return; }
+                const r = e.currentTarget.getBoundingClientRect();
+                this.menuTop = r.bottom + 6;
+                // Clamped at both ends. Right-aligning to the button puts the
+                // panel off the left edge on a narrow viewport, where its first
+                // items are clipped with no way to scroll to them.
+                this.menuLeft = Math.max(8, Math.min(r.right - 200, window.innerWidth - 212));
+                this.menuOpen = true; } }"
+         @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
 
-            {% comment %}
-            flex-wrap here too: on a narrow phone even a wrapped button row can
-            outrun the viewport, and seven buttons in a nowrap flex overflow the
-            card rather than the row growing.
-            {% endcomment %}
-            <div class="flex flex-wrap items-center gap-2">
-                <a href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}"
-                   class="btn-outline btn-inline">{% if can_edit %}Edit{% else %}View{% endif %}</a>
-                {% comment %}
-                  Issue #26. The analytics overview lists only flows that have
-                  been running, so this is the way into a quiet flow's page —
-                  and "how did this one do" is a question asked from the list.
-                {% endcomment %}
-                {% if can_view_analytics %}
-                <a href="{% url 'analytics:flow_detail' workspace_id=request.workspace.id flow_id=flow.id %}"
-                   class="btn-outline btn-inline">Stats</a>
-                {% endif %}
-                {% if can_edit %}
-                <button type="button" class="btn-outline btn-inline" @click="renaming = !renaming">Rename</button>
-                <button type="button" class="btn-outline btn-inline"
-                        hx-post="{% url 'flows:duplicate' workspace_id=request.workspace.id flow_id=flow.id %}"
-                        hx-swap="none">Duplicate</button>
-                {% comment %}
-                  Plain links, not htmx: the response is a file download, and
-                  htmx would swap the JSON into the page instead. "Bundle"
-                  follows this flow's start_flow and sequence-step references
-                  and puts the whole set in one file (issue #27).
-                {% endcomment %}
-                <a href="{% url 'flows:export' workspace_id=request.workspace.id flow_id=flow.id %}"
-                   class="btn-outline btn-inline">Export</a>
-                <a href="{% url 'flows:export_bundle' workspace_id=request.workspace.id flow_id=flow.id %}"
-                   class="btn-outline btn-inline"
-                   title="This flow and every flow it hands over to, as one file">Export bundle</a>
-                {% if flow.status == "archived" %}
-                <button type="button" class="btn-outline btn-inline"
-                        hx-post="{% url 'flows:restore' workspace_id=request.workspace.id flow_id=flow.id %}"
-                        hx-swap="none">Restore</button>
+        <span class="list-row-icon{% if flow.status == 'active' %} list-row-icon-live{% endif %}">
+            {% include "partials/_nav_icon.html" with name="flows" icon_size=19 %}
+        </span>
+
+        <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-2.5">
+                <a class="list-row-title btn-text-hover-primary truncate"
+                   href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}">{{ flow.name }}</a>
+                {% if flow.status == "active" %}
+                <span class="status-pill status-pill-active inline-flex items-center gap-1.5">
+                    <span class="status-pill-dot"></span>Live
+                </span>
+                {% elif flow.status == "archived" %}
+                <span class="status-pill status-pill-archived">Archived</span>
                 {% else %}
-                <button type="button" class="btn-outline btn-inline btn-danger-soft"
-                        hx-post="{% url 'flows:archive' workspace_id=request.workspace.id flow_id=flow.id %}"
-                        hx-swap="none">Archive</button>
-                {% endif %}
+                <span class="status-pill status-pill-draft">Draft</span>
                 {% endif %}
             </div>
-
             {% comment %}
-              A sibling of the two columns rather than a child of the first: the
-              row is flex-wrap, so a full-width form drops onto its own line
-              instead of colliding with the action buttons.
+              When this flow runs, in the reader's words rather than SPEC §10's
+              — see apps/flows/triggers/phrasing.py. A flow with no trigger says
+              so right here, which is where somebody notices before wondering
+              why nothing happened.
+            {% endcomment %}
+            <div class="list-row-meta truncate">{{ flow.trigger_summary }} · edited {{ flow.updated_at|naturaltime }}</div>
+        </div>
+
+        <a class="btn-pill-secondary btn-pill-sm flex-shrink-0"
+           href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}">
+            {% if not can_edit %}View{% elif flow.status == "draft" %}Continue{% else %}Open{% endif %}
+        </a>
+
+        <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)"
+                aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions">
+            <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+        </button>
+
+        <div x-show="menuOpen" x-cloak @click.away="menuOpen = false"
+             :style="`top:${menuTop}px; left:${menuLeft}px;`"
+             class="row-menu-panel fixed z-50 w-[200px]" role="menu">
+            {% if can_view_analytics %}
+            <a class="row-menu-item" role="menuitem"
+               href="{% url 'analytics:flow_detail' workspace_id=request.workspace.id flow_id=flow.id %}">Stats</a>
+            {% endif %}
+            {% if can_edit %}
+            <button type="button" class="row-menu-item" role="menuitem"
+                    @click="renaming = true; menuOpen = false">Rename</button>
+            <button type="button" class="row-menu-item" role="menuitem"
+                    hx-post="{% url 'flows:duplicate' workspace_id=request.workspace.id flow_id=flow.id %}"
+                    hx-swap="none" @click="menuOpen = false">Duplicate</button>
+            {% endif %}
+            {% comment %}
+              Both downloads stay inside `can_edit`, because both views require
+              `edit_flows` (apps/flows/views_portability.py). Offering them to a
+              Viewer would be an action that always answers 403, which reads as
+              a bug rather than as a boundary.
+
+              Plain links, not htmx: the response is a file download, and htmx
+              would swap the JSON into the page instead. The second one follows
+              this flow's start_flow and sequence-step references and puts the
+              whole set in one file (issue #27), named for what it gives you
+              rather than for the word "bundle".
             {% endcomment %}
             {% if can_edit %}
-            <form x-show="renaming" x-cloak class="w-full flex flex-wrap items-center gap-2"
-                  hx-post="{% url 'flows:rename' workspace_id=request.workspace.id flow_id=flow.id %}"
-                  hx-swap="none"
-                  @htmx:after-request="renaming = false">
-                {% csrf_token %}
-                <input type="text" name="name" value="{{ flow.name }}" maxlength="200" required
-                       class="form-input-styled" style="width: 14rem;" aria-label="Flow name">
-                <input type="text" name="folder" value="{{ flow.folder }}" maxlength="200"
-                       class="form-input-styled" style="width: 10rem;" placeholder="Folder" aria-label="Folder">
-                <button type="submit" class="btn-brand btn-inline">Save</button>
-                <button type="button" class="btn-outline btn-inline" @click="renaming = false">Cancel</button>
-            </form>
+            <div class="row-menu-sep"></div>
+            <a class="row-menu-item" role="menuitem"
+               href="{% url 'flows:export' workspace_id=request.workspace.id flow_id=flow.id %}">Download a copy</a>
+            <a class="row-menu-item" role="menuitem"
+               href="{% url 'flows:export_bundle' workspace_id=request.workspace.id flow_id=flow.id %}">Download with everything it uses</a>
+            <div class="row-menu-sep"></div>
+            {% if flow.status == "archived" %}
+            <button type="button" class="row-menu-item" role="menuitem"
+                    hx-post="{% url 'flows:restore' workspace_id=request.workspace.id flow_id=flow.id %}"
+                    hx-swap="none" @click="menuOpen = false">Restore</button>
+            {% else %}
+            <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem"
+                    hx-post="{% url 'flows:archive' workspace_id=request.workspace.id flow_id=flow.id %}"
+                    hx-swap="none" @click="menuOpen = false">Archive</button>
+            {% endif %}
             {% endif %}
         </div>
-        {% endfor %}
+
+        {% comment %}
+          Full-width and ordered last, so it drops onto its own line under the
+          row rather than colliding with the action buttons.
+        {% endcomment %}
+        {% if can_edit %}
+        <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3"
+              hx-post="{% url 'flows:rename' workspace_id=request.workspace.id flow_id=flow.id %}"
+              hx-swap="none"
+              @htmx:after-request="renaming = false">
+            {% csrf_token %}
+            <input type="text" name="name" value="{{ flow.name }}" maxlength="200" required
+                   class="form-input-styled" style="width: 14rem;" aria-label="Flow name">
+            <input type="text" name="folder" value="{{ flow.folder }}" maxlength="200"
+                   class="form-input-styled" style="width: 10rem;" placeholder="Folder" aria-label="Folder">
+            <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
+            <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
+        </form>
+        {% endif %}
     </div>
-</section>
+    {% endfor %}
+</div>
 {% endfor %}
 {% endif %}

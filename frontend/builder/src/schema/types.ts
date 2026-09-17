@@ -170,6 +170,8 @@ export interface TriggerSummary {
   enabled: boolean;
   priority: number;
   summary: string;
+  /** When this runs, as a whole sentence — what the canvas card shows. */
+  plain: string;
   connection: { id: string; label: string; platform: string } | null;
   /** The platforms this trigger resolved to — what the capability warnings used. */
   platforms: string[];

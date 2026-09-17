@@ -1,0 +1,154 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "ask_email-default-join",
+            "source": "ask_email",
+            "sourceHandle": "default",
+            "target": "join"
+          },
+          {
+            "id": "join-default-done",
+            "source": "join",
+            "sourceHandle": "default",
+            "target": "done"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "question": "I will let you know the moment it is back. What is your email?",
+              "reply_type": "email",
+              "retry": {
+                "max": 1
+              },
+              "target": {
+                "key": "email",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 1,
+                "enabled": true,
+                "unit": "days"
+              }
+            },
+            "id": "ask_email",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Waitlist",
+                  "verb": "add_tag"
+                },
+                {
+                  "field": "Signup source",
+                  "value": "Waitlist",
+                  "verb": "set_field"
+                }
+              ]
+            },
+            "id": "join",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "You are on the waitlist. You will hear from me first.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "done",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_message"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Join a waitlist",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "waitlist"
+              },
+              {
+                "mode": "any_word",
+                "text": "notify"
+              },
+              {
+                "mode": "any_word",
+                "text": "restock"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [
+      {
+        "key": "signup source",
+        "name": "Signup source",
+        "used_by": [
+          "flow-1:join"
+        ]
+      }
+    ],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "waitlist",
+        "name": "Waitlist",
+        "used_by": [
+          "flow-1:join"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

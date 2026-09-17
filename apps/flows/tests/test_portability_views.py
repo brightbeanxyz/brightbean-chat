@@ -639,11 +639,18 @@ class TestStartingFromATemplate:
         ``default_reply`` and ``story_reply`` are storage values; a card showing
         one is the same feature speaking with two voices.
         """
+        from apps.flows.triggers.registry import spec_for
+
         body = client_for(tenancy.owner).get(_url("template_gallery", tenancy)).content.decode()
-        assert "Default reply" in body
-        assert "Story reply" in body
-        assert "default_reply" not in body
-        assert "story_reply" not in body
+
+        # Read off the registry rather than spelled out, so a copy pass on a
+        # label changes one place. What is pinned is that the *storage value*
+        # never reaches the page, which is the bug this guards.
+        for trigger_type in ("default_reply", "story_reply"):
+            spec = spec_for(trigger_type)
+            assert spec is not None, trigger_type
+            assert spec.label in body, trigger_type
+            assert trigger_type not in body
 
     def test_the_error_page_keeps_the_category_filters(
         self, tenancy: Any, client_for: Any, settings: Any, tmp_path: Any

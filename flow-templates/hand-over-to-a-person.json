@@ -1,0 +1,126 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Starters",
+      "graph": {
+        "edges": [
+          {
+            "id": "ack-default-flag",
+            "source": "ack",
+            "sourceHandle": "default",
+            "target": "flag"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Of course - putting you through to a person now.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "ack",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Needs a person",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "flag",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "text": "Assign this to whoever is on the inbox today. The Action step can notify them as well as tag the conversation."
+            },
+            "id": "advice",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Hand over to a person",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "any_word",
+                "text": "human"
+              },
+              {
+                "mode": "any_word",
+                "text": "agent"
+              },
+              {
+                "mode": "any_word",
+                "text": "person"
+              },
+              {
+                "mode": "any_word",
+                "text": "someone"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "needs a person",
+        "name": "Needs a person",
+        "used_by": [
+          "flow-1:flag"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

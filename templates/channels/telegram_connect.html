@@ -5,7 +5,7 @@
 {% block content %}
   <p class="muted">
     Telegram bots are created by talking to BotFather. The token it gives you is
-    the whole credential — anyone holding it can read and send as your bot — so
+    the whole credential: anyone holding it can read and send as your bot, so
     it is stored encrypted and never shown again.
   </p>
 
@@ -44,7 +44,7 @@
   <p><code>{{ webhook_url }}</code></p>
   <p class="muted">
     That URL has to be reachable from the public internet over HTTPS with a
-    valid certificate — Telegram will not deliver to anything else. On a local
+    valid certificate. Telegram will not deliver to anything else. On a local
     machine, put a tunnel in front of it first. Full setup notes are in
     <code>docs/channels/telegram.md</code>.
   </p>

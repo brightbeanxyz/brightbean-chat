@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import re
 import smtplib
 from typing import Any
 from unittest.mock import patch
@@ -148,6 +149,25 @@ class TestEmail:
             drain_emails()
 
         assert "https://chat.example.test/notifications/" in mail.outbox[0].body
+
+    def test_the_html_header_logo_is_an_absolute_png(self, tenancy, drain_emails):
+        """The mark in the HTML part has to survive leaving the building.
+
+        Two ways it can break, neither of which the plain-text assertion above
+        can see. A bare {% static %} yields "/static/..." — a path with no
+        origin, which an email client cannot resolve. And the app's own mark is
+        a .webp, which Outlook's Word engine does not render at all; the header
+        deliberately points at the .png twin instead.
+        """
+        with override_settings(APP_URL="https://chat.example.test/"):
+            loop_cap(tenancy.workspace)
+            drain_emails()
+
+        alternative, _mime = mail.outbox[0].alternatives[0]
+        src = re.search(r'<img src="([^"]+)"', alternative)
+        assert src, "the header no longer renders an <img>"
+        assert src.group(1).startswith("https://chat.example.test/static/")
+        assert src.group(1).endswith(".png"), f"not a png: {src.group(1)}"
 
     def test_a_delivery_row_records_the_outcome(self, tenancy, drain_emails):
         loop_cap(tenancy.workspace)

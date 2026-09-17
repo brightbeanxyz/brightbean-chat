@@ -30,7 +30,9 @@ __all__ = [
     "RANGE_CHOICES",
     "DateRange",
     "connection_deliverability",
+    "dashboard_daily_messages",
     "dashboard_kpis",
+    "dashboard_window",
     "empty_counters",
     "flow_daily_series",
     "flow_node_stats",
@@ -263,6 +265,56 @@ def connection_deliverability(workspace: Any, *, window: DateRange, connection_i
     return summary
 
 
+#: How many days Home's "Last 7 days" card covers. One constant, because the
+#: figures and the bar chart beneath them are read as one statement.
+DASHBOARD_DAYS = 7
+
+
+def dashboard_window(days: int = DASHBOARD_DAYS) -> tuple[date_type, Any]:
+    """The start of Home's window, as both a date and an aware datetime.
+
+    **The two halves of that card have to agree.** The figures were counted over
+    a rolling ``now - timedelta(days=7)`` while the bars were grouped by calendar
+    day, so "Messages in" included part of an eighth day the chart never drew and
+    the bars never summed to the number printed above them. Anybody who added
+    them up found the headline wrong.
+
+    Calendar days rather than a rolling window, because that is what a chart with
+    one bar per day means and what a reader means by "the last 7 days" — today
+    plus the six before it.
+    """
+    start_date = timezone.localdate() - timedelta(days=days - 1)
+    return start_date, timezone.make_aware(datetime.combine(start_date, time.min))
+
+
+def dashboard_daily_messages(workspace: Any, *, days: int = DASHBOARD_DAYS) -> list[dict[str, Any]]:
+    """Inbound message volume per day, zero-filled, oldest first.
+
+    For the landing page's sparkline. Zero-filled for the same reason
+    :func:`flow_daily_series` is: a chart drawn only from the days that have
+    rows draws a line between two distant points and calls it a trend. A quiet
+    Sunday is a real data point and should render as a short bar, not vanish.
+
+    Counted off ``Message`` rather than the analytics counters because this
+    answers "did anyone talk to us today", which is true whether or not a flow
+    was involved — the counter tables only know about flow nodes.
+    """
+    from apps.messaging.models import Message, MessageDirection
+
+    start, start_at = dashboard_window(days)
+    rows = (
+        Message.objects.for_workspace(workspace)
+        .filter(created_at__gte=start_at, internal=False, direction=MessageDirection.IN)
+        .values("created_at__date")
+        .annotate(total=Count("id"))
+    )
+    counted = {row["created_at__date"]: row["total"] for row in rows}
+    return [
+        {"date": start + timedelta(days=offset), "messages_in": counted.get(start + timedelta(days=offset), 0)}
+        for offset in range(days)
+    ]
+
+
 def dashboard_kpis(workspace: Any) -> dict[str, Any]:
     """The workspace landing page's cards.
 
@@ -275,8 +327,10 @@ def dashboard_kpis(workspace: Any) -> dict[str, Any]:
     from apps.flows.models import Flow, FlowStatus
     from apps.messaging.models import Message, MessageDirection
 
-    now = timezone.now()
-    week_ago = now - timedelta(days=7)
+    # The same window the bar chart is grouped over — see dashboard_window.
+    # These figures and those bars sit in one card and are read as one
+    # statement, so they cannot be counted over different spans.
+    _, week_ago = dashboard_window()
 
     contacts = Contact.objects.for_workspace(workspace).filter(status=ContactStatus.ACTIVE)
     messages = Message.objects.for_workspace(workspace).filter(created_at__gte=week_ago, internal=False)

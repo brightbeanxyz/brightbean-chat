@@ -1,4 +1,4 @@
-{% comment %}
+{% load common_extras %}{% comment %}
 A comment trigger. Everything here is platform-agnostic: L4-A shipped the config,
 the matcher and the once-per-commenter guard, and each adapter registers what its
 own API can do (apps/flows/triggers/comments.py). Nothing below names a platform.
@@ -12,16 +12,6 @@ Two things are driven by that registry rather than by markup:
   has an API for it. Instagram has none — Meta's IG Comment reference exposes
   like_count as read-only and only hide and replies as write operations — so on
   an Instagram-only deployment the option is absent rather than silently ignored.
-{% endcomment %}
-{% comment %}
-The four list fields below take their value from the view, not from a ``|join``
-here. A join argument cannot hold a raw newline on one line, and the two-line
-spelling this file used before was not a tag at all: Django's lexer does not
-match across a newline, so each one rendered as its own source *inside* the
-textarea and was written back to config_json on the next save. A trigger
-configured that way matched nothing and, with a static public reply, posted the
-template source under a customer's comment. See apps.flows.views_triggers.
-_comment_text and apps.flows.triggers.forms.text_lines.
 {% endcomment %}
 <div x-data="{
        pick(id) {
@@ -39,7 +29,7 @@ _comment_text and apps.flows.triggers.forms.text_lines.
     <option value="specific" {% if config.post_scope == "specific" %}selected{% endif %}>Only these posts</option>
 </select>
 <textarea name="post_ids" rows="2" class="form-input-styled mb-2" x-ref="postIds"
-          placeholder="One post id per line">{{ post_ids_text }}</textarea>
+          placeholder="One post id per line">{{ config.post_ids|lines }}</textarea>
 {% if post_pickers %}
 <div class="flex items-center gap-2 mb-1">
     {% for picker in post_pickers %}
@@ -54,10 +44,10 @@ _comment_text and apps.flows.triggers.forms.text_lines.
 
 <label class="block text-xs font-medium mb-1" for="trigger-include" style="color: var(--text-primary);">Only when the comment contains</label>
 <textarea id="trigger-include" name="include_keywords" rows="2" class="form-input-styled mb-3"
-          placeholder="One word or phrase per line. Blank matches every comment.">{{ include_keywords_text }}</textarea>
+          placeholder="One word or phrase per line. Blank matches every comment.">{{ config.include_keywords|lines }}</textarea>
 
 <label class="block text-xs font-medium mb-1" for="trigger-exclude" style="color: var(--text-primary);">Never when it contains</label>
-<textarea id="trigger-exclude" name="exclude_keywords" rows="2" class="form-input-styled mb-3">{{ exclude_keywords_text }}</textarea>
+<textarea id="trigger-exclude" name="exclude_keywords" rows="2" class="form-input-styled mb-3">{{ config.exclude_keywords|lines }}</textarea>
 
 <label class="flex items-center gap-2 text-xs mb-1.5" style="color: var(--text-primary);">
     <input type="checkbox" name="top_level_only" {% if config.top_level_only %}checked{% endif %}>
@@ -89,7 +79,7 @@ can honour it is a fact that changes when an adapter ships.
     <option value="random" {% if config.public_reply.mode == "random" %}selected{% endif %}>One of these, at random</option>
 </select>
 <textarea name="public_reply_texts" rows="2" class="form-input-styled"
-          placeholder="One reply per line">{{ public_reply_texts_text }}</textarea>
+          placeholder="One reply per line">{{ config.public_reply.texts|lines }}</textarea>
 <p class="text-xs mt-1" style="color: var(--text-tertiary);">
     The public reply goes out first; the flow's first message follows as a private
     reply, once per comment and within seven days of it.

@@ -29,7 +29,7 @@ inside it would be swapped away mid-request.
                 @click="triggersOpen = false">Close</button>
     </div>
     <p class="text-xs mb-4" style="color: var(--text-tertiary);">
-        What starts this flow. Lower numbers run first and the first match wins —
+        What starts this flow. Lower numbers run first and the first match wins,
         across every flow in this workspace, not just this one.
     </p>
 
@@ -64,7 +64,13 @@ inside it would be swapped away mid-request.
           hx-swap="innerHTML">
         <select name="type" class="form-input-styled" aria-label="Trigger type" style="flex: 1 1 auto;">
             {% for spec in trigger_types %}
-            <option value="{{ spec.type }}">{{ spec.label }}</option>
+            {% comment %}
+              A type that cannot fire says so in the option itself, not only
+              once it has been picked — see TriggerSpec.unavailable. The full
+              reason is on the form; this is the part that has to survive
+              inside a <select>.
+            {% endcomment %}
+            <option value="{{ spec.type }}">{{ spec.label }}{% if spec.unavailable %} (not available yet){% endif %}</option>
             {% endfor %}
         </select>
         <button type="submit" class="btn-brand btn-inline">Add</button>

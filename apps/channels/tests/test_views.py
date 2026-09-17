@@ -326,9 +326,25 @@ class TestListing:
         assert connection.display_name in body
         assert theirs.display_name not in body
 
-    def test_the_webhook_url_is_shown(self, tenancy: Any, client_for: Any, connection: ChannelConnection) -> None:
-        body = client_for(tenancy.owner).get(url_for("list", tenancy)).content.decode()
-        assert "/webhooks/telegram/" in body
+    def test_the_webhook_url_is_on_the_connection_not_the_list(
+        self, tenancy: Any, client_for: Any, connection: ChannelConnection
+    ) -> None:
+        """It moved deliberately. A webhook URL is a machine string somebody
+        needs once, while setting the channel up, and printing it on every row
+        made the list read as a configuration dump rather than a list of
+        channels. The operator pasting one into a console is already on the
+        connection's own page."""
+        client = client_for(tenancy.owner)
+
+        assert "/webhooks/telegram/" not in client.get(url_for("list", tenancy)).content.decode()
+
+        detail = client.get(
+            reverse(
+                "channels:detail",
+                kwargs={"workspace_id": tenancy.workspace.pk, "connection_id": connection.pk},
+            )
+        )
+        assert "/webhooks/telegram/" in detail.content.decode()
 
     def test_a_hostile_display_name_is_escaped(self, tenancy: Any, client_for: Any) -> None:
         ChannelConnection.objects.create(

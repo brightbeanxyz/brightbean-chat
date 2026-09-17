@@ -15,6 +15,7 @@ urlpatterns = [
     path("settings/", views.settings_view, name="settings"),
     path("billing/", views.billing_view, name="billing"),
     path("settings/update/", views.update_settings, name="update_settings"),
+    path("billing/", views.billing_view, name="billing"),
     path("workspaces/", views.workspaces_view, name="workspaces"),
     path("workspaces/create/", views.create_workspace, name="create_workspace"),
     path("workspaces/<uuid:target_id>/archived/", views.set_workspace_archived, name="set_workspace_archived"),

@@ -11,6 +11,7 @@ from apps.common.platforms import Platform
 from apps.flows.models import Trigger, TriggerType
 from apps.flows.tests.support import connection_for, graph, node, published_flow
 from apps.flows.triggers import qr
+from apps.flows.triggers.registry import spec_for
 
 NOOP_ACTION = {"actions": [{"verb": "remove_tag", "tag": "not-a-tag-here"}]}
 
@@ -173,8 +174,11 @@ class TestThePanel:
         response = client_for(tenancy.owner).get(_url("flows:trigger_panel", tenancy, flow))
 
         assert b"More than one" in response.content
-        # The label the rest of the panel uses, not the column value.
-        assert b"Default reply" in response.content
+        # The label the rest of the panel uses, not the column value. Read from
+        # the registry rather than typed out: the labels are copy — nothing but
+        # `type` is a contract — and this test is about which register the
+        # warning speaks in, not about the wording of the day.
+        assert spec_for(TriggerType.DEFAULT_REPLY).label.encode() in response.content
         assert b"default_reply trigger" not in response.content
 
     def test_every_trigger_type_can_be_created_from_the_panel(self, tenancy, client_for, flow):
