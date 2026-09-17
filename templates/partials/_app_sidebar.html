@@ -1,0 +1,184 @@
+{% comment %}
+The sidebar — the product's whole chrome. There is no top header: the
+workspace switcher, the primary navigation, notifications and the account menu
+all live here.
+
+240px on a desktop, collapsing to 60px, and an off-canvas drawer below `lg`.
+
+**The three legs of the anti-flash contract.** The collapse is persisted, so a
+page can start in either of two widths and the wrong one flashes before Alpine
+boots. Three pieces stop that, and they only work together: a pre-paint script
+in base.html's head stamping `sidebar-is-collapsed` on <html> (leg 1), the
+`.sidebar-initial` width mirror (leg 2, in base.html's head for the width and
+in styles.css for everything else), and the `x-init` below, which strips both
+markers the moment Alpine takes over (leg 3). Remove one and you get either a
+flash on every load or a sidebar frozen at its pre-paint width forever —
+`.sidebar-initial`'s width is unlayered and beats the `lg:w-*` utility Alpine
+binds. TestTheSidebar fails the page if any leg goes missing.
+
+**One copy of the nav, still.** The drawer does not break the invariant the old
+bottom tab bar existed to protect: it is this same <aside>, repositioned by a
+media query and slid in with a transform. A *second* nav would mean a second
+`nav-badge-inbox`, and an out-of-band swap only ever finds the first —
+apps/notifications/tests/test_shell.py forbids it.
+
+**No `{% templatetag openblock %} block sidebar_nav {% templatetag closeblock %}`.**
+Studio has one and every settings layout overrides it, which is how its badge
+targets came to go missing on whole archetypes. Here the settings nav is a
+second column beside this one, and
+apps/notifications/tests/test_shell.py::test_no_layout_replaces_the_navigation_any_more
+fails the moment a layout replaces it.
+
+`wsOpen` is local again. It sat on the shell wrapper while two controls opened
+one panel — the header's workspace button and the rail's logo mark — and with
+the header gone there is one trigger, inside the panel's own wrapper, so the
+`data-ws-toggle` guard the two-trigger arrangement needed is gone with it.
+{% endcomment %}
+<aside class="sidebar sidebar-initial flex flex-col flex-shrink-0
+              fixed inset-y-0 left-0 z-40 w-60
+              transition-transform duration-200
+              lg:relative lg:z-auto lg:translate-x-0"
+       :class="[
+           sidebarCollapsed ? 'lg:w-[60px] sidebar-collapsed' : 'lg:w-60',
+           mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+       ]"
+       x-init="$el.classList.remove('sidebar-initial');
+               document.documentElement.classList.remove('sidebar-is-collapsed');
+               $nextTick(() => $el.classList.add('transition-all', 'duration-200'))"
+       {% comment %}
+         One delegated handler rather than a @click on every link: below `lg`
+         the drawer covers the page it navigated to, so tapping any row has to
+         close it. Above `lg` the drawer is not a drawer and this does nothing.
+       {% endcomment %}
+       @click="if (window.innerWidth < 1024 && $event.target.closest('a')) { mobileMenuOpen = false }">
+
+    <div class="sidebar-ws relative" x-data="{ wsOpen: false }" @click.away="wsOpen = false"
+         @keydown.escape.window="wsOpen = false">
+        {% if sidebar_workspaces %}
+        <button type="button" class="sidebar-ws-btn"
+                @click="wsOpen = !wsOpen"
+                title="Switch workspace (currently {{ current_workspace.name|default:'BrightBean Chat' }})"
+                aria-haspopup="true" :aria-expanded="wsOpen ? 'true' : 'false'">
+            {% include "partials/_logo.html" with workspace=current_workspace only %}
+            <span class="sidebar-ws-name">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
+            <svg class="sidebar-ws-chevron" :class="wsOpen && 'open'" width="16" height="16" fill="none"
+                 stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"
+                 stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+
+        {% comment %}
+          `left-2 right-2` is studio's, and inside a 60px collapsed sidebar it
+          would leave a 44px panel with a workspace name in it. The min-width
+          floor keeps the switcher usable at every width rather than hiding it
+          when collapsed — switching workspace is exactly what someone clicks
+          that mark for.
+        {% endcomment %}
+        <div x-show="wsOpen" x-cloak
+             class="bb-select-panel anim-collapse absolute left-2 right-2 top-full mt-1 z-50 py-1 min-w-[220px]">
+            {% for ws in sidebar_workspaces %}
+            <a href="{{ ws.url }}" class="sidebar-nav-item"
+               {% if ws.is_current %}style="color: var(--brand-700); font-weight: 600;"{% endif %}>
+                {% include "partials/_logo.html" with workspace=ws size="sm" only %}
+                <span class="sidebar-nav-label">{{ ws.name }}</span>
+                {% if ws.is_current %}
+                <svg class="flex-shrink-0 ml-auto" width="16" height="16" fill="none" stroke="currentColor"
+                     viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                     aria-hidden="true"><path d="M5 13l4 4L19 7"/></svg>
+                {% endif %}
+            </a>
+            {% endfor %}
+            {% if can_create_workspace %}
+            <div class="mt-1 pt-1" style="border-top: 1px solid var(--divider);">
+                <a href="{{ create_workspace_url }}" class="sidebar-nav-item" style="color: var(--primary);">
+                    <svg class="flex-shrink-0" width="18" height="18" fill="none" stroke="currentColor"
+                         viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                         aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    <span class="sidebar-nav-label">New workspace</span>
+                </a>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        {% comment %}
+          No workspaces to list — an anonymous visitor on /ui/, or a user whose
+          memberships have all been archived. The mark and the name without a
+          button or a panel, rather than a control that toggles a state nothing
+          shows. (A user with exactly ONE workspace still gets the panel: the
+          list is truthy, and it carries "New workspace" for anyone allowed to
+          make a second.)
+        {% endcomment %}
+        <div class="sidebar-ws-btn" title="{{ current_workspace.name|default:'BrightBean Chat' }}">
+            {% include "partials/_logo.html" with workspace=current_workspace only %}
+            <span class="sidebar-ws-name">{{ current_workspace.name|default:"BrightBean Chat" }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Main">
+        {% include "partials/_sidebar_items.html" with groups=nav_groups %}
+    </nav>
+
+    <div class="sidebar-footer">
+        {% include "partials/_sidebar_items.html" with groups=nav_footer_groups %}
+        {% if request.user.is_authenticated %}
+        {% comment %}
+          The account block is not a NavItem: it has no glyph and no route, it
+          is a menu trigger. Rendered straight from request.user so no CSS
+          class or display string is ever built in Python — see
+          test_no_python_file_emits_a_class_attribute.
+
+          Its two halves are swapped by CSS, not by x-show. Studio uses x-show
+          here and pays for it with two x-cloak flashes and an element whose
+          visibility depends on an inline `display:none` that Alpine has to
+          clear — the exact shape
+          test_no_element_combines_x_show_with_a_display_none_utility exists to
+          catch. The collapsed rules are already written twice for the
+          pre-paint mirror; these two are just two more.
+        {% endcomment %}
+        <div class="relative" x-data="{ meOpen: false }" @click.away="meOpen = false"
+             @keydown.escape.window="meOpen = false">
+            <div class="sidebar-footer-expanded">
+                <button type="button" class="sidebar-account" @click="meOpen = !meOpen"
+                        title="{{ request.user.display_name }}"
+                        aria-haspopup="true" :aria-expanded="meOpen ? 'true' : 'false'">
+                    <span class="avatar avatar-sm avatar-brand">{{ request.user.display_name|make_list|first|upper }}</span>
+                    <span class="flex-1 min-w-0 flex flex-col">
+                        <span class="sidebar-account-name">{{ request.user.display_name }}</span>
+                        <span class="sidebar-account-meta">{{ request.user.email }}</span>
+                    </span>
+                </button>
+                <button type="button" class="sidebar-toggle" @click="sidebarCollapsed = true"
+                        title="Collapse sidebar" aria-label="Collapse sidebar">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                         stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v18M16 15l-3-3 3-3M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
+                </button>
+            </div>
+            <div class="sidebar-footer-collapsed">
+                <button type="button" class="sidebar-toggle" @click="sidebarCollapsed = false"
+                        title="Expand sidebar" aria-label="Expand sidebar">
+                    <svg class="scale-x-[-1]" width="16" height="16" fill="none" stroke="currentColor"
+                         viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"
+                         aria-hidden="true"><path d="M9 3v18M16 15l-3-3 3-3M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z"/></svg>
+                </button>
+                <button type="button" class="avatar avatar-sm avatar-brand" @click="meOpen = !meOpen"
+                        title="{{ request.user.display_name }}"
+                        aria-haspopup="true" :aria-expanded="meOpen ? 'true' : 'false'">{{ request.user.display_name|make_list|first|upper }}</button>
+            </div>
+
+            <div x-show="meOpen" x-cloak
+                 class="bb-select-panel anim-collapse absolute bottom-full left-0 mb-2 z-50 py-1 w-48">
+                <div class="px-3 py-1.5 text-xs truncate" style="color: var(--text-tertiary);">{{ request.user.email }}</div>
+                <a href="{{ settings_home_url|default:'#' }}" class="block px-3 py-1.5 text-xs btn-surface-1"
+                   style="color: var(--text-secondary);">Settings</a>
+                {% if logout_url %}
+                <form method="post" action="{{ logout_url }}">
+                    {% csrf_token %}
+                    <button type="submit" class="block w-full text-left px-3 py-1.5 text-xs btn-surface-1 cursor-pointer"
+                            style="color: var(--text-secondary);">Sign out</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</aside>

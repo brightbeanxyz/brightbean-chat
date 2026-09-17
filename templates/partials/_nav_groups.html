@@ -1,5 +1,5 @@
 {% comment %}
-The settings nav — the 232px second column beside the rail.
+The settings nav — the 232px second column beside the sidebar.
 
 DEVIATION 4 of the L1-B brief, unchanged by the redesign. Studio writes each
 nav row by hand and computes `active` inline against request.resolver_match —
@@ -8,12 +8,12 @@ layouts use a fourth convention, a view-supplied `settings_active` string that
 11 views have to remember to set. Here `active` is computed once, in Python,
 and both navs in the product are a loop over the same structure.
 
-Since the redesign this renders the settings nav only; the rail has its own
-renderer in partials/_rail_items.html. They share the data, not the markup.
+This renders the settings nav only; the sidebar has its own renderer in
+partials/_sidebar_items.html. They share the data, not the markup.
 
-Unlike the old sidebar, this column does *not* replace the rail — it sits
-beside it. That is why there is no "Back to app" link any more: the rail never
-left, so there is nothing to go back to.
+This column does *not* replace the main navigation — it sits beside it. That is
+why there is no "Back to app" link any more: the sidebar never left, so there
+is nothing to go back to.
 
 Args:
   groups: list of {label, items: [{key,label,icon,url,active,badge,badge_slot}]}
