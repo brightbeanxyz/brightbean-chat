@@ -45,6 +45,15 @@ __all__ = [
 ]
 
 
+class FlowPlanLimitError(ValueError):
+    """The organization's plan has no room for another active automation.
+
+    A ``ValueError``, like every other refusal a caller of this module is
+    written to catch — not a ``FlowValidationError``, which carries a
+    ``ValidationResult`` and would make a billing limit look like a broken graph.
+    """
+
+
 class FlowValidationError(Exception):
     """Publishing was refused. ``result`` carries the findings to show the author."""
 
@@ -127,16 +136,29 @@ def published_version(flow: Flow) -> FlowVersion | None:
 
 
 @transaction.atomic
-def create_flow(*, workspace: Any, name: str, folder: str = "", user: Any = None) -> Flow:
-    """A new flow, with version 1 already there as an empty draft.
+def create_flow(*, workspace: Any, name: str, folder: str = "", user: Any = None, graph: Any = None) -> Flow:
+    """A new flow, with version 1 already there as a draft.
 
     Creating the first version here rather than lazily means every read path can
     assume a draft exists, and the builder never has to special-case a flow with
     nothing in it.
+
+    ``graph`` defaults to empty on purpose. The importer and the broadcast
+    composer both call this and then overwrite version 1 immediately, and
+    several tests read "still empty" as "nothing was written" — so seeding every
+    caller would turn those into false greens rather than failures. Only the
+    Create button on the flows list asks for a starter; the product decision
+    stays at the product surface.
     """
     flow = Flow(workspace=workspace, name=name, folder=folder, status=FlowStatus.DRAFT)
     flow.save()
-    FlowVersion(workspace=flow.workspace, flow=flow, version=1, graph_json=empty_graph(), created_by=user).save()
+    FlowVersion(
+        workspace=flow.workspace,
+        flow=flow,
+        version=1,
+        graph_json=empty_graph() if graph is None else graph,
+        created_by=user,
+    ).save()
     return flow
 
 
@@ -160,7 +182,15 @@ def archive_flow(flow: Flow) -> Flow:
 
 
 def restore_flow(flow: Flow) -> Flow:
-    """Un-archive. Back to active if something is published, draft otherwise."""
+    """Un-archive. Back to active if something is published, draft otherwise.
+
+    Un-archiving a flow that has a published version puts it back to ACTIVE,
+    which is the same lever :func:`publish` pulls — so it takes the same plan
+    check. Without it, an organization over its automation limit could archive
+    and restore its way past the cap one flow at a time.
+    """
+    if published_version(flow):
+        _check_plan_allows_activation(flow)
     flow.status = FlowStatus.ACTIVE if published_version(flow) else FlowStatus.DRAFT
     flow.save(update_fields=["status", "updated_at"])
     return flow
@@ -252,6 +282,14 @@ def publish(flow: Flow, *, user: Any = None) -> PublishResult:
     if not result.is_publishable:
         raise FlowValidationError(result)
 
+    # The organization's plan. Checked while holding the row lock taken above,
+    # which is what apps/media_library/quotas.py requires of any read-then-write
+    # count: without it two concurrent publishes both read the old total and
+    # both pass. Only a flow that is not already active spends a slot, so
+    # re-publishing a live flow is always allowed.
+    if locked.status != FlowStatus.ACTIVE:
+        _check_plan_allows_activation(locked)
+
     if not target.published:
         _versions(locked).filter(published=True).update(published=False)
         target.published = True
@@ -265,3 +303,31 @@ def publish(flow: Flow, *, user: Any = None) -> PublishResult:
     # every call site remember to refresh.
     flow.status = locked.status
     return PublishResult(version=target, validation=result)
+
+
+def _check_plan_allows_activation(flow: Flow) -> None:
+    """Refuse activating a flow the organization's plan has no room for.
+
+    Re-raised as ``FlowValidationError``'s sibling rather than letting
+    ``PlanLimitError`` out: every caller of :func:`publish` already handles this
+    module's own errors, and a new exception type escaping into those views
+    would be a 500 rather than a message.
+
+    A late import — billing reads this app's models, so a module-scope import
+    would close the loop, and an unconfigured deployment should never load it.
+    """
+    from apps.billing.entitlements import (
+        PlanLimitError,
+        check_can_activate_automation,
+        organization_locked,
+    )
+
+    organization = flow.workspace.organization
+    try:
+        # Locked, not merely counted: `publish` holds its own flow row, which
+        # says nothing about the *other* flows the count walks. Two publishes at
+        # once would otherwise both read `limit - 1`.
+        with organization_locked(organization):
+            check_can_activate_automation(organization)
+    except PlanLimitError as exc:
+        raise FlowPlanLimitError(str(exc)) from exc

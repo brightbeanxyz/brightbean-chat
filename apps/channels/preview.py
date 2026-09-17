@@ -89,6 +89,48 @@ PREVIEW_PROCESSOR = "preview"
 PREVIEW_REF_PREFIX = "preview-"
 
 
+#: Platforms a live preview can run on, and how the tester is sent into one.
+#:
+#: The mechanism is a deep link carrying a ``ref`` that comes back as a referral
+#: event, so a platform is in this table only if it can do both halves.
+#: Messenger's ``external_id`` is the page id and ``m.me/<page-id>`` resolves;
+#: Telegram and Instagram both carry a public @name in ``display_name``.
+#:
+#: WhatsApp, SMS and email are deliberately absent and not a gap to be filled
+#: later with a token in the message body. None of them emits a referral event,
+#: none has a column this app can trust to hold a dialable public handle, and a
+#: token the tester has to type would mean the preview stage inspecting ordinary
+#: message text — a wider claim surface than the one ``_claim`` is written
+#: against, and a different threat model that would have to be argued from
+#: scratch. What they get instead is an empty state that says so.
+PREVIEW_LINKS: dict[str, str] = {
+    Platform.TELEGRAM: "https://t.me/{handle}?start={payload}",
+    Platform.MESSENGER: "https://m.me/{handle}?ref={payload}",
+    Platform.INSTAGRAM: "https://ig.me/m/{handle}?ref={payload}",
+}
+
+PREVIEW_PLATFORMS: frozenset[str] = frozenset(PREVIEW_LINKS)
+
+#: How the tester is told to use the link, where tapping it is not enough.
+#:
+#: Telegram acts on the tap: it delivers ``/start <payload>`` by itself. Meta
+#: does not — the link opens a composer, and the referral rides in with the
+#: first message the tester actually sends. Without saying so, people report a
+#: working link as broken.
+PREVIEW_INSTRUCTIONS: dict[str, str] = {
+    Platform.MESSENGER: "Send any message once the chat opens — that first message is what starts the test.",
+    Platform.INSTAGRAM: "Send any message once the chat opens — that first message is what starts the test.",
+}
+
+
+def preview_link(connection: ChannelConnection, handle: str, payload: str) -> str:
+    """The deep link that starts a preview on this connection, or ""."""
+    template = PREVIEW_LINKS.get(connection.platform)
+    if template is None or not handle:
+        return ""
+    return template.format(handle=handle.lstrip("@"), payload=payload)
+
+
 def start_payload(handle: str) -> str:
     """The ``?start=`` payload for ``handle``."""
     return f"{PREVIEW_REF_PREFIX}{handle}"
@@ -140,7 +182,7 @@ def preview_events(connection: ChannelConnection, events: Sequence[NormalizedEve
     generic, because the token arrives inside a webhook that always answers 200;
     what stands in for the generic 404 is that no observable behaviour differs.
     """
-    if connection.platform != Platform.TELEGRAM:
+    if connection.platform not in PREVIEW_PLATFORMS:
         return
     for event in events:
         if event.type != EventType.REFERRAL:

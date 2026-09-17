@@ -28,6 +28,7 @@ from apps.channels import whatsapp_templates
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.forms_whatsapp import WhatsAppConnectForm, WhatsAppCostHintForm, WhatsAppTemplateForm
 from apps.channels.models import ChannelConnection, WhatsAppTemplate, WhatsAppTemplateStatus
+from apps.channels.plan import plan_refusal
 from apps.channels.providers import whatsapp
 from apps.channels.providers.exceptions import APIError
 from apps.common.platforms import Platform
@@ -124,6 +125,12 @@ def _connect(request: WorkspaceRequest, data: dict[str, Any]) -> str:
         return REJECTED_MESSAGE
 
     display = str(number.get("display_phone_number") or "") or str(number.get("verified_name") or "")
+    # The organization's channel limit. See apps/channels/plan.py on why this
+    # is called here in all six adapters rather than in one shared service.
+    refusal = plan_refusal(request.workspace)
+    if refusal:
+        return refusal
+
     connection = ChannelConnection(
         workspace=request.workspace,
         platform=Platform.WHATSAPP.value,

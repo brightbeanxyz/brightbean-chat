@@ -395,7 +395,7 @@ MAIN_NAV: list[NavGroup] = [
                 icon="flows",
                 url_name="flows:list",
                 url_names=frozenset(
-                    {"flows:list", "flows:edit", "flows:templates", "campaigns:list", "campaigns:detail"}
+                    {"flows:list", "flows:edit", "flows:template_gallery", "campaigns:list", "campaigns:detail"}
                 ),
                 workspace_scoped=True,
             ),
@@ -482,7 +482,7 @@ FLOWS_TABS: list[NavGroup] = [
                 key="tab_templates",
                 label="Templates",
                 icon="grid",
-                url_name="flows:templates",
+                url_name="flows:template_gallery",
                 workspace_scoped=True,
             ),
         ),

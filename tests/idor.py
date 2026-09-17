@@ -121,13 +121,23 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # message_id resolver's job. Zero is as good as any — the route 404s for an
     # outsider at the conversation lookup, long before it looks at this.
     "index": 0,
-    # Which of the templates this REPOSITORY ships to start a flow from
-    # (flows:import_template). It names a file in flow-templates/, identical for
-    # every workspace and owned by none of them, so it identifies no tenant's
-    # object and cannot leak one across the boundary. The route's tenancy comes
-    # entirely from its workspace_id, which the sweep does vary; an unknown slug
-    # 404s for everybody alike.
-    "slug": "telegram-welcome-and-faq",
+    # The filename stem of a template this repository ships (flows:template_*).
+    # It names a file on the server, identical for every tenant and the same on
+    # every installation — there is no row behind it and no workspace it could
+    # belong to, so it is neutral in the strict sense this table means. It is
+    # never used to build a path either: apps/flows/portability/library.py
+    # resolves it by comparing against the stems of flow-templates/*.json.
+    #
+    # Deliberately NOT spelled `template_id`: that kwarg already belongs to the
+    # WhatsApp template manager and resolves to a WhatsAppTemplate pk, so a
+    # route reusing the name would be handed a value of the wrong shape and
+    # would 404 because the template does not exist rather than because of
+    # tenancy — passing for exactly the reason this file keeps warning about.
+    #
+    # A REAL stem, for the same reason: the route must 404 on the workspace and
+    # not on a template that is not there. test_portability_library.py asserts
+    # this still names a shipped file.
+    "template_slug": "telegram-welcome-and-faq",
 }
 
 #: Why the inbound webhook routes cannot answer 404 and are therefore not

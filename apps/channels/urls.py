@@ -13,6 +13,7 @@ from apps.channels import (
     views_email,
     views_instagram,
     views_messenger,
+    views_preview,
     views_sms,
     views_telegram,
     views_whatsapp,
@@ -28,10 +29,14 @@ urlpatterns = [
     # routes for readability only — the converter would never match a word.
     path("email/connect/", views_email.email_connect, name="email_connect"),
     path("telegram/connect/", views_telegram.telegram_connect, name="telegram_connect"),
+    # The builder's Test button. Named for the flow rather than the platform,
+    # because which platform it opens is now the flow's own triggers' answer
+    # (apps/channels/views_preview.py). The Telegram-specific route is gone:
+    # apps/flows/views.py was its only reverse.
     path(
-        "telegram/preview/<uuid:flow_id>/",
-        views_telegram.telegram_preview,
-        name="telegram_preview",
+        "preview/<uuid:flow_id>/",
+        views_preview.flow_preview,
+        name="flow_preview",
     ),
     # WhatsApp's guided connect flow and its template manager (issue #19).
     # Declared before the ``<uuid:connection_id>`` routes for readability only —

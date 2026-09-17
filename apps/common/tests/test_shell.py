@@ -4,8 +4,6 @@ import re
 from pathlib import Path
 
 import pytest
-from django.test import RequestFactory
-from django.urls import resolve
 
 NONCE_ATTR_RE = re.compile(r'nonce="([A-Za-z0-9+/=]+)"')
 INLINE_SCRIPT_RE = re.compile(r"<(script|style)(?![^>]*\bsrc=)([^>]*)>", re.I)
@@ -340,72 +338,45 @@ class TestTheNavBadge:
 
 
 @pytest.mark.django_db
-class TestWorkspaceSwitcher:
-    """The `{% if sidebar_workspaces %}` branch of base.html.
+class TestTheWorkspaceSettingsAreReachable:
+    """The concern the old sidebar dropdown existed for, against the new shell.
 
-    It renders for nobody until issue #31 populates the list, which is exactly
-    why it needs covering here: unexercised markup is where a dead `href=""`
-    hides. Two of them did — `create_workspace_url` was referenced by the
-    template and supplied by nothing, and `ws.url` was an attribute no
-    Workspace model has — and neither the suite nor a browser pass caught it,
-    because the branch never ran.
+    Before #130 the nine workspace-settings pages were reachable only by typing
+    a URL, and the fix then was a "Workspace settings" link in the sidebar's
+    workspace switcher. The redesign removed that sidebar: the rail's Settings
+    row lands on the account settings page, and the settings nav is one list
+    gated per row rather than two filtered ones. That is a different answer to
+    the same question, so the guard moves rather than going away — what must
+    stay true is that the pages have *an* entry point that is not the URL bar.
     """
 
-    def _render(self, tenancy, **overrides):
-        """Render the shell for a real signed-in owner, then override.
+    def test_the_settings_page_reaches_the_workspace_section(self, tenancy, client_for):
+        from django.urls import reverse
 
-        The switcher reads real membership data since issue #31 merged, so the
-        base context comes from the context processor rather than being
-        hand-built — that is what keeps this test honest about the contract the
-        template actually depends on.
+        html = client_for(tenancy.owner).get(reverse("accounts:settings")).content.decode()
+
+        assert f'href="/w/{tenancy.workspace.id}/settings/channels/"' in html
+        assert "Channels" in html
+
+    def test_a_role_without_the_key_is_not_offered_the_row(self, tenancy, client_for):
+        """Gated per row on the key its own view enforces, so a control never
+        renders for somebody the page behind it would refuse."""
+        from django.urls import reverse
+
+        html = client_for(tenancy.user_for("viewer")).get(reverse("accounts:settings")).content.decode()
+
+        assert f'href="/w/{tenancy.workspace.id}/settings/channels/"' not in html
+
+    def test_the_glyph_sizes_are_pinned_so_an_ambient_context_var_cannot_move_them(self, tenant_client, shell_url):
+        """`partials/_nav_icon.html` takes an optional `icon_size`, and
+        `{% include %}` without `only` inherits the whole parent context — so a
+        view adding a `size` key would silently resize every glyph in the shell
+        if the parameter were named `size`. It is not, deliberately; this pins
+        the default so a change to `default:18` cannot pass unnoticed.
         """
-        from django.template.loader import render_to_string
+        html = tenant_client.get(shell_url).content.decode()
 
-        from apps.common.context_processors import navigation_context
-
-        path = f"/w/{tenancy.workspace.id}/"
-        request = RequestFactory().get(path)
-        request.resolver_match = resolve(path)
-        request.workspace = tenancy.workspace
-        request.org_membership = None
-        request.user = tenancy.owner
-        context = navigation_context(request)
-        context["can_create_workspace"] = True
-        context.update(overrides)
-        return render_to_string("base.html", context, request=request)
-
-    def test_every_workspace_row_has_a_real_href(self, tenancy):
-        html = self._render(tenancy)
-
-        assert f'href="/w/{tenancy.workspace.id}/"' in html
-
-    def test_the_create_link_has_a_real_href(self, tenancy):
-        """An undefined variable renders as "" and `href=""` reloads the current
-        page — a dead control that looks alive."""
-        html = self._render(tenancy)
-
-        assert "New workspace" in html
-        assert 'href=""' not in html
-
-    def test_no_anchor_in_the_shell_has_an_empty_href(self, tenancy):
-        """Catches the whole class, not just the two known instances."""
-        html = self._render(tenancy)
-
-        assert not re.findall(r'<a\s[^>]*href=""', html)
-
-    def test_workspace_names_are_escaped(self, tenancy):
-        html = self._render(
-            tenancy,
-            sidebar_workspaces=[{"name": "<script>alert(1)</script>", "url": "/w/x/", "is_current": False}],
-        )
-
-        assert "<script>alert(1)</script>" not in html
-        assert "&lt;script&gt;" in html
-
-    def test_the_switcher_is_absent_when_there_are_no_workspaces(self, tenancy):
-        html = self._render(tenancy, sidebar_workspaces=[], can_create_workspace=False)
-
-        assert "New workspace" not in html
+        assert 'class="flex-shrink-0" width="18" height="18"' in html
 
 
 @pytest.mark.django_db

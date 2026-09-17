@@ -38,6 +38,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.channels.capabilities import capabilities_for
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR, ChannelConnectionForm
 from apps.channels.models import ChannelConnection, ConnectionStatus, WebhookEventLog
+from apps.channels.plan import plan_locked, plan_refusal
 from apps.channels.policy import policy_for
 from apps.channels.providers import email_backends
 from apps.channels.providers.base import Adapter
@@ -75,13 +76,18 @@ CONNECT_FLOW_ISSUES: dict[str, str] = {
 #: main while this dict was being edited on another branch, and each merge
 #: produced a row reading "set it up — " with nothing after the dash. Neither
 #: branch could see it alone, which is exactly what a test is for.
+#:
+#: Each is a whole sentence and is capitalised as one. They used to be
+#: continuations of "Telegram — set it up — …", so they read correctly only in
+#: that one line of markup; the moment the page grew a card layout they became
+#: lowercase sentences under a heading.
 CONNECT_HINTS: dict[str, str] = {
-    Platform.TELEGRAM: "paste a BotFather token and we do the rest.",
-    Platform.INSTAGRAM: "sign in with the Instagram account and grant the messaging permissions.",
-    Platform.WHATSAPP: "paste your Cloud API ids and system user token; we verify them with Meta first.",
-    Platform.MESSENGER: "sign in with Facebook and pick the page to connect.",
-    Platform.SMS: "paste your Twilio account SID, auth token and number.",
-    Platform.EMAIL: "pick SMTP, Resend or SES; we check the credentials before saving them.",
+    Platform.TELEGRAM: "Paste a BotFather token and we do the rest.",
+    Platform.INSTAGRAM: "Sign in with the Instagram account and grant the messaging permissions.",
+    Platform.WHATSAPP: "Paste your Cloud API ids and system user token; we verify them with Meta first.",
+    Platform.MESSENGER: "Sign in with Facebook and pick the page to connect.",
+    Platform.SMS: "Paste your Twilio account SID, auth token and number.",
+    Platform.EMAIL: "Pick SMTP, Resend or SES; we check the credentials before saving them.",
 }
 
 #: Extra settings pages a platform brings with it, as ``(label, route)`` pairs.
@@ -315,7 +321,24 @@ def connection_create(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
             connection.workspace = request.workspace
             secret = connection.rotate_webhook_secret()
             try:
-                with transaction.atomic():
+                # The count and the insert are one critical section; see
+                # apps/billing/entitlements.organization_locked.
+                with plan_locked(request.workspace), transaction.atomic():
+                    refusal = plan_refusal(request.workspace)
+                    if refusal:
+                        # A form error rather than a message, so it lands beside
+                        # the control the reader was using — the same place the
+                        # duplicate check below puts its refusal.
+                        form.add_error(None, refusal)
+                        return render(
+                            request,
+                            "channels/new.html",
+                            {
+                                "form": form,
+                                "platforms": Platform.choices,
+                                "connect_flow_issues": CONNECT_FLOW_ISSUES,
+                            },
+                        )
                     connection.save()
             except IntegrityError:
                 # The form's duplicate check is a read, so it is check-then-
@@ -363,12 +386,27 @@ def connection_set_status(request: WorkspaceRequest, workspace_id: str, connecti
     """
     connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
     status = request.POST.get("status", "")
+    # Re-enabling a disabled connection has the same effect on the count as
+    # connecting one, so it takes the same check. Without it an organization
+    # over its limit disables three channels and switches them back on one at a
+    # time — the shape every half-enforced limit bug takes.
+    turning_on = status != ConnectionStatus.DISABLED and connection.status == ConnectionStatus.DISABLED
     if status not in SETTABLE_STATUSES:
         messages.error(request, "That is not a status you can set by hand.")
     else:
-        connection.status = status
-        connection.save(update_fields=["status", "updated_at"])
-        messages.success(request, f"{connection.display_name} is now {connection.get_status_display().lower()}.")
+        # The count and the status change are one critical section when the
+        # change is a re-enable: two admins switching channels back on at the
+        # same moment would otherwise both read `limit - 1`.
+        with plan_locked(request.workspace):
+            refusal = plan_refusal(request.workspace) if turning_on else ""
+            if refusal:
+                messages.error(request, refusal)
+            else:
+                connection.status = status
+                connection.save(update_fields=["status", "updated_at"])
+                messages.success(
+                    request, f"{connection.display_name} is now {connection.get_status_display().lower()}."
+                )
     return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
 
 

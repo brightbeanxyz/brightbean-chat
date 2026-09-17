@@ -1,3 +1,4 @@
+{% load humanize %}
 {% comment %}
 The subscriber panel: who is on the sequence, and the manual add/remove SPEC §12
 asks for.
@@ -46,7 +47,19 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
     {% endif %}
 
     {% if not enrollments %}
+    {% comment %}
+    Which empty, not just empty. With the filter on Active and one completed
+    subscriber present, "Nobody here yet." is a claim about the sequence that
+    the Completed tab immediately contradicts. Same branch flows/_list_rows.html
+    makes between a filtered miss and a genuinely empty list.
+    {% endcomment %}
+    {% if enrolled_total %}
+    <p class="text-sm" style="color: var(--text-secondary);">
+        Nobody is {{ status }} right now — {{ enrolled_total }} on this sequence in all.
+    </p>
+    {% else %}
     <p class="text-sm" style="color: var(--text-secondary);">Nobody here yet.</p>
+    {% endif %}
     {% else %}
     {% comment %}
       The panel says when it has stopped short. A list that silently ends at the
@@ -68,8 +81,22 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
             <div class="flex-1 min-w-0">
                 <a href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=enrollment.contact_id %}"
                    class="text-sm truncate btn-text-hover-primary" style="color: var(--text-primary);">{{ enrollment.contact.display_name }}</a>
+                {% comment %}
+                current_step is bookkeeping: the model documents it as the
+                position of the step that runs *next*, so a finished enrollment
+                deliberately sits one past the end. Rendered raw, that told
+                anyone who completed a one-step sequence they were on "Step 2".
+                There is no completed_at column — EnrollmentStatus is the record
+                that it finished, and updated_at is when.
+                {% endcomment %}
                 <p class="text-xs" style="color: var(--text-tertiary);">
-                    Step {{ enrollment.current_step }}{% if enrollment.next_run_at %} · next {{ enrollment.next_run_at }}{% endif %}
+                    {% if enrollment.status == "completed" %}
+                    Finished {{ enrollment.updated_at|naturaltime }}
+                    {% elif enrollment.status == "unsubscribed" %}
+                    Unsubscribed {{ enrollment.updated_at|naturaltime }}
+                    {% else %}
+                    Step {{ enrollment.current_step }}{% if enrollment.next_run_at %} · next {{ enrollment.next_run_at|naturaltime }}{% endif %}
+                    {% endif %}
                 </p>
             </div>
             {% if can_edit and enrollment.status == "active" %}

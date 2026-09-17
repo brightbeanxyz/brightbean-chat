@@ -44,6 +44,7 @@ from django.views.decorators.http import require_GET
 from apps.channels import instagram_oauth as oauth
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.models import ChannelConnection, ConnectionStatus
+from apps.channels.plan import plan_refusal
 from apps.channels.providers import instagram
 from apps.channels.providers.exceptions import APIError
 from apps.common.platforms import Platform
@@ -218,6 +219,19 @@ def _complete(request: Any, workspace: Any, code: str) -> str:
         # APIError's text names the host it came from (SECURITY-BASELINE §5).
         logger.info("Instagram connect: the token exchange failed for workspace %s.", workspace.pk)
         return REJECTED_MESSAGE
+
+    # The organization's channel limit. See apps/channels/plan.py on why this
+    # is called here in all six adapters rather than in one shared service.
+    #
+    # `workspace`, not `request.workspace`: this is the OAuth callback, mounted
+    # at /channels/instagram/callback/ rather than under /w/<workspace_id>/, so
+    # RBACMiddleware never resolves a workspace from the URL and
+    # request.workspace is None or whichever one the user last visited. The
+    # workspace travels in the signed `state` and arrives as this argument,
+    # which is what every other line in this function uses.
+    refusal = plan_refusal(workspace)
+    if refusal:
+        return refusal
 
     connection = ChannelConnection(
         workspace=workspace,

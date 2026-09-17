@@ -55,5 +55,4 @@ SECURITY.md
 deploy/
 app.json
 render.yaml
-railway.json
 scripts/smoke.sh

@@ -1,0 +1,220 @@
+{
+  "app": "brightbean-chat",
+  "entry": "flow-1",
+  "flows": [
+    {
+      "folder": "Grow",
+      "graph": {
+        "edges": [
+          {
+            "id": "offer-qr-yes-ask_phone",
+            "source": "offer",
+            "sourceHandle": "qr:yes",
+            "target": "ask_phone"
+          },
+          {
+            "id": "offer-qr-no-stay",
+            "source": "offer",
+            "sourceHandle": "qr:no",
+            "target": "stay"
+          },
+          {
+            "id": "ask_phone-default-first_text",
+            "source": "ask_phone",
+            "sourceHandle": "default",
+            "target": "first_text"
+          },
+          {
+            "id": "first_text-default-tag_moved",
+            "source": "first_text",
+            "sourceHandle": "default",
+            "target": "tag_moved"
+          },
+          {
+            "id": "first_text-error-sms_failed",
+            "source": "first_text",
+            "sourceHandle": "error",
+            "target": "sms_failed"
+          }
+        ],
+        "nodes": [
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Instagram closes this chat 24 hours after your last message. Text is easier. Want me to move us over?",
+                  "type": "text"
+                }
+              ],
+              "quick_replies": [
+                {
+                  "id": "yes",
+                  "label": "Yes, text me"
+                },
+                {
+                  "id": "no",
+                  "label": "Stay here"
+                }
+              ]
+            },
+            "id": "offer",
+            "position": {
+              "x": 0,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "question": "What number should I use? Include the country code.",
+              "reply_type": "phone",
+              "retry": {
+                "invalid_text": "That number did not parse. Try it with the country code?",
+                "max": 2
+              },
+              "target": {
+                "key": "phone",
+                "type": "system_field"
+              },
+              "timeout": {
+                "delay": 6,
+                "enabled": true,
+                "unit": "hours"
+              }
+            },
+            "id": "ask_phone",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "data_collection"
+          },
+          {
+            "config": {
+              "text": "It is me, from Instagram. Reply here and I will pick it up. Reply STOP to end these."
+            },
+            "id": "first_text",
+            "position": {
+              "x": 600,
+              "y": 0
+            },
+            "type": "send_sms"
+          },
+          {
+            "config": {
+              "actions": [
+                {
+                  "tag": "Moved to SMS",
+                  "verb": "add_tag"
+                }
+              ]
+            },
+            "id": "tag_moved",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "action"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "That did not go through, so let us carry on here instead.",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "sms_failed",
+            "position": {
+              "x": 900,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "blocks": [
+                {
+                  "text": "Staying right here then. What did you want to know?",
+                  "type": "text"
+                }
+              ]
+            },
+            "id": "stay",
+            "position": {
+              "x": 300,
+              "y": 0
+            },
+            "type": "send_message"
+          },
+          {
+            "config": {
+              "text": "This flow needs two connections: Instagram for the trigger and SMS for the text. Only the Instagram one is asked for at import, because the requirements list is built from triggers and nothing here triggers on SMS. Connect SMS in Settings before you publish, or the Send SMS step takes its error path every time.\n\nThat error path is wired on purpose: no SMS connection and no phone number both land there, so the conversation carries on in the DM instead of stopping dead.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+            },
+            "id": "two_channels",
+            "position": {
+              "x": 1200,
+              "y": 0
+            },
+            "type": "note"
+          }
+        ],
+        "schema": 1
+      },
+      "key": "flow-1",
+      "name": "Move the conversation to SMS",
+      "triggers": [
+        {
+          "config": {
+            "keywords": [
+              {
+                "mode": "exact",
+                "text": "TEXT"
+              },
+              {
+                "mode": "exact",
+                "text": "SMS"
+              }
+            ]
+          },
+          "platform": "instagram",
+          "type": "keyword"
+        }
+      ]
+    }
+  ],
+  "format": 1,
+  "requirements": {
+    "comment_posts": [],
+    "custom_field": [],
+    "flow": [],
+    "from_override": [],
+    "link_handle": [],
+    "media": [],
+    "member": [],
+    "platform": [
+      {
+        "key": "instagram",
+        "name": "instagram",
+        "used_by": [
+          "flow-1:trigger-0"
+        ]
+      }
+    ],
+    "request_header": [],
+    "segment": [],
+    "sequence": [],
+    "tag": [
+      {
+        "key": "moved to sms",
+        "name": "Moved to SMS",
+        "used_by": [
+          "flow-1:tag_moved"
+        ]
+      }
+    ],
+    "whatsapp_template": []
+  },
+  "schema": 1
+}

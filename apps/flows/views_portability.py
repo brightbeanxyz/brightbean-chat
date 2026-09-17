@@ -17,9 +17,11 @@ easier to reason about than two.
 The wizard, and the promise it keeps
 --------------------------------------------------------------------------
 
-``upload`` → ``review`` → ``confirm``. The upload validates and stores; the
-review asks the mapping questions and shows the dry run; only the confirm
-writes. **Nothing but the ``FlowImport`` row exists before the confirm**, which
+(``upload`` *or* ``pick a template``) → ``review`` → ``confirm``. The upload
+validates and stores; the review asks the mapping questions and shows the dry
+run; only the confirm writes. A shipped template is just a pre-loaded import —
+it writes the same ``FlowImport`` row and hands off to the same review page, so
+the promise below covers it without a second wizard to keep honest. **Nothing but the ``FlowImport`` row exists before the confirm**, which
 is the issue's "no object creation before dry-run confirm" and is asserted
 directly in ``apps/flows/tests/test_portability_import.py``.
 
@@ -51,7 +53,9 @@ from apps.flows.compat import installed_model
 from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.picklists import picklists
 from apps.flows.portability import library
+from apps.flows.portability.cards import REQUIREMENT_KIND_HELP, REQUIREMENT_KIND_LABELS, card_contexts
 from apps.flows.portability.envelope import MAX_DOCUMENT_BYTES
+from apps.flows.portability.library import read_template, template_cards, template_for_slug
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
 
@@ -61,8 +65,9 @@ __all__ = [
     "import_confirm",
     "import_discard",
     "import_review",
-    "import_shipped_template",
     "import_start",
+    "template_gallery",
+    "template_start",
 ]
 
 logger = logging.getLogger(__name__)
@@ -142,53 +147,25 @@ def import_start(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if document is None:
         return _upload_failed(request, workspace_id, [issue.message for issue in issues])
 
-    record = FlowImport(
-        workspace=request.workspace,
-        document=document,
-        mapping=portability.default_mapping(request.workspace, document, user=request.user),
-        original_filename=str(upload.name or "")[:255],
-        created_by=request.user,
-    )
-    record.save()
-    return _redirect_to_review(workspace_id, record)
+    return _begin_import(request, workspace_id, document, str(upload.name or ""))
 
 
-@login_required
-@require_permission("edit_flows")
-@require_POST
-def import_shipped_template(request: WorkspaceRequest, workspace_id: str, slug: str) -> HttpResponse:
-    """Start an import from one of the templates this repository ships.
+def _begin_import(
+    request: WorkspaceRequest, workspace_id: str, document: dict[str, Any], filename: str
+) -> HttpResponse:
+    """Store the validated document and send the user to the mapping step.
 
-    "Start from a template" has to land somewhere specific. Sending every tile
-    to the blank upload page would make three cards one card wearing three
-    names — the reader has already chosen, and the product should act on it.
-
-    Deliberately the same machinery an upload uses, right down to
-    :func:`read_template` running ``parse_and_validate``: a shipped template
-    earns no shortcut past validation, the requirement-mapping step still asks
-    which channel to bind, and the dry run still shows every URL the flow would
-    call before anything is created. The only thing skipped is choosing a file.
-
-    POST because it writes a FlowImport row. The slug is matched against the
-    library rather than joined onto a path — an id from a URL must never build
-    a filesystem path.
+    The tail of an upload, and the whole of starting from a shipped template —
+    which is the point of it being one function. A template skips exactly one
+    thing an upload does, reading the bytes off the wire; everything after that
+    has to be identical, and the cheapest way to keep a promise like that is to
+    have only one place that can break it.
     """
-    match = next((path for path in library.template_paths() if path.stem == slug), None)
-    if match is None:
-        raise Http404("No such template")
-
-    document, issues = library.read_template(match)
-    if document is None:
-        # A shipped template that no longer validates is a broken build, not a
-        # broken page: a test walks every one of them. Say so plainly rather
-        # than showing an upload form nobody asked for.
-        return _upload_failed(request, workspace_id, [issue.message for issue in issues])
-
     record = FlowImport(
         workspace=request.workspace,
         document=document,
         mapping=portability.default_mapping(request.workspace, document, user=request.user),
-        original_filename=match.name[:255],
+        original_filename=filename[:255],
         created_by=request.user,
     )
     record.save()
@@ -211,6 +188,79 @@ def _upload_failed(request: WorkspaceRequest, workspace_id: str, errors: list[st
 
 def _redirect_to_review(workspace_id: str, record: FlowImport) -> HttpResponse:
     return redirect("flows:import_review", workspace_id=workspace_id, flow_import_id=record.pk)
+
+
+# ---------------------------------------------------------------------------
+# Import, step zero: the shipped template gallery
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("edit_flows")
+@require_GET
+def template_gallery(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
+    """The templates this installation ships, as something you can pick from.
+
+    Until this existed the library had no UI at all: the files sat in the
+    repository and the only door into them was downloading one and uploading it
+    again. Nothing here is workspace data — every card is the same for everyone
+    on this installation — which is why there is no object to scope and why the
+    slug is not a tenant identifier.
+    """
+    return render(request, "flows/template_gallery.html", _gallery_context(request.workspace, workspace_id))
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def template_start(request: WorkspaceRequest, workspace_id: str, template_slug: str) -> HttpResponse:
+    """Begin an import from a shipped template.
+
+    Joins the wizard the upload path already walks, one step in. POST and not
+    GET because it writes the ``FlowImport`` row — the same row an upload
+    writes, and still the only thing that exists before the confirm.
+    """
+    path = template_for_slug(template_slug)
+    if path is None:
+        raise Http404("No such template.")
+
+    document, issues = read_template(path)
+    if document is None:
+        # A file this repository ships failing its own importer is our bug, not
+        # the user's, so it is logged at error and the page says so plainly
+        # rather than blaming whatever they clicked.
+        logger.error(
+            "shipped flow template %s does not validate: %s",
+            path.name,
+            "; ".join(issue.message for issue in issues[:5]),
+        )
+        errors = [f"{path.name} could not be read. This is a problem with the template, not with you."]
+        return render(
+            request,
+            "flows/template_gallery.html",
+            _gallery_context(request.workspace, workspace_id, errors=errors),
+            status=400,
+        )
+
+    return _begin_import(request, workspace_id, document, path.name)
+
+
+def _gallery_context(workspace: Any, workspace_id: str, *, errors: list[str] | None = None) -> dict[str, Any]:
+    """Everything the gallery page renders, built in one place.
+
+    One builder rather than one per view: the 400 that a broken shipped template
+    produces renders the same page, and a second copy of this dict is a second
+    thing to keep in step — which is how that copy came to pass an empty
+    ``categories`` and silently drop the filter chips.
+    """
+    cards = template_cards()
+    return {
+        "cards": card_contexts(workspace, cards),
+        "categories": list(dict.fromkeys(card.category for card in cards if card.category)),
+        "errors": errors or [],
+        "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
+        "upload_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +395,7 @@ def _review_context(
         # through eight questions for the one that was blank.
         "unanswered": [
             {
-                "label": _KIND_LABELS.get(resolution.requirement.kind, resolution.requirement.kind),
+                "label": REQUIREMENT_KIND_LABELS.get(resolution.requirement.kind, resolution.requirement.kind),
                 "name": resolution.requirement.name or resolution.requirement.key,
                 "anchor": f"ask-{resolution.requirement.kind}-{slugify(resolution.requirement.key)}",
             }
@@ -425,8 +475,8 @@ def _groups(workspace: Any, workspace_id: str, plan: portability.ImportPlan) -> 
     return [
         {
             "kind": kind,
-            "label": _KIND_LABELS.get(kind, kind),
-            "help": _KIND_HELP.get(kind, ""),
+            "label": REQUIREMENT_KIND_LABELS.get(kind, kind),
+            "help": REQUIREMENT_KIND_HELP.get(kind, ""),
             "field_types": _field_types() if kind == "custom_field" else [],
             "questions": [
                 {
@@ -500,65 +550,6 @@ def _field_types() -> list[tuple[str, str]]:
     from apps.contacts.models import CustomFieldType
 
     return list(CustomFieldType.choices)
-
-
-_KIND_LABELS: dict[str, str] = {
-    "tag": "Tags",
-    "custom_field": "Custom fields",
-    "sequence": "Sequences",
-    "segment": "Segments",
-    "member": "Members",
-    "flow": "Other flows",
-    "media": "Media",
-    "platform": "Channels",
-    "request_header": "Request headers",
-    "whatsapp_template": "WhatsApp templates",
-    "link_handle": "Ref link handles",
-    "from_override": "Email sender addresses",
-    "comment_posts": "Comment trigger posts",
-}
-
-#: What each section is asking for, for somebody who has never seen the word.
-#:
-#: These name the product's own concepts, and a person importing their first
-#: template is meeting several of them at once. "Create them here, or point each
-#: one at a tag you already use" answers *what do I do* without ever answering
-#: *what is a tag*, which is the question actually being asked.
-_KIND_HELP: dict[str, str] = {
-    "tag": (
-        "This flow labels people with the tags below, and your workspace does not have "
-        "them yet. For each one: create it under this name, or point it at a tag you "
-        "already use. (A tag is a label on a person — “VIP”, “Newsletter” — that you can "
-        "search and filter by later.)"
-    ),
-    "custom_field": (
-        "This flow saves these details onto a contact, and your workspace does not have "
-        "them yet. For each one: create it, or point it at a field you already have. "
-        "(A custom field is a detail that is not built in — a size, a booking date, an "
-        "order number. Its type decides what you can store, and cannot be changed later.)"
-    ),
-    "sequence": (
-        "A sequence is a series of messages sent over days. A new one arrives empty, so add its messages afterwards."
-    ),
-    "segment": "A segment is a saved contact filter and cannot be created from a file. Pick one you already have.",
-    "member": "Who the flow assigns conversations to and notifies. Defaults to you.",
-    "flow": "Flows this one hands over to. A file exported with everything it uses carries them along.",
-    "media": "Pick an image or file from your library, or paste a link to use instead.",
-    "platform": (
-        "Which connected account each trigger should watch. Letting one watch every account "
-        "is wider than it sounds: it covers every platform that kind of trigger works on, not "
-        "just this one, so a Telegram keyword trigger would answer SMS as well."
-    ),
-    "request_header": "These were stripped when the file was made, so no password could travel in it. Supply your own.",
-    "whatsapp_template": "The flow sends these approved templates. Nothing to answer — make sure you have them.",
-    "link_handle": "The public @handle a link was built from was stripped when the file was made.",
-    "from_override": "The sending address was stripped when the file was made.",
-    "comment_posts": (
-        "The trigger watched particular posts, and which posts was stripped when the file was made. "
-        "List your own — leaving this blank does not mean every post, it means no posts, so the "
-        "trigger would never fire."
-    ),
-}
 
 
 def _mapping_from(request: WorkspaceRequest, record: FlowImport) -> dict[str, Any]:

@@ -275,10 +275,36 @@ def describe(trigger: Trigger) -> str:
     if trigger.type == TriggerType.REF_URL:
         return f"Reference “{config.get('ref') or '—'}”"
     if trigger.type == TriggerType.COMMENT:
-        scope = "specific posts" if config.get("post_scope") == "specific" else "any post"
-        return f"Comments on {scope}"
+        return _describe_comment(config)
     spec = spec_for(trigger.type)
     return spec.description if spec is not None else ""
+
+
+def _describe_comment(config: dict[str, Any]) -> str:
+    """A comment trigger, including the parts that are not in the graph.
+
+    The public reply is configured *here*, on the trigger, and never appears as
+    a node — so a summary reading only "Comments on any post" is why people
+    conclude the feature is missing and go looking for a node that replies to a
+    comment. Both consumers of describe() get it: the drawer row and the card on
+    the canvas.
+    """
+    scope = "specific posts" if config.get("post_scope") == "specific" else "any post"
+    keywords = [str(word) for word in config.get("include_keywords") or () if str(word).strip()]
+    if keywords:
+        shown = ", ".join(keywords[:2])
+        more = f" and {len(keywords) - 2} more" if len(keywords) > 2 else ""
+        parts = [f"Comments on {scope} containing {shown}{more}"]
+    else:
+        parts = [f"Comments on {scope}"]
+
+    public_reply = config.get("public_reply")
+    mode = (public_reply or {}).get("mode") if isinstance(public_reply, dict) else None
+    if mode and mode != "none":
+        parts.append("replies publicly")
+    if config.get("like_comment"):
+        parts.append("likes the comment")
+    return " · ".join(parts)
 
 
 def _connected(flow: Flow) -> tuple[str, ...]:

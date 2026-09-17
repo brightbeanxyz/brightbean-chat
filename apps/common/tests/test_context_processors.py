@@ -325,6 +325,18 @@ class TestNavStructure:
         assert rows["ws_tags"].url_name == "contacts:tag_list"
         assert rows["ws_labels"].url_name == "inbox:label_settings"
 
+    def test_every_permission_a_row_names_is_a_real_permission_key(self):
+        """A typo in NavItem.permission fails open in the worst direction: the
+        key is never in effective_permissions, so the row silently vanishes for
+        everyone and the page becomes unreachable again. The check lives here
+        rather than in __post_init__ because these items are built at module
+        import, before the app registry is guaranteed to be populated."""
+        from apps.members.roles import PERMISSION_KEYS
+
+        named = {i.permission for g in MAIN_NAV + SETTINGS_NAV for i in g.items if i.permission}
+
+        assert named <= set(PERMISSION_KEYS), f"not permission keys: {sorted(named - set(PERMISSION_KEYS))}"
+
     def test_nav_item_keys_are_unique_across_both_navs(self):
         keys = [i.key for g in MAIN_NAV + SETTINGS_NAV for i in g.items]
 

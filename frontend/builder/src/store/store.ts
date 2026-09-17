@@ -28,6 +28,7 @@ import { newNodeConfig } from "../schema/sample";
 import type {
   DomainEdge,
   FlowDetail,
+  FlowMeta,
   GraphLimits,
   Issue,
   Picklists,
@@ -90,6 +91,12 @@ export interface BuilderState extends GraphState {
   dragging: boolean;
 
   picklists: Picklists;
+  /**
+   * Read-only, from the flow API. Carries `status`, which is the only record
+   * of whether this flow is live -- the page header around the island is
+   * server-rendered once and cannot say.
+   */
+  flow: FlowMeta | null;
   /** Read-only, from the flow API. The HTMX drawer on the page owns editing. */
   triggers: TriggerSummary[];
   validation: ValidationSlice;
@@ -102,6 +109,8 @@ export interface BuilderState extends GraphState {
 
   /** Replace the read-only trigger list after a drawer edit or a tab refocus. */
   setTriggers: (triggers: TriggerSummary[]) => void;
+  /** Replace the read-only flow meta, so a refocus sees another tab's publish. */
+  setFlow: (flow: FlowMeta) => void;
 
   // ── graph mutations ───────────────────────────────────────────────────────
   load: (detail: FlowDetail) => void;
@@ -255,6 +264,7 @@ export function createBuilderStore(env: BuilderEnv) {
         picklists: EMPTY_PICKLISTS,
         validation: { ...emptyValidationIndex(), revision: 0 },
         save: { state: "clean", version: null, publishedVersion: null, message: null, issues: [] },
+        flow: null,
         triggers: [],
         stats: null,
         statsFailed: false,
@@ -265,6 +275,7 @@ export function createBuilderStore(env: BuilderEnv) {
           set((state) => ({
             ...fromGraph(detail.graph),
             picklists: detail.picklists,
+            flow: detail.flow,
             triggers: detail.triggers,
             limits: detail.limits,
             validation: { ...indexIssues(detail.validation), revision: state.revision },
@@ -282,6 +293,8 @@ export function createBuilderStore(env: BuilderEnv) {
           })),
 
         setTriggers: (triggers) => set({ triggers }),
+
+        setFlow: (flow) => set({ flow }),
 
         addNode: (type, position, options) => {
           const state = get();
@@ -363,7 +376,12 @@ export function createBuilderStore(env: BuilderEnv) {
           set((state) => (state.dragging ? { dragging: false, revision: state.revision + 1 } : {})),
 
         deleteNodes: (ids) => {
-          const doomed = new Set(ids);
+          // Ids this store has never heard of are dropped rather than deleted.
+          // Without this an unknown id still ran withHistory: a no-op undo
+          // entry pushed, `revision` bumped, the flow marked dirty, and a
+          // pointless PUT sent. The trigger cards are synthetic ids on the same
+          // canvas, so this closes the class rather than that one instance.
+          const doomed = new Set([...ids].filter((id) => get().nodeType[id] !== undefined));
           if (doomed.size === 0) {
             return;
           }
@@ -389,7 +407,8 @@ export function createBuilderStore(env: BuilderEnv) {
         },
 
         deleteEdges: (ids) => {
-          const doomed = new Set(ids);
+          // As in deleteNodes: an id no edge has is not a deletion.
+          const doomed = new Set([...ids].filter((id) => get().edge[id] !== undefined));
           if (doomed.size === 0) {
             return;
           }

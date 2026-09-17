@@ -5,12 +5,12 @@ an act that creates a FlowImport row, so it posts rather than linking.
 Shared by the Flows list's four-up strip and the full Templates page, because a
 tile that looks different in the two places reads as two different things.
 {% endcomment %}
-<form method="post" action="{% url 'flows:import_template' workspace_id=request.workspace.id slug=template.slug %}">
+<form method="post" action="{% url 'flows:template_start' workspace_id=request.workspace.id template_slug=template.slug %}">
     {% csrf_token %}
     <button type="submit" class="tile p-4 block w-full h-full text-left cursor-pointer">
         <span class="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center mb-3"
               style="background: var(--primary-tint); color: var(--brand-700);">
-            {% include "partials/_nav_icon.html" with name="flows" size=17 %}
+            {% include "partials/_nav_icon.html" with name="flows" icon_size=17 %}
         </span>
         <span class="block text-sm font-semibold" style="color: var(--text-primary);">{{ template.name }}</span>
         {% comment %}

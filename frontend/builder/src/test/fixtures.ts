@@ -9,7 +9,7 @@
 import { NODE_TYPES, SCHEMA_VERSION, nodeSpec } from "../schema/artifact";
 import { sourceHandles } from "../schema/handles";
 import { sampleConfig } from "../schema/sample";
-import type { DomainEdge, DomainNode, FlowDetail, FlowGraph, Picklists } from "../schema/types";
+import type { DomainEdge, DomainNode, FlowDetail, FlowGraph, Picklists, TriggerSummary } from "../schema/types";
 
 /** Deterministic ids, so a snapshot is stable across runs. */
 export function sequentialIds(prefix: string): () => string {
@@ -88,6 +88,29 @@ export function makeDetail(graph: FlowGraph = makeSampleGraph(), overrides: Part
     schema_url: "/w/ws/api/flows/schema/",
     ...overrides,
   };
+}
+
+/**
+ * Well-formed trigger summaries, for the canvas cards.
+ *
+ * makeDetail's `triggers: []` default is deliberately untouched: it is what
+ * keeps every existing suite rendering the graph it expects.
+ */
+export function makeTriggers(count: number, overrides: Partial<TriggerSummary> = {}): TriggerSummary[] {
+  return Array.from({ length: count }, (_unused, index) => ({
+    id: `t${index + 1}`,
+    type: "comment",
+    type_label: "Comment",
+    enabled: true,
+    priority: index,
+    summary: `Comments on any post containing WORD${index + 1} · replies publicly`,
+    // Required, not optional: the canvas card reads `plain` as the sentence it
+    // shows, so a fixture without one is a card with a blank body.
+    plain: `When somebody comments WORD${index + 1} on any post`,
+    connection: null,
+    platforms: ["instagram"],
+    ...overrides,
+  }));
 }
 
 /** Key order is not preserved by Postgres jsonb, so compare canonical forms. */

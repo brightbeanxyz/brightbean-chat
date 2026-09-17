@@ -339,6 +339,10 @@ def subscribers_panel(request: WorkspaceRequest, workspace_id: str, sequence_id:
             "sequence": sequence,
             "enrollments": page.rows,
             "subscriber_total": page.total,
+            # Only when this view came back empty, so the panel can tell "nobody
+            # is enrolled" apart from "nobody matches this filter". One count,
+            # on the one path that cannot answer the question without it.
+            "enrolled_total": selectors.subscriber_count(sequence) if not page.rows else page.total,
             "subscriber_cap": selectors.MAX_SUBSCRIBERS,
             "truncated": page.truncated,
             "status": status,

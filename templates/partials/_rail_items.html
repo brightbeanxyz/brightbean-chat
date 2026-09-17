@@ -26,7 +26,7 @@ Args:
       slot is rendered even at zero.
     {% endcomment %}
     <span class="rail-icon-wrap">
-        {% include "partials/_nav_icon.html" with name=item.icon size=20 %}
+        {% include "partials/_nav_icon.html" with name=item.icon icon_size=20 %}
         {% if item.badge_slot %}{% include "partials/_nav_badge.html" with key=item.key count=item.badge only %}{% endif %}
     </span>
     <span>{{ item.label }}</span>

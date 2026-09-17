@@ -8,10 +8,13 @@ importing adapter code and Layer 5 adapters never patch can_send". Importing
 ``channels.providers`` here would also be an import cycle waiting to happen, and
 would drag HTTP clients into a code path that only ever asks a table a question.
 
-Issue #4 has not merged, so this module is the single swap point, in the same
-shape as :mod:`apps.flows.schema.condition`: the import wins as soon as
+This module is the single swap point, in the same shape as
+:mod:`apps.flows.schema.condition`: the import wins as soon as
 ``apps.channels`` exists, and the table below is SPEC §6.1's field list filled in
-from §§6.2–6.7 until then.
+from §§6.2–6.7 until then. ``apps.channels`` has since shipped, so on this
+deployment the import takes and :data:`CAPABILITIES_ARE_VENDORED` is False — the
+table below is the fallback for a build without that app, not what is in force.
+A test asserts that, so the two cannot quietly swap places again.
 
 The values are conservative by design. A missing warning is a surprise at
 runtime; a spurious one is a line in a panel that publishes anyway, since
@@ -210,11 +213,15 @@ def capabilities_for(platform: str) -> Any | None:
 def connected_platforms(workspace: Any) -> tuple[str, ...]:
     """Which platforms this workspace has a live connection on.
 
-    **Documented stub until #4.** ``channels.ChannelConnection`` is that issue's
-    model; until it exists there is nothing to ask, so this returns an empty
-    tuple and no capability warning is ever emitted in a running deployment. The
+    **Live** means ``ACTIVE``: a ``DISABLED`` or ``NEEDS_REAUTH`` connection
+    cannot deliver a message, so counting it would let a flow validate — and a
+    template card read as ready — on a channel that would refuse the first send.
+
+    Resolved through ``installed_model`` rather than imported, so this module
+    still loads in a deployment that has not installed ``apps.channels``; there
+    it returns an empty tuple and no capability warning is ever emitted. The
     validator takes the platform set as an argument precisely so the rules can
-    be — and are — tested against real capability data today
+    be — and are — tested against real capability data
     (``apps/flows/tests/test_capabilities.py``).
     """
     from apps.flows.compat import installed_model

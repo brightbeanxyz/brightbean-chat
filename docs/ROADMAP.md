@@ -83,5 +83,7 @@ Workstreams in the same layer code against these signatures without importing ea
 - **A design-system class always beats a Tailwind utility.** Everything in `theme/static_src/src/styles.css` is unlayered CSS, while Tailwind emits its utilities inside `@layer utilities` — and unlayered rules win over every cascade layer, whatever the specificity or source order. So `class="btn-outline w-auto"` does **not** produce an auto-width button: `.btn-outline { width: 100% }` wins, silently, with nothing in the build or the browser to say so. To vary a component, add a modifier class to `styles.css` (`.btn-inline`, `.sidebar-logo-mark-sm`) rather than a utility at the call site. Utilities stay correct for properties no component class sets — layout, spacing, flex. Second trap in the same area: Tailwind only emits a utility while some scanned template still names it, so an override can also vanish when an *unrelated* template stops using that class.
 - **Security**: every PR satisfies the applicable items in `docs/SECURITY-BASELINE.md`; security-critical issues (#4, #15, #16, #25, every adapter) get a dedicated security review at PR time; every layer gate runs one over the merged diff.
 - Tests accompany every issue (pytest, same conventions as Studio's `conftest.py` + per-app `tests/`).
-- No AI features, no billing, no TikTok — do not stub them.
+- No AI features, no TikTok — do not stub them.
+- No billing in the product. The optional hosted-operator integration in `apps/billing` is the only
+  exception and is off unless configured (SPEC §1.1); nothing in a layer may depend on it being on.
 - Product name in UI/docs: **BrightBean Chat**.

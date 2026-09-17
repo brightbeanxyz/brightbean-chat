@@ -10,9 +10,16 @@ Everything platform-supplied here (a keyword, a ref, a connection's display
 name) is attacker-adjacent user text and is rendered escaped. No mark_safe, no
 `|safe`.
 {% endcomment %}
+{% comment %}
+hx-include carries #trigger-focus, the hidden input in edit.html that holds the
+id of the trigger the canvas asked to open. It lives outside this region on
+purpose: this element is replaced wholesale by every refetch, and an input
+inside it would be swapped away mid-request.
+{% endcomment %}
 <div id="flow-triggers"
      hx-get="{% url 'flows:trigger_panel' workspace_id=request.workspace.id flow_id=flow.id %}"
      hx-trigger="triggersChanged from:body"
+     hx-include="#trigger-focus"
      hx-swap="outerHTML"
      class="p-4">
 
@@ -70,5 +77,10 @@ name) is attacker-adjacent user text and is rendered escaped. No mark_safe, no
     </form>
     {% endif %}
 
-    <div id="trigger-form" class="mt-4"></div>
+    {% comment %}
+    Pre-filled when the panel was opened on one trigger — clicking its card on
+    the canvas — and empty otherwise, which is the original behaviour and what
+    the buttons above swap into.
+    {% endcomment %}
+    <div id="trigger-form" class="mt-4">{% if spec %}{% include "flows/_trigger_form.html" %}{% endif %}</div>
 </div>

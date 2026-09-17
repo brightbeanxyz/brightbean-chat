@@ -26,7 +26,10 @@ from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
 from apps.flows.models import Flow, FlowStatus
-from apps.flows.portability.library import gallery_entries
+from apps.flows.portability.cards import card_contexts
+from apps.flows.portability.library import STARTER_CATEGORY
+from apps.flows.portability.library import template_cards as shipped_templates
+from apps.flows.starter import starter_graph
 from apps.flows.triggers.phrasing import describe_triggers
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
@@ -56,6 +59,21 @@ UNFILED_LABEL = "Unfiled"
 UNFILED_VALUE = "__unfiled__"
 
 _MAX_NAME = Flow._meta.get_field("name").max_length or 200
+
+#: How many template cards the flows empty state shows before deferring to the
+#: full gallery. Enough to suggest the range, few enough that the Create field
+#: above them is still the obvious alternative.
+EMPTY_STATE_TEMPLATES = 4
+
+
+def _featured(cards: list[Any], limit: int) -> list[Any]:
+    """The first ``limit`` cards to show somebody who has nothing yet.
+
+    Starters first. ``template_paths()`` is alphabetical, which puts four
+    near-identical ``instagram-comment-*`` cards at the front — the same channel
+    four times over, from the one screen meant to suggest the range.
+    """
+    return sorted(cards, key=lambda card: card.category != STARTER_CATEGORY)[:limit]
 
 
 def _visible_flows(request: WorkspaceRequest) -> Any:
@@ -90,7 +108,6 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     # them cost an extra query plus a dict that existed only to join the answer
     # back onto objects already in hand.
     flows = list(_visible_flows(request).prefetch_related("triggers"))
-    templates = gallery_entries()
 
     # The redesign's filter chips carry counts, so a reader can see there are
     # two drafts without selecting the filter to find out. One grouped query
@@ -135,9 +152,36 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     )
 
     folder_names = list(folders)
+    can_edit = request.workspace_membership.effective_permissions.get("edit_flows", False)
+    filtered = bool(request.GET.get("q") or request.GET.get("status") or request.GET.get("folder"))
+
+    # Templates in the empty state, and only there: this is the exact moment
+    # somebody has nothing and no idea what to build, and the page offered them
+    # a naked text field.
+    #
+    # `has_no_flows`, not `not groups`. An empty *view* is not an empty
+    # workspace: _visible_flows excludes archived flows unless the status filter
+    # asks for them, so somebody who archived all twenty of theirs would be
+    # shown a first-run gallery and told they have no flows. The extra query
+    # only runs once the cheap checks have passed, and stops the moment the
+    # first Create lands, since the HTMX refresh re-renders with groups.
+    #
+    # shipped_templates() digests every file on disk even on a cache hit, so it
+    # stays inside the guard — do not hoist it.
+    template_cards: list[dict[str, Any]] = []
+    template_total = 0
+    if not groups and not filtered and can_edit:
+        has_no_flows = not Flow.objects.for_workspace(request.workspace).exists()
+        if has_no_flows:
+            cards = shipped_templates()
+            template_total = len(cards)
+            template_cards = card_contexts(request.workspace, _featured(cards, EMPTY_STATE_TEMPLATES))
+
     return {
         "groups": groups,
         "flow_count": len(flows),
+        "template_cards": template_cards,
+        "template_total": template_total,
         # (value, label) pairs, which is what ui_select wants — and what keeps
         # the "Unfiled" row's value distinct from a folder of the same name.
         "folder_options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
@@ -158,7 +202,7 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         "query": request.GET.get("q", ""),
         "status": request.GET.get("status", ""),
         "folder": request.GET.get("folder", ""),
-        "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
+        "can_edit": can_edit,
         # Issue #26's per-flow stats page. Gated on its own key rather than on
         # edit_flows: reading numbers and changing a graph are different rights,
         # and every role holds this one today.
@@ -173,14 +217,6 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
             and django_apps.is_installed("apps.analytics")
         ),
         "unfiled_label": UNFILED_LABEL,
-        # "Start from a template", from the templates this repository ships.
-        # Four on the page and the real total beside them — the design mocked
-        # two dozen, and claiming a number the library does not have is the
-        # kind of small lie a reader catches immediately. Bound once above:
-        # calling gallery_entries() twice here read and revalidated every
-        # shipped file twice per render.
-        "flow_templates": templates[:4],
-        "flow_template_total": len(templates),
     }
 
 
@@ -192,26 +228,6 @@ def flow_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     context = _list_context(request)
     template = "flows/_list_rows.html" if request.headers.get("HX-Request") else "flows/list.html"
     return render(request, template, context)
-
-
-@login_required
-@require_workspace_member
-@require_GET
-def flow_templates(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    """The template gallery, and the Templates tab's destination.
-
-    Reads the same cached :func:`gallery_entries` the Flows list and Home read,
-    so the four-up strip and this page can never disagree about what is on offer
-    or how many there are.
-    """
-    return render(
-        request,
-        "flows/templates.html",
-        {
-            "templates": gallery_entries(),
-            "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
-        },
-    )
 
 
 @login_required
@@ -228,14 +244,15 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
     finds no cookie.
     """
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
-    version = services.latest_version(flow)
+    # No version is fetched for the page. The header cannot re-render, so
+    # anything it said about draft-versus-live went stale the moment the user
+    # published; the island reads both from the flow API instead.
     keys = {"workspace_id": workspace_id, "flow_id": flow.pk}
     return render(
         request,
         "flows/edit.html",
         {
             "flow": flow,
-            "version": version,
             "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
             "api_detail_url": reverse("flows:api_detail", kwargs=keys),
             "api_publish_url": reverse("flows:api_publish", kwargs=keys),
@@ -250,11 +267,11 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             # its four siblings rather than assembled from location.pathname in
             # the bundle, which would break under FORCE_SCRIPT_NAME.
             "media_picker_url": reverse("media:picker", kwargs={"workspace_id": workspace_id}),
-            # SPEC §16's "test on Telegram". The endpoint lives in the channels
-            # app — it reads a connection and mints a channel-specific deep link
-            # — and is reversed here for the same reason the picker is: the
-            # island assembles no URLs of its own.
-            "preview_url": reverse("channels:telegram_preview", kwargs=keys),
+            # SPEC §16's preview, no longer Telegram-only. The endpoint lives
+            # in the channels app — it reads a connection and mints a
+            # channel-specific deep link — and is reversed here for the same
+            # reason the picker is: the island assembles no URLs of its own.
+            "preview_url": reverse("channels:flow_preview", kwargs=keys),
             "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
         },
     )
@@ -272,11 +289,20 @@ def flow_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if not name:
         return toast_response(tone="error", title="Name required", body="Give the flow a name to create it.")
     folder = (request.POST.get("folder") or "").strip()[:_MAX_NAME]
-    flow = services.create_flow(workspace=request.workspace, name=name, folder=folder, user=request.user)
+    # The one caller that asks for a starter graph. Everything else that creates
+    # a flow — the importer, the broadcast composer — writes its own version 1
+    # immediately afterwards. See apps.flows.starter.
+    flow = services.create_flow(
+        workspace=request.workspace,
+        name=name,
+        folder=folder,
+        user=request.user,
+        graph=starter_graph(),
+    )
     return toast_response(
         tone="success",
         title="Flow created",
-        body=f"{flow.name} is ready to edit.",
+        body=f"{flow.name} starts with a first message — open it to edit.",
         events={"flowsChanged": True},
     )
 

@@ -15,9 +15,6 @@ app_name = "flows"
 
 urlpatterns = [
     path("flows/", views.flow_list, name="list"),
-    # Before nothing in particular: "templates" is not a uuid, so the
-    # <uuid:flow_id> patterns below cannot shadow it.
-    path("flows/templates/", views.flow_templates, name="templates"),
     path("flows/create/", views.flow_create, name="create"),
     path("flows/<uuid:flow_id>/edit/", views.flow_edit, name="edit"),
     path("flows/<uuid:flow_id>/rename/", views.flow_rename, name="rename"),
@@ -29,12 +26,18 @@ urlpatterns = [
     path("flows/<uuid:flow_id>/export/", views_portability.flow_export, name="export"),
     path("flows/<uuid:flow_id>/export/bundle/", views_portability.flow_export_bundle, name="export_bundle"),
     path("flows/import/", views_portability.import_start, name="import_start"),
-    # "Start from a template" on the home and flows pages. A slug rather than a
-    # file upload; the same three-step wizard from here on.
+    # Step zero of the same wizard: pick one of the templates this
+    # installation ships instead of uploading a file. ``template_slug`` is a
+    # filename stem, identical for every tenant and resolved against a
+    # whitelist — see ``template_for_slug`` and ``tests/idor.py``. It is
+    # deliberately not spelled ``template_id``: that kwarg already belongs to
+    # the WhatsApp template manager and resolves to a WhatsAppTemplate pk, so
+    # reusing it would hand the IDOR sweep a value of the wrong shape here.
+    path("flows/templates/", views_portability.template_gallery, name="template_gallery"),
     path(
-        "flows/import/template/<slug:slug>/",
-        views_portability.import_shipped_template,
-        name="import_template",
+        "flows/templates/<slug:template_slug>/start/",
+        views_portability.template_start,
+        name="template_start",
     ),
     path(
         "flows/imports/<uuid:flow_import_id>/",

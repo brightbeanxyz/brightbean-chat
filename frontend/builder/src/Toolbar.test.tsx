@@ -131,4 +131,115 @@ describe("Publish and a flush that did not land", () => {
 
     await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2), SETTLE);
   });
+
+  it("says Live without a reload as soon as the publish lands", async () => {
+    http.route("/publish/", { body: published });
+
+    renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
+
+    await waitFor(() => expect(screen.getByText("Live · v2")).toBeTruthy(), SETTLE);
+  });
+
+  it("stops saying Archived once the publish that un-archived it lands", async () => {
+    /**
+     * services.publish() moves an archived flow back to ACTIVE and the response
+     * carries the status it landed on. The handler used to update only the save
+     * slice, so the store kept the stale `archived` and this header went on
+     * offering Publish for a flow that was already live.
+     */
+    http.route("/publish/", { body: published });
+    const detail = makeDetail(makeSampleGraph());
+    const store = makeStore({ ...detail, flow: { ...detail.flow, status: "archived" } });
+
+    renderWith(store, <Toolbar autosave={null} />);
+    expect(screen.getByText("Archived")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
+
+    await waitFor(() => expect(screen.queryByText("Archived")).toBeNull(), SETTLE);
+    expect(screen.getByText("Live · v2")).toBeTruthy();
+    expect(store.getState().flow?.status).toBe("active");
+  });
+
+  it("says Live on load when the latest version is already published", () => {
+    /**
+     * The reload case, and the one that made this worth fixing: it reaches the
+     * toolbar through load(), never through the publish handler, so a test that
+     * publishes by clicking would go on passing while this stayed broken. QA
+     * published the same flow twice for exactly this reason.
+     */
+    const detail = makeDetail(makeSampleGraph(), {
+      flow: { id: "flow-1", name: "Welcome", status: "active", folder: "", updated_at: "" },
+      version: { id: "v2", version: 2, published: true, updated_at: "" },
+      published_version: { id: "v2", version: 2, published: true, updated_at: "" },
+    });
+
+    renderWith(makeStore(detail), <Toolbar autosave={null} />);
+
+    expect(screen.getByText("Live · v2")).toBeTruthy();
+    expect(screen.queryByText(/Draft v2/)).toBeNull();
+  });
+
+  it("stops offering Publish for a version that is already live", () => {
+    const detail = makeDetail(makeSampleGraph(), {
+      flow: { id: "flow-1", name: "Welcome", status: "active", folder: "", updated_at: "" },
+      version: { id: "v2", version: 2, published: true, updated_at: "" },
+      published_version: { id: "v2", version: 2, published: true, updated_at: "" },
+    });
+
+    renderWith(makeStore(detail), <Toolbar autosave={null} />);
+
+    expect(screen.getByRole("button", { name: "Live" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("offers it again the moment an edit is pending", async () => {
+    const detail = makeDetail(makeSampleGraph(), {
+      flow: { id: "flow-1", name: "Welcome", status: "active", folder: "", updated_at: "" },
+      version: { id: "v2", version: 2, published: true, updated_at: "" },
+      published_version: { id: "v2", version: 2, published: true, updated_at: "" },
+    });
+    const store = makeStore(detail);
+
+    renderWith(store, <Toolbar autosave={null} />);
+    // What installAutosave does on a revision bump (autosave.ts:165-172); there
+    // is no autosave mounted here, so drive the same transition directly.
+    store.getState().setSave({ state: "dirty" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Set live" }).hasAttribute("disabled")).toBe(false));
+  });
+
+  it("fires a success toast the page's global host can render", async () => {
+    http.route("/publish/", { body: published });
+    const seen: CustomEvent[] = [];
+    const listen = (event: Event) => seen.push(event as CustomEvent);
+    document.body.addEventListener("showToast", listen);
+
+    try {
+      renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={null} />);
+      fireEvent.click(screen.getByRole("button", { name: "Set live" }));
+
+      await waitFor(() => expect(seen).toHaveLength(1), SETTLE);
+      const detail = seen[0]?.detail as { tone: string; title: string };
+      expect(detail.tone).toBe("success");
+      expect(detail.title).toBeTruthy();
+    } finally {
+      document.body.removeEventListener("showToast", listen);
+    }
+  });
+
+  it("keeps Publish enabled when the flow has known errors", () => {
+    /**
+     * A regression guard, not a feature test. The module docstring's policy is
+     * that Publish stays live with known errors, because the builder only knows
+     * what the last save told it. "Disable when already published" must not be
+     * read as licence to disable on anything else.
+     */
+    const detail = makeDetail(makeSampleGraph(), {
+      validation: { errors: [{ code: "no_entry_node", message: "The flow has no nodes to run." }], warnings: [] },
+    });
+
+    renderWith(makeStore(detail), <Toolbar autosave={null} />);
+
+    expect(screen.getByRole("button", { name: "Set live" }).hasAttribute("disabled")).toBe(false);
+  });
 });

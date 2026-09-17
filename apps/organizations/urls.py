@@ -13,6 +13,7 @@ app_name = "organizations"
 
 urlpatterns = [
     path("settings/", views.settings_view, name="settings"),
+    path("billing/", views.billing_view, name="billing"),
     path("settings/update/", views.update_settings, name="update_settings"),
     path("billing/", views.billing_view, name="billing"),
     path("workspaces/", views.workspaces_view, name="workspaces"),

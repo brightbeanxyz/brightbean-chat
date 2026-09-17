@@ -16,7 +16,7 @@ from apps.flows.triggers.registry import spec_for
 from apps.flows.triggers.schema import MAX_KEYWORDS
 from apps.flows.triggers.types import TriggerType
 
-__all__ = ["KeywordMismatchError", "config_from_post"]
+__all__ = ["KeywordMismatchError", "config_from_post", "text_lines"]
 
 _MODES = {"exact", "contains", "any_word"}
 
@@ -130,6 +130,26 @@ def _comment(post: Any) -> dict[str, Any]:
         "like_comment": _flag(post, "like_comment"),
         "once_per_contact_per_post": _flag(post, "once_per_contact_per_post"),
     }
+
+
+def text_lines(values: Any) -> str:
+    """The inverse of :func:`_lines` — a stored list as textarea content.
+
+    It lives here, beside the parser it mirrors, because the two have to agree
+    on a separator and the agreement is only obvious when they are adjacent.
+
+    The view calls this rather than the template calling ``|join`` because
+    ``join``'s argument cannot carry a raw newline on one line, and writing the
+    tag across two physical lines does not work: Django's ``tag_re``
+    (django/template/base.py) is compiled without ``re.DOTALL``, so a tag
+    spanning a newline is never recognised as a tag. It stays a TEXT node and is
+    emitted verbatim *and unescaped* — which is how four textareas here came to
+    render their own template source as their value, and then persist it on the
+    next save.
+    """
+    if not isinstance(values, (list, tuple)):
+        return ""
+    return "\n".join(str(value) for value in values)
 
 
 def _lines(value: Any) -> list[str]:

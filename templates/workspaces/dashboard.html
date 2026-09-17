@@ -27,7 +27,7 @@ goes.
         </div>
         {% if can_edit_flows %}
         <a class="btn-pill-primary flex-shrink-0" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
-            {% include "partials/_nav_icon.html" with name="flows" size=16 %} New flow
+            {% include "partials/_nav_icon.html" with name="flows" icon_size=16 %} New flow
         </a>
         {% endif %}
     </div>
@@ -90,7 +90,7 @@ goes.
                     {{ flow_template_total }} ready-made flow{{ flow_template_total|pluralize }}. Pick one and change the words to suit you.
                 </p>
             </div>
-            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'flows:templates' workspace_id=request.workspace.id %}">Browse all {{ flow_template_total }}</a>
+            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">Browse all {{ flow_template_total }}</a>
         </div>
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {% comment %}
@@ -160,7 +160,7 @@ goes.
                style="border-color: var(--divider);" href="{{ item.url }}">
                 <span class="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
                       style="background: {% if item.tone == 'bad' %}var(--error-50); color: var(--error-700){% elif item.tone == 'warn' %}var(--primary-tint); color: var(--brand-700){% else %}var(--surface-page); color: var(--text-secondary){% endif %};">
-                    {% include "partials/_nav_icon.html" with name="bell" size=15 %}
+                    {% include "partials/_nav_icon.html" with name="bell" icon_size=15 %}
                 </span>
                 <span class="min-w-0">
                     <span class="block text-sm font-semibold" style="color: var(--text-primary);">{{ item.title }}</span>

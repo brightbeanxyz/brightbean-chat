@@ -1,132 +1,157 @@
 {% extends "layouts/settings.html" %}
-{% comment %}
-Plan & billing.
-
-**Nothing here charges anybody.** There is no billing app in this repository —
-no plan model, no subscription, no payment provider — so the plan comparison
-below is presentation only, and says so on its face rather than pretending to a
-state the product cannot hold. The prices are the ones the redesign mocked; when
-billing ships, they come from a model and this notice goes.
-
-What *is* real is the usage: contacts talked to this month, seats in use and
-channels connected all come from the same models the rest of the product reads.
-That is deliberate. Those are the numbers somebody opens this page for, they all
-exist today, and hiding them behind an unbuilt payment integration would mean
-nobody can answer "am I near a limit" until it lands.
-{% endcomment %}
+{% load static %}
 {% block title %}Plan &amp; billing · BrightBean Chat{% endblock %}
-{% block content_wrap %}{% endblock %}
+{% block page_header %}<h1>Plan &amp; billing</h1>{% endblock %}
 
 {% block content %}
-<div class="max-w-[880px] w-full">
-    <h1 class="page-title">Plan &amp; billing</h1>
-    <p class="page-lede mt-1.5 mb-6">You pay for the contacts you talk to each month, not for messages.</p>
+  {% if checkout_state == "cancelled" %}
+    <div class="alert-info mb-4">Checkout was cancelled. No charge was made.</div>
+  {% elif checkout_state == "activating" %}
+    <div class="alert-info mb-4">
+      Your subscription is being activated. This usually takes a few seconds — refresh the page.
+    </div>
+  {% endif %}
 
-    <div class="alert-info mb-5" role="status">
-        Billing is not connected yet. The usage below is real; the plans are a preview.
+  {% if stripe_enabled %}
+    <div class="plan-grid">
+      {% for card in plans %}
+        <div class="plan-card{% if card.key == plan %} plan-card-current{% endif %}">
+          <div class="plan-card-head">
+            <span class="plan-card-title">
+              {% if card.show_logo %}
+                <img src="{% static 'img/brightbean-logo.webp' %}" alt="" class="plan-card-logo" />
+              {% endif %}
+              <span class="plan-card-name">{{ card.name }}</span>
+            </span>
+            {% if card.key == plan %}
+              <span class="status-pill status-pill-{{ card.key }}">Current plan</span>
+            {% endif %}
+          </div>
+          <p class="plan-card-tagline">{{ card.tagline }}</p>
+
+          {% if card.price %}
+            <p class="plan-price">
+              <span class="plan-price-amount">{{ card.price.amount }}</span>
+              <span class="plan-price-note">{{ card.price.note }}</span>
+            </p>
+          {% endif %}
+
+          {% comment %}
+            The call to action sits above the feature list. Somebody who already
+            knows they want the plan should not have to travel the whole list to
+            act, and both columns then start their bullets at the same height
+            whatever each one offers.
+
+            Rendered only when there is something to put in it: Django leaves
+            the whitespace inside a template block, so an empty div is not
+            `:empty` and a CSS rule could not collapse the gap.
+          {% endcomment %}
+          {% if card.key == plan and can_manage_billing and can_manage %}
+            <div class="plan-card-actions">
+              {% comment %}
+                The Customer Portal. A plain POST, not a link: it mints a
+                single-use session server-side, and CSP is form-action 'self' so
+                the form could not point at Stripe even if we wanted it to.
+              {% endcomment %}
+              <form method="post" action="{% url 'billing:portal' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn-brand-outline">Manage billing</button>
+              </form>
+            </div>
+          {% elif card.key == "paid" and card.key != plan and can_manage %}
+            <div class="plan-card-actions">
+              {% comment %}
+                One call to action, and a toggle that swaps the price beside it.
+
+                The swap is CSS, not JavaScript: the two radios precede both
+                price blocks, so `input:checked ~ .plan-price` picks the one to
+                show. That keeps the page working with no script at all, which
+                matters here because the CSP is 'self' with a per-request nonce
+                and an inline handler would be refused outright.
+
+                The radios are moved off-screen rather than display:none — a
+                hidden input is not focusable, and the control would stop working
+                for anybody on a keyboard. Their value posts with the form and
+                the view validates it against the same two-element allowlist it
+                always did, so this is presentation and not a new input to trust.
+              {% endcomment %}
+              <form method="post" action="{% url 'billing:checkout' %}">
+                {% csrf_token %}
+                <fieldset class="plan-pricing">
+                  <legend class="sr-only">Billing interval</legend>
+                  <input type="radio" name="interval" id="interval-monthly-{{ card.key }}" value="monthly" checked />
+                  <input type="radio" name="interval" id="interval-yearly-{{ card.key }}" value="yearly" />
+
+                  <div class="plan-interval">
+                    <label for="interval-monthly-{{ card.key }}">Monthly</label>
+                    <label for="interval-yearly-{{ card.key }}">
+                      Yearly <span class="plan-save">{{ yearly_saving }}</span>
+                    </label>
+                  </div>
+
+                  {% for key, price in paid_prices.items %}
+                    <p class="plan-price" data-interval="{{ key }}">
+                      <span class="plan-price-amount">{{ price.amount }}</span>
+                      <span class="plan-price-cadence">{{ price.cadence }}</span>
+                      <span class="plan-price-note">{{ price.note }}</span>
+                    </p>
+                  {% endfor %}
+                </fieldset>
+                <button type="submit" class="btn-brand">Subscribe</button>
+              </form>
+            </div>
+          {% endif %}
+
+          <ul class="plan-card-features">
+            {% for feature in card.features %}
+              <li>{% include "partials/_nav_icon.html" with name=feature.icon %}<span>{{ feature.text }}</span></li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endfor %}
     </div>
 
-    <section class="card p-6 mb-6">
-        <div class="flex flex-wrap items-start justify-between gap-4">
-            <div>
-                <div class="flex items-center gap-2.5">
-                    <span class="text-xl font-bold" style="color: var(--text-primary);">Free</span>
-                    <span class="status-pill status-pill-active inline-flex items-center gap-1.5">
-                        <span class="status-pill-dot"></span>Active
-                    </span>
-                </div>
-                <p class="text-sm mt-1" style="color: var(--text-tertiary);">
-                    $0 a month · billed to {{ request.user.email }}
-                </p>
-            </div>
-        </div>
+    {% if renews_on %}
+      <p class="mb-4 text-sm" style="color: var(--text-secondary);">Renews on {{ renews_on|date:"j F Y" }}.</p>
+    {% elif cancels_on %}
+      <p class="mb-4 text-sm" style="color: var(--text-secondary);">
+        Your plan ends on {{ cancels_on|date:"j F Y" }}. Nothing is deleted — you keep everything you have made.
+      </p>
+    {% endif %}
 
-        <div class="card-divider my-5"></div>
-
-        <div class="grid gap-5 sm:grid-cols-3">
-            <div>
-                <div class="text-[13px] font-semibold" style="color: var(--text-primary);">Contacts this month</div>
-                <div class="flex items-baseline gap-1.5 mt-1">
-                    <span class="figure">{{ contacts_talked_to }}</span>
-                    <span class="text-[13px]" style="color: var(--text-tertiary);">talked to</span>
-                </div>
-                <p class="text-xs mt-1" style="color: var(--text-ghost);">
-                    Of {{ contacts_total }} in this organisation. Resets {{ renews_on|date:"j F" }}.
-                </p>
-            </div>
-            <div>
-                <div class="text-[13px] font-semibold" style="color: var(--text-primary);">Team seats</div>
-                <div class="flex items-baseline gap-1.5 mt-1">
-                    <span class="figure">{{ seats_in_use }}</span>
-                    <span class="text-[13px]" style="color: var(--text-tertiary);">in use</span>
-                </div>
-                <p class="text-xs mt-1" style="color: var(--text-ghost);">
-                    <a style="color: var(--brand-700);" href="{% url 'members:list' %}">Invite more people</a>
-                </p>
-            </div>
-            <div>
-                <div class="text-[13px] font-semibold" style="color: var(--text-primary);">Channels</div>
-                <div class="flex items-baseline gap-1.5 mt-1">
-                    <span class="figure">{{ channels_connected }}</span>
-                    <span class="text-[13px]" style="color: var(--text-tertiary);">connected</span>
-                </div>
-                <p class="text-xs mt-1" style="color: var(--text-ghost);">Across every workspace.</p>
-            </div>
-        </div>
-    </section>
-
-    <h2 class="section-title">Plans</h2>
-    <p class="text-sm mt-1 mb-4" style="color: var(--text-tertiary);">
-        Two plans, and you can change any time. We bill the difference for the days that remain.
-    </p>
-
-    <div class="grid gap-4 md:grid-cols-2">
-        <div class="card p-7">
-            <div class="text-xl font-bold" style="color: var(--text-primary);">Free</div>
-            <p class="text-[13px] mt-1" style="color: var(--text-tertiary);">Try the whole product on two channels</p>
-            <div class="text-[34px] font-bold mt-4" style="color: var(--text-primary);">$0</div>
-            <div class="text-[13px]" style="color: var(--text-ghost);">Free forever</div>
-            <div class="card-divider my-5"></div>
-            <div class="figure">25</div>
-            <div class="text-[13px] mb-5" style="color: var(--text-tertiary);">Contacts per month</div>
-            <button type="button" class="btn-pill-secondary w-full" disabled aria-disabled="true">Your plan</button>
-            <ul class="mt-5 space-y-2.5 text-sm" style="color: var(--text-primary);">
-                <li>Connect 2 channels</li>
-                <li>Up to 4 active flows</li>
-                <li>1 person on the team</li>
-                <li>Shared inbox</li>
-                <li>Community support</li>
-            </ul>
-        </div>
-
-        <div class="card p-7" style="border: 1.5px solid var(--primary);">
-            <div class="text-xl font-bold" style="color: var(--text-primary);">Pro</div>
-            <p class="text-[13px] mt-1" style="color: var(--text-tertiary);">Everything, with no limits</p>
-            <div class="flex items-baseline gap-1.5 mt-4">
-                <span class="text-[34px] font-bold" style="color: var(--text-primary);">$15</span>
-                <span class="text-[15px]" style="color: var(--text-tertiary);">/mo</span>
-            </div>
-            <div class="text-[13px]" style="color: var(--text-ghost);">$144 billed annually ($12/mo, 20% off)</div>
-            <div class="card-divider my-5"></div>
-            <div class="figure">Unlimited</div>
-            <div class="text-[13px] mb-5" style="color: var(--text-tertiary);">Contacts per month</div>
-            {% comment %}
-              Deliberately disabled rather than hidden. A button that takes a
-              payment is the one thing on this page that cannot be faked, and a
-              live-looking "Upgrade" that silently does nothing is worse than an
-              honest one that says why.
-            {% endcomment %}
-            <button type="button" class="btn-pill-primary w-full" disabled aria-disabled="true"
-                    title="Billing is not connected yet">Not available yet</button>
-            <ul class="mt-5 space-y-2.5 text-sm" style="color: var(--text-primary);">
-                <li>Unlimited channels</li>
-                <li>Unlimited flows and sequences</li>
-                <li>Unlimited team members</li>
-                <li>Broadcasts, labels and rules</li>
-                <li>Assignments and roles</li>
-                <li>Priority support</li>
-            </ul>
-        </div>
+    {% if not can_manage %}
+      <p class="mb-4 text-sm" style="color: var(--text-tertiary);">
+        Only organization admins can change the plan.
+      </p>
+    {% endif %}
+  {% else %}
+    {% comment %}
+      No payment provider configured, which is every self-hosted install. There
+      is deliberately no plan comparison here: rendering a Free column whose
+      limits are fiction on a box that has no limits is the one thing the
+      promise in docs/SPEC.md §1.1 actually forbids.
+    {% endcomment %}
+    <div class="crm-panel plan-panel mb-4">
+      <h2>Self-hosted</h2>
+      <p>
+        Every feature is available, with no limits and nothing counted. There is no plan to be on and no
+        payment provider to configure.
+      </p>
     </div>
-</div>
+  {% endif %}
+
+  <div class="crm-panel plan-panel">
+    <h2>Usage</h2>
+    <table class="plan-usage">
+      {% for row in usage_rows %}
+        <tr class="{% if row.at_limit %}plan-usage-at{% elif row.near_limit %}plan-usage-near{% endif %}">
+          <td class="plan-usage-icon">{% include "partials/_nav_icon.html" with name=row.icon %}</td>
+          <td>{{ row.label }}</td>
+          <td class="plan-usage-figure">
+            {% if row.limit is None %}{{ row.used }}{% else %}{{ row.used }} of {{ row.limit }}{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
 {% endblock %}

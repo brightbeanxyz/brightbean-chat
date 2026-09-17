@@ -10,7 +10,7 @@ partial each template has to remember to pull in; this page fires toasts with
 nothing but a form posting to a toast_response view.
 {% endcomment %}
 
-{% block title %}Design system — BrightBean Chat{% endblock %}
+{% block title %}Design system · BrightBean Chat{% endblock %}
 
 {% block page_header %}
 <h1 class="page-title">Design system</h1>
@@ -223,7 +223,7 @@ nothing but a form posting to a toast_response view.
         <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">List row</h2>
         <div class="card overflow-hidden">
             <div class="list-row">
-                <span class="list-row-icon list-row-icon-live">{% include "partials/_nav_icon.html" with name="flows" size=19 %}</span>
+                <span class="list-row-icon list-row-icon-live">{% include "partials/_nav_icon.html" with name="flows" icon_size=19 %}</span>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2.5">
                         <span class="list-row-title">Instagram comment → DM</span>
@@ -237,7 +237,7 @@ nothing but a form posting to a toast_response view.
                 </span>
             </div>
             <div class="list-row">
-                <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="flows" size=19 %}</span>
+                <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="flows" icon_size=19 %}</span>
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2.5">
                         <span class="list-row-title">Lead magnet, PDF delivery</span>

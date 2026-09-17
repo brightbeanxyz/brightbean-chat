@@ -4,11 +4,15 @@ apps.common.context_processors; an unknown name renders a neutral dot rather
 than nothing, so a mistyped key is visible instead of silently collapsing the
 row's layout.
 
-`size` is the pixel box, defaulting to 18. The rail passes 20: its glyph is the
+`icon_size` is the pixel box, defaulting to 18. The rail passes 20: its glyph is the
 whole affordance with only a 10px label under it, where a settings row has a
 15px label beside it doing most of the work.
+
+Named `icon_size` rather than `size` so an ambient `size` in a parent context
+cannot resize a glyph by accident: `{% include %}` without `only` inherits
+everything the caller has.
 {% endcomment %}{% spaceless %}
-{% with px=size|default:18 %}
+{% with px=icon_size|default:18 %}
 <svg class="flex-shrink-0" width="{{ px }}" height="{{ px }}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 {% if name == "home" %}<path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V9.5"/>
 {% elif name == "billing" %}<rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
@@ -25,6 +29,7 @@ whole affordance with only a 10px label under it, where a settings row has a
 {% elif name == "grid" %}<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
 {% elif name == "users" %}<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
 {% elif name == "key" %}<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/>
+{% elif name == "check" %}<polyline points="20 6 9 17 4 12"/>
 {% elif name == "channels" %}<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
 {% elif name == "fields" %}<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
 {% elif name == "tag" %}<path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>

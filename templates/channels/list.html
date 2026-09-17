@@ -34,7 +34,7 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
             </p>
         </div>
         <a class="btn-pill-primary flex-shrink-0" href="{% url 'channels:create' workspace_id=request.workspace.id %}">
-            {% include "partials/_nav_icon.html" with name="channels" size=16 %} Connect a channel
+            {% include "partials/_nav_icon.html" with name="channels" icon_size=16 %} Connect a channel
         </a>
     </div>
 
@@ -72,7 +72,7 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                 </div>
                 {% if row.settings_url %}
                 <a class="btn-icon-round flex-shrink-0" href="{{ row.settings_url }}" aria-label="Settings for {{ row.connection.display_name }}">
-                    {% include "partials/_nav_icon.html" with name="settings" size=16 %}
+                    {% include "partials/_nav_icon.html" with name="settings" icon_size=16 %}
                 </a>
                 {% endif %}
             </div>

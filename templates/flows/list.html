@@ -56,7 +56,7 @@ swap in styles.css meaningful.
             <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
                class="btn-pill-secondary">Import a file</a>
             <button type="button" class="btn-pill-primary" @click="creating = true; $nextTick(() => $refs.newName.focus())">
-                {% include "partials/_nav_icon.html" with name="flows" size=16 %} New flow
+                {% include "partials/_nav_icon.html" with name="flows" icon_size=16 %} New flow
             </button>
         </div>
         {% endif %}
@@ -102,21 +102,26 @@ swap in styles.css meaningful.
         {% ui_select model="folder" options=folder_options placeholder="All folders" icon="tag" onchange="reload()" %}
     </form>
 
-    {% if flow_templates and can_edit %}
+    {% if template_cards and can_edit %}
     <section class="card p-[22px] mb-7">
         <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
             <div>
                 <h2 class="section-title">Start from a template</h2>
                 <p class="text-[13px] mt-1" style="color: var(--text-tertiary);">
-                    {{ flow_template_total }} ready-made flow{{ flow_template_total|pluralize }}. Pick one and change the words to suit you.
+                    {{ template_total }} ready-made flow{{ template_total|pluralize }}. Pick one and change the words to suit you.
                 </p>
             </div>
             <a class="btn-pill-secondary btn-pill-sm flex-shrink-0"
-               href="{% url 'flows:templates' workspace_id=request.workspace.id %}">Browse all {{ flow_template_total }}</a>
+               href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">Browse all {{ template_total }}</a>
         </div>
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {% for template in flow_templates %}
-            {% include "flows/_template_tile.html" %}
+            {% comment %}
+              The loop variable is `entry`, and there is no `searchable`:
+              flows/_template_card.html reads entry.card.* and leaves off the
+              gallery page's Alpine filter unless that flag is passed.
+            {% endcomment %}
+            {% for entry in template_cards %}
+            {% include "flows/_template_card.html" %}
             {% endfor %}
         </div>
     </section>
