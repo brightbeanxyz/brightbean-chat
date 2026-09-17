@@ -21,21 +21,6 @@
   <a href="https://www.djangoproject.com/"><img src="https://img.shields.io/badge/Django-5.x-green.svg" alt="Django 5.x"></a>
 </p>
 
-<p align="center">
-  <strong>Django 5 · HTMX · Tailwind 4 · PostgreSQL</strong><br>
-  No Redis. No message broker. No aggregator in the middle.
-</p>
-
-<p align="center">
-  <a href="#an-open-source-manychat-alternative">vs. ManyChat</a> ·
-  <a href="#deploy-it">Deploy it</a> ·
-  <a href="#run-it-locally">Run it locally</a> ·
-  <a href="#platform-credentials">Platform credentials</a> ·
-  <a href="#api--webhooks">API &amp; webhooks</a> ·
-  <a href="#documentation">Documentation</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
-</p>
-
 ---
 
 ## About BrightBean Chat
