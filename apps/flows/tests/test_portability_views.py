@@ -559,6 +559,29 @@ class TestStartingFromATemplate:
         assert record.original_filename == "telegram-welcome-and-faq.json"
         assert response["Location"] == _url("import_review", tenancy, flow_import_id=record.pk)
 
+    def test_the_whole_wizard_runs_from_a_template(self, tenancy: Any, client_for: Any) -> None:
+        """Template to live draft, through the review form a browser actually
+        posts rather than by assigning ``record.mapping``. That is what makes
+        this different from the confirm test below: it exercises
+        ``_mapping_from``'s parser on the way through.
+        """
+        from apps.flows.models import Trigger
+        from apps.flows.tests.portability_support import answer_channels
+
+        client = client_for(tenancy.owner)
+        client.post(_url("template_start", tenancy, template_slug="telegram-welcome-and-faq"))
+        record = _record_for(tenancy)
+
+        answered = answer_channels(record.document, record.mapping)
+        review = _url("import_review", tenancy, flow_import_id=record.pk)
+        assert client.post(review, _as_form(answered)).status_code == 302
+
+        assert client.post(_url("import_confirm", tenancy, flow_import_id=record.pk)).status_code == 204
+        flows = Flow.objects.for_workspace(tenancy.workspace)
+        assert flows.exists()
+        assert all(flow.status == "draft" for flow in flows)
+        assert not Trigger.objects.for_workspace(tenancy.workspace).filter(enabled=True).exists()
+
     def test_starting_in_one_workspace_creates_nothing_in_another(
         self, tenancy: Any, other_tenancy: Any, client_for: Any
     ) -> None:

@@ -17,7 +17,7 @@ from typing import Any
 
 from django.urls import reverse
 
-__all__ = ["REQUIREMENT_KIND_LABELS", "card_contexts"]
+__all__ = ["REQUIREMENT_KIND_HELP", "REQUIREMENT_KIND_LABELS", "card_contexts"]
 
 
 #: What each requirement kind is called, everywhere it is named. Shared by the
@@ -40,18 +40,49 @@ REQUIREMENT_KIND_LABELS: dict[str, str] = {
 }
 
 
-def card_contexts(workspace: Any, workspace_id: Any, cards: Sequence[Any]) -> list[dict[str, Any]]:
+#: The sentence under each section heading on the import review page. Beside the
+#: labels deliberately: the two are keyed by the same requirement kinds, and a
+#: new kind that got one and not the other would render a bare slug as a heading
+#: or a heading with nothing under it.
+REQUIREMENT_KIND_HELP: dict[str, str] = {
+    "tag": "Create them here, or point each one at a tag you already use.",
+    "custom_field": "A new field needs a type; pick the one the template expects.",
+    "sequence": "A new sequence arrives empty — add its steps afterwards.",
+    "segment": "A segment is a saved filter and cannot be created from a template. Pick one you already have.",
+    "member": "Who the flow assigns conversations to and notifies. Defaults to you.",
+    "flow": "Flows this one hands over to. A bundle export carries them with it.",
+    "media": "Pick an asset from your library, or paste a URL to use instead.",
+    "platform": (
+        "Which connection each trigger should watch. Leaving one unbound does not mean "
+        "“every connection of this platform” — it means every platform that trigger type supports "
+        "(SPEC §5), so a Telegram keyword trigger would also listen on SMS."
+    ),
+    "request_header": "Header values were removed on export so no credential could travel. Supply your own.",
+    "whatsapp_template": "The flow sends these approved templates. Nothing to answer — make sure you have them.",
+    "link_handle": "The public handle a ref link is built from was removed on export.",
+    "from_override": "The sending address was removed on export.",
+    "comment_posts": (
+        "The trigger watched specific posts and their ids were removed on export. List your own — "
+        "leaving it blank keeps the trigger scoped to specific posts with none listed, so it matches nothing."
+    ),
+}
+
+
+def card_contexts(workspace: Any, cards: Sequence[Any]) -> list[dict[str, Any]]:
     """Render-ready contexts for ``cards``, in the order given.
 
     The connections query runs once for the batch rather than once per card, so
     pass the slice you are going to show — the empty state shows four of the
     twenty-one, and reversing twenty-one URLs to throw seventeen away is work
-    nobody asked for.
+    nobody asked for. No cards, no query: a deployment that ships none renders
+    this page too.
     """
     from apps.flows.capabilities import connected_platforms
 
+    if not cards:
+        return []
     connected = frozenset(connected_platforms(workspace))
-    return [_card_context(workspace_id, card, connected) for card in cards]
+    return [_card_context(workspace.pk, card, connected) for card in cards]
 
 
 def _card_context(workspace_id: Any, card: Any, connected: frozenset[str]) -> dict[str, Any]:

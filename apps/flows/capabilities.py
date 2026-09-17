@@ -8,10 +8,13 @@ importing adapter code and Layer 5 adapters never patch can_send". Importing
 ``channels.providers`` here would also be an import cycle waiting to happen, and
 would drag HTTP clients into a code path that only ever asks a table a question.
 
-Issue #4 has not merged, so this module is the single swap point, in the same
-shape as :mod:`apps.flows.schema.condition`: the import wins as soon as
+This module is the single swap point, in the same shape as
+:mod:`apps.flows.schema.condition`: the import wins as soon as
 ``apps.channels`` exists, and the table below is SPEC §6.1's field list filled in
-from §§6.2–6.7 until then.
+from §§6.2–6.7 until then. ``apps.channels`` has since shipped, so on this
+deployment the import takes and :data:`CAPABILITIES_ARE_VENDORED` is False — the
+table below is the fallback for a build without that app, not what is in force.
+A test asserts that, so the two cannot quietly swap places again.
 
 The values are conservative by design. A missing warning is a surprise at
 runtime; a spurious one is a line in a panel that publishes anyway, since

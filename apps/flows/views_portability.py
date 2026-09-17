@@ -50,7 +50,7 @@ from apps.flows import portability
 from apps.flows.compat import installed_model
 from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.picklists import picklists
-from apps.flows.portability.cards import REQUIREMENT_KIND_LABELS, card_contexts
+from apps.flows.portability.cards import REQUIREMENT_KIND_HELP, REQUIREMENT_KIND_LABELS, card_contexts
 from apps.flows.portability.envelope import MAX_DOCUMENT_BYTES
 from apps.flows.portability.library import read_template, template_cards, template_for_slug
 from apps.members.decorators import require_permission
@@ -252,7 +252,7 @@ def _gallery_context(workspace: Any, workspace_id: str, *, errors: list[str] | N
     """
     cards = template_cards()
     return {
-        "cards": card_contexts(workspace, workspace_id, cards),
+        "cards": card_contexts(workspace, cards),
         "categories": list(dict.fromkeys(card.category for card in cards if card.category)),
         "errors": errors or [],
         "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
@@ -323,7 +323,7 @@ def _groups(workspace: Any, plan: portability.ImportPlan) -> list[dict[str, Any]
         {
             "kind": kind,
             "label": REQUIREMENT_KIND_LABELS.get(kind, kind),
-            "help": _KIND_HELP.get(kind, ""),
+            "help": REQUIREMENT_KIND_HELP.get(kind, ""),
             "field_types": _field_types() if kind == "custom_field" else [],
             "questions": [
                 {"resolution": resolution, "options": _options(workspace, lists, resolution.requirement)}
@@ -392,30 +392,6 @@ def _field_types() -> list[tuple[str, str]]:
     from apps.contacts.models import CustomFieldType
 
     return list(CustomFieldType.choices)
-
-
-_KIND_HELP: dict[str, str] = {
-    "tag": "Create them here, or point each one at a tag you already use.",
-    "custom_field": "A new field needs a type; pick the one the template expects.",
-    "sequence": "A new sequence arrives empty — add its steps afterwards.",
-    "segment": "A segment is a saved filter and cannot be created from a template. Pick one you already have.",
-    "member": "Who the flow assigns conversations to and notifies. Defaults to you.",
-    "flow": "Flows this one hands over to. A bundle export carries them with it.",
-    "media": "Pick an asset from your library, or paste a URL to use instead.",
-    "platform": (
-        "Which connection each trigger should watch. Leaving one unbound does not mean "
-        "“every connection of this platform” — it means every platform that trigger type supports "
-        "(SPEC §5), so a Telegram keyword trigger would also listen on SMS."
-    ),
-    "request_header": "Header values were removed on export so no credential could travel. Supply your own.",
-    "whatsapp_template": "The flow sends these approved templates. Nothing to answer — make sure you have them.",
-    "link_handle": "The public handle a ref link is built from was removed on export.",
-    "from_override": "The sending address was removed on export.",
-    "comment_posts": (
-        "The trigger watched specific posts and their ids were removed on export. List your own — "
-        "leaving it blank keeps the trigger scoped to specific posts with none listed, so it matches nothing."
-    ),
-}
 
 
 def _mapping_from(request: WorkspaceRequest, record: FlowImport) -> dict[str, Any]:

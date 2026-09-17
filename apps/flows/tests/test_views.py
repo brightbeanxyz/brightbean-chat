@@ -6,6 +6,7 @@ from django.urls import reverse
 
 from apps.flows.fixtures import graph_for
 from apps.flows.models import Flow, FlowStatus
+from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.services import archive_flow, create_flow, publish, save_draft
 from apps.flows.views import UNFILED_VALUE
 from apps.members.roles import WorkspaceRole
@@ -138,10 +139,22 @@ class TestTemplatesInTheEmptyState:
 
     def test_the_cards_say_which_channel_they_need(self, tenancy, client_for):
         """The badge is the reason the empty state is worth more than a list of
-        names: "Needs Instagram" is answerable before you click."""
+        names: "Needs Instagram" is answerable before you click. Named in full
+        rather than as the bare word, which "Also needs:" would also satisfy."""
         body = client_for(tenancy.owner).get(list_url(tenancy)).content.decode()
 
-        assert "Needs" in body
+        assert "Needs Instagram" in body
+
+    def test_the_featured_cards_are_not_all_one_channel(self, tenancy, client_for):
+        """What _featured() exists for. The library is alphabetical, so a plain
+        slice is four near-identical instagram-comment-* cards — the same channel
+        four times over, from the one screen meant to suggest the range."""
+        response = client_for(tenancy.owner).get(list_url(tenancy))
+
+        cards = response.context["template_cards"]
+        assert [entry["card"].category for entry in cards][:3] == [STARTER_CATEGORY] * 3
+        platforms = {platform["key"] for entry in cards for platform in entry["platforms"]}
+        assert len(platforms) > 1, f"every featured card is on the same channel: {platforms}"
 
     def test_the_cards_here_carry_no_alpine_filter(self, tenancy, client_for):
         """matches() is defined in template_gallery.html's x-data. This panel

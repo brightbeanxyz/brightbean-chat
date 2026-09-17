@@ -26,6 +26,7 @@ from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
 from apps.flows.models import Flow, FlowStatus
 from apps.flows.portability.cards import card_contexts
+from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.portability.library import template_cards as shipped_templates
 from apps.flows.starter import starter_graph
 from apps.members.decorators import require_permission, require_workspace_role
@@ -70,7 +71,7 @@ def _featured(cards: list[Any], limit: int) -> list[Any]:
     near-identical ``instagram-comment-*`` cards at the front — the same channel
     four times over, from the one screen meant to suggest the range.
     """
-    return sorted(cards, key=lambda card: card.category != "Starters")[:limit]
+    return sorted(cards, key=lambda card: card.category != STARTER_CATEGORY)[:limit]
 
 
 def _visible_flows(request: WorkspaceRequest) -> Any:
@@ -99,7 +100,7 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
     return flows.order_by("folder", "name")
 
 
-def _list_context(request: WorkspaceRequest, workspace_id: str) -> dict[str, Any]:
+def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     flows = list(_visible_flows(request))
 
     # Runs are detected on the folder value, not on the label it renders under:
@@ -129,17 +130,25 @@ def _list_context(request: WorkspaceRequest, workspace_id: str) -> dict[str, Any
 
     # Templates in the empty state, and only there: this is the exact moment
     # somebody has nothing and no idea what to build, and the page offered them
-    # a naked text field. Computed on that path alone, so a workspace that has
-    # flows never pays for the extra connections query — and stops paying the
-    # moment the first Create lands, since the HTMX refresh re-renders with
-    # groups. shipped_templates() digests every file on disk even on a cache
-    # hit, so it stays inside the guard — do not hoist it.
-    template_cards: list[Any] = []
+    # a naked text field.
+    #
+    # `has_no_flows`, not `not groups`. An empty *view* is not an empty
+    # workspace: _visible_flows excludes archived flows unless the status filter
+    # asks for them, so somebody who archived all twenty of theirs would be
+    # shown a first-run gallery and told they have no flows. The extra query
+    # only runs once the cheap checks have passed, and stops the moment the
+    # first Create lands, since the HTMX refresh re-renders with groups.
+    #
+    # shipped_templates() digests every file on disk even on a cache hit, so it
+    # stays inside the guard — do not hoist it.
+    template_cards: list[dict[str, Any]] = []
     template_total = 0
     if not groups and not filtered and can_edit:
-        cards = shipped_templates()
-        template_total = len(cards)
-        template_cards = card_contexts(request.workspace, workspace_id, _featured(cards, EMPTY_STATE_TEMPLATES))
+        has_no_flows = not Flow.objects.for_workspace(request.workspace).exists()
+        if has_no_flows:
+            cards = shipped_templates()
+            template_total = len(cards)
+            template_cards = card_contexts(request.workspace, _featured(cards, EMPTY_STATE_TEMPLATES))
 
     return {
         "groups": groups,
@@ -176,7 +185,7 @@ def _list_context(request: WorkspaceRequest, workspace_id: str) -> dict[str, Any
 @require_GET
 def flow_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The flow list. Answers the rows partial to HTMX and the page otherwise."""
-    context = _list_context(request, workspace_id)
+    context = _list_context(request)
     template = "flows/_list_rows.html" if request.headers.get("HX-Request") else "flows/list.html"
     return render(request, template, context)
 

@@ -298,6 +298,45 @@ class TestTheGalleryCards:
         assert card.needs == ("custom_field", "tag")
         assert "platform" not in card.needs
 
+    def test_a_card_says_when_the_template_calls_out(self) -> None:
+        """Installing a template only ever touches your own workspace — except
+        for an external_request node, which sends what the flow gathered to a
+        third party. Tested on the predicate rather than through a shipped file
+        because no template ships one today; the badge is what makes the first
+        one that does say so on the card.
+        """
+        from apps.flows.portability.library import _calls_out
+
+        node = {"type": "external_request", "id": "n1"}
+        assert _calls_out({"requirements": {}, "flows": [{"graph": {"nodes": [node]}}]}) is True
+
+    def test_a_card_says_it_calls_out_when_only_a_header_survived_the_export(self) -> None:
+        """The other half. An export strips header *values*, so a template can
+        arrive with the requirement and, in a hand-written file, no node to show
+        for it — and vice versa, which is why neither check stands alone."""
+        from apps.flows.portability.library import _calls_out
+
+        headers = {"request_header": [{"key": "r1"}]}
+        assert _calls_out({"requirements": headers, "flows": [{"graph": {"nodes": []}}]}) is True
+
+    def test_a_card_does_not_claim_an_ordinary_template_calls_out(self) -> None:
+        from apps.flows.portability.library import _calls_out
+
+        ordinary = {"type": "send_message", "id": "n1"}
+        document = {
+            "requirements": {"request_header": [], "tag": [{"key": "t1"}]},
+            "flows": [{"graph": {"nodes": [ordinary]}}],
+        }
+        assert _calls_out(document) is False
+
+    def test_no_shipped_template_calls_out_today(self) -> None:
+        """Not a rule — a record. If this goes red, a template that makes an
+        outbound request has been added: check the badge renders for it and
+        that docs/flow-templates.md's warning about live URLs was heeded, then
+        update this test rather than the card.
+        """
+        assert [card.slug for card in template_cards() if card.calls_out] == []
+
     def test_a_file_with_no_copy_still_gets_a_card(self, settings: Any, tmp_path: Any) -> None:
         """A self-hoster's drop-in is never invisible just because this repository
         has no sentence about it."""
