@@ -12,7 +12,6 @@
   {% if not configured %}
     <div class="alert-error">
       <p>{{ not_configured_message }}</p>
-      <p><a href="{{ credentials_url }}">Add Facebook app credentials</a></p>
     </div>
   {% endif %}
 
@@ -24,8 +23,7 @@
     <li>Add this exact redirect URI to Facebook Login for Business →
       <em>Valid OAuth Redirect URIs</em>:
       <br /><code>{{ callback_url }}</code></li>
-    <li>Put the app's ID and secret into
-      <a href="{{ credentials_url }}">Settings → Credentials</a>, or into
+    <li>Set the app's ID and secret on this deployment as
       <code>PLATFORM_MESSENGER_CLIENT_ID</code> and
       <code>PLATFORM_MESSENGER_CLIENT_SECRET</code>.</li>
     <li>Set <code>PLATFORM_MESSENGER_VERIFY_TOKEN</code> and paste the same value

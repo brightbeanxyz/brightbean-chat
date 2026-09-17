@@ -98,7 +98,6 @@ class TestActiveFlag:
             ("/organization/workspaces/", "settings_nav_groups", "org_workspaces"),
             ("WS/settings/", "workspace_settings_nav_groups", "ws_general"),
             ("WS/settings/tags/", "workspace_settings_nav_groups", "ws_tags"),
-            ("WS/settings/credentials/", "workspace_settings_nav_groups", "ws_credentials"),
             ("WS/settings/channels/", "workspace_settings_nav_groups", "ws_channels"),
         ],
     )
@@ -265,7 +264,6 @@ class TestNavStructure:
         expected = {
             "ws_general": "manage_workspace_settings",
             "ws_channels": "manage_channels",
-            "ws_credentials": "manage_workspace_settings",
             "ws_labels": "reply_in_inbox",
             "ws_inbox_rules": "manage_workspace_settings",
             "ws_email_tracking": "manage_workspace_settings",
@@ -389,7 +387,6 @@ class TestTenancyIntegration:
                 [
                     "General",
                     "Channels",
-                    "Platform credentials",
                     "Labels",
                     "Inbox rules",
                     "Email tracking",

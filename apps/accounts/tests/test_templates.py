@@ -68,12 +68,29 @@ class TestAppPagesRender:
     def test_org_pages(self, tenancy, client_for, path):
         assert client_for(tenancy.owner).get(path).status_code == 200
 
-    def test_workspace_settings_and_credentials(self, tenancy, client_for):
-        client = client_for(tenancy.owner)
+    @pytest.mark.parametrize(
+        "suffix",
+        [
+            "settings/",
+            "settings/channels/",
+            "settings/fields/",
+            "settings/tags/",
+            "settings/webhooks/",
+            "inbox/settings/labels/",
+            "inbox/settings/rules/",
+            "analytics/settings/",
+        ],
+    )
+    def test_workspace_pages(self, tenancy, client_for, suffix):
+        """Every row the workspace-settings nav offers an admin, rendered.
 
-        assert client.get(f"/w/{tenancy.workspace.pk}/settings/").status_code == 200
-        assert client.get(f"/w/{tenancy.workspace.pk}/settings/credentials/").status_code == 200
-        assert client.get(f"/w/{tenancy.workspace.pk}/settings/credentials/instagram/").status_code == 200
+        The nav is built from ``apps/common/context_processors.py``; a page that
+        500s on an empty workspace is the failure this catches, and it used to
+        be caught for one page only.
+        """
+        path = f"/w/{tenancy.workspace.pk}/{suffix}"
+
+        assert client_for(tenancy.owner).get(path).status_code == 200
 
     def test_the_member_workspace_access_form(self, tenancy, client_for):
         from apps.members.models import OrgMembership

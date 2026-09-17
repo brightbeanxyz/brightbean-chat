@@ -6,10 +6,13 @@ from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.members.roles import OrgRole
 from tests.support import create_user
 
+#: Parameterless POST targets across the workspace-settings permissions, so the
+#: sweep stays a sweep. The first two answer to ``manage_workspace_settings``
+#: and the third to ``manage_channels``; a Viewer holds neither.
 MUTATING_WORKSPACE_ROUTES = [
     "/w/{workspace}/settings/update/",
-    "/w/{workspace}/settings/credentials/instagram/",
-    "/w/{workspace}/settings/credentials/instagram/clear/",
+    "/w/{workspace}/settings/webhooks/create/",
+    "/w/{workspace}/settings/channels/new/",
 ]
 
 

@@ -44,8 +44,7 @@ Three things, and the third is the one that takes weeks rather than minutes.
    signed `state` parameter instead.
 
 2. **Add the app credentials.** Copy the *Instagram app ID* and *Instagram app
-   secret* into *Settings → Credentials → Instagram*, or set them on the
-   deployment:
+   secret* onto the deployment:
 
    ```
    PLATFORM_INSTAGRAM_CLIENT_ID=...
@@ -53,9 +52,15 @@ Three things, and the third is the one that takes weeks rather than minutes.
    PLATFORM_INSTAGRAM_VERIFY_TOKEN=...
    ```
 
-   Resolution order is **workspace override → organization → deployment
-   environment** (SPEC §4), so a single self-hosted app can serve every
-   workspace, and one workspace can bring its own.
+   Resolution order is **deployment environment → organization** (SPEC §4), so
+   one self-hosted app serves every workspace. An organization can bring its own
+   *app id and secret* from the Django admin, but only where the environment is
+   silent for them — what is set here wins.
+
+   `PLATFORM_INSTAGRAM_VERIFY_TOKEN` is the exception: it is always
+   deployment-level. The verification `GET` below is unauthenticated and names
+   no organization, so there is nothing to resolve a per-org token against —
+   set it here or the webhook cannot be subscribed at all.
 
 3. **Connect.** *Settings → Channels → Instagram → set it up*
    (`/w/<workspace>/settings/channels/instagram/connect/`), then authorise on

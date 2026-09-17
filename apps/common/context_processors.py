@@ -308,17 +308,6 @@ SETTINGS_NAV: list[NavGroup] = [
                 permission="manage_channels",
                 workspace_scoped=True,
             ),
-            # Renamed from "Channels" by issue #4, which took that name for the
-            # connection list above. The page's own heading has always read
-            # "Platform credentials"; the nav row now agrees with it.
-            NavItem(
-                key="ws_credentials",
-                label="Platform credentials",
-                icon="key",
-                url_name="credentials:list",
-                permission="manage_workspace_settings",
-                workspace_scoped=True,
-            ),
             # Issue #24. Two rows rather than one "Inbox" page: they answer to
             # different permissions — a label is inbox furniture an Agent files
             # with, a rule is workspace-wide automation — and a single page

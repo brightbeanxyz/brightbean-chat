@@ -95,28 +95,6 @@ class TestOrgWorkspaceListIsScoped:
 
 
 @pytest.mark.django_db
-class TestCredentialPageQueryCount:
-    def test_it_does_not_re_resolve_per_platform(self, tenancy, client_for, settings):
-        """resolve_platform_credentials per platform re-read — and re-decrypted —
-        rows the page had already fetched."""
-        from apps.credentials.models import CONFIGURABLE_PLATFORMS
-
-        client = client_for(tenancy.user_for("admin"))
-        url = f"/w/{tenancy.workspace.pk}/settings/credentials/"
-
-        queries = count_queries(client, url)
-
-        # The property under test is the *per-platform* one: the budget is a
-        # fixed base plus one query per platform, and a regression here would
-        # scale with the platform count. The base moved 10 -> 11 when issue #7
-        # added the unread-notification count to the shell's context processor,
-        # and 11 -> 12 when issue #14 added the unread-inbox count beside it.
-        # Both are one indexed count() on every authenticated page and neither
-        # varies with platforms.
-        assert queries < 12 + len(CONFIGURABLE_PLATFORMS), queries
-
-
-@pytest.mark.django_db
 def test_a_user_without_an_org_cannot_reach_the_workspace_list(client_for):
     stranger = create_user("nobody@example.test")
 

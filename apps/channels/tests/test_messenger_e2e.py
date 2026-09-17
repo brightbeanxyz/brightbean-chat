@@ -21,13 +21,13 @@ from django.test import Client
 from django.utils import timezone
 
 from apps.channels.models import ChannelConnection
-from apps.channels.tests.messenger_support import fake_graph, load_delivery, post_webhook
+from apps.channels.tests.messenger_support import APP_SECRET, fake_graph, load_delivery, post_webhook
 from apps.common.platforms import Platform
 from apps.flows.models import LIVE_STATUSES, Flow, FlowExecution, Trigger, TriggerType
 from apps.flows.tests.support import edge, graph, node, published_flow
 from apps.flows.triggers.services import create_trigger
 from apps.messaging.models import Message, MessageDirection, MessageStatus
-from tests.support import Tenancy, create_tenancy
+from tests.support import Tenancy, create_tenancy, org_platform_credential
 
 pytestmark = pytest.mark.django_db
 
@@ -413,11 +413,15 @@ class TestABatchSpanningWorkspaces:
     """The cost of failing closed, and the seam that answers it.
 
     ``views_webhooks._event_connection`` drops any event naming a connection in
-    another workspace, because with per-workspace app credentials a signature
-    proves authority over one tenant only. On a deployment that configures **one**
-    Meta app in the environment, though, several workspaces connect pages under it
-    and Meta batches their entries together — so that rule was acknowledging real
-    customer messages with a 200 and never storing them.
+    another workspace, because where two tenants have different app credentials a
+    signature proves authority over one of them only. On a deployment that
+    configures **one** Meta app in the environment, though, several workspaces
+    connect pages under it and Meta batches their entries together — so that rule
+    was acknowledging real customer messages with a 200 and never storing them.
+
+    Since credentials resolve environment-first, two tenants differ only when the
+    environment is silent for the platform and each organization holds its own
+    row. Both shapes are covered below.
     """
 
     def _page_for(self, workspace: Any, external_id: str) -> ChannelConnection:
@@ -458,32 +462,26 @@ class TestABatchSpanningWorkspaces:
         logged = {row.connection_id for row in WebhookEventLog.objects.all()}
         assert logged == {page.pk, theirs.pk}
 
-    def test_a_workspace_with_its_own_app_is_still_a_boundary(
-        self, client: Client, tenancy: Tenancy, page: ChannelConnection, app_secret: str
+    def test_an_organization_with_its_own_app_is_still_a_boundary(
+        self, client: Client, tenancy: Tenancy, page: ChannelConnection, app_secret: str, settings: Any
     ) -> None:
-        """SPEC §4's override has to stay a real tenant boundary.
+        """Two organizations with different Meta apps stay separate tenants.
 
-        The neighbour supplies its own Meta app, so the signature over this body
-        proves nothing about their page — and their entry is dropped exactly as
-        before.
+        The environment is cleared first, because it outranks both rows and
+        would otherwise make one app the authority over every page — which is
+        the case the test above covers. Here each organization holds its own
+        credentials, so the signature over this body proves nothing about the
+        neighbour's page and their entry is dropped.
         """
         from apps.channels.models import WebhookEventLog
-        from apps.credentials.models import WorkspaceCredentialOverride
 
         other = create_tenancy("neighbour")
         theirs = self._page_for(other.workspace, "888888888888888")
-        override = WorkspaceCredentialOverride(
-            workspace=other.workspace,
-            platform=Platform.MESSENGER.value,
-        )
-        # ``EncryptedJSONField`` subclasses ``TextField``, so django-stubs types
-        # the attribute as ``str`` even though the column holds JSON — the same
-        # suppression ``messenger_module.store_page_token`` explains.
-        override.credentials = {  # type: ignore[assignment]
-            "client_id": "9999",
-            "client_secret": "their-own-secret",
-        }
-        override.save()
+        org_platform_credential(tenancy, Platform.MESSENGER.value, client_id="1234567890", client_secret=APP_SECRET)
+        org_platform_credential(other, Platform.MESSENGER.value, client_id="9999", client_secret="their-own-secret")
+        # Fixtures have run, so the env level can go: the signature below is
+        # still APP_SECRET, now supplied by our organization's row.
+        settings.PLATFORM_CREDENTIALS_FROM_ENV = {}
 
         with fake_graph():
             response = post_webhook(client, self._two_page_delivery(page, theirs))
@@ -491,6 +489,31 @@ class TestABatchSpanningWorkspaces:
 
         logged = {row.connection_id for row in WebhookEventLog.objects.all()}
         assert logged == {page.pk}
+
+    def test_one_env_level_app_covers_every_organization_in_a_delivery(
+        self, client: Client, tenancy: Tenancy, page: ChannelConnection, app_secret: str
+    ) -> None:
+        """The deliberate consequence of resolving the environment first.
+
+        A neighbour organization that entered its own Meta app in the admin is
+        *not* carved out while the deployment sets the platform's env vars — the
+        env value is that organization's effective app secret too, so the
+        delivery genuinely authenticates both pages and neither entry is
+        dropped. Carving out requires being the only configuration there is,
+        which is the test above.
+        """
+        from apps.channels.models import WebhookEventLog
+
+        other = create_tenancy("neighbour")
+        theirs = self._page_for(other.workspace, "666666666666666")
+        org_platform_credential(other, Platform.MESSENGER.value, client_id="9999", client_secret="their-own-secret")
+
+        with fake_graph():
+            response = post_webhook(client, self._two_page_delivery(page, theirs))
+        assert response.status_code == 200
+
+        logged = {row.connection_id for row in WebhookEventLog.objects.all()}
+        assert logged == {page.pk, theirs.pk}
 
     def test_the_hook_defaults_to_refusing(self) -> None:
         """An adapter that cannot answer keeps the conservative behaviour."""

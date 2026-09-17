@@ -78,6 +78,45 @@ def create_tenancy(slug: str, *, workspace_name: str | None = None) -> Tenancy:
     return Tenancy(slug=slug, organization=organization, workspace=workspace, owner=owner, members=members)
 
 
+def org_platform_credential(
+    tenancy: Any,
+    platform: str,
+    *,
+    client_id: str,
+    client_secret: str,
+    extra: dict[str, str] | None = None,
+) -> Any:
+    """An organization-level Meta app — the lower level of SPEC §4's chain.
+
+    Lives here rather than beside either caller because
+    ``apps/channels/tests/test_instagram_webhook.py`` and
+    ``test_messenger_e2e.py`` both need exactly this to exercise the level below
+    the environment, and a second copy drifts the moment the model or the
+    django-stubs suppression below changes. Same rule ``email_identity`` states.
+
+    The two required keys are named parameters rather than ``**kwargs`` so a
+    misspelling is a ``TypeError`` here instead of a credential row that silently
+    fails ``derive_is_configured`` and surfaces as an unexplained 403 in whatever
+    test built it. ``extra`` carries the alias spellings and anything else a
+    specific test needs.
+
+    Imports are function-local, for the reason that helper gives.
+    """
+    from apps.credentials.models import PlatformCredential
+
+    credential = PlatformCredential(organization=tenancy.organization, platform=platform)
+    # ``EncryptedJSONField`` subclasses ``TextField``, so django-stubs types the
+    # attribute as ``str`` even though the column holds JSON — the same
+    # suppression ``instagram_oauth.store_credentials`` carries.
+    credential.credentials = {  # type: ignore[assignment]
+        "client_id": client_id,
+        "client_secret": client_secret,
+        **(extra or {}),
+    }
+    credential.save()
+    return credential
+
+
 def email_identity(workspace: Any, connection: Any, address: str) -> Any:
     """A contact with an opted-in email identity on ``connection``.
 

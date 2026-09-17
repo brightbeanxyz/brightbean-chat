@@ -4,9 +4,10 @@ Opening a change page decrypts secrets into an HTML response, so every
 permission hook is superuser-only — ``is_staff`` (which the admin already
 requires) is not a high enough bar for the crown jewels (SECURITY-BASELINE §5).
 
-``WorkspaceCredentialOverride`` is deliberately **not** registered: it is
-workspace-scoped tenant data with its own permission-gated UI, and an admin
-listing would be a cross-tenant view of every workspace's secrets.
+This is the only editor for platform credentials, and it is deliberately not a
+tenant-facing one. The ordinary way to configure a platform is
+``PLATFORM_<PLATFORM>_<KEY>`` in the environment, which outranks anything set
+here; see :mod:`apps.credentials.resolution`.
 """
 
 from typing import Any

@@ -97,8 +97,8 @@ OAUTH_FAILED = (
 #: on purpose: this one is not a failed attempt, it is a missing prerequisite, and
 #: the fix is a different screen.
 NOT_CONFIGURED = (
-    "This workspace has no Facebook app credentials yet. Add them under Settings → Credentials, "
-    "or set PLATFORM_MESSENGER_CLIENT_ID and PLATFORM_MESSENGER_CLIENT_SECRET; see "
+    "This deployment has no Facebook app credentials yet. Set "
+    "PLATFORM_MESSENGER_CLIENT_ID and PLATFORM_MESSENGER_CLIENT_SECRET in the environment; see "
     "docs/channels/messenger.md."
 )
 
@@ -158,7 +158,6 @@ def messenger_connect(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
             # The URL Meta has to have whitelisted, shown so an operator can copy
             # it into the app console rather than guess at it.
             "callback_url": messenger_oauth.callback_url(),
-            "credentials_url": reverse("credentials:list", kwargs={"workspace_id": workspace_id}),
             "list_url": reverse("channels:list", kwargs={"workspace_id": workspace_id}),
         },
     )
@@ -376,8 +375,8 @@ def _connect_page(request: WorkspaceRequest, page: messenger_oauth.MetaPage) -> 
 def _app_credentials(workspace: Any) -> dict[str, str]:
     """The Meta app id and secret in force for ``workspace``, or {}.
 
-    SPEC §4's chain — workspace override, then organization, then the
-    deployment's environment — through ``apps.credentials.resolution``. Meta's own
+    SPEC §4's chain — the deployment's environment, then the organization —
+    through ``apps.credentials.resolution``. Meta's own
     documentation says ``app_id``/``app_secret`` while its OAuth endpoints say
     ``client_id``/``client_secret``; ``REQUIRED_CREDENTIAL_KEYS`` accepts both, so
     both are read and the OAuth spelling is what comes back.

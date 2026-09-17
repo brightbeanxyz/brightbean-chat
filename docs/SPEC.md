@@ -12,7 +12,7 @@ Implementation is tracked as GitHub issues titled `[L<layer>-<workstream>] …`.
 
 OpenChat lets a workspace connect messaging channels (Telegram, Instagram, Facebook Messenger, WhatsApp, SMS, Email), build automation flows in a visual editor, and run them against inbound events: DMs, comments, story mentions, inbound SMS. It includes a contact CRM, drip sequences, broadcasts, and a shared live-chat inbox with human takeover.
 
-Deployment model mirrors BrightBean Studio: each self-hoster creates their own platform developer apps and supplies credentials via env vars or per-organization Django admin. Direct first-party API calls only, no aggregator middleman.
+Deployment model mirrors BrightBean Studio: each self-hoster creates their own platform developer apps and supplies credentials via env vars, which win, or per-organization Django admin as a fallback. Direct first-party API calls only, no aggregator middleman.
 
 ### 1.1 Non-goals (do not build)
 
@@ -95,7 +95,7 @@ Single invariant that everything relies on: at most one flow step executes at a 
 
 ## 4. Multi-tenancy and RBAC
 
-Port Studio's model unchanged: Organization -> Workspace, with **two membership tiers and two permission tables** — the architecture of Studio's `apps/members`. All tenant data carries `workspace_id`. Channel connections are per workspace. Platform app credentials resolve in order: workspace-level override (if set) -> organization-level (Django admin) -> deployment env vars.
+Port Studio's model unchanged: Organization -> Workspace, with **two membership tiers and two permission tables** — the architecture of Studio's `apps/members`. All tenant data carries `workspace_id`. Channel connections are per workspace. Platform app credentials resolve in order: deployment env vars (`PLATFORM_<PLATFORM>_<KEY>`) -> organization-level (Django admin). They are developer credentials and have no tenant-facing UI; the org row is the fallback for one deployment serving several organizations, and the environment outranks it. `PLATFORM_<PLATFORM>_VERIFY_TOKEN` is outside the chain entirely — the verification GET is unauthenticated and names no organization, so it is read from the environment alone.
 
 ### 4.1 Organization tier
 
@@ -107,8 +107,12 @@ Port Studio's model unchanged: Organization -> Workspace, with **two membership 
 |---|:--:|:--:|:--:|
 | `manage_members` — invite, remove, change org roles, assign workspace memberships | ✓ | ✓ | |
 | `manage_workspaces` — create and archive workspaces | ✓ | ✓ | |
-| `manage_platform_credentials` — org-level platform app credentials | ✓ | ✓ | |
 | `manage_api_keys` — issue and revoke API keys for any workspace in the org | ✓ | ✓ | |
+
+There is deliberately no `manage_platform_credentials` key. Platform app
+credentials are developer credentials: they come from the environment, and the
+only editor is the superuser-gated Django admin — a tier above org owner, not
+below it. An org permission would describe a grant no code honours.
 
 Owner and admin hold the same set; they differ through role-hierarchy checks rather than the table — only an owner may change an owner, the last owner cannot be removed or demoted, and nobody may grant a tier at or above their own. Resolution helper: `has_org_permission(membership, key) -> bool`.
 

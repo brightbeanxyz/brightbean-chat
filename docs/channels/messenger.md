@@ -46,8 +46,7 @@ workspace travels in the signed `state` instead.
 
 ### 3. Give this deployment the app credentials
 
-Either per workspace or organization, under **Settings → Credentials**, or for
-the whole deployment in the environment:
+In the environment:
 
 ```
 PLATFORM_MESSENGER_CLIENT_ID=<app id>
@@ -55,10 +54,16 @@ PLATFORM_MESSENGER_CLIENT_SECRET=<app secret>
 PLATFORM_MESSENGER_VERIFY_TOKEN=<any long random string you choose>
 ```
 
-Resolution is SPEC §4's chain: a workspace override beats the organization's app,
-which beats the environment, and a level is only used if it is complete. Meta's
-own console says *App ID* and *App Secret*; `app_id`/`app_secret` are accepted as
-aliases of the OAuth spelling.
+Resolution is SPEC §4's chain: the environment first, then an organization's own
+app id and secret from the Django admin, and a level is only used if it is
+complete. There is no tenant-facing UI for these — they are developer
+credentials. Meta's own console says *App ID* and *App Secret*;
+`app_id`/`app_secret` are accepted as aliases of the OAuth spelling.
+
+`PLATFORM_MESSENGER_VERIFY_TOKEN` does not take part in that chain. Meta's
+verification `GET` is unauthenticated and names no organization, so the endpoint
+reads the environment and nothing else — an organization cannot supply one, and
+leaving it unset means the webhook cannot be subscribed.
 
 ### 4. Point the webhook at this deployment
 
@@ -134,9 +139,14 @@ carried it. The whole batch costs one connection query, not one per entry.
 A delivery can span **workspaces** too, when one Meta app is configured in the
 environment and several workspaces connect pages under it. Those entries are kept,
 because both pages are signed for by the same app secret — so whoever produced a
-valid signature holds the authority for both. If either workspace overrides the
-app with its own credentials the secrets differ, and its entries are dropped:
-SPEC §4's per-workspace override is a real tenant boundary and stays one.
+valid signature holds the authority for both.
+
+What separates two tenants here is SPEC §4's chain, not this rule. Since
+credentials resolve environment-first, a deployment-wide app secret is every
+connection's effective secret and every entry is kept. An organization differs
+only when it is the *only* configuration there is — no env var for the platform,
+and its own row in the admin. Then the secrets differ and its entries are
+dropped, which is a real tenant boundary and stays one.
 
 Every delivery is signed: `X-Hub-Signature-256`, HMAC-SHA256 of the **raw body**
 under the **app secret**, compared in constant time before the JSON is parsed.

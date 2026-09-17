@@ -132,7 +132,6 @@ urlpatterns = [
     # Workspace-scoped routes (SPEC §16). The kwarg name `workspace_id` is
     # RBACMiddleware's resolution contract; do not rename it.
     path("w/<uuid:workspace_id>/", include("apps.workspaces.urls")),
-    path("w/<uuid:workspace_id>/settings/credentials/", include("apps.credentials.urls")),
     path("w/<uuid:workspace_id>/settings/channels/", include("apps.channels.urls")),
     # Outbound webhooks are workspace-scoped (SPEC §5), unlike the API keys
     # above: their url, secret and subscriptions belong to one workspace's data.

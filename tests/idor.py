@@ -111,6 +111,9 @@ TENANT_KWARG_RESOLVERS: dict[str, Callable[[Tenancy], Any]] = {
 #: Kwargs that need *a* value but do not identify a tenant. A route made only of
 #: these is not fuzzed.
 NEUTRAL_KWARG_VALUES: dict[str, Any] = {
+    # The inbound webhook path's platform segment. It selects an adapter, not a
+    # tenant's object; `/webhooks/<platform>/` is made only of neutral kwargs and
+    # is therefore not fuzzed at all.
     "platform": "instagram",
     # The email webhook's provider segment (resend / ses / smtp). It selects a
     # payload shape, not a tenant's object, and is not used for lookup.

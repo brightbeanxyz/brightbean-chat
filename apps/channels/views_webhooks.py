@@ -429,11 +429,11 @@ def _event_connection(
 
     same workspace
         The signature proves whoever sent this holds the secret for
-        ``verified``. Where a workspace supplies its own Meta app credentials
-        (the top of SPEC §4's resolution chain), that secret is *its* secret —
-        so a tenant could sign a delivery for its own connection and staple on
-        an event naming another tenant's page. Requiring the same workspace is
-        what stops the batch from crossing a tenant boundary
+        ``verified``. Where an organization supplies its own Meta app credentials
+        (and no env var shadows them — see SPEC §4's chain), that secret is
+        *its* secret, so a tenant could sign a delivery for its own connection
+        and staple on an event naming another tenant's page. Requiring the same
+        workspace is what stops the batch from crossing a tenant boundary
         (SECURITY-BASELINE §1).
 
     The conservative direction costs something worth naming: a deployment whose

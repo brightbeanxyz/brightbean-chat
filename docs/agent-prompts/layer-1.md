@@ -70,6 +70,18 @@ DELIBERATE DEVIATIONS FROM STUDIO — these are the traps; do not copy them:
 2. **Tenant scoping is enforced, not opt-in.** Studio's `OrgScopedManager`/`WorkspaceScopedManager` only add a `.for_workspace(id)` helper; nothing overrides `get_queryset()`, so a view that forgets `.for_workspace(...)` leaks across tenants and relies purely on the middleware. Ship a **workspace-scoped base manager/queryset** (in `apps/common/`) that every tenant model must use, document the convention in CONTRIBUTING, and make cross-workspace object access return **404, never 403** (no existence oracle). This is SECURITY-BASELINE §1 and later layers depend on it.
 3. **The IDOR fuzz helper is a deliverable, not a nice-to-have.** Build a reusable pytest utility that walks registered URL patterns and hits them as an authenticated member of a *different* workspace, asserting 404. Wire it over your own views now; every later PR that adds endpoints extends it. Prove it works by pointing it at a deliberately-broken view in a test.
 4. **Credential resolution direction is INVERTED vs Studio.** Studio's `resolve_platform_credentials` is env-dominant with an org fallback. `docs/SPEC.md` §4 requires **workspace-level override → organization-level (Django admin) → deployment env vars**. Implement that order, add the workspace-level override table + UI (Admin role, encrypted values, in workspace settings), and unit-test all three levels including partial/incomplete credential sets. Do not port Studio's direction.
+
+   > **Superseded on 2026-09-17.** This deviation was reversed: the workspace
+   > override table and its settings page were removed, and the chain is now
+   > **deployment env → organization** — Studio's direction after all, because
+   > platform app credentials are developer credentials and have no
+   > tenant-facing UI. The `manage_platform_credentials` key listed in
+   > `ORG_PERMISSION_KEYS` above went with it: the only editor is the
+   > superuser-gated Django admin, a tier above org owner, so `docs/SPEC.md` §4.1
+   > now states there is deliberately no such key. The instructions above are
+   > kept as a record of what this layer was built against; see
+   > `apps/credentials/resolution.py` and `apps/members/roles.py` for the
+   > behaviour today.
 5. **Drop `CustomRole`.** It exists in Studio with no UI and is ignored by `require_workspace_role` despite its docstring. Four built-in roles only.
 6. **Single source of truth for role hierarchies.** Studio duplicates the level maps in `decorators.py` and `services.py` with a "must match" comment. Define once, import in both.
 7. **Auth hardening.** Port `AuthRateLimitMiddleware` (per-IP, POST-only, on login/signup/password-reset) but **do not trust `X-Forwarded-For` unconditionally** as Studio does — gate it behind a `TRUSTED_PROXIES` setting, defaulting to not trusting the header. Keep responses enumeration-safe. **Set `ACCOUNT_EMAIL_VERIFICATION = "optional"`** — this is decided, not open: Studio ships `"none"`, but ours sends a verification email on signup while never blocking access on it, so a self-hoster with no SMTP configured is never locked out of their own instance. Keep the console email backend in development so local signup stays frictionless, and document the SMTP requirement in `.env.example`.
@@ -84,7 +96,7 @@ CONSTRAINTS:
 - Tests required: BOTH permission tables (a workspace viewer cannot POST anywhere; a workspace agent is blocked from flow routes; a workspace admin who is only an org *member* cannot reach member management, API keys or workspace creation; an org owner is treated as workspace admin in a workspace they hold no membership in), credential resolution across all three levels, invitation escalation rules (cannot invite at or above your own org tier, cannot remove or demote the last org owner, cannot remove yourself), auth rate limiting, and the IDOR helper.
 - Follow `docs/SECURITY-BASELINE.md`.
 
-DEFINITION OF DONE: signup → org+workspace provisioning → an org-level invitation carrying an org role plus workspace assignments → workspace switcher all work; both permission tables enforce exactly what SPEC §4 specifies, with member management and API keys reachable only through the org tier; credentials resolve workspace → org → env and are stored encrypted; the workspace-scoped manager and IDOR fuzz helper exist, are documented, and are proven by tests. In the PR body, list the Studio files ported and confirm each of the 9 deviations above.
+DEFINITION OF DONE: signup → org+workspace provisioning → an org-level invitation carrying an org role plus workspace assignments → workspace switcher all work; both permission tables enforce exactly what SPEC §4 specifies, with member management and API keys reachable only through the org tier; credentials resolve workspace → org → env and are stored encrypted (superseded — see deviation 4); the workspace-scoped manager and IDOR fuzz helper exist, are documented, and are proven by tests. In the PR body, list the Studio files ported and confirm each of the 9 deviations above.
 ````
 
 ---
@@ -138,7 +150,7 @@ DEFINITION OF DONE: the app renders in the Studio visual style (shell, sidebar c
 
 1. `docker compose up` from a clean clone → signup → org+workspace auto-provisioned → land on a styled dashboard shell.
 2. Invite a member with each org role and each workspace role; confirm a workspace viewer cannot POST, a workspace agent is refused on flow routes, and an org member — whatever their workspace role — is refused on member management, API keys and workspace creation.
-3. Set a platform credential at env, org and workspace level in turn; confirm resolution order workspace → org → env, and that stored values are encrypted at rest and absent from logs.
+3. Set a platform credential at env, org and workspace level in turn; confirm resolution order workspace → org → env (superseded — see deviation 4), and that stored values are encrypted at rest and absent from logs.
 4. Run the IDOR fuzz suite; add a deliberately unscoped view and confirm it fails.
 5. Toggle the sidebar, hard-reload, confirm no flash; trigger a `toast_response` view and confirm the toast renders without a per-page include.
 6. `make lint typecheck test` plus `pip-audit`/`npm audit` all clean; production settings refuse to boot with secrets unset.
