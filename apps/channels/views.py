@@ -75,13 +75,18 @@ CONNECT_FLOW_ISSUES: dict[str, str] = {
 #: main while this dict was being edited on another branch, and each merge
 #: produced a row reading "set it up — " with nothing after the dash. Neither
 #: branch could see it alone, which is exactly what a test is for.
+#:
+#: Each is a whole sentence and is capitalised as one. They used to be
+#: continuations of "Telegram — set it up — …", so they read correctly only in
+#: that one line of markup; the moment the page grew a card layout they became
+#: lowercase sentences under a heading.
 CONNECT_HINTS: dict[str, str] = {
-    Platform.TELEGRAM: "paste a BotFather token and we do the rest.",
-    Platform.INSTAGRAM: "sign in with the Instagram account and grant the messaging permissions.",
-    Platform.WHATSAPP: "paste your Cloud API ids and system user token; we verify them with Meta first.",
-    Platform.MESSENGER: "sign in with Facebook and pick the page to connect.",
-    Platform.SMS: "paste your Twilio account SID, auth token and number.",
-    Platform.EMAIL: "pick SMTP, Resend or SES; we check the credentials before saving them.",
+    Platform.TELEGRAM: "Paste a BotFather token and we do the rest.",
+    Platform.INSTAGRAM: "Sign in with the Instagram account and grant the messaging permissions.",
+    Platform.WHATSAPP: "Paste your Cloud API ids and system user token; we verify them with Meta first.",
+    Platform.MESSENGER: "Sign in with Facebook and pick the page to connect.",
+    Platform.SMS: "Paste your Twilio account SID, auth token and number.",
+    Platform.EMAIL: "Pick SMTP, Resend or SES; we check the credentials before saving them.",
 }
 
 #: Extra settings pages a platform brings with it, as ``(label, route)`` pairs.

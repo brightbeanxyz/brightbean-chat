@@ -7,24 +7,28 @@
  * draft is allowed to be half-wired. And Publish stays enabled with known
  * errors: what the builder knows is only as of the last save, so disabling it
  * would be a claim it cannot support.
+ *
+ * The one case where Publish *is* disabled is not that policy loosening. It is
+ * the server having told us this exact version is published and nothing having
+ * been edited since, which the builder can support: any edit bumps `revision`,
+ * which moves save.state to dirty, which re-enables the button. See
+ * publishState.ts.
+ *
+ * The trigger count used to live here as a badge, because the canvas gave no
+ * hint that a flow with no trigger never runs. The canvas now says so itself,
+ * in the place the missing thing would be, so a header chip repeating it would
+ * be a second copy of a fact the user is already looking at.
  */
 import { useState } from "react";
 
 import { ApiError } from "./api/client";
-import { TestOnTelegram } from "./TestOnTelegram";
+import { TestOnChannel } from "./TestOnChannel";
 import type { ValidationPayload } from "./schema/types";
 import { publishFlow } from "./api/flows";
+import { publishView } from "./publishState";
+import { showToast } from "./toast";
 import type { Autosave } from "./persistence/autosave";
 import { useBuilder, useBuilderStore } from "./store/context";
-
-const SAVE_COPY: Record<string, string> = {
-  clean: "No changes",
-  dirty: "Unsaved changes",
-  saving: "Saving…",
-  saved: "Saved",
-  rejected: "Not saved",
-  error: "Save failed",
-};
 
 export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const store = useBuilderStore();
@@ -36,8 +40,8 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const canRedo = useBuilder((state) => state.future.length > 0);
   const errorCount = useBuilder((state) => state.validation.errors.length);
   const warningCount = useBuilder((state) => state.validation.warnings.length);
-  const triggerCount = useBuilder((state) => state.triggers.length);
-  const loaded = useBuilder((state) => state.loaded);
+  const flowStatus = useBuilder((state) => state.flow?.status);
+  const view = publishView(save, flowStatus);
   const [publishing, setPublishing] = useState(false);
 
   const publish = async () => {
@@ -54,12 +58,25 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       }
       const result = await publishFlow(store.getState().env);
       store.getState().applyValidation(result.validation, store.getState().revision);
+      // The flow itself, not just the save slice. services.publish() moves a
+      // draft *or an archived* flow to active, and the response carries the
+      // status it landed on — dropping it left the store reading "archived",
+      // so the header this button sits in went on offering Publish for a flow
+      // that had just gone live.
+      store.getState().setFlow(result.flow);
       store.getState().setSave({
         state: "saved",
         version: result.version,
         publishedVersion: result.version,
         message: null,
         issues: [],
+      });
+      // The header now reads "Live", but a header is not where someone is
+      // looking when they press a button. Say it once, out loud.
+      showToast({
+        tone: "success",
+        title: "Flow published",
+        body: `Version ${result.version.version} is live.`,
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 422) {
@@ -106,33 +123,24 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         surrounding canvas looks; the server enforces `edit_flows` on the
         endpoint either way.
       */}
-      {canEdit ? <TestOnTelegram /> : null}
+      {canEdit ? <TestOnChannel /> : null}
 
       <span className="ml-auto flex items-center gap-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
         {errorCount > 0 ? <span className="fb-badge fb-badge-error">{errorCount} to fix</span> : null}
         {warningCount > 0 ? <span className="fb-badge fb-badge-warning">{warningCount} to check</span> : null}
-        {/*
-          A published flow with no trigger never runs, and the canvas gives no
-          hint of that — so it is the one thing worth saying about triggers from
-          an island that does not own them. Editing happens in the HTMX drawer
-          behind the header's Triggers button.
-        */}
-        {loaded ? (
-          triggerCount > 0 ? (
-            <span className="fb-badge">
-              {triggerCount} trigger{triggerCount === 1 ? "" : "s"}
-            </span>
-          ) : (
-            <span className="fb-badge fb-badge-warning">No triggers</span>
-          )
-        ) : null}
-        <span data-save-state={save.state}>
-          {SAVE_COPY[save.state] ?? save.state}
-          {save.version ? ` · Draft v${save.version.version}` : ""}
+        {view.liveChip ? <span className="fb-badge fb-badge-success">{view.liveChip}</span> : null}
+        <span data-save-state={save.state} data-publish-tone={view.tone}>
+          {view.label}
         </span>
         {canEdit ? (
-          <button type="button" className="btn-primary-sm" disabled={publishing} onClick={() => void publish()}>
-            {publishing ? "Publishing…" : "Publish"}
+          <button
+            type="button"
+            className="btn-primary-sm"
+            disabled={publishing || view.publishDisabled}
+            title={view.publishHint ?? undefined}
+            onClick={() => void publish()}
+          >
+            {publishing ? "Publishing…" : view.publishLabel}
           </button>
         ) : null}
       </span>

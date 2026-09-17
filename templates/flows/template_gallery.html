@@ -68,7 +68,7 @@ list.html, which exists only because htmx has to serialise a form first.
 
     <div class="grid gap-4 mt-2" style="grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));">
         {% for entry in cards %}
-        {% include "flows/_template_card.html" %}
+        {% include "flows/_template_card.html" with searchable=True %}
         {% endfor %}
     </div>
 

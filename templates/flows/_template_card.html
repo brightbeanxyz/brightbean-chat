@@ -1,15 +1,21 @@
 {% comment %}
-One template in the gallery. Everything here is text from the validated document
-or from TEMPLATE_COPY — no |safe, no mark_safe, matching the rule the review page
-states: a template's message bodies carry {{placeholders}} that only
-apps.flows.rendering ever substitutes, and showing one must not be the exception.
+One template, as both the gallery and the flows empty state show it. Everything
+here is text from the validated document or from TEMPLATE_COPY — no |safe, no
+mark_safe, matching the rule the review page states: a template's message bodies
+carry {{placeholders}} that only apps.flows.rendering ever substitutes, and
+showing one must not be the exception.
 
 A plain form rather than hx-post: the response is a redirect to the mapping page,
 which is what the upload form already does.
+
+`searchable` is what the gallery page passes and the empty state does not.
+matches() is defined in template_gallery.html's x-data, and the empty state sits
+inside list.html's, which has no such method — an unguarded x-show there throws
+inside Alpine's evaluator on every card, on every render of the core Flows page.
 {% endcomment %}
 <article class="rounded-xl border p-4 flex flex-col gap-3"
          style="border-color: var(--border); background: var(--surface-1);"
-         x-show="matches('{{ entry.card.name|escapejs }} {{ entry.card.summary|escapejs }}', '{{ entry.card.category|escapejs }}')">
+         {% if searchable %}x-show="matches('{{ entry.card.name|escapejs }} {{ entry.card.summary|escapejs }}', '{{ entry.card.category|escapejs }}')"{% endif %}>
     <div>
         <div class="flex items-start justify-between gap-2">
             <h2 class="text-sm font-semibold" style="color: var(--text-primary);">{{ entry.card.name }}</h2>
@@ -23,17 +29,48 @@ which is what the upload form already does.
         {% endif %}
     </div>
 
-    <dl class="text-xs space-y-1" style="color: var(--text-tertiary);">
-        {% if entry.platforms %}
-        <div class="flex gap-1">
-            <dt class="font-medium">Channels:</dt>
-            <dd>{{ entry.platforms|join:", " }}</dd>
-        </div>
-        {% endif %}
+    {% comment %}
+    The channels, and whether you have them. A template that needs Instagram is
+    worth knowing about before the review page asks you to map it, not after —
+    and "connected" here means an *active* connection, because a disabled or
+    re-auth-pending one cannot send. It warns; it never blocks. Somebody may
+    legitimately be reading a template before connecting anything.
+    {% endcomment %}
+    {% if entry.platforms or entry.card.calls_out %}
+    <div class="flex flex-wrap items-center gap-1.5">
+        {% for platform in entry.platforms %}
         {% comment %}
-          Guarded like the two rows above: the envelope puts no minimum on a
-          flow's triggers, so a template reached only through start_flow is legal
-          and would otherwise render a "Starts on:" label with nothing after it.
+          One span, two states. A connected channel is a neutral fact; a missing
+          one is the warning, so only the colours and the "Needs " prefix differ
+          — writing it twice is how the two drift apart.
+        {% endcomment %}
+        <span class="rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1"
+              style="{% if platform.connected %}background: var(--surface-2); color: var(--text-secondary);{% else %}background: rgba(var(--warning-500-rgb), 0.12); color: var(--warning-700);{% endif %}">
+            {% include "partials/_platform_icon.html" with platform=platform.key size="sm" %}
+            {% if not platform.connected %}Needs {% endif %}{{ platform.label }}
+        </span>
+        {% endfor %}
+        {% if entry.card.calls_out %}
+        {% comment %}
+          Installing a template only ever touches your own workspace — except
+          for this. An external_request node sends whatever the flow gathered to
+          a third party, which is worth knowing before the install, not after.
+        {% endcomment %}
+        <span class="rounded-full px-2 py-0.5 text-xs font-medium inline-flex items-center gap-1"
+              style="background: var(--surface-2); color: var(--text-secondary);"
+              title="This template contains a step that sends a request to another service.">
+            Calls out to the internet
+        </span>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <dl class="text-xs space-y-1" style="color: var(--text-tertiary);">
+        {% comment %}
+          "Starts on:" falls back rather than being guarded like the row below
+          it: the envelope puts no minimum on a flow's triggers, so a template
+          reached only through start_flow is legal, and a bare label with
+          nothing after it reads as a missing value rather than an answer.
         {% endcomment %}
         <div class="flex gap-1">
             <dt class="font-medium">Starts on:</dt>

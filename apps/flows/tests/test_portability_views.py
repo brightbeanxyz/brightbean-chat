@@ -33,6 +33,22 @@ def _upload(client: Any, tenancy: Any, payload: Any, *, filename: str = "templat
     )
 
 
+def _as_form(mapping: dict[str, Any]) -> dict[str, Any]:
+    """A mapping dict flattened into the review form's field names.
+
+    ``<kind>|<requirement key>|<field>``, which is what ``_mapping_from`` reads
+    back. Going through the form rather than writing ``record.mapping`` directly
+    is the point of the end-to-end test: it exercises the parser a browser hits.
+    """
+    fields: dict[str, Any] = {}
+    for kind, answers in mapping.items():
+        for key, answer in (answers or {}).items():
+            for field, value in (answer or {}).items():
+                if value is not None:
+                    fields[f"{kind}|{key}|{field}"] = value
+    return fields
+
+
 def _record_for(tenancy: Any) -> FlowImport:
     record = FlowImport.objects.for_workspace(tenancy.workspace).first()
     assert record is not None
@@ -460,6 +476,38 @@ class TestTheTemplateGallery:
             # escaped, which is the property the XSS test below asserts directly.
             assert escape(card.name) in body
 
+    def test_it_warns_when_a_channel_is_not_connected(self, tenancy: Any, client_for: Any) -> None:
+        """The whole reason the badge is on the card: the review page asks this
+        as a blocking question, which is one click too late to be a warning."""
+        response = client_for(tenancy.owner).get(_url("template_gallery", tenancy))
+
+        assert b"Needs Instagram" in response.content
+
+    def test_the_warning_goes_away_once_the_platform_is_connected(self, tenancy: Any, client_for: Any) -> None:
+        from apps.flows.tests.support import connection_for
+
+        connection_for(tenancy.workspace, platform="instagram", external_id="ig-1")
+
+        response = client_for(tenancy.owner).get(_url("template_gallery", tenancy))
+
+        assert b"Needs Instagram" not in response.content
+        assert b"Instagram" in response.content
+
+    def test_a_connection_that_cannot_send_does_not_count_as_connected(self, tenancy: Any, client_for: Any) -> None:
+        """ "Connected" means active. A disabled or re-auth-pending connection
+        cannot deliver a message, so a card that stopped warning about it would
+        be telling somebody the template is ready to run when it is not."""
+        from apps.channels.models import ConnectionStatus
+        from apps.flows.tests.support import connection_for
+
+        connection = connection_for(tenancy.workspace, platform="instagram", external_id="ig-1")
+        connection.status = ConnectionStatus.DISABLED
+        connection.save(update_fields=["status"])
+
+        response = client_for(tenancy.owner).get(_url("template_gallery", tenancy))
+
+        assert b"Needs Instagram" in response.content
+
     @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
     def test_a_role_without_edit_flows_is_refused(self, tenancy: Any, client_for: Any, role: str) -> None:
         assert client_for(tenancy.user_for(role)).get(_url("template_gallery", tenancy)).status_code == 403
@@ -510,6 +558,42 @@ class TestStartingFromATemplate:
         assert record.status == FlowImportStatus.PENDING
         assert record.original_filename == "telegram-welcome-and-faq.json"
         assert response["Location"] == _url("import_review", tenancy, flow_import_id=record.pk)
+
+    def test_the_whole_wizard_runs_from_a_template(self, tenancy: Any, client_for: Any) -> None:
+        """Template to live draft, through the review form a browser actually
+        posts rather than by assigning ``record.mapping``. That is what makes
+        this different from the confirm test below: it exercises
+        ``_mapping_from``'s parser on the way through.
+        """
+        from apps.flows.models import Trigger
+        from apps.flows.tests.portability_support import answer_channels
+
+        client = client_for(tenancy.owner)
+        client.post(_url("template_start", tenancy, template_slug="telegram-welcome-and-faq"))
+        record = _record_for(tenancy)
+
+        answered = answer_channels(record.document, record.mapping)
+        review = _url("import_review", tenancy, flow_import_id=record.pk)
+        assert client.post(review, _as_form(answered)).status_code == 302
+
+        assert client.post(_url("import_confirm", tenancy, flow_import_id=record.pk)).status_code == 204
+        flows = Flow.objects.for_workspace(tenancy.workspace)
+        assert flows.exists()
+        assert all(flow.status == "draft" for flow in flows)
+        assert not Trigger.objects.for_workspace(tenancy.workspace).filter(enabled=True).exists()
+
+    def test_starting_in_one_workspace_creates_nothing_in_another(
+        self, tenancy: Any, other_tenancy: Any, client_for: Any
+    ) -> None:
+        """A shipped template is the same file in every workspace, so the usual
+        "another tenant's object id" shape does not exist here. What has to hold
+        instead is that the row lands scoped to the caller and is invisible next
+        door."""
+        client_for(tenancy.owner).post(_url("template_start", tenancy, template_slug="telegram-welcome-and-faq"))
+
+        assert FlowImport.objects.for_workspace(tenancy.workspace).count() == 1
+        assert FlowImport.objects.for_workspace(other_tenancy.workspace).count() == 0
+        assert Flow.objects.for_workspace(other_tenancy.workspace).count() == 0
 
     def test_the_mapping_arrives_prefilled_exactly_as_an_uploads_does(self, tenancy: Any, client_for: Any) -> None:
         """The point of ``_begin_import`` being one function.

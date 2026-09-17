@@ -180,7 +180,24 @@ class TestMissingConnections:
 
 @pytest.mark.django_db
 class TestConnectedPlatforms:
-    def test_it_is_empty_until_the_channels_app_lands(self, tenancy):
-        """Documented stub (issue #4). The validator takes platforms as an
-        argument precisely so the rules stay testable in the meantime."""
+    def test_a_workspace_with_no_connections_has_no_platforms(self, tenancy):
+        assert connected_platforms(tenancy.workspace) == ()
+
+    def test_an_active_connection_is_reported(self, tenancy):
+        from apps.flows.tests.support import connection_for
+
+        connection_for(tenancy.workspace, platform="instagram", external_id="ig-1")
+
+        assert connected_platforms(tenancy.workspace) == ("instagram",)
+
+    @pytest.mark.parametrize("status", ["disabled", "needs_reauth"])
+    def test_a_connection_that_cannot_send_is_not(self, tenancy, status):
+        """The template cards and the capability warnings both read this, and
+        both would be telling somebody a channel is ready when it is not."""
+        from apps.flows.tests.support import connection_for
+
+        connection = connection_for(tenancy.workspace, platform="instagram", external_id="ig-1")
+        connection.status = status
+        connection.save(update_fields=["status"])
+
         assert connected_platforms(tenancy.workspace) == ()

@@ -4,6 +4,41 @@ for every HTMX refresh — one renderer, so a filtered view and a post-mutation
 refresh can never disagree about what a row looks like.
 {% endcomment %}
 {% if not groups %}
+{% if template_cards %}
+{% comment %}
+The gallery, in the empty state. This is the exact moment somebody has nothing
+and no idea what to build, and what the page offered them was a naked text
+field. Only reached when there are no flows, no filters and the member may edit
+— apps/flows/views.py::_list_context computes the cards on that path alone, so
+the branch below is still the answer for everyone else.
+
+This partial is the only renderer of the rows, for the page and for every HTMX
+refresh, so the gallery lands in both without a second template to keep in step.
+{% endcomment %}
+<div class="rounded-xl border p-5 sm:p-6" style="border-color: var(--border); background: var(--surface-1);">
+    <p class="text-sm font-medium" style="color: var(--text-primary);">No flows here yet — start with a template</p>
+    <p class="text-sm mt-1 mb-4" style="color: var(--text-secondary);">
+        Each one installs as an unpublished draft with its triggers off, so you can read it
+        before anything runs. Create one above instead to start from a blank canvas.
+    </p>
+    <div class="grid gap-3 sm:grid-cols-2">
+        {% comment %}
+          The loop variable must be `entry` — flows/_template_card.html reads
+          entry.card.*. No `searchable`, so the card leaves off the Alpine
+          filter that only the gallery page's scope defines.
+        {% endcomment %}
+        {% for entry in template_cards %}
+        {% include "flows/_template_card.html" %}
+        {% endfor %}
+    </div>
+    {% if template_total > template_cards|length %}
+    <p class="text-sm mt-3" style="color: var(--text-tertiary);">
+        <a href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}"
+           class="btn-text-hover-primary">Browse all {{ template_total }} templates</a>
+    </p>
+    {% endif %}
+</div>
+{% else %}
 <div class="rounded-xl border p-8 text-center" style="border-color: var(--border); background: var(--surface-1);">
     <p class="text-sm font-medium" style="color: var(--text-primary);">No flows here yet</p>
     <p class="text-sm mt-1" style="color: var(--text-secondary);">
@@ -14,6 +49,7 @@ refresh can never disagree about what a row looks like.
         {% endif %}
     </p>
 </div>
+{% endif %}
 {% else %}
 {% for group in groups %}
 <section class="mb-6">
@@ -23,7 +59,16 @@ refresh can never disagree about what a row looks like.
     <div class="rounded-xl border divide-y" style="border-color: var(--border); background: var(--surface-1);">
         {% for flow in group.flows %}
         <div class="p-3 sm:p-4 flex flex-wrap items-center gap-3" x-data="{ renaming: false }">
-            <div class="flex-1 min-w-0">
+            {% comment %}
+            min-w-[16rem], not min-w-0. The seven action buttons beside this are
+            sized by their content and take their width first, so a name column
+            allowed to shrink to nothing absorbed the whole shortfall: at 800px
+            "QA Welcome Flow" rendered as "QA Welcom…" with room to spare on the
+            row. A floor here is what makes the outer flex-wrap fire and drop
+            the buttons onto their own line instead. It is still below `auto`,
+            so `truncate` keeps working — it just stops happening first.
+            {% endcomment %}
+            <div class="flex-1 min-w-[16rem]">
                 <div class="flex items-center gap-2">
                     <a href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}"
                        class="text-sm font-medium truncate btn-text-hover-primary" style="color: var(--text-primary);">{{ flow.name }}</a>
@@ -41,7 +86,12 @@ refresh can never disagree about what a row looks like.
                 <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">Updated {{ flow.updated_at|naturaltime }}</p>
             </div>
 
-            <div class="flex items-center gap-2">
+            {% comment %}
+            flex-wrap here too: on a narrow phone even a wrapped button row can
+            outrun the viewport, and seven buttons in a nowrap flex overflow the
+            card rather than the row growing.
+            {% endcomment %}
+            <div class="flex flex-wrap items-center gap-2">
                 <a href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}"
                    class="btn-outline btn-inline">{% if can_edit %}Edit{% else %}View{% endif %}</a>
                 {% comment %}

@@ -127,6 +127,16 @@ NEUTRAL_KWARG_VALUES: dict[str, Any] = {
     # belong to, so it is neutral in the strict sense this table means. It is
     # never used to build a path either: apps/flows/portability/library.py
     # resolves it by comparing against the stems of flow-templates/*.json.
+    #
+    # Deliberately NOT spelled `template_id`: that kwarg already belongs to the
+    # WhatsApp template manager and resolves to a WhatsAppTemplate pk, so a
+    # route reusing the name would be handed a value of the wrong shape and
+    # would 404 because the template does not exist rather than because of
+    # tenancy — passing for exactly the reason this file keeps warning about.
+    #
+    # A REAL stem, for the same reason: the route must 404 on the workspace and
+    # not on a template that is not there. test_portability_library.py asserts
+    # this still names a shipped file.
     "template_slug": "telegram-welcome-and-faq",
 }
 

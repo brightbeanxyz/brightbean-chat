@@ -30,8 +30,9 @@ keys, the other requirement kinds from the rest of it — and the only
 hand-written thing is :data:`TEMPLATE_COPY`, the one part no machine can infer.
 Nothing that could drift is duplicated: the name on a card *is* the document's
 name, and the badges *are* the manifest. Human copy in a module-level dict is
-the house pattern already (``_KIND_LABELS`` in ``apps/flows/views_portability.py``,
-``FILTER_ICONS`` in ``apps/common/templatetags/common_extras.py``).
+the house pattern already (``REQUIREMENT_KIND_LABELS`` in
+``apps/flows/portability/cards.py``, ``FILTER_ICONS`` in
+``apps/common/templatetags/common_extras.py``).
 
 A file with no copy entry still gets a card with an empty summary, so a
 self-hoster's drop-in is never invisible; a test asserts the two sets match both
@@ -48,6 +49,7 @@ from typing import Any
 
 __all__ = [
     "LIBRARY_RELATIVE_PATH",
+    "STARTER_CATEGORY",
     "SLUG_PATTERN",
     "TEMPLATE_COPY",
     "TemplateCard",
@@ -138,7 +140,17 @@ class TemplateCard:
     trigger_types: tuple[str, ...]
     flow_count: int
     step_count: int
+    #: The template makes an outbound HTTP request when it runs. Worth saying on
+    #: the card because it is the one thing installing a template does *on your
+    #: behalf, to somebody else* — the rest of it only touches your workspace.
+    calls_out: bool
 
+
+#: The category for the handful of templates a first-time workspace is shown.
+#: Named because two places select on it and a bare string in the second would
+#: go quietly wrong if this dict were ever re-worded: the gallery's filter chips
+#: and ``apps.flows.views._featured``.
+STARTER_CATEGORY = "Starters"
 
 #: Keyed by filename stem. A template with no entry still gets a card; a stale
 #: entry and a missing one are both caught by a test that compares this against
@@ -330,6 +342,23 @@ def _card(path_str: str, content_digest: str) -> TemplateCard | None:
         trigger_types=tuple(dict.fromkeys(t["type"] for flow in flows for t in flow["triggers"])),
         flow_count=len(flows),
         step_count=sum(_steps_in(flow["graph"]) for flow in flows),
+        calls_out=_calls_out(document),
+    )
+
+
+def _calls_out(document: dict[str, Any]) -> bool:
+    """Whether running this template makes an outbound HTTP request.
+
+    Both halves are needed. ``request_header`` in the manifest catches a template
+    whose call carries a header the importer must ask for, and the node sweep
+    catches one that calls out with no header at all — an export strips header
+    *values*, so a template can legitimately arrive with an ``external_request``
+    node and nothing in ``requirements`` to show for it.
+    """
+    if document["requirements"].get("request_header"):
+        return True
+    return any(
+        node.get("type") == "external_request" for flow in document["flows"] for node in flow["graph"].get("nodes", [])
     )
 
 

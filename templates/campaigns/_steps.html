@@ -29,7 +29,7 @@ edits to another.
                 <div class="flex-1 min-w-0">
                     <p class="text-sm font-medium truncate" style="color: var(--text-primary);">{{ step.flow.name }}</p>
                     <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
-                        Wait {{ step.delay_value }} {{ step.get_delay_unit_display|lower }}{% if step.window.enabled %},
+                        Wait {{ step.delay_label }}{% if step.window.enabled %},
                         {{ step.window.from }}–{{ step.window.to }}{% if step.window.use_contact_timezone %} in the contact's timezone{% endif %}{% endif %}
                         · {{ step.waiting_count }} waiting
                     </p>

@@ -1,84 +1,118 @@
 {% extends "layouts/workspace_settings.html" %}
 {% load common_extras %}
 {% block title %}Channels · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Channels</h1>{% endblock %}
+{% block page_header %}<h1 class="text-lg font-semibold" style="color: var(--text-primary);">Channels</h1>{% endblock %}
+
+{% comment %}
+Designed rather than bare, because this is the first page a new self-hosted
+install has to visit: nothing in the product does anything until a channel is
+connected, and until #32 there was no link to it either.
+
+Its neighbours under layouts/workspace_settings.html are still plain HTML, so
+this page is now ahead of them rather than behind. That is deliberate — it is
+the one with a first-run audience — and the idiom used here is the app's
+existing one (the rounded-xl/divide-y card from flows/_list_rows.html, .an-table,
+.status-pill, .pi-chip), so bringing a sibling up to match is a copy job rather
+than a design decision.
+
+Utilities here only ever set properties the design-system classes do not, per
+ground rule 9 in docs/agent-prompts/layer-2.md: those classes are unlayered and
+beat @layer utilities, so `btn-outline w-auto` would silently do nothing.
+{% endcomment %}
 
 {% block content %}
-  <p class="muted">
+  <p class="text-sm mb-5" style="color: var(--text-secondary); max-width: 60ch;">
     A channel connects one bot, page, number or sending domain to this workspace.
     Inbound events arrive at the channel's webhook URL and are verified against
     its secret before anything else happens.
   </p>
 
-  {% if rows %}
-    <table>
-      <thead>
-        <tr><th></th><th>Name</th><th>Account</th><th>Status</th><th>Last event</th><th>Webhook URL</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for row in rows %}
-          <tr>
-            <td>
-              <span class="pi-chip {{ row.connection.platform|platform_class }} w-8 h-8">
-                {% include "partials/_platform_icon.html" with platform=row.connection.platform size="md" %}
-              </span>
-            </td>
-            <td>
-              <a href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}">
-                {{ row.connection.display_name }}
-              </a><br />
-              <span class="muted">{{ row.label }}</span>
-            </td>
-            <td><code>{{ row.connection.external_id }}</code></td>
-            <td>
-              <span class="status-pill status-pill-{{ row.connection.status }}">
-                {{ row.connection.get_status_display }}
-              </span>
-              {% if not row.adapter_ready %}
-                <br /><span class="muted">Adapter ships with {{ row.connect_flow_issue }}</span>
-              {% endif %}
-            </td>
-            {% comment %}
-            Webhook health. "Nothing yet" and "nothing since Tuesday" are the two
-            ways a misconfigured webhook shows itself, and neither is visible
-            from the row's own status — a bot pointed at the wrong URL looks
-            exactly like a bot nobody has messaged.
-            {% endcomment %}
-            <td>
-              {% if row.last_event_at %}
-                <span title="{{ row.last_event_at|date:"c" }}">{{ row.last_event_at|timesince }} ago</span>
-              {% else %}
-                <span class="muted">Nothing received yet</span>
-              {% endif %}
-            </td>
-            <td><code>{{ row.webhook_url }}</code></td>
-            <td>
-              <form method="post"
-                    action="{% url 'channels:set_status' workspace_id=request.workspace.id connection_id=row.connection.id %}">
-                {% csrf_token %}
-                {% if row.connection.status == "disabled" %}
-                  <input type="hidden" name="status" value="active" />
-                  <button type="submit">Enable</button>
-                {% else %}
-                  <input type="hidden" name="status" value="disabled" />
-                  <button type="submit">Disable</button>
-                {% endif %}
-              </form>
-              <form method="post"
-                    action="{% url 'channels:delete' workspace_id=request.workspace.id connection_id=row.connection.id %}">
-                {% csrf_token %}
-                <button type="submit">Disconnect</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>No channels connected yet.</p>
-  {% endif %}
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+    <h2 class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-tertiary);">Connected</h2>
+    <a href="{% url 'channels:create' workspace_id=request.workspace.id %}" class="btn-brand btn-inline">Add a channel</a>
+  </div>
 
-  <p><a href="{% url 'channels:create' workspace_id=request.workspace.id %}">Add a channel</a></p>
+  {% if rows %}
+    <div class="rounded-xl border overflow-x-auto mb-8" style="border-color: var(--border); background: var(--surface-1);">
+      <table class="an-table">
+        <thead>
+          <tr>
+            <th></th><th>Name</th><th>Account</th><th>Status</th><th>Last event</th><th>Webhook URL</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>
+                <span class="pi-chip {{ row.connection.platform|platform_class }} w-8 h-8">
+                  {% include "partials/_platform_icon.html" with platform=row.connection.platform size="md" %}
+                </span>
+              </td>
+              <td>
+                <a href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}"
+                   class="font-medium btn-text-hover-primary" style="color: var(--text-primary);">
+                  {{ row.connection.display_name }}
+                </a>
+                <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">{{ row.label }}</p>
+              </td>
+              <td><code class="text-xs">{{ row.connection.external_id }}</code></td>
+              <td>
+                <span class="status-pill status-pill-{{ row.connection.status }}">
+                  {{ row.connection.get_status_display }}
+                </span>
+                {% if not row.adapter_ready %}
+                  <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
+                    Adapter ships with {{ row.connect_flow_issue }}
+                  </p>
+                {% endif %}
+              </td>
+              {% comment %}
+              Webhook health. "Nothing yet" and "nothing since Tuesday" are the two
+              ways a misconfigured webhook shows itself, and neither is visible
+              from the row's own status — a bot pointed at the wrong URL looks
+              exactly like a bot nobody has messaged.
+              {% endcomment %}
+              <td>
+                {% if row.last_event_at %}
+                  <span title="{{ row.last_event_at|date:"c" }}">{{ row.last_event_at|timesince }} ago</span>
+                {% else %}
+                  <span style="color: var(--text-tertiary);">Nothing received yet</span>
+                {% endif %}
+              </td>
+              <td><code class="text-xs">{{ row.webhook_url }}</code></td>
+              <td>
+                <div class="flex items-center gap-2">
+                  <form method="post"
+                        action="{% url 'channels:set_status' workspace_id=request.workspace.id connection_id=row.connection.id %}">
+                    {% csrf_token %}
+                    {% if row.connection.status == "disabled" %}
+                      <input type="hidden" name="status" value="active" />
+                      <button type="submit" class="btn-outline btn-inline">Enable</button>
+                    {% else %}
+                      <input type="hidden" name="status" value="disabled" />
+                      <button type="submit" class="btn-outline btn-inline">Disable</button>
+                    {% endif %}
+                  </form>
+                  <form method="post"
+                        action="{% url 'channels:delete' workspace_id=request.workspace.id connection_id=row.connection.id %}">
+                    {% csrf_token %}
+                    <button type="submit" class="btn-outline btn-inline btn-danger-soft">Disconnect</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="rounded-xl border p-6 text-center mb-8" style="border-color: var(--border); background: var(--surface-1);">
+      <p class="text-sm font-medium" style="color: var(--text-primary);">No channels connected yet.</p>
+      <p class="text-sm mt-1" style="color: var(--text-secondary);">
+        Nothing in the product runs until one is. Pick a platform below to start.
+      </p>
+    </div>
+  {% endif %}
 
   {% comment %}
   The placeholder connect panels the issue asks for. Each platform's real flow —
@@ -86,30 +120,41 @@
   that platform's own issue, so what this says is which issue, rather than
   pretending six different flows are one form.
   {% endcomment %}
-  <h2>Platforms</h2>
-  <ul>
+  <h2 class="text-xs font-semibold uppercase tracking-wide mb-2" style="color: var(--text-tertiary);">Platforms</h2>
+  <div class="rounded-xl border divide-y" style="border-color: var(--border); background: var(--surface-1);">
     {% for platform in platforms %}
-      <li>
-        <span class="pi-chip {{ platform.value|platform_class }} w-6 h-6">
-          {% include "partials/_platform_icon.html" with platform=platform.value size="sm" %}
+      <div class="p-3 sm:p-4 flex flex-wrap items-center gap-3">
+        <span class="pi-chip {{ platform.value|platform_class }} w-8 h-8 flex-shrink-0">
+          {% include "partials/_platform_icon.html" with platform=platform.value size="md" %}
         </span>
-        {{ platform.label }} —
-        {% if platform.connect_url %}
-          <a href="{{ platform.connect_url }}">set it up</a> — {{ platform.connect_hint }}
-        {% elif platform.adapter_ready %}
-          adapter installed.
-        {% else %}
-          guided setup arrives with {{ platform.issue }}. A connection added now holds its
-          webhook URL and secret, and starts working when the adapter ships.
-        {% endif %}
-        {% if platform.extra_links %}
-          <ul>
-            {% for link in platform.extra_links %}
-              <li><a href="{{ link.url }}">{{ link.label }}</a></li>
-            {% endfor %}
-          </ul>
-        {% endif %}
-      </li>
+        <div class="flex-1 min-w-[16rem]">
+          <p class="text-sm font-medium" style="color: var(--text-primary);">{{ platform.label }}</p>
+          <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
+            {% if platform.connect_url %}
+              {{ platform.connect_hint }}
+            {% elif platform.adapter_ready %}
+              Adapter installed.
+            {% else %}
+              Guided setup arrives with {{ platform.issue }}. A connection added now holds its
+              webhook URL and secret, and starts working when the adapter ships.
+            {% endif %}
+          </p>
+          {% if platform.extra_links %}
+            <div class="flex flex-wrap items-center gap-3 mt-1.5">
+              {% for link in platform.extra_links %}
+                <a href="{{ link.url }}" class="text-xs btn-text-hover-primary" style="color: var(--text-secondary);">{{ link.label }}</a>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-2">
+          {% if platform.connect_url %}
+            <a href="{{ platform.connect_url }}" class="btn-outline btn-inline">Set it up</a>
+          {% else %}
+            <span class="text-xs" style="color: var(--text-ghost);">Not yet</span>
+          {% endif %}
+        </div>
+      </div>
     {% endfor %}
-  </ul>
+  </div>
 {% endblock %}

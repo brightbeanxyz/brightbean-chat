@@ -17,7 +17,7 @@ from apps.flows.capabilities import connected_platforms
 from apps.flows.models import Trigger
 from apps.flows.triggers.registry import spec_for
 
-__all__ = ["platforms_for_flow", "platforms_for_trigger"]
+__all__ = ["declared_platforms_for_flow", "platforms_for_flow", "platforms_for_trigger"]
 
 
 def platforms_for_trigger(trigger: Trigger, *, connected: set[str]) -> set[str]:
@@ -40,6 +40,49 @@ def platforms_for_trigger(trigger: Trigger, *, connected: set[str]) -> set[str]:
     if connection is not None:
         return {str(connection.platform)}
     return set(spec.platforms) & connected
+
+
+def declared_platforms_for_flow(flow: Any) -> tuple[str, ...]:
+    """The platforms this flow's own triggers name. No fallback.
+
+    :func:`platforms_for_flow` answers for **capability validation**, where a
+    flow that names nothing still has to be warned about every channel it could
+    run on — so it falls back to the workspace's connected platforms. A caller
+    choosing a channel to *act* on needs the opposite guarantee. Under that
+    fallback, a flow whose only trigger is an unbound Instagram one, in a
+    workspace with only Telegram connected, answers ``("telegram",)``: the
+    Instagram trigger narrows to nothing against the connected set, the empty
+    result falls back, and the caller cannot tell that apart from a flow that
+    genuinely runs anywhere. The builder's Test button then offered a Telegram
+    chat for an Instagram flow instead of saying "connect Instagram".
+
+    An empty result here means **this flow names no channel** — a
+    channel-independent trigger (``api``, ``rule``, which resolve a channel from
+    the contact at run time) or no enabled trigger at all. It never means "you
+    have not connected the one it names", which is the distinction the fallback
+    destroys.
+
+    Not narrowed by what is connected, for the same reason: the whole point is
+    to be able to say which channel is missing.
+    """
+    named: set[str] = set()
+    triggers = (
+        Trigger.objects.for_workspace(flow.workspace_id)
+        .filter(flow=flow, enabled=True)
+        .select_related("channel_connection")
+    )
+    for trigger in triggers:
+        spec = spec_for(trigger.type)
+        if spec is None:
+            continue
+        if not spec.platforms:
+            # Channel-independent, so the flow as a whole runs anywhere and no
+            # channel-specific answer is honest. Same short-circuit as
+            # platforms_for_flow, for the same reason.
+            return ()
+        connection = trigger.channel_connection if trigger.channel_connection_id is not None else None
+        named |= {str(connection.platform)} if connection is not None else set(spec.platforms)
+    return tuple(sorted(named))
 
 
 def platforms_for_flow(flow: Any) -> tuple[str, ...]:

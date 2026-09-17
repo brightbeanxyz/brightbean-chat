@@ -33,13 +33,28 @@ export function fetchStats(env: BuilderEnv): Promise<StatsPayload> {
 /**
  * SPEC §16's preview link.
  *
- * A 200 either way: "you have no Telegram bot connected" is an ordinary state
- * for the builder to render, not a request that failed, and a 4xx would send
- * this down the API-error path and show a failure instead of an explanation.
+ * A 200 either way: "you have no Instagram account connected" is an ordinary
+ * state for the builder to render, not a request that failed, and a 4xx would
+ * send this down the API-error path and show a failure instead of an
+ * explanation. `unsupported_platform` arrives the same way — a flow that only
+ * runs on WhatsApp has no live test, and that is a fact about the channel
+ * rather than something the reader has got wrong.
+ *
+ * `settings_url` is absent on `unsupported_platform`: there is nothing to go
+ * and connect that would change the answer.
  */
 export type PreviewLink =
-  | { ok: true; deep_link: string; bot: string; expires_in: number }
-  | { ok: false; reason: string; message: string; settings_url: string };
+  | {
+      ok: true;
+      deep_link: string;
+      platform: string;
+      platform_label: string;
+      account: string;
+      /** How to actually start the test, where tapping the link is not enough. */
+      instructions: string;
+      expires_in: number;
+    }
+  | { ok: false; reason: string; message: string; settings_url?: string };
 
 export function requestPreviewLink(env: BuilderEnv): Promise<PreviewLink> {
   return request<PreviewLink>(env.previewUrl, { method: "POST" });

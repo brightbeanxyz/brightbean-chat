@@ -17,9 +17,11 @@ easier to reason about than two.
 The wizard, and the promise it keeps
 --------------------------------------------------------------------------
 
-``upload`` → ``review`` → ``confirm``. The upload validates and stores; the
-review asks the mapping questions and shows the dry run; only the confirm
-writes. **Nothing but the ``FlowImport`` row exists before the confirm**, which
+(``upload`` *or* ``pick a template``) → ``review`` → ``confirm``. The upload
+validates and stores; the review asks the mapping questions and shows the dry
+run; only the confirm writes. A shipped template is just a pre-loaded import —
+it writes the same ``FlowImport`` row and hands off to the same review page, so
+the promise below covers it without a second wizard to keep honest. **Nothing but the ``FlowImport`` row exists before the confirm**, which
 is the issue's "no object creation before dry-run confirm" and is asserted
 directly in ``apps/flows/tests/test_portability_import.py``.
 
@@ -48,6 +50,7 @@ from apps.flows import portability
 from apps.flows.compat import installed_model
 from apps.flows.models import Flow, FlowImport, FlowImportStatus
 from apps.flows.picklists import picklists
+from apps.flows.portability.cards import REQUIREMENT_KIND_HELP, REQUIREMENT_KIND_LABELS, card_contexts
 from apps.flows.portability.envelope import MAX_DOCUMENT_BYTES
 from apps.flows.portability.library import read_template, template_cards, template_for_slug
 from apps.members.decorators import require_permission
@@ -201,7 +204,7 @@ def template_gallery(request: WorkspaceRequest, workspace_id: str) -> HttpRespon
     on this installation — which is why there is no object to scope and why the
     slug is not a tenant identifier.
     """
-    return render(request, "flows/template_gallery.html", _gallery_context(workspace_id))
+    return render(request, "flows/template_gallery.html", _gallery_context(request.workspace, workspace_id))
 
 
 @login_required
@@ -232,14 +235,14 @@ def template_start(request: WorkspaceRequest, workspace_id: str, template_slug: 
         return render(
             request,
             "flows/template_gallery.html",
-            _gallery_context(workspace_id, errors=errors),
+            _gallery_context(request.workspace, workspace_id, errors=errors),
             status=400,
         )
 
     return _begin_import(request, workspace_id, document, path.name)
 
 
-def _gallery_context(workspace_id: str, *, errors: list[str] | None = None) -> dict[str, Any]:
+def _gallery_context(workspace: Any, workspace_id: str, *, errors: list[str] | None = None) -> dict[str, Any]:
     """Everything the gallery page renders, built in one place.
 
     One builder rather than one per view: the 400 that a broken shipped template
@@ -249,45 +252,11 @@ def _gallery_context(workspace_id: str, *, errors: list[str] | None = None) -> d
     """
     cards = template_cards()
     return {
-        "cards": [_card_context(workspace_id, card) for card in cards],
+        "cards": card_contexts(workspace, cards),
         "categories": list(dict.fromkeys(card.category for card in cards if card.category)),
         "errors": errors or [],
         "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
         "upload_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),
-    }
-
-
-def _card_context(workspace_id: str, card: Any) -> dict[str, Any]:
-    """One card with its labels resolved and its start URL reversed.
-
-    Labels come from the registries that already own them — ``_KIND_LABELS``,
-    ``Platform``'s choices, and each trigger type's own ``TriggerSpec.label`` —
-    rather than from a second table: the review step and the trigger panel
-    already name these things, and a gallery that called a channel or a trigger
-    something else would be the same feature speaking with two voices.
-    """
-    from apps.common.platforms import Platform
-    from apps.flows.triggers.registry import spec_for
-
-    def platform_label(key: str) -> str:
-        try:
-            return str(Platform(key).label)
-        except ValueError:
-            return key
-
-    def trigger_label(trigger_type: str) -> str:
-        spec = spec_for(trigger_type)
-        return spec.label if spec is not None else trigger_type
-
-    return {
-        "card": card,
-        "platforms": [platform_label(key) for key in card.platforms],
-        "needs": [_KIND_LABELS.get(kind, kind) for kind in card.needs],
-        "triggers": [trigger_label(trigger_type) for trigger_type in card.trigger_types],
-        "start_url": reverse(
-            "flows:template_start",
-            kwargs={"workspace_id": workspace_id, "template_slug": card.slug},
-        ),
     }
 
 
@@ -353,8 +322,8 @@ def _groups(workspace: Any, plan: portability.ImportPlan) -> list[dict[str, Any]
     return [
         {
             "kind": kind,
-            "label": _KIND_LABELS.get(kind, kind),
-            "help": _KIND_HELP.get(kind, ""),
+            "label": REQUIREMENT_KIND_LABELS.get(kind, kind),
+            "help": REQUIREMENT_KIND_HELP.get(kind, ""),
             "field_types": _field_types() if kind == "custom_field" else [],
             "questions": [
                 {"resolution": resolution, "options": _options(workspace, lists, resolution.requirement)}
@@ -423,46 +392,6 @@ def _field_types() -> list[tuple[str, str]]:
     from apps.contacts.models import CustomFieldType
 
     return list(CustomFieldType.choices)
-
-
-_KIND_LABELS: dict[str, str] = {
-    "tag": "Tags",
-    "custom_field": "Custom fields",
-    "sequence": "Sequences",
-    "segment": "Segments",
-    "member": "Members",
-    "flow": "Other flows",
-    "media": "Media",
-    "platform": "Channels",
-    "request_header": "Request headers",
-    "whatsapp_template": "WhatsApp templates",
-    "link_handle": "Ref link handles",
-    "from_override": "Email sender addresses",
-    "comment_posts": "Comment trigger posts",
-}
-
-_KIND_HELP: dict[str, str] = {
-    "tag": "Create them here, or point each one at a tag you already use.",
-    "custom_field": "A new field needs a type; pick the one the template expects.",
-    "sequence": "A new sequence arrives empty — add its steps afterwards.",
-    "segment": "A segment is a saved filter and cannot be created from a template. Pick one you already have.",
-    "member": "Who the flow assigns conversations to and notifies. Defaults to you.",
-    "flow": "Flows this one hands over to. A bundle export carries them with it.",
-    "media": "Pick an asset from your library, or paste a URL to use instead.",
-    "platform": (
-        "Which connection each trigger should watch. Leaving one unbound does not mean "
-        "“every connection of this platform” — it means every platform that trigger type supports "
-        "(SPEC §5), so a Telegram keyword trigger would also listen on SMS."
-    ),
-    "request_header": "Header values were removed on export so no credential could travel. Supply your own.",
-    "whatsapp_template": "The flow sends these approved templates. Nothing to answer — make sure you have them.",
-    "link_handle": "The public handle a ref link is built from was removed on export.",
-    "from_override": "The sending address was removed on export.",
-    "comment_posts": (
-        "The trigger watched specific posts and their ids were removed on export. List your own — "
-        "leaving it blank keeps the trigger scoped to specific posts with none listed, so it matches nothing."
-    ),
-}
 
 
 def _mapping_from(request: WorkspaceRequest, record: FlowImport) -> dict[str, Any]:

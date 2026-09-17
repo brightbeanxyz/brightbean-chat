@@ -44,7 +44,7 @@ export interface Autosave {
 }
 
 /** Save states in which the server does NOT have what the editor is showing. */
-const UNSAVED: readonly SaveState[] = ["dirty", "saving", "rejected", "error"];
+export const UNSAVED: readonly SaveState[] = ["dirty", "saving", "rejected", "error"];
 
 export function installAutosave(store: BuilderStore): Autosave {
   let timer: ReturnType<typeof setTimeout> | null = null;

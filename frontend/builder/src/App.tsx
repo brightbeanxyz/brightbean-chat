@@ -16,6 +16,7 @@ import type { BuilderEnv } from "./env";
 import { Inspector } from "./inspector/Inspector";
 import { Palette } from "./palette/Palette";
 import { installAutosave, type Autosave } from "./persistence/autosave";
+import { refreshApplies } from "./refreshState";
 import { useStats } from "./stats/useStats";
 import { BuilderStoreProvider, useBuilder, useBuilderStore } from "./store/context";
 import { createBuilderStore } from "./store/store";
@@ -89,6 +90,11 @@ function Shell() {
    *
    * Both paths re-apply the trigger list as well as the validation, because
    * they change together and for the same reason.
+   *
+   * Version and flow meta ride along for the same reason again: a publish in
+   * another tab, or an admin archiving the flow, changes what the toolbar must
+   * say and nothing else on this page would ever hear about it. The guard above
+   * means this only runs over a clean store, so none of it can clobber an edit.
    */
   useEffect(() => {
     if (!loaded) {
@@ -97,14 +103,30 @@ function Shell() {
     let last = 0;
     const refresh = (throttle: boolean) => {
       const now = Date.now();
-      if ((throttle && now - last < 30_000) || store.getState().save.state !== "clean") {
+      if (throttle && now - last < 30_000) {
         return;
       }
       last = now;
+      // The guard applies to what the *server derived from the graph* — a
+      // verdict about a draft the server has not seen would be a verdict about
+      // the wrong graph, and versions move with it. Triggers are not the graph:
+      // they live in their own table, the drawer edits them while the canvas is
+      // dirty, and refusing them here meant a trigger you just saved never
+      // reached the cards until you saved the flow too.
+      //
+      // refreshApplies() is the rule, with its cases in refreshState.test.ts.
+      // The revision is captured here and compared *after* the response.
+      const revision = store.getState().revision;
       void loadFlow(store.getState().env)
         .then((detail) => {
-          store.getState().applyValidation(detail.validation, store.getState().revision);
           store.getState().setTriggers(detail.triggers);
+          const state = store.getState();
+          if (!refreshApplies(state.save.state, revision, state.revision)) {
+            return;
+          }
+          store.getState().applyValidation(detail.validation, revision);
+          store.getState().setFlow(detail.flow);
+          store.getState().setSave({ version: detail.version, publishedVersion: detail.published_version });
         })
         .catch(() => {});
     };

@@ -18,9 +18,10 @@ Two routes:
     identity, then a connection row, then ``setWebhook`` with a freshly minted
     secret. Nothing is stored until the token is known good.
 
-``telegram/preview/<flow_id>/``
-    Mint a preview deep link for the flow builder (SPEC §16). Answers JSON,
-    because its caller is the React island rather than a browser navigation.
+The flow builder's preview used to live here too. It is now
+``apps.channels.views_preview``, because which platform it opens is the flow's
+own triggers' answer rather than a Telegram fact — ``BOT_USERNAME`` below is
+what it still borrows from this module.
 """
 
 import logging
@@ -29,26 +30,22 @@ import re
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, transaction
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
 
-from apps.channels import preview
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
-from apps.channels.models import PREVIEW_LINK_TTL, ChannelConnection, ConnectionStatus
+from apps.channels.models import ChannelConnection
 from apps.channels.plan import plan_refusal
 from apps.channels.providers import telegram
 from apps.channels.providers.exceptions import APIError
 from apps.common.platforms import Platform
-from apps.common.shortcuts import get_scoped_object_or_404
-from apps.flows.models import Flow
 from apps.members.decorators import require_permission
 from apps.members.requests import WorkspaceRequest
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["telegram_connect", "telegram_preview"]
+__all__ = ["telegram_connect"]
 
 #: Shown when the pasted token does not work. Deliberately one message for every
 #: reason ``getMe`` can fail — wrong token, revoked token, Telegram unreachable.
@@ -186,71 +183,3 @@ def _connect(request: WorkspaceRequest, token: str) -> str:
 
     messages.success(request, f"Connected @{username}. Send it /start to check it works.")
     return ""
-
-
-@login_required
-@require_permission("edit_flows")
-@require_POST
-def telegram_preview(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
-    """Mint a "test on Telegram" deep link for one flow (SPEC §16).
-
-    ``edit_flows`` rather than ``manage_channels``: this is the builder's Test
-    button, and the person pressing it is a flow author who may well not
-    administer channels. It reads a connection but changes nothing about it.
-
-    The empty state is a **200 with a reason**, not an error status. The caller
-    is the builder island, "you have no Telegram bot connected yet" is an
-    ordinary thing for it to render, and a 4xx would send it down its API-error
-    path and show a failure instead of an explanation.
-    """
-    flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
-
-    # The first active bot that can actually send. A row created through the
-    # generic form before that path was closed has no token, and picking it
-    # would mint a link to a bot that answers nothing — the connection has to be
-    # filtered on the token, which is an encrypted column and therefore a
-    # Python-side check rather than a queryset filter.
-    connection = next(
-        (
-            candidate
-            for candidate in ChannelConnection.objects.for_workspace(request.workspace)
-            .filter(platform=Platform.TELEGRAM.value, status=ConnectionStatus.ACTIVE)
-            .order_by("created_at")
-            if telegram.bot_token(candidate)
-        ),
-        None,
-    )
-    if connection is None:
-        return JsonResponse(
-            {
-                "ok": False,
-                "reason": "no_connection",
-                "message": "Connect a Telegram bot first — testing runs the draft in a real chat with it.",
-                "settings_url": reverse("channels:telegram_connect", kwargs={"workspace_id": workspace_id}),
-            }
-        )
-
-    username = connection.display_name.lstrip("@")
-    if not BOT_USERNAME.match(username):
-        return JsonResponse(
-            {
-                "ok": False,
-                "reason": "no_username",
-                "message": (
-                    "That Telegram connection has no usable bot username. Reconnect it through the "
-                    "guided setup so its username comes from Telegram."
-                ),
-                "settings_url": reverse("channels:telegram_connect", kwargs={"workspace_id": workspace_id}),
-            }
-        )
-
-    link, handle = preview.mint(flow=flow, connection=connection, user=request.user)
-    logger.info("Preview link %s minted for flow %s.", link.pk, flow.pk)
-    return JsonResponse(
-        {
-            "ok": True,
-            "deep_link": telegram.deep_link(username, preview.start_payload(handle)),
-            "bot": f"@{username}",
-            "expires_in": int(PREVIEW_LINK_TTL.total_seconds()),
-        }
-    )

@@ -282,6 +282,21 @@ which is Django's own template directory.
    every file in the directory and imports each one into a clean workspace, so a
    template that stops working turns the build red.
 
+### Why the gallery text lives outside the document
+
+The card's summary and category are not keys inside the document.
+`document_schema()` sets `additionalProperties: false`, and the round-trip test
+asserts that re-exporting an imported template reproduces the file *byte for
+byte* — so a new key inside the envelope would have to be re-emitted by the
+exporter, which would then need something to say for every flow anybody ever
+exports. That is a change to a shared interchange format in order to carry a
+marketing sentence. `TEMPLATE_COPY` carries it instead.
+
+The `.json` files remain the authority for everything else. The card's
+requirement badges — "Needs Instagram" and the rest — come from walking the
+document, never from `TEMPLATE_COPY` and never from the document's own advisory
+`requirements` block.
+
 Keep a template free of anything specific to your workspace: no real customer
 names, no live URLs you do not control, no credentials. The export already
 removes the ones it can identify, but a message body is your own prose and it
