@@ -81,6 +81,18 @@ Three things, and the third is the one that takes weeks rather than minutes.
    column; when it moves from "Nothing received yet" to a timestamp, inbound is
    working.
 
+### A note for self-hosters who write their own CSP
+
+The connect page starts the flow with a POST, so that the outbound leg carries a
+CSRF token, and answers a redirect to `www.instagram.com`. Chrome and Safari
+check `form-action` against every hop of the navigation a form submission
+starts, so that origin has to be listed in the directive or **Continue to
+Instagram** silently does nothing — no error, no console message the operator
+will look for. The
+application ships them listed (`OAUTH_FORM_ACTION` in
+`config/settings/base.py`); a proxy or a hand-written policy that replaces the
+app's own header has to list them too. Issue #115.
+
 ### Permissions requested
 
 | Scope | What it buys |

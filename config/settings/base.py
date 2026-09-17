@@ -723,7 +723,58 @@ else:
 # which 4.0 removed; a greenfield project has no reason to adopt the retired
 # spelling. Per-request nonces come from ``csp.constants.NONCE`` and are read
 # in templates as ``{{ request.csp_nonce }}``.
-#
+
+#: Origins a form submission may finish its redirect chain on (issue #115).
+#:
+#: Chrome and Safari check ``form-action`` against **every hop** of the
+#: navigation a form submission starts, not just the form's immediate target,
+#: and they check it against the policy of the page that held the form. Firefox
+#: does not, and the specification question is still open as
+#: w3c/webappsec-csp#8 — but two engines out of three enforce it, so every flow
+#: here that posts to itself and answers a redirect to a provider is a button
+#: that does nothing until that provider's origin is named below.
+#:
+#: "Every hop" is why several of these are a provider's whole domain rather than
+#: the one host we navigate to first. A provider that bounces its own dialog
+#: between subdomains — Meta serves the mobile dialog from ``m.`` and the
+#: Business login from ``business.`` — puts that bounce inside the same
+#: navigation, where the directive is checked again. Naming only the entry host
+#: would leave issue #115 reproducible on a phone, so each entry is as wide as
+#: the provider's own redirects and no wider.
+#:
+#: That is the trade being made: ``form-action`` exists to stop an injected form
+#: posting a page's contents somewhere of the attacker's choosing, and every
+#: entry gives back a little of it. These are four named third parties that
+#: cannot be made to echo a request back to an attacker, which is what keeps the
+#: trade cheap. ``tests/form_action.py`` is the inventory and the argument for
+#: each one; the sweep over it fails on a sixth appearing as readily as on one
+#: of these going stale.
+OAUTH_FORM_ACTION: tuple[str, ...] = (
+    # Facebook Login for Business, from apps/channels/views_messenger.py. The
+    # dialog starts on www.facebook.com and moves to m. or business. by user
+    # agent and product, all of it inside the one navigation.
+    "https://*.facebook.com",
+    # Instagram API with Instagram Login, from apps/channels/views_instagram.py.
+    # Same shape, same reason. The apex needs its own entry because it redirects
+    # to www. — another hop — and a CSP wildcard matches subdomains but never the
+    # domain itself.
+    "https://instagram.com",
+    "https://*.instagram.com",
+    # Stripe's hosted Checkout and Customer Portal, from apps/billing/views.py.
+    # Deliberately the same set apps/billing/services.py accepts on the URL
+    # Stripe hands back — ``stripe.com`` or anything under it. A URL that module
+    # lets through and this one refuses is a redirect the browser drops in
+    # silence, so the two are kept identical rather than merely close, and a test
+    # runs the same hosts through both.
+    "https://stripe.com",
+    "https://*.stripe.com",
+    # Google SSO, which allauth starts on a POST because SOCIALACCOUNT_LOGIN_ON_GET
+    # is False above. One host, not the domain: allauth's flow stays on
+    # accounts.google.com until it returns to our own callback, and the drift
+    # guard reads the adapter's URL rather than trusting this comment.
+    "https://accounts.google.com",
+)
+
 # 'unsafe-eval' in script-src is required by Alpine.js's standard build, which
 # evaluates x-* expressions at runtime. 'unsafe-inline' is confined to styles,
 # where Tailwind utility classes make it unavoidable.
@@ -737,7 +788,7 @@ CSP_POLICY: dict[str, Any] = {
         "connect-src": [SELF],
         "media-src": [SELF, "blob:"],
         "frame-ancestors": [NONE],
-        "form-action": [SELF],
+        "form-action": [SELF, *OAUTH_FORM_ACTION],
         "base-uri": [SELF],
         "object-src": [NONE],
     },

@@ -40,7 +40,20 @@ class TestContentSecurityPolicy:
         assert "default-src 'self'" in header
         assert "frame-ancestors 'none'" in header
         assert "object-src 'none'" in header
-        assert "form-action 'self'" in header
+
+    def test_form_action_starts_from_self(self, client):
+        """Deliberately only the floor. ``form-action`` also names the OAuth
+        origins the app navigates to — Chrome and Safari apply the directive to
+        a form submission's whole redirect chain, so a POST-initiated OAuth flow
+        is blocked without them (issue #115). What those origins are, and why
+        each one is there, is ``tests/form_action.py``; the exact list is
+        asserted once, against that inventory, in
+        ``tests/test_form_action_destinations.py``. Spelling it out again here
+        would be a third copy to keep in step."""
+        header = client.get(PAGE).headers["Content-Security-Policy"]
+        directives = {part.split(" ", 1)[0]: part.split(" ", 1)[1] for part in header.split("; ") if " " in part}
+
+        assert directives["form-action"].split()[0] == "'self'"
 
     def test_unsafe_eval_is_scoped_to_scripts_and_unsafe_inline_to_styles(self, client):
         """Alpine's standard build needs eval; inline styles are Tailwind's."""
