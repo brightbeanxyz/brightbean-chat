@@ -361,6 +361,166 @@ body {
 }
 .sidebar-ws-chevron.open { transform: rotate(180deg); }
 
+/* --- The two popovers the sidebar opens ----------------------------------
+   The switcher's panel and the account menu, as one family: a white card on
+   the sidebar's ground, rows carrying a mark beside a name, and a tail of
+   actions behind a rule.
+
+   NONE OF THESE ROWS IS A .sidebar-nav-item, and none of their labels is a
+   .sidebar-nav-label. That is the whole reason the family exists. Both panels
+   are children of an element that carries the collapsed state — .sidebar-ws
+   for one, .sidebar-footer for the other — so every row rule in the collapsed
+   block below reaches inside them, and the switcher spent a release showing a
+   column of bare marks for exactly that reason. The scoping down there fixes
+   the case it was written for; a separate name fixes the next one too.
+
+   The switcher insets its rows by 4px and rounds them; the account menu runs
+   its rows full width between rules. Studio draws both that way, and the
+   difference is doing work: a list of things you switch between should not
+   read like a short menu of actions. */
+.sidebar-menu {
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+}
+.sidebar-menu-ws { padding: 4px; }
+/* Full-bleed rows need the corners to clip them. */
+.sidebar-menu-account { overflow: hidden; }
+
+/* A switcher row: the mark, the name, and a tick on the current one. */
+.sidebar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.sidebar-menu-item:hover {
+  background: rgba(var(--scrim-rgb), 0.04);
+  color: var(--text-primary);
+}
+/* Studio tints the current workspace with a neutral, not the brand, and it is
+   right to: the tick already says which one you are in, while a brand-coloured
+   row in a list of four reads as the one being recommended. */
+.sidebar-menu-item.is-current {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.sidebar-menu-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-menu-check {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-ghost);
+}
+/* The glyph slot on a row that has no workspace mark, sized to the mark so
+   every label in the panel starts at the same x. */
+.sidebar-menu-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  color: var(--text-ghost);
+}
+.sidebar-menu-mark-new { border: 1px dashed var(--border-strong); }
+/* A rule across the switcher's full width, drawn from inside its 4px padding. */
+.sidebar-menu-divider {
+  margin: 4px -4px 0;
+  padding: 4px 4px 0;
+  border-top: 1px solid var(--divider);
+}
+
+/* The account menu: who you are, then what you can do about it. */
+.sidebar-menu-identity { padding: 14px 14px 10px; }
+.sidebar-menu-identity-email,
+.sidebar-menu-identity-org {
+  display: block;
+  font-size: var(--fs-body);
+}
+/* An address has no good break point, so it clips; a company name does, and
+   "InnovationCraft UG (haftun…" in a menu about which organisation you are in
+   is the one line here that must not be guessed at. Studio makes the same
+   split. */
+.sidebar-menu-identity-email {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.sidebar-menu-identity-org {
+  margin-top: 2px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+/* The one framed control in either panel. Not .btn-outline: that is a
+   full-width pill that lifts on hover, built to be a form's primary action,
+   and it would be the loudest thing in a menu whose other rows are plain text.
+   No width here — a block-level flex container already fills the panel between
+   its margins, and a `width: 100%` would add them on top of it. */
+.sidebar-menu-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 12px 12px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease;
+}
+.sidebar-menu-cta:hover { background: rgba(var(--scrim-rgb), 0.04); }
+.sidebar-menu-section { border-top: 1px solid var(--divider); }
+.sidebar-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 14px;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.sidebar-menu-row:hover {
+  background: rgba(var(--scrim-rgb), 0.04);
+  color: var(--text-primary);
+}
+/* The glyph stays quiet while the row's text takes the hover colour: it is
+   there to be recognised, not read. */
+.sidebar-menu-row svg,
+.sidebar-menu-cta svg { color: var(--text-ghost); }
+
 /* --- Nav rows ------------------------------------------------------------ */
 .sidebar-nav {
   flex: 1;
@@ -499,13 +659,19 @@ body {
 
    THE ROW RULES ARE SCOPED TO .sidebar-nav AND .sidebar-footer, never to the
    whole sidebar. The workspace switcher's panel is an absolutely-positioned
-   child of .sidebar-ws and it draws its options with .sidebar-nav-item too —
-   so an unscoped `.sidebar-collapsed .sidebar-nav-label { display: none }`
-   reached inside it and hid every workspace NAME. The panel kept its 220px
-   width and showed a column of bare marks, and "New workspace" became a lone
-   plus sign: the switcher was unusable in exactly the state it was widened
-   for. Anything that is a row in the nav or the footer collapses; anything in
-   a popover does not, whatever classes it shares. */
+   child of .sidebar-ws and it drew its options with .sidebar-nav-item — so an
+   unscoped `.sidebar-collapsed .sidebar-nav-label { display: none }` reached
+   inside it and hid every workspace NAME. The panel kept its 220px width and
+   showed a column of bare marks, and "New workspace" became a lone plus sign:
+   the switcher was unusable in exactly the state it was widened for. Anything
+   that is a row in the nav or the footer collapses; anything in a popover does
+   not, whatever classes it shares.
+
+   Both popovers now draw their own rows (.sidebar-menu-item and
+   .sidebar-menu-row, up beside the switcher) and the scoping stays anyway.
+   They are two independent guards against one mistake: the names keep today's
+   rules out, the scoping keeps out the rule someone writes next year against
+   whatever a popover shares with a row by then. */
 @media (min-width: 1024px) {
   .sidebar-collapsed .sidebar-nav .sidebar-nav-item,
   .sidebar-collapsed .sidebar-footer .sidebar-nav-item,
@@ -546,6 +712,14 @@ body {
   html.sidebar-is-collapsed .sidebar-initial .sidebar-footer-expanded { display: none; }
   .sidebar-collapsed .sidebar-footer-collapsed,
   html.sidebar-is-collapsed .sidebar-initial .sidebar-footer-collapsed { display: flex; }
+
+  /* The account menu is stretched across the footer's content box, which is
+     44px wide in the rail — an email and an organisation name in it would be
+     one letter per line. Same floor the switcher's panel gets from its
+     min-width, and for the same reason: the menu has to stay usable in the
+     state the rail exists for, so it spills over the page instead. */
+  .sidebar-collapsed .sidebar-menu-account,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-menu-account { right: auto; width: 240px; }
 
   /* The label is gone, so margin-left:auto has nothing to push against and
      the pill would sit on the glyph. It becomes the corner count the rail

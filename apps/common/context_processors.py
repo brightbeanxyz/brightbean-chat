@@ -665,6 +665,20 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     channel_connections: list[Any] = []
 
     workspace_id = workspace.id if workspace is not None else None
+
+    # The switcher's last row, and the account menu's one framed control. Both
+    # are gated the way the settings rows they lead to are gated — see
+    # NavItem.visible_to — rather than rendered and refused at: somebody who
+    # cannot tell a permission from a bug is the person a dead row costs most.
+    workspace_settings_url = None
+    if (
+        workspace_id is not None
+        and membership is not None
+        and membership.effective_permissions.get("manage_workspace_settings", False)
+    ):
+        workspace_settings_url = reverse_cached("workspaces:settings", workspace_id=workspace_id)
+    members_url = reverse_cached("members:list") if org_membership is not None else None
+
     settings_nav = _render_nav(SETTINGS_NAV, request, badges, workspace_id)
     return {
         # The sidebar's nav, in two halves. One structure, filtered on
@@ -700,6 +714,12 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         )
         or "/",
         "create_workspace_url": reverse_cached("organizations:workspaces") or "#",
+        # These two are None rather than "#" when they are not on offer: the
+        # templates test them, so a falsy value is the row not rendering at
+        # all. `or "#"` above is the opposite case — a row that always renders
+        # and needs somewhere harmless to point until its app merges.
+        "workspace_settings_url": workspace_settings_url,
+        "members_url": members_url,
         "logout_url": reverse_cached("account_logout"),
         # The shell renders its chrome when this is true. It tracks
         # authentication, and /ui/ overrides it (see navigation_context).

@@ -414,6 +414,12 @@ class TestTheWorkspaceSettingsAreReachable:
     gated per row rather than two filtered ones. That is a different answer to
     the same question, so the guard moves rather than going away — what must
     stay true is that the pages have *an* entry point that is not the URL bar.
+
+    The switcher's link is back as well, matching Studio's panel. It is now the
+    second way in rather than the only one, and both are asserted here: the
+    question this class asks is whether the pages are reachable, and one entry
+    point surviving while the other rots is exactly the state that would answer
+    it "yes" while a workspace admin cannot find them.
     """
 
     def test_the_settings_page_reaches_the_workspace_section(self, tenancy, client_for):
@@ -433,6 +439,20 @@ class TestTheWorkspaceSettingsAreReachable:
 
         assert f'href="/w/{tenancy.workspace.id}/settings/channels/"' not in html
 
+    def test_the_switcher_offers_this_workspace_s_own_settings(self, tenancy, client_for, shell_url):
+        html = client_for(tenancy.owner).get(shell_url).content.decode()
+
+        assert f'href="/w/{tenancy.workspace.id}/settings/"' in html
+        assert "Workspace settings" in html
+
+    def test_the_switcher_row_is_gated_on_the_key_its_page_enforces(self, tenancy, client_for, shell_url):
+        """Same rule as the settings nav above, on the row that is one click
+        from every page in the product rather than one click from one page."""
+        html = client_for(tenancy.user_for("viewer")).get(shell_url).content.decode()
+
+        assert f'href="/w/{tenancy.workspace.id}/settings/"' not in html
+        assert "Workspace settings" not in html
+
     def test_the_glyph_sizes_are_pinned_so_an_ambient_context_var_cannot_move_them(self, tenant_client, shell_url):
         """`partials/_nav_icon.html` takes an optional `icon_size`, and
         `{% include %}` without `only` inherits the whole parent context — so a
@@ -443,6 +463,42 @@ class TestTheWorkspaceSettingsAreReachable:
         html = tenant_client.get(shell_url).content.decode()
 
         assert 'class="flex-shrink-0" width="18" height="18"' in html
+
+
+@pytest.mark.django_db
+class TestTheAccountMenu:
+    """The footer's menu, ported from Studio's organisation panel.
+
+    It is the only surface in the shell that names the organisation at all —
+    the top of the sidebar names the *workspace*, and nothing on a page names
+    the org — which is what the identity block is for and why it is asserted
+    rather than left to the styling.
+    """
+
+    def test_it_names_the_organisation_under_the_email(self, tenancy, client_for, shell_url):
+        html = client_for(tenancy.owner).get(shell_url).content.decode()
+
+        assert f'<span class="sidebar-menu-identity-org">{tenancy.organization.name}</span>' in html
+
+    def test_it_links_the_team_for_an_ordinary_member(self, tenancy, client_for, shell_url):
+        """``members:list`` is gated at ``org_role="member"``, which everybody
+        in an organisation holds — so the control is offered to all of them,
+        not only to the owner whose menu it was drawn against."""
+        from django.urls import reverse
+
+        members_url = reverse("members:list")
+        html = client_for(tenancy.user_for("viewer")).get(shell_url).content.decode()
+
+        assert f'href="{members_url}"' in html
+
+    def test_signing_out_is_still_a_post(self, tenancy, client_for, shell_url):
+        """Studio's row is an ``<a>`` to /accounts/logout/ — a GET that ends the
+        session, which one prefetching browser or one crawler is enough to
+        fire. Copying the styling was never a reason to copy that."""
+        html = client_for(tenancy.owner).get(shell_url).content.decode()
+
+        assert '<form method="post" action="/accounts/logout/">' in html
+        assert 'href="/accounts/logout/"' not in html
 
 
 @pytest.mark.django_db
