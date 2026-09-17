@@ -8,17 +8,37 @@ an unrelated `size` in the surrounding context would silently resize the mark.
 
 Args:
   workspace: optional object with .icon and .name.
-  size: "sm" (28px) or "md" (30px, default).
+  size: "sm" (28px), "md" (30px, the base class's own size, and the default)
+    or "lg" (26px and a rounder corner — the rail's workspace button, which is
+    the only size any caller actually passes today).
 
 The size modifier is a class from the design system, not a Tailwind utility.
 .sidebar-logo-mark is unlayered CSS and Tailwind's w-7/h-7 live in
 @layer utilities, so the utility loses the cascade and never applies.
+
+It is derived from the argument rather than branched on per size. Branching
+tested only for "sm", so size="lg" — what both of the rail's includes pass —
+fell through to the unmodified 30px mark and .sidebar-logo-mark-lg was emitted
+nowhere at all: the same silent no-op the stylesheet says size="sm" once was.
+Every size but "md" names its own modifier, and TestLogoSizing checks that each
+one a caller asks for exists in the stylesheet.
 {% endcomment %}{% with px=size|default:"md" %}
+{% comment %}
+  Text, not an <img>: Workspace.icon is a CharField holding an emoji, not
+  Studio's ImageField — apps/workspaces/models.py says why. This branch came
+  over from Studio as `<img src="{{ workspace.icon.url }}">`, and `.url` on a
+  str is not an error in a template, it is the empty string, so every workspace
+  that had set an icon shipped `src=""` and a broken-image mark.
+
+  aria-hidden says what the <img>'s `alt=""` used to: the mark is decoration
+  beside a name that carries the meaning, and as text a screen reader would
+  otherwise read the emoji's Unicode name before every workspace name.
+{% endcomment %}
 {% if workspace and workspace.icon %}
-<img src="{{ workspace.icon.url }}" alt="" class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">
+<div class="sidebar-logo-mark{% if px != "md" %} sidebar-logo-mark-{{ px }}{% endif %}" aria-hidden="true">{{ workspace.icon }}</div>
 {% elif workspace %}
-<div class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">{{ workspace.name|make_list|first|upper }}</div>
+<div class="sidebar-logo-mark{% if px != "md" %} sidebar-logo-mark-{{ px }}{% endif %}">{{ workspace.name|make_list|first|upper }}</div>
 {% else %}
-<img src="{% static 'img/brightbean-chat-logo-small.webp' %}" alt="BrightBean Chat" class="sidebar-logo-mark{% if px == "sm" %} sidebar-logo-mark-sm{% endif %}">
+<img src="{% static 'img/brightbean-chat-logo-small.webp' %}" alt="BrightBean Chat" class="sidebar-logo-mark{% if px != "md" %} sidebar-logo-mark-{{ px }}{% endif %}">
 {% endif %}
 {% endwith %}

@@ -583,6 +583,43 @@ class TestLogoSizing:
 
         assert "sidebar-logo-mark-sm" not in html
 
+    def test_every_size_a_caller_asks_for_reaches_the_stylesheet(self):
+        """The sizes are discovered from the call sites rather than listed here.
+
+        Listing them is how `lg` was lost: the partial branched on `sm` alone
+        while both of the rail's includes passed `size="lg"`, so every mark in
+        the product drew at the unmodified 30px and .sidebar-logo-mark-lg — the
+        26px rule the stylesheet comment calls "the rail's workspace button" —
+        was emitted nowhere. Naming the sizes in the test would have agreed with
+        the bug; asking the templates what they pass does not.
+
+        Read from the source stylesheet, not the compiled bundle: this is about
+        the rule existing at all, which the tracked file answers, and the two
+        tests above already cover the bundle and the cascade.
+        """
+        from django.conf import settings
+
+        root = Path(settings.BASE_DIR) / "templates"
+        sizes = set()
+        for path in root.rglob("*.html"):
+            for include in re.finditer(r"{%\s*include\s+\"partials/_logo\.html\".*?%}", path.read_text()):
+                sizes.update(re.findall(r"""\bsize=["'](\w+)["']""", include.group(0)))
+
+        assert sizes, "no caller passes a size — has the partial been inlined?"
+
+        stylesheet = (Path(settings.BASE_DIR) / "theme" / "static_src" / "src" / "styles.css").read_text()
+        missing = []
+        for size in sorted(sizes):
+            modifier = re.search(r"\bsidebar-logo-mark-\w+", self._render(size=size))
+            if size == "md":
+                assert modifier is None, "md is the base class's own size and takes no modifier"
+                continue
+            assert modifier, f'size="{size}" emitted no modifier, so it silently renders at the default'
+            if f".{modifier.group(0)} {{" not in stylesheet:
+                missing.append(f'size="{size}" emits .{modifier.group(0)}')
+
+        assert missing == [], "emitted with no rule behind it, so the size is a no-op: " + "; ".join(missing)
+
 
 @pytest.mark.django_db
 class TestSettingsLayouts:
