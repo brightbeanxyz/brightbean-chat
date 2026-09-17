@@ -189,7 +189,7 @@ describe("Publish and a flush that did not land", () => {
 
     renderWith(makeStore(detail), <Toolbar autosave={null} />);
 
-    expect(screen.getByRole("button", { name: "Live" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Set live" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("offers it again the moment an edit is pending", async () => {

@@ -161,27 +161,6 @@ def comment_on_any(*words: str) -> dict[str, Any]:
 
 TEMPLATES: list[dict[str, Any]] = [
     {
-        "slug": "instagram-comment-to-dm-lead-magnet",
-        "name": "Comment-to-DM lead magnet",
-        "triggers": [("comment", "instagram", comment_on_any("guide", "GUIDE"))],
-        "nodes": [
-            send(
-                "deliver",
-                text("Thanks for commenting! Here is the guide I promised."),
-                buttons=[button("Open the guide", "https://example.com/guide", "guide")],
-            ),
-            ask(
-                "ask_email",
-                "Want the follow-up tips by email? Send your email address, or say no thanks.",
-                key="email",
-                reply="email",
-            ),
-            act("tag_lead", tag("Lead magnet"), field("Signup source", "Instagram comment")),
-            send("thanks", text("You are on the list. Talk soon!")),
-        ],
-        "edges": chain("deliver", "ask_email", "tag_lead", "thanks") + [("ask_email", "timeout", "thanks")],
-    },
-    {
         "slug": "instagram-comment-to-discount-code",
         "name": "Comment for a discount code",
         "triggers": [("comment", "instagram", comment_on_any("code", "CODE", "discount"))],
@@ -748,8 +727,13 @@ def main() -> int:
             print(f"FAILED  {line}")
         return 1
 
+    # Only files this script owns. apps/flows/tests/template_sources.py
+    # generates the rest of the directory and gates them byte-for-byte, so a
+    # blanket prune here deleted eighteen templates it had never written —
+    # from the command the module docstring tells contributors to run.
+    owned = {spec["slug"] for spec in TEMPLATES}
     for existing in directory.glob("*.json"):
-        if existing.stem not in written:
+        if existing.stem in owned and existing.stem not in written:
             existing.unlink()
             print(f"removed {existing.name}")
     for slug, body in written.items():

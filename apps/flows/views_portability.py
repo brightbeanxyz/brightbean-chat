@@ -319,10 +319,13 @@ def _source_label(record: FlowImport) -> str:
     """
     filename = record.original_filename or ""
     if filename.endswith(".json"):
-        slug = filename[: -len(".json")]
-        entry = next((row for row in library.gallery_entries() if row["slug"] == slug), None)
-        if entry is not None:
-            return f"From the {entry['name']} template."
+        # Resolved against the whitelist directly rather than by scanning the
+        # gallery: template_for_slug is the same lookup the install route uses,
+        # and it answers one question instead of building forty-odd cards.
+        path = library.template_for_slug(filename[: -len(".json")])
+        card = library.template_card(path) if path is not None else None
+        if card is not None:
+            return f"From the {card.name} template."
     return f"From {filename}." if filename else "From an uploaded file."
 
 

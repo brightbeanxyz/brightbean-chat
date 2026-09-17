@@ -43,10 +43,15 @@ pytestmark = pytest.mark.django_db
 #: a deliberate act with a test to update rather than a directory that quietly
 #: empties, and so that adding one without running the suite is not possible.
 #:
-#: New templates are authored through scripts/make_flow_templates.py rather than
-#: typed: the files are written by the real exporter, because their
-#: `requirements` manifests are derived from the graph and a hand-written one
-#: asks the importer for the wrong things.
+#: Templates are generated rather than typed: the files come out of the real
+#: exporter, because their `requirements` manifests are derived from the graph
+#: and a hand-written one asks the importer for the wrong things.
+#:
+#: Two generators own the directory between them, and neither may claim a file
+#: the other does — test_template_script_sources.py asserts the partition.
+#: apps/flows/tests/template_sources.py holds nineteen of them and is gated by
+#: test_template_library_sources.py; scripts/make_flow_templates.py holds the
+#: other twenty-four and is gated by test_template_script_sources.py.
 EXPECTED = (
     "collect-an-email-address.json",
     "event-reminder.json",

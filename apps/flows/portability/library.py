@@ -474,26 +474,64 @@ def gallery_entries() -> list[dict[str, Any]]:
     """The shipped templates as the Home and flow-list tiles read them.
 
     A projection of :func:`template_cards`, not a second walk of the directory.
-    The tiles want four facts and the gallery card wants nine, but there is only
+    The tiles want five facts and the gallery card wants nine, but there is only
     one library and only one definition of what a card says about it — deriving
     the smaller shape from the larger is what stops the two pages disagreeing
     about how many templates ship.
+
+    Cached on the directory's own fingerprint rather than recomputed. Home and
+    the import review page both call this per render, and ``template_cards()``
+    reads and digests every file on disk *before* it can consult the per-card
+    cache — so without this the two most-visited pages in the product paid
+    forty-odd file reads each time. Keyed on (name, mtime, size) per file rather
+    than held for the life of the process, so a template edited on disk still
+    shows through, which the library's own cache guarantees and the tests rely
+    on.
 
     Dicts rather than the dataclass because the tile template indexes them and
     a caller may sort or slice, which a shared frozen instance would make
     everybody's business.
     """
-    return [
+    # A fresh dict *and* a fresh platforms list per call: dict() is shallow, so
+    # handing back the cached list would let one caller's sort or append reach
+    # every later render.
+    return [{**entry, "platforms": list(entry["platforms"])} for entry in _gallery_entries(_library_fingerprint())]
+
+
+def _library_fingerprint() -> tuple[Any, ...]:
+    """What the gallery cache keys on: every file's name, mtime and size.
+
+    Cheap next to reading and hashing each file, and it moves for the edits that
+    matter — a new template, a deleted one, or a changed one. A same-size
+    same-mtime rewrite is invisible here, which is exactly the case
+    :func:`_card` keys on a content digest to catch; this cache sits in front of
+    that one rather than replacing it.
+    """
+    entries: list[Any] = []
+    for path in template_paths():
+        try:
+            stat = path.stat()
+        except OSError:
+            entries.append((path.name, None))
+        else:
+            entries.append((path.name, stat.st_mtime_ns, stat.st_size))
+    return tuple(entries)
+
+
+@lru_cache(maxsize=4)
+def _gallery_entries(fingerprint: tuple[Any, ...]) -> tuple[dict[str, Any], ...]:
+    """The projection itself, computed once per state of the directory."""
+    return tuple(
         {
             "slug": card.slug,
             "name": card.name,
-            "folder": card.category,
-            "platforms": list(card.platforms),
+            "category": card.category,
+            "platforms": tuple(card.platforms),
             "platform_label": _platform_label(list(card.platforms)),
             "steps": card.step_count,
         }
         for card in template_cards()
-    ]
+    )
 
 
 def _platform_label(platforms: list[str]) -> str:

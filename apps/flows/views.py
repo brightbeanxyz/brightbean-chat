@@ -167,11 +167,13 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     # first Create lands, since the HTMX refresh re-renders with groups.
     #
     # shipped_templates() digests every file on disk even on a cache hit, so it
-    # stays inside the guard — do not hoist it.
+    # stays inside the guard — do not hoist it. `by_status` above already counts
+    # every flow in the workspace, archived included, so the emptiness question
+    # costs no query of its own.
     template_cards: list[dict[str, Any]] = []
     template_total = 0
     if not groups and not filtered and can_edit:
-        has_no_flows = not Flow.objects.for_workspace(request.workspace).exists()
+        has_no_flows = sum(by_status.values()) == 0
         if has_no_flows:
             cards = shipped_templates()
             template_total = len(cards)

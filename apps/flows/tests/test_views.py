@@ -76,7 +76,10 @@ class TestTheList:
     def test_the_empty_state_says_which_empty_it_is(self, tenancy, client_for):
         client = client_for(tenancy.owner)
 
-        assert "A flow replies for you when something happens" in client.get(list_url(tenancy)).content.decode()
+        # The empty state's own wording, not the page lede: the lede renders
+        # for a full workspace too, so asserting it would pass with no empty
+        # state on the page at all.
+        assert "No flows here yet" in client.get(list_url(tenancy)).content.decode()
         create_flow(workspace=tenancy.workspace, name="Welcome")
         assert "Nothing matches these filters" in client.get(list_url(tenancy), {"q": "zzz"}).content.decode()
 
