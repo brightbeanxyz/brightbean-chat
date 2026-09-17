@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Open-source chat-marketing automation for teams that want to own their stack.</strong>
+  <strong>The open-source ManyChat alternative — chat-marketing automation you host yourself.</strong>
 </p>
 
 <p align="center">
@@ -27,6 +27,7 @@
 </p>
 
 <p align="center">
+  <a href="#an-open-source-manychat-alternative">vs. ManyChat</a> ·
   <a href="#deploy-it">Deploy it</a> ·
   <a href="#run-it-locally">Run it locally</a> ·
   <a href="#platform-credentials">Platform credentials</a> ·
@@ -40,9 +41,10 @@
 ## About BrightBean Chat
 
 BrightBean Chat is an open-source, self-hostable chat-marketing automation
-platform. Connect the messaging channels your audience already uses, build
-automation in a visual flow editor, and manage contacts, conversations, and
-campaigns from one workspace.
+platform — a ManyChat alternative you run on your own infrastructure. Connect
+the messaging channels your audience already uses, build automation in a visual
+flow editor, and manage contacts, conversations, and campaigns from one
+workspace.
 
 It is designed for creators, agencies, and teams that want to own their
 messaging stack rather than put customer conversations behind another SaaS
@@ -61,6 +63,32 @@ settings empty — the default — and billing stays invisible
 > sequences, broadcasts, analytics, the media library, and the public API.
 > Remaining work is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md). Read
 > [`SECURITY.md`](SECURITY.md) before pointing a real audience at it.
+
+## An open-source ManyChat alternative
+
+BrightBean Chat aims at ManyChat's feature set — keyword triggers,
+comment-to-DM, story mentions, drip sequences, broadcasts, a shared inbox, and a
+visual flow builder — and runs it on infrastructure you control. The trade is
+deliberate: you bring your own server and your own platform developer apps, and
+in exchange there is no per-contact pricing, no plan that gates the feature you
+need, and no third party sitting between you and your audience.
+
+| | ManyChat | BrightBean Chat |
+|---|---|---|
+| **Hosting** | Managed SaaS | Self-hosted: Docker Compose, Railway, Render, or Heroku |
+| **Pricing** | Per-contact tiers, with features gated by plan | One tier, every feature, no contact limits — your only cost is the server |
+| **Your data** | Lives in ManyChat's account | Your PostgreSQL and your object storage |
+| **Platform access** | Through ManyChat's Meta app | Your own Meta, Twilio, and SMTP credentials, called directly — no aggregator |
+| **Source** | Proprietary | AGPL-3.0: auditable, forkable, modifiable |
+| **Extensibility** | Catalog of native integrations | Public REST API, signed outbound webhooks, and the External Request node |
+| **Channels** | Instagram, Messenger, WhatsApp, Telegram, SMS, email, TikTok | The same, minus TikTok — its DM API is restricted to badged partners |
+| **AI features** | Built-in reply generation and intent detection | None, deliberately ([`docs/SPEC.md`](docs/SPEC.md) §1.1) |
+
+What you give up is real. ManyChat keeps the service running for you, and its
+Meta app is already approved. Self-hosting means creating your own Meta
+developer app, passing app review for the permissions each channel needs, and
+owning uptime, upgrades, and backups yourself. If that is not a trade you want
+to make, ManyChat is the better product for you.
 
 ## Features
 
