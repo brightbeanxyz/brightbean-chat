@@ -83,15 +83,15 @@ bcrypt==5.0.0 \
     --hash=sha256:f8429e1c410b4073944f03bd778a9e066e7fad723564a52ff91841d278dfc822 \
     --hash=sha256:fc746432b951e92b58317af8e0ca746efe93e66555f1b40888865ef5bf56446b
     # via -r requirements.in
-boto3==1.43.78 \
-    --hash=sha256:2fa59116e298171ef59e7600a8be6c01177faef8af4b9a4314b7a57a04009ada \
-    --hash=sha256:893f06a171469618e17de78dc927aca6e74fcf45a70d2c5918e9ac9919e96cc9
+boto3==1.43.93 \
+    --hash=sha256:196bfc8b4c9cd5505f9f7b963e30956db3a00fd47e20dd0ee3574a243c1fb212 \
+    --hash=sha256:3c948fe231490d446bf90bf3322d1452632107329d3683b37d88b7399bf481a0
     # via
     #   -r requirements.in
     #   django-storages
-botocore==1.43.82 \
-    --hash=sha256:347573c0bab52e29c923e28128764fcc50f469ed98dc5460220026cd3672ac0c \
-    --hash=sha256:97b3e89061decc91e7745d726dae595cbe2053894611c49ea91d6fdcb2ecc36b
+botocore==1.43.96 \
+    --hash=sha256:3ef7c8c40738bb42a40eb0ac3dc2d9f1698946541874ae9b505e49f289272805 \
+    --hash=sha256:c21153a07b97e8497f4ffa83e340a055f3f479b074e6eedf7d0562a9bc861cac
     # via
     #   boto3
     #   s3transfer
