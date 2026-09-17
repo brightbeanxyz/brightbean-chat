@@ -5,12 +5,12 @@
 </p>
 
 <p align="center">
-  <strong>Open-source chat-marketing automation for teams that want to own their stack.</strong>
+  <strong>The open-source ManyChat alternative. Chat-marketing automation you host yourself.</strong>
 </p>
 
 <p align="center">
   Build flows once and run them across Telegram, Instagram, Messenger, WhatsApp,
-  SMS, and email — with a visual builder, shared inbox, broadcasts, sequences,
+  SMS, and email, with a visual builder, shared inbox, broadcasts, sequences,
   analytics, and a public API.
 </p>
 
@@ -21,28 +21,15 @@
   <a href="https://www.djangoproject.com/"><img src="https://img.shields.io/badge/Django-5.x-green.svg" alt="Django 5.x"></a>
 </p>
 
-<p align="center">
-  <strong>Django 5 · HTMX · Tailwind 4 · PostgreSQL</strong><br>
-  No Redis. No message broker. No aggregator in the middle.
-</p>
-
-<p align="center">
-  <a href="#deploy-it">Deploy it</a> ·
-  <a href="#run-it-locally">Run it locally</a> ·
-  <a href="#platform-credentials">Platform credentials</a> ·
-  <a href="#api--webhooks">API &amp; webhooks</a> ·
-  <a href="#documentation">Documentation</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
-</p>
-
 ---
 
 ## About BrightBean Chat
 
 BrightBean Chat is an open-source, self-hostable chat-marketing automation
-platform. Connect the messaging channels your audience already uses, build
-automation in a visual flow editor, and manage contacts, conversations, and
-campaigns from one workspace.
+platform, a ManyChat alternative you run on your own infrastructure. Connect
+the messaging channels your audience already uses, build automation in a visual
+flow editor, and manage contacts, conversations, and campaigns from one
+workspace.
 
 It is designed for creators, agencies, and teams that want to own their
 messaging stack rather than put customer conversations behind another SaaS
@@ -50,10 +37,10 @@ vendor. The application calls each platform's official API directly using your
 credentials. There is no aggregator middleman, per-seat pricing, or required
 payment provider.
 
-Every self-hosted installation has one tier: all features are available, with
+Every self-hosted installation has one tier. All features are available, with
 no feature gates or contact limits. An optional Stripe integration exists only
 for operators running BrightBean Chat as a paid hosted service; leave its
-settings empty — the default — and billing stays invisible
+settings empty (the default) and billing stays invisible
 ([`docs/billing.md`](docs/billing.md)).
 
 > **Status: pre-1.0.** The core platform is in place: tenancy and RBAC, all six
@@ -61,6 +48,32 @@ settings empty — the default — and billing stays invisible
 > sequences, broadcasts, analytics, the media library, and the public API.
 > Remaining work is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md). Read
 > [`SECURITY.md`](SECURITY.md) before pointing a real audience at it.
+
+## An open-source ManyChat alternative
+
+BrightBean Chat aims at ManyChat's feature set: keyword triggers,
+comment-to-DM, story mentions, drip sequences, broadcasts, a shared inbox, and a
+visual flow builder. The difference is where it runs. You bring your own server
+and your own platform developer apps, and in exchange there is no per-contact
+pricing, no plan that gates the feature you need, and no third party sitting
+between you and your audience.
+
+| | ManyChat | BrightBean Chat |
+|---|---|---|
+| **Hosting** | Managed SaaS | Self-hosted: Docker Compose, Railway, Render, or Heroku |
+| **Pricing** | Per-contact tiers, with features gated by plan | One tier, every feature, no contact limits. Your only cost is the server |
+| **Your data** | Lives in ManyChat's account | Your PostgreSQL and your object storage |
+| **Platform access** | Through ManyChat's Meta app | Your own Meta, Twilio, and SMTP credentials, called directly. No aggregator |
+| **Source** | Proprietary | AGPL-3.0, so you can read it, change it, and run your fork |
+| **Extensibility** | Catalog of native integrations | Public REST API, signed outbound webhooks, and the External Request node |
+| **Channels** | Instagram, Messenger, WhatsApp, Telegram, SMS, email, TikTok | The same, minus TikTok, whose DM API is restricted to badged partners |
+| **AI features** | Built-in reply generation and intent detection | None, deliberately ([`docs/SPEC.md`](docs/SPEC.md) §1.1) |
+
+Self-hosting has costs ManyChat absorbs for you. ManyChat keeps the service
+running, and its Meta app is already approved. Running this yourself means
+creating your own Meta developer app, passing app review for the permissions
+each channel needs, and owning uptime, upgrades, and backups. If that is not a
+trade you want to make, ManyChat is the better product for you.
 
 ## Features
 
@@ -98,9 +111,10 @@ checked before every send.
 | **SMS** | Inbound texts and carrier opt-out keywords | SMS and outbound MMS images | Bring your own Twilio account. STOP/HELP/START handling and GSM-7/UCS-2 segment previews are built in. |
 | **Email** | Provider bounce notifications only (not conversations) | HTML and plain-text email, inline images, unsubscribe links, and tracked links | Bring your own SMTP, Resend, or SES credentials. Unsubscribe and hard-bounce suppression are enforced. |
 
-Meta's platforms need a developer app of your own, set as environment variables
-— see [Platform credentials](#platform-credentials). Per-channel webhook URLs,
-permissions, and platform quirks are in [`docs/channels/`](docs/channels/).
+Meta's platforms need a developer app of your own, set as environment
+variables. See [Platform credentials](#platform-credentials). Per-channel
+webhook URLs, permissions, and platform quirks are in
+[`docs/channels/`](docs/channels/).
 
 ## Try it locally
 
@@ -217,23 +231,23 @@ of your own. BrightBean Chat calls each platform's API directly with your
 credentials, so there is no shared app to borrow and nothing to register with
 us.
 
-**These are developer credentials, and they are set as environment variables.**
+These are developer credentials, and they are set as environment variables.
 They belong in the deployment's `.env` beside `SECRET_KEY` and `DATABASE_URL`,
-not in a settings page — no workspace admin should be able to change which Meta
+not in a settings page. No workspace admin should be able to change which Meta
 app the deployment speaks as.
 
 A deployment serving several organizations from one instance can give each its
 own Meta app id and secret instead, from the Django admin at
 `https://<your-host>/admin/` → *Credentials → Platform credentials*. That page
-is superuser-only (`python manage.py createsuperuser`). **The environment
-wins:** when a platform is configured in both places, the environment value is
-the one in force and the admin row is never consulted — it is the fallback for
+is superuser-only (`python manage.py createsuperuser`). The environment wins.
+When a platform is configured in both places, the environment value is the one
+in force and the admin row is never consulted. It is the fallback for
 organizations that have none, not an override.
 
-**`PLATFORM_<PLATFORM>_VERIFY_TOKEN` is always deployment-level and must be set
-in the environment**, including when the app id and secret come from an
+`PLATFORM_<PLATFORM>_VERIFY_TOKEN` is always deployment-level and must be set
+in the environment, including when the app id and secret come from an
 organization row. Meta's verification `GET` arrives at `/webhooks/<platform>/`
-unauthenticated, carrying nothing but the platform name — there is no
+unauthenticated, carrying nothing but the platform name. There is no
 organization to resolve a token against, so the endpoint reads only the
 environment. Leave it unset and that platform's verification answers 404, which
 means the webhook cannot be subscribed and no inbound events arrive at all.
@@ -267,7 +281,8 @@ and platform quirks are in [`docs/channels/`](docs/channels/).
 ### Instagram
 
 Instagram runs on the Instagram API with Instagram Login, against
-**professional** accounts — Business or Creator. No Facebook Page in the middle.
+professional accounts, either Business or Creator. No Facebook Page in the
+middle.
 
 1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
    app and add the **Instagram** product.
@@ -278,12 +293,12 @@ Instagram runs on the Instagram API with Instagram Login, against
    https://<your-host>/channels/instagram/callback/
    ```
 
-   One URI for the whole deployment, not one per workspace — Meta matches it
+   One URI for the whole deployment, not one per workspace. Meta matches it
    character for character, and the workspace travels in a signed `state`.
 3. Request these permissions: `instagram_business_basic`,
    `instagram_business_manage_messages`, `instagram_business_manage_comments`.
 4. Copy the *Instagram app ID* and *Instagram app secret* from the Instagram
-   product's API setup — these are **not** the plain Facebook app id and secret.
+   product's API setup. These are not the plain Facebook app id and secret.
 5. Set:
 
    ```dotenv
@@ -297,7 +312,7 @@ Instagram runs on the Instagram API with Instagram Login, against
    `mentions`, and `message_deletions`.
 
 Serving any account other than the app owner's own needs Advanced Access, App
-Review, and Business Verification — the step that takes weeks rather than
+Review, and Business Verification, the step that takes weeks rather than
 minutes. See [`docs/channels/instagram.md`](docs/channels/instagram.md).
 
 ### Facebook Messenger
@@ -327,21 +342,21 @@ minutes. See [`docs/channels/instagram.md`](docs/channels/instagram.md).
    `messaging_referrals`, `message_deliveries`, `message_reads`, and `feed`
    automatically when they connect.
 
-This is the most expensive channel to set up — a Meta app, a page, App Review,
+This is the most expensive channel to set up: a Meta app, a page, App Review,
 and Business Verification. See
 [`docs/channels/messenger.md`](docs/channels/messenger.md).
 
 ### WhatsApp
 
-WhatsApp does not use OAuth: you paste a system-user token into the connect page
-rather than authorising through Meta. The app secret is still required, because
-it is what every inbound delivery's signature is verified against.
+WhatsApp does not use OAuth. You paste a system-user token into the connect
+page rather than authorizing through Meta. The app secret is still required,
+because it is what every inbound delivery's signature is verified against.
 
 1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
    app of type **Business** and add the **WhatsApp** product.
 2. Add a phone number under *WhatsApp → API Setup* and complete its
-   verification. Note the **phone number ID** — the numeric API id, not the
-   phone number — and the **WhatsApp Business Account ID**.
+   verification. Note the **phone number ID** (the numeric API id, not the
+   phone number) and the **WhatsApp Business Account ID**.
 3. Create a system user in *Business Settings*, give it access to the WABA, and
    generate a token with `whatsapp_business_messaging` and
    `whatsapp_business_management`. Choose **never expires**; a 60-day token
@@ -462,8 +477,8 @@ checks, dependency audits, and deployment-focused validation.
 ## Contributing
 
 Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). The project specification and
-security baseline are part of the development workflow, not background reading:
-new endpoints must be tenant-scoped, new URLs must follow the project routing
+security baseline are part of the development workflow, not background reading.
+New endpoints must be tenant-scoped, new URLs must follow the project routing
 conventions, and security-sensitive behavior needs a regression test.
 
 ## Security
