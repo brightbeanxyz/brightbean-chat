@@ -193,8 +193,14 @@ class TestWebhookHealth:
         WebhookEventLog.objects.create(connection=connection, platform=Platform.TELEGRAM, provider_event_id="tg:1")
         url = reverse("channels:detail", kwargs={"workspace_id": tenancy.workspace.pk, "connection_id": connection.pk})
         body = as_admin(client, tenancy).get(url).content.decode()
-        assert "Last event received" in body
-        assert "Nothing yet" not in body
+
+        # The detail page says this as one sentence now, in the same words the
+        # test above asserts for the list — it used to print "Status: Active"
+        # and "Last event received: ..." as two separate rows, which is the
+        # split _health exists to close. Both halves are still asserted: that
+        # something HAS arrived, and that the page does not claim otherwise.
+        assert "last message" in body
+        assert "Connected, but nothing has arrived yet" not in body
 
     def test_the_platform_list_links_to_the_guided_flow(self, client: Client, tenancy: Tenancy) -> None:
         url = reverse("channels:list", kwargs={"workspace_id": tenancy.workspace.pk})

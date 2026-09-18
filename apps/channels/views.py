@@ -371,7 +371,13 @@ def connection_detail(request: WorkspaceRequest, workspace_id: str, connection_i
     Never renders the secret — see the module docstring.
     """
     connection = get_scoped_object_or_404(ChannelConnection, request.workspace, pk=connection_id)
-    return render(request, "channels/detail.html", _connection_context(request, connection))
+    context = _connection_context(request, connection)
+    # The same sentence the card on the list page shows. This page used to print
+    # the status word and "last event received" as two separate rows — exactly
+    # the split _health exists to close, and the one a reader had to join up
+    # themselves to find out whether the channel was actually working.
+    context["health"] = _health(context)
+    return render(request, "channels/detail.html", context)
 
 
 @login_required

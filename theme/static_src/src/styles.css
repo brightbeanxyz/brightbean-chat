@@ -4581,11 +4581,13 @@ a.an-card:hover { border-color: var(--border-hover); }
 .status-pill-archived { background: var(--neutral-100); color: var(--text-tertiary); }
 
 /* ═══════════════════════════════════════════════════════════════
-   CHANNEL CONNECT PAGES
+   CHANNEL PAGES
    The six guided setup flows — Telegram, WhatsApp, Instagram, Messenger,
-   SMS and email. One shape: a hero carrying the platform's own mark, a
-   numbered sequence of things to do in somebody else's console, the
-   credential form, and what happens after Connect.
+   SMS and email — and the connection page they land on. One shape: a hero
+   carrying the platform's own mark, a numbered sequence of things to do in
+   somebody else's console, the credential form, and what happens after
+   Connect. channels/detail.html reuses the column, the copy field and the
+   back link; it has no steps of its own.
 
    Labels, hints and errors are the shared .field-* family, not a second
    copy scoped to these pages — two families for one idea is exactly the
