@@ -4800,3 +4800,201 @@ a.an-card:hover { border-color: var(--border-hover); }
   text-decoration: none;
 }
 .cn-back:hover { color: var(--text-primary); }
+
+/* ═══════════════════════════════════════════════════════════════
+   PLAN & BILLING (templates/organizations/billing.html)
+   The one surface in the product whose markup shipped without any of its
+   stylesheet. `grep -c "plan-" styles.css` returned 0, and this is the
+   only stylesheet in the repo, so the most developed template of the
+   settings pages rendered as an unstyled vertical stack — from its first
+   commit, through three later commits that edited only the markup.
+
+   Written to fit the markup rather than the markup rebuilt on primitives,
+   for two reasons. apps/billing/tests/test_billing_page.py counts
+   `class="plan-usage-icon"` and `plan-card-features` to catch a real bug
+   class — _nav_icon.html draws a neutral dot for an unknown name, so five
+   usage rows quietly rendering dots would look deliberate. And the
+   interval switch is argued for at length in the template: it is CSS only
+   because the CSP is 'self' with a per-request nonce and an inline
+   handler would be refused outright.
+
+   A per-surface family is the convention here, not the exception —
+   .ib-*, .crm-*, .media-*, .an-*, .fb-*, .bc-* all work this way.
+   ═══════════════════════════════════════════════════════════════ */
+.plan-grid {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+@media (min-width: 768px) {
+  .plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+}
+/* The plan you are on: a tint and a heavier rule, the same signal
+   .tile-selected gives a chosen template. */
+.plan-card-current {
+  border: 1.5px solid var(--brand-500);
+  background: var(--primary-tint);
+}
+
+.plan-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.plan-card-title { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.plan-card-logo { width: 24px; height: 24px; flex-shrink: 0; border-radius: var(--radius-md); }
+.plan-card-name { font-size: var(--fs-title); font-weight: 700; color: var(--text-primary); }
+.plan-card-tagline { font-size: var(--fs-body); color: var(--text-tertiary); margin-bottom: 1rem; }
+
+/* Tabular numerals so the two columns' figures line up, and so swapping
+   interval does not shift the baseline under the button. */
+.plan-price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem;
+  margin-bottom: 1rem;
+}
+.plan-price-amount {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.plan-price-cadence { font-size: var(--fs-body-lg); color: var(--text-secondary); }
+.plan-price-note { flex-basis: 100%; font-size: var(--fs-body); color: var(--text-tertiary); }
+
+/* The interval switch. position:relative so the visually-hidden radios
+   have something to be absolute against. */
+.plan-pricing { position: relative; margin: 0 0 1rem; padding: 0; border: 0; }
+/* Moved off-screen rather than display:none — a hidden input is not
+   focusable, and the control would stop working on a keyboard. */
+.plan-pricing > input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.plan-interval {
+  display: inline-flex;
+  padding: 3px;
+  margin-bottom: 0.875rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+}
+.plan-interval label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-bottom: 0;
+  padding: 0.375rem 0.875rem;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.plan-save {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  padding: 0.0625rem 0.375rem;
+  border-radius: var(--radius-full);
+  background: var(--success-50);
+  color: var(--success-700);
+}
+/* Both prices are rendered; the checked radio picks which one shows. */
+.plan-pricing .plan-price { display: none; }
+.plan-pricing > input[value="monthly"]:checked ~ .plan-price[data-interval="monthly"],
+.plan-pricing > input[value="yearly"]:checked ~ .plan-price[data-interval="yearly"] { display: flex; }
+.plan-pricing > input[value="monthly"]:checked ~ .plan-interval label[for^="interval-monthly"],
+.plan-pricing > input[value="yearly"]:checked ~ .plan-interval label[for^="interval-yearly"] {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-xs);
+}
+/* The focus ring the clip-path takes away, put on the group — the radio
+   itself is a 1px box nobody can see. */
+.plan-pricing > input[type="radio"]:focus-visible ~ .plan-interval {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 2px;
+}
+
+/* Above the feature list on purpose, so both columns start their bullets
+   at the same height whatever each one offers — see the template's note. */
+.plan-card-actions { margin-bottom: 1.25rem; }
+
+.plan-card-features {
+  list-style: none;
+  margin: auto 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.plan-card-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  font-size: var(--fs-body);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+/* _nav_icon.html renders a currentColor stroke; the colour is set here so
+   a feature bullet reads as a tick rather than as a second run of text. */
+.plan-card-features li > svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--success-700);
+}
+
+/* Usage stays a table: the three cells ARE a row of one kind — a glyph, a
+   label and a figure — and it is the one place on these pages where that
+   is true. border-bottom:0 because @layer base .app-content td sets one,
+   and this table wants rules between rows only. */
+.plan-usage { width: 100%; border-collapse: collapse; margin-bottom: 0; }
+.plan-usage tr + tr td { border-top: 1px solid var(--divider); }
+.plan-usage td {
+  padding: 0.625rem 0.5rem;
+  font-size: var(--fs-body-lg);
+  color: var(--text-primary);
+  border-bottom: 0;
+  vertical-align: middle;
+}
+.plan-usage-icon { width: 2rem; color: var(--text-ghost); line-height: 0; }
+.plan-usage-figure {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Amber near a cap, red at it — and only for a cap you can spend down.
+   TestTheUsageColouring is why that distinction matters: a free plan has
+   one user and one workspace BY DEFINITION, so flagging those painted two
+   rows red on every new account, permanently. */
+.plan-usage-near td { background: var(--warning-50); }
+.plan-usage-near .plan-usage-figure,
+.plan-usage-near .plan-usage-icon { color: var(--warning-700); }
+.plan-usage-at td { background: var(--error-50); }
+.plan-usage-at .plan-usage-figure,
+.plan-usage-at .plan-usage-icon { color: var(--error-700); }

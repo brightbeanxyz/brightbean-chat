@@ -1,9 +1,14 @@
 {% extends "layouts/settings.html" %}
 {% load static %}
 {% block title %}Plan &amp; billing · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Plan &amp; billing</h1>{% endblock %}
+{% block page_header %}{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
+<div class="max-w-[900px] w-full">
+  <h1 class="page-title">Plan &amp; billing</h1>
+  <p class="page-lede mt-1.5 mb-6">What this organization is on, and what it is using.</p>
+
   {% if checkout_state == "cancelled" %}
     <div class="alert-info mb-4">Checkout was cancelled. No charge was made.</div>
   {% elif checkout_state == "activating" %}
@@ -24,7 +29,7 @@
               <span class="plan-card-name">{{ card.name }}</span>
             </span>
             {% if card.key == plan %}
-              <span class="status-pill status-pill-{{ card.key }}">Current plan</span>
+              <span class="status-pill status-pill-active inline-flex items-center gap-1.5"><span class="status-pill-dot"></span>Current plan</span>
             {% endif %}
           </div>
           <p class="plan-card-tagline">{{ card.tagline }}</p>
@@ -61,7 +66,7 @@
               {% endcomment %}
               <form method="post" action="{% url 'billing:portal' %}">
                 {% csrf_token %}
-                <button type="submit" class="btn-brand-outline">Manage billing</button>
+                <button type="submit" class="btn-pill-secondary">Manage billing</button>
               </form>
             </div>
           {% elif card.key == "paid" and card.key != plan and can_manage %}
@@ -103,7 +108,7 @@
                     </p>
                   {% endfor %}
                 </fieldset>
-                <button type="submit" class="btn-brand">Subscribe</button>
+                <button type="submit" class="btn-pill-primary w-full">Subscribe</button>
               </form>
             </div>
           {% endif %}
@@ -137,8 +142,8 @@
       limits are fiction on a box that has no limits is the one thing the
       promise in docs/SPEC.md §1.1 actually forbids.
     {% endcomment %}
-    <div class="crm-panel plan-panel mb-4">
-      <h2>Self-hosted</h2>
+    <div class="card p-6 mb-4">
+      <h2 class="section-title mb-3">Self-hosted</h2>
       <p>
         Every feature is available, with no limits and nothing counted. There is no plan to be on and no
         payment provider to configure.
@@ -146,8 +151,8 @@
     </div>
   {% endif %}
 
-  <div class="crm-panel plan-panel">
-    <h2>Usage</h2>
+  <div class="card p-6">
+    <h2 class="section-title mb-3">Usage</h2>
     <table class="plan-usage">
       {% for row in usage_rows %}
         <tr class="{% if row.at_limit %}plan-usage-at{% elif row.near_limit %}plan-usage-near{% endif %}">
@@ -160,4 +165,5 @@
       {% endfor %}
     </table>
   </div>
+</div>
 {% endblock %}
