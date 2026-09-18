@@ -1,6 +1,14 @@
-{% extends "base.html" %}
+{% extends "layouts/workspace_settings.html" %}
 {% comment %}
 The media library browser (issue #16).
+
+**Why a settings layout.** Library used to be a sidebar row, pinned to the
+footer beside Settings; it is a row in the workspace settings nav now. A page
+whose own nav row is in a column it does not render would light nothing and
+strand the reader on a screen with no way back into settings, so it renders the
+column it lives in. The layout only adds that column: `content_wrap` is cleared
+below, so this page keeps the bare `.app-content` flex container it has always
+filled rather than the card the settings archetype wraps text pages in.
 
 A folder rail, a filter bar, a drop zone and the asset grid. Filters are plain
 links so the state lives in the querystring and a view is bookmarkable; search,
@@ -19,6 +27,13 @@ design-system classes, so they live in theme/static_src/src/styles.css as
 
 {% block title %}Media · BrightBean Chat{% endblock %}
 
+{% comment %}
+  layouts/settings.html wraps its pages in a card for the seventeen-odd
+  templates that are still bare semantic HTML. This one is a three-column
+  browser with its own surfaces, so it takes the container unstyled.
+{% endcomment %}
+{% block content_wrap %}{% endblock %}
+
 {% block page_header %}
   <div class="flex items-start justify-between gap-4 mb-4">
     <div>
@@ -36,10 +51,17 @@ design-system classes, so they live in theme/static_src/src/styles.css as
 {% endblock %}
 
 {% block content %}
-<div class="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+{% comment %}
+  `xl`, not `lg`. The settings column this page now renders takes 232px out of
+  the window before this layout gets any, so at a 1280-wide laptop the old `lg`
+  breakpoint left the grid about 380px to work in: the filter pills wrapped one
+  per line and the drop zone's copy broke to a word a line. The rail stacks
+  above the grid until there is room for both.
+{% endcomment %}
+<div class="flex flex-col xl:flex-row gap-6 flex-1 min-h-0">
 
   {# ── Folder rail ─────────────────────────────────────────────── #}
-  <aside class="lg:w-56 flex-shrink-0">
+  <aside class="xl:w-56 flex-shrink-0">
     <h2>Folders</h2>
     {% include "media_library/_folder_rail.html" %}
 
@@ -129,7 +151,12 @@ design-system classes, so they live in theme/static_src/src/styles.css as
   </div>
 
   {# ── Detail panel, filled by htmx when a card is clicked ─────── #}
-  <aside id="media-detail" class="lg:w-80 flex-shrink-0" aria-live="polite"></aside>
+  {% comment %}
+    `xl`, matching the folder rail: the three columns appear together or not at
+    all. At `lg` the panel took its 320px while the layout was still stacked,
+    so a selected asset read as a stray card under a full-width grid.
+  {% endcomment %}
+  <aside id="media-detail" class="xl:w-80 flex-shrink-0" aria-live="polite"></aside>
 </div>
 {% endblock %}
 

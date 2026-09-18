@@ -8,21 +8,24 @@ from django.db import IntegrityError, transaction
 from apps.channels.models import ChannelConnection, WebhookEventLog, generate_webhook_secret
 from apps.common.platforms import Platform
 from apps.common.scoping import UnscopedQueryError
+from tests import support
 
 pytestmark = pytest.mark.django_db
 
 
 def make_connection(workspace: Any, **overrides: Any) -> ChannelConnection:
-    fields = {
+    """This module's defaults over the shared builder in tests/support.py.
+
+    The names are load-bearing here and nowhere else: the uniqueness tests below
+    turn on two connections agreeing or disagreeing about ``external_id``.
+    """
+    fields: dict[str, Any] = {
         "platform": Platform.TELEGRAM,
         "display_name": "Bot",
         "external_id": f"ext-{workspace.pk}",
         **overrides,
     }
-    connection = ChannelConnection(workspace=workspace, **fields)
-    connection.rotate_webhook_secret()
-    connection.save()
-    return connection
+    return support.make_connection(workspace, **fields)
 
 
 class TestTenancy:

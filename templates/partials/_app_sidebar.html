@@ -99,12 +99,13 @@ the header gone there is one trigger, inside the panel's own wrapper, so the
             {% endif %}
             {% comment %}
               Studio ends the switcher with a link into the workspace you are
-              in, and the panel is where people look for it: the Settings row
-              in the nav lands on the *account* page, and the workspace's own
-              settings are two clicks past it. The url is absent for a member
-              without manage_workspace_settings — a row advertising a page
-              somebody is refused at is worse than no row, the same rule
-              NavItem.visible_to follows.
+              in, and the panel is where people look for it: the account menu's
+              Settings row lands on the *account* page, and with no Settings
+              row left in the nav this is the one direct way into the
+              workspace's own settings — and so into the Library. The url is
+              absent for a member without manage_workspace_settings — a row
+              advertising a page somebody is refused at is worse than no row,
+              the same rule NavItem.visible_to follows.
             {% endcomment %}
             {% if workspace_settings_url %}
             <div class="sidebar-menu-divider">
@@ -135,10 +136,24 @@ the header gone there is one trigger, inside the panel's own wrapper, so the
 
     <nav class="sidebar-nav" aria-label="Main">
         {% include "partials/_sidebar_items.html" with groups=nav_groups %}
+        {% comment %}
+          The workspace's channels, and the ones it could connect next. Inside
+          this nav rather than below it so the rows collapse with every other
+          row at 60px, and so one scroll container holds everything that can
+          grow — a workspace with six connections and a long flow list scrolls
+          once, not twice.
+        {% endcomment %}
+        {% include "partials/_sidebar_channels.html" %}
     </nav>
 
+    {% comment %}
+      The footer carries no nav rows. It held two — Library and Settings —
+      until Settings left the sidebar (the account menu below and the workspace
+      switcher above both lead there) and Library moved into the workspace
+      settings nav, beside the rest of the workspace's setup. What is left is
+      who you are and the collapse toggle.
+    {% endcomment %}
     <div class="sidebar-footer">
-        {% include "partials/_sidebar_items.html" with groups=nav_footer_groups %}
         {% if request.user.is_authenticated %}
         {% comment %}
           The account block is not a NavItem: it has no glyph and no route, it

@@ -21,6 +21,7 @@ from django.core.signals import setting_changed
 from django.dispatch import receiver
 from django.http import HttpRequest
 from django.urls import NoReverseMatch, get_urlconf, reverse
+from django.utils.functional import SimpleLazyObject
 
 # Resolved URLs, keyed by (urlconf, route name).
 #
@@ -36,13 +37,26 @@ from django.urls import NoReverseMatch, get_urlconf, reverse
 _URL_CACHE: dict[tuple[str | None, str, tuple[tuple[str, str], ...]], str | None] = {}
 
 
-def reverse_cached(url_name: str, **kwargs: Any) -> str | None:
+def reverse_cached(url_name: str, *, cache: bool = True, **kwargs: Any) -> str | None:
     """``reverse(url_name, kwargs=...)``, memoised. ``None`` when unresolvable.
 
     Workspace-scoped routes vary by workspace id, so the id is part of the key;
     a user switching workspace gets a fresh entry rather than the previous
     workspace's URL.
+
+    ``cache=False`` skips the memo and still swallows ``NoReverseMatch`` —
+    for a route keyed on a row id, where remembering every answer would grow
+    this module-level dict by one entry per row in the deployment and never
+    shed one. The *never raises* half is the point of calling this at all: a
+    context processor runs on every response, including the error pages, so a
+    bare ``reverse`` here turns one unmounted route into a blank 500 on every
+    page of the product.
     """
+    if not cache:
+        try:
+            return reverse(url_name, kwargs=kwargs or None)
+        except NoReverseMatch:
+            return None
     key = (get_urlconf(), url_name, tuple(sorted((k, str(v)) for k, v in kwargs.items())))
     if key not in _URL_CACHE:
         try:
@@ -93,7 +107,7 @@ class NavItem:
     #: This replaced the two-list split (``ACCOUNT_SETTINGS_GROUPS`` /
     #: ``WORKSPACE_SETTINGS_GROUPS``), which approximated the same idea at group
     #: granularity and got both halves wrong. It hid every Workspace row from
-    #: the account settings page — the page the nav's own Settings row lands on
+    #: the account settings page — the page the account menu's Settings row lands on
     #: — so Channels, Tags, Labels and five more had no entry point in the
     #: product at all. And within a group it hid nothing, so an Editor still saw
     #: rows they would be refused at. Gating the row on the same key its view
@@ -207,13 +221,6 @@ class NavGroup:
 
     label: str
     items: tuple[NavItem, ...] = ()
-    # "bottom" pins the group to the sidebar's footer, below the scrolling nav:
-    # Library and Settings sit against the avatar, away from the six rows that
-    # answer "what am I doing". A field on the group rather than a second
-    # module-level list, because the tests that police nav invariants — unique
-    # keys, every target reverses — iterate MAIN_NAV, and a second list would
-    # quietly fall outside all of them.
-    placement: str = "top"
 
 
 SETTINGS_NAV: list[NavGroup] = [
@@ -235,6 +242,22 @@ SETTINGS_NAV: list[NavGroup] = [
                 icon="channels",
                 url_name="channels:list",
                 url_names=frozenset({"channels:list", "channels:create", "channels:detail"}),
+                workspace_scoped=True,
+            ),
+            # Library was a sidebar row, in the footer group beside Settings.
+            # It is workspace content you set up rather than a place you work,
+            # so it reads here beside Channels — and the sidebar is down to the
+            # six rows that answer "what am I doing".
+            #
+            # Ungated, unlike its neighbours: media_library.views.library takes
+            # `manage_media` for uploads and mutations only, and any member of
+            # the workspace may browse what is in it.
+            NavItem(
+                key="media",
+                label="Library",
+                icon="image",
+                url_name="media:library",
+                url_names=frozenset({"media:library", "media:asset_detail"}),
                 workspace_scoped=True,
             ),
             # Two rows, not one. The redesign draws a single "Tags & labels",
@@ -362,17 +385,13 @@ SETTINGS_NAV: list[NavGroup] = [
 ]
 
 
-# Every route any settings row points at. The sidebar's Settings row lights up on
-# all of them, and deriving the set beats hand-listing seventeen route names
-# that would drift the first time a settings page is added.
-_SETTINGS_ROUTES: frozenset[str] = frozenset(
-    name for group in SETTINGS_NAV for item in group.items for name in (item.url_names or frozenset({item.url_name}))
-)
-
-
 # --- The product's navigation ------------------------------------------------
-# The sidebar (SPEC §16's shell): the rows that answer "what am I doing", then
-# a bottom group for the things you reach occasionally.
+# The sidebar (SPEC §16's shell): the rows that answer "what am I doing", and
+# nothing else. There used to be a second group pinned to the footer, carrying
+# Library and Settings. Settings is gone from the sidebar — the account menu
+# and the workspace switcher both lead there, so a third way in was a row
+# spent on something nobody navigates to twice a day — and Library went into
+# SETTINGS_NAV's Workspace group with the rest of the workspace's setup.
 #
 # Keys track the route; labels track the design. That is why `dashboard`,
 # `analytics` and `media` keep their keys while reading Home, Insights and
@@ -464,28 +483,6 @@ MAIN_NAV: list[NavGroup] = [
             ),
         ),
     ),
-    NavGroup(
-        label="",
-        placement="bottom",
-        items=(
-            NavItem(
-                key="media",
-                label="Library",
-                icon="image",
-                url_name="media:library",
-                url_names=frozenset({"media:library", "media:asset_detail"}),
-                workspace_scoped=True,
-            ),
-            # Lights up on every settings page, derived rather than listed.
-            NavItem(
-                key="settings",
-                label="Settings",
-                icon="settings",
-                url_name="accounts:settings",
-                url_names=_SETTINGS_ROUTES,
-            ),
-        ),
-    ),
 ]
 
 
@@ -535,7 +532,7 @@ FLOWS_TABS: list[NavGroup] = [
 #
 # The intent was right and the mechanism was too coarse, in both directions. It
 # hid every Workspace row from the account settings page, which is where the
-# nav's own Settings row lands, so Channels, Tags, Labels and five more had no
+# account menu's Settings row lands, so Channels, Tags, Labels and five more had no
 # entry point anywhere in the product once the first-run checklist was done.
 # And inside a group it filtered nothing, so an Editor still saw the rows they
 # would be refused at.
@@ -568,6 +565,114 @@ def _render_nav(
     return rendered
 
 
+#: What the sidebar's channel block hands the template when there is nothing to
+#: draw — no workspace, no membership, no permission, or no channels app in this
+#: deployment. A constant so every early return is the same shape.
+_NO_CHANNELS: dict[str, Any] = {"connections": [], "connectable": [], "home_url": None}
+
+
+def _sidebar_channels(request: HttpRequest, workspace: Any, membership: Any, workspace_id: Any) -> dict[str, Any]:
+    """The sidebar's channel block: what is connected, what is not, and the way in.
+
+    Both lists are gated on ``manage_channels``, the key every view behind them
+    is gated on (``apps.channels.views`` and each platform's connect flow), for
+    the reason NavItem.visible_to states: a row that always answers 403 reads as
+    a bug rather than as a boundary. An Agent sees neither list.
+
+    **A platform leaves the connect list only while it is ACTIVE.** That is the
+    rule ``apps.flows.capabilities.connected_platforms`` and the dashboard's
+    setup checklist both apply, and for the same reason: a ``disabled`` or
+    ``needs_reauth`` connection cannot deliver, so treating it as "you have
+    Telegram" would leave the one surface on every page offering no way to
+    connect Telegram at all. Derived from the rows already loaded rather than by
+    calling that helper, because this runs on every render and one query is the
+    budget; ``test_the_connect_list_agrees_with_connected_platforms`` pins the
+    two against each other so they cannot drift.
+
+    Everything is resolved defensively, because a context processor runs on
+    every response including error pages: the app may not be installed
+    (``installed_model``), and the routes may not be mounted (``reverse_cached``
+    and the guard on ``home_url``). Any of those misses and the block is simply
+    absent.
+
+    Returns ``_NO_CHANNELS`` when there is nothing to draw.
+    """
+    if workspace is None or workspace_id is None or membership is None:
+        return _NO_CHANNELS
+    if not membership.effective_permissions.get("manage_channels", False):
+        return _NO_CHANNELS
+
+    # Function-local for the same reason every model import in this module is:
+    # a context processor is imported by dotted path while the template engine
+    # is being configured, which can precede app-registry population.
+    from apps.channels.registry import connect_route_for
+    from apps.common.platforms import Platform
+    from apps.flows.compat import installed_model
+
+    # Not a direct import: the channels app is one a deployment may leave out
+    # (apps/flows/capabilities.py resolves the same model this way, and
+    # config/urls.py guards apps.analytics likewise), and an ImportError here
+    # would take down every page rather than one block.
+    model = installed_model("channels", "apps.channels", "ChannelConnection")
+    # `channels:list` is the block's own way in AND the proof that the app's
+    # routes are mounted at all: with it unresolvable, nothing below could
+    # reverse either, so the whole block steps aside instead of raising.
+    home_url = reverse_cached("channels:list", workspace_id=workspace_id)
+    if model is None or home_url is None:
+        return _NO_CHANNELS
+
+    from apps.channels.models import ConnectionStatus
+
+    match = request.resolver_match
+    open_connection = (
+        str(match.kwargs.get("connection_id", "")) if match and match.view_name == "channels:detail" else ""
+    )
+
+    connections: list[dict[str, Any]] = []
+    live: set[str] = set()
+    # `only`: the sidebar draws a glyph, a name and one status. The encrypted
+    # credentials column in particular is deserialised on access, and nothing
+    # here reads it.
+    rows = model.objects.for_workspace(workspace).only("id", "platform", "display_name", "status")
+    for connection in rows:
+        if connection.status == ConnectionStatus.ACTIVE:
+            live.add(connection.platform)
+        url = reverse_cached("channels:detail", workspace_id=workspace_id, connection_id=connection.pk, cache=False)
+        if url is None:  # pragma: no cover - home_url reversing means this does too
+            continue
+        connections.append(
+            {
+                "name": connection.display_name,
+                "platform": connection.platform,
+                "url": url,
+                # The same active convention every nav row follows (deviation 4
+                # in this module's docstring), computed once here rather than
+                # by the template comparing ids.
+                "active": open_connection == str(connection.pk),
+                # Two states mean "this is not carrying messages", and the shell
+                # says which: a revoked connection needs somebody, a disabled one
+                # is somebody's own decision. Without them a dead channel looks
+                # exactly like a quiet one until the settings page is opened.
+                "needs_reauth": connection.status == ConnectionStatus.NEEDS_REAUTH,
+                "disabled": connection.status == ConnectionStatus.DISABLED,
+            }
+        )
+
+    connectable: list[dict[str, Any]] = []
+    for value, label in Platform.choices:
+        if value in live:
+            continue
+        route = connect_route_for(value)
+        # A platform with no guided flow yet, or one whose route is not mounted
+        # in this deployment, gets no row rather than a dead one — the rule
+        # NavItem.visible_to and _render_nav both follow.
+        url = reverse_cached(route, workspace_id=workspace_id) if route else None
+        if url:
+            connectable.append({"platform": value, "label": label, "url": url})
+
+    return {"connections": connections, "connectable": connectable, "home_url": home_url}
+
+
 def navigation_context(request: HttpRequest) -> dict[str, Any]:
     """Build the shell's navigation payload.
 
@@ -575,6 +680,11 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     for a request the context processor deliberately skips — the UI style guide
     at ``/ui/`` is the only such caller, and it exists so the design system
     stays inspectable without a session.
+
+    Everything workspace-shaped is read off ``request`` the way RBACMiddleware
+    leaves it, which is also how ``/ui/`` gets a populated sidebar without a
+    session: it sets its own stand-in workspace on the request before calling
+    here, so this function needs no idea that the style guide exists.
     """
     # Model imports stay inside the function. A context processor is imported
     # by dotted path while the template engine is being configured, which can
@@ -659,12 +769,13 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
 
         badges["unread_inbox"] = inbox_unread_count(workspace, user)
 
-    # TODO(L2-B): connected channels for the sidebar's channel list, once
-    # channels.ChannelConnection exists (issue #4). The credential store from
-    # #31 is per-platform configuration, not a connected account.
-    channel_connections: list[Any] = []
-
     workspace_id = workspace.id if workspace is not None else None
+
+    # Deferred, not computed: a context processor runs on every ``render()``,
+    # and most of those are htmx fragments — the bell badge every 60s per tab,
+    # the inbox list every 3s — which swap a span and never draw a sidebar.
+    # Evaluated on first touch, once, by the one template that reads it.
+    channels = SimpleLazyObject(lambda: _sidebar_channels(request, workspace, membership, workspace_id))
 
     # The switcher's last row, and the account menu's one framed control. Both
     # are gated the way the settings rows they lead to are gated — see
@@ -681,13 +792,9 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
 
     settings_nav = _render_nav(SETTINGS_NAV, request, badges, workspace_id)
     return {
-        # The sidebar's nav, in two halves. One structure, filtered on
-        # placement, so the invariant tests that iterate MAIN_NAV still cover
-        # every row.
-        "nav_groups": _render_nav([g for g in MAIN_NAV if g.placement == "top"], request, badges, workspace_id),
-        "nav_footer_groups": _render_nav(
-            [g for g in MAIN_NAV if g.placement == "bottom"], request, badges, workspace_id
-        ),
+        # The sidebar's nav. One group now: the footer holds the account
+        # block and the collapse toggle, and no rows.
+        "nav_groups": _render_nav(MAIN_NAV, request, badges, workspace_id),
         "flow_tab_groups": _render_nav(FLOWS_TABS, request, badges, workspace_id),
         # One nav, two names. Both layouts render the same filtered list; the
         # second key is kept so the fourteen templates extending either layout
@@ -697,12 +804,18 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
         "sidebar_workspaces": sidebar_workspaces,
         "current_workspace": workspace,
         "can_create_workspace": can_create_workspace,
-        "channel_connections": channel_connections,
+        # The shell's channel block, as one object rather than three keys:
+        # `channels.connections`, `channels.connectable` and
+        # `channels.home_url`. partials/_sidebar_channels.html draws it, and
+        # touching any of the three is what runs the query (see above).
+        "channels": channels,
         "unread_notification_count": badges["unread_notifications"],
         # Named rather than indexed out of the nav in the template. Positional
         # lookup (`settings_nav_groups.0.items.0.url`) fails soft in Django, so
-        # reordering SETTINGS_NAV would silently retarget the footer link — and
-        # reordering being safe is the whole point of nav-as-data.
+        # reordering SETTINGS_NAV would silently retarget the account menu's
+        # Settings row — and reordering being safe is the whole point of
+        # nav-as-data. It is also the only Settings link left in the sidebar
+        # now that the footer's row is gone.
         "settings_home_url": reverse_cached("accounts:settings") or "#",
         # Where "Back to app" goes. The dashboard is workspace-scoped, so a
         # user with no current workspace (every one archived) is sent to the

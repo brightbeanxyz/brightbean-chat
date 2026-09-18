@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support import make_connection
+
 NONCE_ATTR_RE = re.compile(r'nonce="([A-Za-z0-9+/=]+)"')
 INLINE_SCRIPT_RE = re.compile(r"<(script|style)(?![^>]*\bsrc=)([^>]*)>", re.I)
 
@@ -233,6 +235,29 @@ class TestTheSidebar:
         assert ">Notifications</span>" in sidebar
         assert ">Sequences</span>" not in sidebar
 
+    def test_the_footer_holds_no_nav_rows(self, tenant_client, shell_urls, shell_url):
+        """It held Library and Settings, in a group pinned below the scrolling
+        nav. Both are gone — Settings from the product's chrome entirely (the
+        account menu below and the switcher above both lead there), Library into
+        the workspace settings nav — so the footer is the account block and the
+        collapse toggle.
+
+        Asserted on the rendered footer, not on MAIN_NAV: the group came back
+        once already, and it could come back as an include rather than as a
+        group.
+        """
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+        footer = sidebar[sidebar.index('class="sidebar-footer"') :]
+
+        assert "sidebar-nav-item" not in footer
+        # Matched on the label class a nav row uses, because the account menu
+        # below still carries a Settings row — as a .sidebar-menu-row, which is
+        # the point: one way in from the menu, none from the nav.
+        assert 'sidebar-nav-label">Library' not in sidebar
+        assert 'sidebar-nav-label">Settings' not in sidebar
+        assert "sidebar-menu-row" in sidebar
+
     def test_the_sidebar_survives_a_missing_optional_app(self, tenant_client, shell_urls, shell_url):
         """apps.analytics is an optional install, so the Insights row reverses
         to "#" and _render_nav drops it. The nav must not assume a fixed number
@@ -266,6 +291,93 @@ class TestTheSidebar:
                     offenders.append(f"{path.name}: {tag}")
 
         assert not offenders, f"x-show on an element that a utility class keeps hidden: {offenders}"
+
+
+@pytest.mark.django_db
+class TestTheChannelBlockInTheSidebar:
+    """What a workspace has connected, and what it could connect next.
+
+    The data is tested in apps/common/tests/test_context_processors.py; this is
+    the markup: the block is in the nav, its rows are nav rows, and the rail
+    keeps the channels while dropping the reading matter.
+    """
+
+    @pytest.fixture
+    def connected(self, tenancy):
+        return make_connection(tenancy.workspace, display_name="Acme support bot")
+
+    def test_a_connected_channel_is_a_row_in_the_nav(self, tenant_client, shell_url, connected):
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert ">Channels</div>" in sidebar
+        assert ">Acme support bot</span>" in sidebar
+        # The platform's own chip, through the filter that guarantees a class
+        # some stylesheet actually defines — never `pi-{{ key }}`.
+        assert "pi-chip pi-telegram" in sidebar
+        assert f"/settings/channels/{connected.pk}/" in sidebar
+
+    def test_a_channel_that_is_not_carrying_messages_says_so(self, tenant_client, shell_url, tenancy):
+        """A revoked channel gets the badge; a disabled one is drained of
+        colour. Both read as "not working" without opening a settings page."""
+        make_connection(tenancy.workspace, platform="instagram", status="needs_reauth")
+        make_connection(tenancy.workspace, platform="sms", status="disabled")
+
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert "sidebar-channel-flag" in sidebar
+        assert "sidebar-channel-mark is-off" in sidebar
+        assert "needs reconnecting" in sidebar
+        assert "turned off" in sidebar
+
+    def test_the_row_for_the_channel_you_are_reading_is_marked(self, tenant_client, tenancy, connected):
+        """Same active convention as every other nav row, `aria-current`
+        included — without it the shell says nothing about where you are."""
+        url = f"/w/{tenancy.workspace.id}/settings/channels/{connected.pk}/"
+
+        body = tenant_client.get(url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert 'class="sidebar-nav-item active"' in sidebar
+        assert 'aria-current="page"' in sidebar
+
+    def test_the_platforms_you_have_not_connected_are_offered(self, tenant_client, shell_url, connected):
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert ">Connect channels</div>" in sidebar
+        assert ">WhatsApp</span>" in sidebar
+        assert "sidebar-connect-plus" in sidebar
+        assert ">More channels</span>" in sidebar
+        # Telegram is connected, so it is in the list above and not in this one.
+        assert sidebar.count(">Telegram</span>") == 0
+
+    def test_a_member_who_cannot_connect_a_channel_sees_no_block(self, client_for, tenancy, shell_url, connected):
+        body = client_for(tenancy.user_for("agent")).get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert ">Channels</div>" not in sidebar
+        assert ">Connect channels</div>" not in sidebar
+        # And the rest of the sidebar is untouched.
+        assert ">Inbox</span>" in sidebar
+
+    def test_the_rail_keeps_the_channels_and_drops_the_offer(self):
+        """A connected channel is a glyph like any other nav row and survives
+        at 60px. The "Connect channels" list does not: six chips of platforms
+        you do NOT have, under a heading that is itself hidden, is a puzzle.
+
+        Read from the compiled bundle, and both halves of the collapse contract
+        are asserted — a rule written for the Alpine class alone flashes on
+        every load for anyone whose sidebar starts collapsed.
+        """
+        from django.contrib.staticfiles import finders
+
+        bundle = Path(finders.find("css/dist/styles.css")).read_text()
+
+        for marker in [".sidebar-connect", ".sidebar-section-label-wrap"]:
+            assert f".sidebar-collapsed {marker}" in bundle, marker
+            assert f"html.sidebar-is-collapsed .sidebar-initial {marker}" in bundle, marker
 
 
 @pytest.mark.django_db

@@ -33,6 +33,21 @@ class TestLibraryPage:
         assert "media-dropzone" in editor.content.decode()
         assert "media-dropzone" not in agent.content.decode()
 
+    def test_it_renders_the_settings_column_its_nav_row_lives_in(self, editor_client, workspace):
+        """Library is a workspace settings row now, not a sidebar one.
+
+        A page whose own nav row sits in a column it does not render would
+        light nothing and leave the reader with no way back into settings, so
+        the two move together: the row is in SETTINGS_NAV and this page extends
+        layouts/workspace_settings.html.
+        """
+        body = editor_client.get(_library(workspace)).content.decode()
+
+        assert 'class="setnav"' in body
+        assert 'class="setnav-item active"' in body
+        # And the sidebar is still beside it, with the rest of the product.
+        assert "sidebar-nav-item" in body
+
     def test_an_htmx_request_returns_only_the_grid(self, editor_client, workspace):
         f.make_asset(workspace)
         response = editor_client.get(_library(workspace), headers={"HX-Request": "true"})

@@ -9,8 +9,8 @@ import pytest
 from apps.channels import ingest as channels_ingest
 from apps.channels.events import EventPayload, EventType, NormalizedEvent
 from apps.channels.models import ChannelConnection
-from apps.common.platforms import Platform
 from apps.messaging.ingest import register_processors
+from tests.support import make_connection
 
 
 @pytest.fixture(autouse=True)
@@ -45,19 +45,9 @@ def _registered_processors() -> Iterator[None]:
         channels_ingest.register_processor(processor, name=name)
 
 
-def make_connection(workspace: Any, *, platform: str = Platform.TELEGRAM, suffix: str = "") -> ChannelConnection:
-    """An active connection. ``external_id`` is namespaced: SPEC §5's unique on
-    ``(platform, external_id)`` is deployment-wide, so a fixed literal would make
-    two tenancies in one test collide."""
-    connection = ChannelConnection(
-        workspace=workspace,
-        platform=platform,
-        display_name=f"{platform} {suffix or workspace.pk}",
-        external_id=f"{platform}-{suffix or workspace.pk}",
-    )
-    connection.rotate_webhook_secret()
-    connection.save()
-    return connection
+# Re-exported, not redefined: ten modules across six apps import
+# `make_connection` from here, and the builder itself now lives in
+# tests/support.py with every other shared object builder.
 
 
 @pytest.fixture
