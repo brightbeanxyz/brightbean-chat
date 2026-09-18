@@ -1,0 +1,39 @@
+{% comment %}
+One machine string an operator has to paste into somebody else's console: a
+webhook URL, an OAuth redirect URI. A well with a copy button rather than a
+bare <code>, because these are long, they must be transcribed exactly — Twilio
+signs each delivery with an HMAC over the URL itself, so a URL differing by one
+character fails verification — and hand-selecting a wrapped <code> is where the
+wrong character comes from.
+
+Alpine rather than an onclick attribute: the CSP is nonce-based and forbids
+inline handlers, and apps/common/tests/test_shell.py sweeps every rendered page
+for them. x-ref rather than the DOM walk templates/flows/_trigger_ref_links.html
+does — `$el.closest('div').parentElement.querySelector('code')` breaks the first
+time somebody adds a wrapper.
+
+navigator.clipboard is undefined outside a secure context, so the call is
+optional-chained: over plain http on a LAN the button does nothing rather than
+throwing, and the value stays selectable, which is the fallback either way.
+
+NEVER pass a secret through this. The value is a plain, greppable string in the
+page source — right for a URL, wrong for a token.
+
+type="button" is load-bearing: this sits inside or beside a POST form on four of
+the six connect pages, and a default-type button in a form submits it.
+
+Args:
+  label: the eyebrow above the well.
+  value: the string shown and copied.
+  hint:  optional line underneath. Omit for none.
+{% endcomment %}
+<div>
+  <div class="section-eyebrow mb-1.5">{{ label }}</div>
+  <div class="cn-copy" x-data="{ copied: false }">
+    <code class="cn-copy-value" x-ref="value">{{ value }}</code>
+    <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="navigator.clipboard?.writeText($refs.value.textContent.trim())?.then(() => { copied = true; setTimeout(() => copied = false, 1600) })">
+      <span x-text="copied ? 'Copied' : 'Copy'">Copy</span>
+    </button>
+  </div>
+  {% if hint %}<p class="field-hint">{{ hint }}</p>{% endif %}
+</div>

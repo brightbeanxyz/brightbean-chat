@@ -1515,6 +1515,109 @@ img.sidebar-logo-mark {
   box-shadow: 0 0 0 3px rgba(var(--error-rgb), 0.15);
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   FORM FIELDS — label, control, hint, error
+   The shape every settings page repeats. .form-input-styled was the only
+   piece of this in the system, so each page hand-rolled the label out of
+   five utilities and an inline colour, and the three that had been
+   migrated had already drifted apart.
+
+   Unlayered like the rest of this file, which is the right call here: a
+   label's type and colour are not things a call site should vary. What a
+   call site DOES legitimately vary — the control's width, the number of
+   columns — is deliberately left unset, so `style="width: 9rem"` and
+   `grid sm:grid-cols-2` keep working. Same trade as .card.
+   ═══════════════════════════════════════════════════════════════ */
+.field { margin-bottom: 1.25rem; }
+.field:last-child { margin-bottom: 0; }
+/* A field sitting in a toolbar row rather than in a stack. */
+.field-inline { margin-bottom: 0; }
+
+.field-label {
+  display: block;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.375rem;
+}
+/* "optional", beside the label rather than under it. */
+.field-label-optional {
+  margin-left: 0.375rem;
+  font-weight: 500;
+  color: var(--text-ghost);
+}
+.field-hint {
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  margin-top: 0.375rem;
+}
+.field-error {
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--error-700);
+  margin-top: 0.375rem;
+}
+
+/* The @layer base defaults in .app-content cap every input at 26rem. They
+   are there for pages still written as bare semantic HTML, and a field
+   that has been given real classes is not one of them — .form-input-styled
+   sets width:100% and no max-width, so base was the only declarant and a
+   620px card rendered a 416px input in it. Base is a layer; this is not,
+   so this wins. */
+.field .form-input-styled { max-width: none; }
+
+/* A checkbox or toggle with its label and hint stacked beside it. The
+   generic label-above-control shape is wrong for these — the same thing
+   partials/_auth_form_fields.html learned with allauth's "Remember me". */
+.field-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  margin-bottom: 1.25rem;
+}
+.field-check-body { min-width: 0; }
+.field-check .field-label { margin-bottom: 0; cursor: pointer; }
+.field-check input[type="checkbox"],
+.field-check .bb-toggle { margin-top: 2px; flex-shrink: 0; }
+
+/* A colour, as a swatch bound to a hex box. Nothing here styles a native
+   input[type=color] otherwise: it is a 50x27 box with a heavy border and
+   cannot be made to match a 40px control any other way.
+
+   The swatch carries no `name` — the text box beside it is what posts. A
+   bare type=color always submits, defaulting to #000000, so it cannot
+   express "no override", and Workspace.primary_color is blank=True with
+   "" meaning exactly that. Binding the two keeps the empty state
+   reachable. */
+.field-swatch { display: flex; align-items: center; gap: 0.625rem; }
+.field-swatch-well {
+  width: 44px;
+  height: 40px;
+  flex-shrink: 0;
+  padding: 3px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-0);
+  cursor: pointer;
+}
+.field-swatch-well::-webkit-color-swatch-wrapper { padding: 0; }
+.field-swatch-well::-webkit-color-swatch { border: none; border-radius: 6px; }
+.field-swatch-well::-moz-color-swatch { border: none; border-radius: 6px; }
+
+/* The row of buttons that closes a form. The rule above it is the card's
+   inner divider, not its outline. */
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--divider);
+}
+.form-actions-bare { border-top: 0; padding-top: 0; }
 /* Primary button */
 .btn-brand {
   display: inline-flex;
@@ -2117,6 +2220,20 @@ span.flatpickr-weekday {
 .pi-email     { background: var(--platform-email); }
 /* Unknown platform key — the partial's fallback glyph on a neutral chip. */
 .pi-unknown   { background: var(--neutral-400); }
+/* Size modifiers. These have to be classes: .pi-chip sets border-radius,
+   this file is unlayered, and Tailwind's utilities live in @layer
+   utilities — so `class="pi-chip rounded-xl"` is a silent no-op, which is
+   what templates/channels/list.html:65 has been doing since the redesign.
+   A 4px radius on a 56px square reads as a broken square, not as a mark.
+   .pi-chip-md is the retrofit for the 36-44px chips already in the
+   product; .pi-chip-hero is the connect pages' mark, and pairs with the
+   partial's size="lg" (28px glyph). */
+.pi-chip-md   { border-radius: var(--radius-xl); }
+.pi-chip-hero {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-2xl);
+}
 
 /* ═══════════════════════════════════════════════════════════════
    STATUS PILLS
@@ -4056,6 +4173,30 @@ span.flatpickr-weekday {
   .app-content ul:not([class]) { margin: 0 0 1rem 1.125rem; list-style: disc; font-size: 0.875rem; color: var(--text-secondary); }
   .app-content form { margin-bottom: 1rem; }
   .app-content .errorlist { list-style: none; margin: 0.375rem 0 0; padding: 0; color: var(--error-700); font-size: 0.75rem; }
+
+  /* `.muted` is written by 58 templates and has never existed — every
+     "quiet" line on every page still written as bare semantic HTML has
+     been rendering at .app-content p's own weight. Here rather than
+     unlayered, for the reason the rest of this block is here: it is a
+     default for markup that has not been given real classes, so a utility
+     or a component class at the call site must win without a fight. Pages
+     migrated to .page-lede / .field-hint stop reaching for it. */
+  .app-content .muted { font-size: var(--fs-body); color: var(--text-tertiary); }
+
+  /* <code> is used by 25 templates and styled in none of them. Sized in
+     `em` so a machine string inside a 13px meta line and one inside a 15px
+     paragraph both come out a step smaller than what surrounds them.
+     overflow-wrap because these are URLs and key prefixes: a long one must
+     wrap rather than widen the card it sits in. */
+  .app-content code {
+    font-family: var(--font-mono);
+    font-size: 0.8125em;
+    padding: 0.0625rem 0.3125rem;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -4456,3 +4597,185 @@ a.an-card:hover { border-color: var(--border-hover); }
    defined above for connections, WhatsApp templates and broadcasts; `active`
    and `draft` are shared with them, and only `archived` was missing. */
 .status-pill-archived { background: var(--neutral-100); color: var(--text-tertiary); }
+
+/* ═══════════════════════════════════════════════════════════════
+   CHANNEL CONNECT PAGES
+   The six guided setup flows — Telegram, WhatsApp, Instagram, Messenger,
+   SMS and email. One shape: a hero carrying the platform's own mark, a
+   numbered sequence of things to do in somebody else's console, the
+   credential form, and what happens after Connect.
+
+   Labels, hints and errors are the shared .field-* family, not a second
+   copy scoped to these pages — two families for one idea is exactly the
+   drift this file exists to stop. What lives here is what only a connect
+   page has.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* The column. One width for all six, so the reading measure of the steps
+   and the width of a pasted token do not change between platforms. */
+.cn-page { width: 100%; max-width: 680px; }
+
+/* ── The numbered sequence ──────────────────────────────────────
+   Tailwind's preflight zeroes `ol` and nothing in this file restored it —
+   only .app-content ul:not([class]) and .fb-rich-text ol have list styling
+   — so "Before you paste" has been rendering as three unnumbered lines of
+   body text. These are not a restyle; they are the first time the steps
+   have had numbers.
+
+   A counter rather than the browser's marker: a marker cannot be a tinted
+   disc and cannot carry the connector rule that makes three items read as
+   one sequence. list-style:none strips list semantics in Safari, so the
+   markup carries role="list". */
+.cn-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: cn-step;
+}
+.cn-step {
+  counter-increment: cn-step;
+  position: relative;
+  padding: 0 0 20px 42px;
+  font-size: var(--fs-body-lg);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.cn-step:last-child { padding-bottom: 0; }
+.cn-step::before {
+  content: counter(cn-step);
+  position: absolute;
+  left: 0;
+  top: -1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--primary-tint);
+  border: 1px solid var(--primary-tint-border);
+  color: var(--brand-700);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.cn-step::after {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 31px;
+  bottom: 3px;
+  width: 1px;
+  background: var(--divider);
+}
+.cn-step:last-child::after { display: none; }
+
+/* A Django form rendered through partials/_auth_form_fields.html, which
+   emits {{ field }} and therefore cannot put a class on the widget.
+   Exactly the situation .auth-card solves for allauth, and the same
+   answer: style by scope. Every declaration mirrors .form-input-styled;
+   keep the two in step. Used by whatsapp_connect.html only — the five
+   hand-written pages say class="form-input-styled" where you can see it.
+
+   Python must NOT grow a widget `class` attribute instead: @source at the
+   top of this file does not scan apps/, so a class name generated there is
+   dropped from the bundle, and TestTailwindSourceCoverage fails if apps/
+   is added to it. */
+.cn-form input[type="text"],
+.cn-form input[type="email"],
+.cn-form input[type="password"],
+.cn-form input[type="url"],
+.cn-form input[type="tel"],
+.cn-form select,
+.cn-form textarea {
+  width: 100%;
+  max-width: none;
+  font-family: var(--font-body);
+  font-size: 0.9375rem;
+  padding: 0.625rem 0.875rem;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.cn-form input:hover,
+.cn-form select:hover,
+.cn-form textarea:hover { border-color: var(--border-hover); }
+.cn-form input:focus,
+.cn-form select:focus,
+.cn-form textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+
+/* ── The copy field ────────────────────────────────────────────
+   A webhook or callback URL, in a well with a copy button. Sunken rather
+   than white so it reads as a value to take away rather than as a field to
+   fill in. The button is .btn-pill-secondary .btn-pill-sm — no new button
+   class. Two classes on the value, so it beats the .app-content code base
+   rule regardless of source order. */
+.cn-copy {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-sunken);
+}
+.cn-copy .cn-copy-value {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* ── The email page's provider picker ──────────────────────────
+   Three links, not a select plus a submit: apps/channels/views_email.py
+   reads the provider from the query string, so a link does the whole job
+   with no JavaScript and without spending the page's one primary button on
+   a control that only changes which fields are visible.
+
+   The :not() keeps the hover border off the chosen tile, whose 1.5px brand
+   border comes from .tile-selected and would otherwise lose to a two-class
+   hover selector. */
+.cn-provider {
+  display: block;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.cn-provider:not(.tile-selected):hover { border-color: var(--border-hover); }
+.cn-provider-name {
+  display: block;
+  font-size: var(--fs-body-lg);
+  font-weight: 600;
+}
+.cn-provider-note {
+  display: block;
+  font-size: var(--fs-body);
+  line-height: 1.4;
+  color: var(--text-tertiary);
+  margin-top: 3px;
+}
+
+/* ── The way back ──────────────────────────────────────────────
+   Quiet on purpose. .app-content a in @layer base paints every link
+   --primary, and an orange "Back to channels" under an orange Connect
+   button reads as a second call to action. */
+.cn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-decoration: none;
+}
+.cn-back:hover { color: var(--text-primary); }
