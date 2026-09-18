@@ -1,62 +1,86 @@
 {% extends "layouts/workspace_settings.html" %}
+{% comment %}
+Outbound webhooks, in the shape contacts/tag_list.html established.
+
+The add form re-opens on an error because the view re-renders this page with the
+message rather than redirecting, and a disclosure that closed itself would hide
+the form that produced it.
+
+No "…" on a row: disabling, rotating and deleting an endpoint all live on its own
+page, and a second copy of them here is the seven-buttons-per-row problem coming
+back. Open is the one action, and it is where the rest are.
+{% endcomment %}
 {% block title %}Webhooks · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Outbound webhooks</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    BrightBean Chat POSTs a signed JSON document to your endpoint when something
-    happens in this workspace. See the
-    <a href="{% url 'api_docs' %}">API reference</a> for the payload shape and a
-    signature-verification snippet.
-  </p>
+<div class="max-w-[860px] w-full" x-data="{ adding: {% if error %}true{% else %}false{% endif %} }">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">Outbound webhooks</h1>
+            <p class="page-lede mt-1.5">
+                BrightBean Chat POSTs a signed JSON document to your endpoint when something happens
+                in this workspace. See the <a href="{% url 'api_docs' %}">API reference</a> for the
+                payload shape and a signature-verification snippet.
+            </p>
+        </div>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newUrl.focus())">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} Add an endpoint</button>
+    </div>
 
-  {% if error %}<div class="alert-error"><p>{{ error }}</p></div>{% endif %}
+    {% if error %}<div class="alert-error mb-5">{{ error }}</div>{% endif %}
 
-  <h2>Add an endpoint</h2>
-  <form method="post" action="{% url 'api_webhooks:create' workspace_id=request.workspace.id %}">
-    {% csrf_token %}
-    <label for="webhook-url">URL</label>
-    <input id="webhook-url" type="url" name="url" maxlength="500" required
-           value="{{ submitted_url|default:'' }}" placeholder="https://example.com/hooks/brightbean" />
+    <form class="card p-6 mb-5" method="post" action="{% url 'api_webhooks:create' workspace_id=request.workspace.id %}" x-show="adding" x-cloak>
+        {% csrf_token %}
+        <h2 class="section-title mb-5">Add an endpoint</h2>
+        <div class="field">
+            <label class="field-label" for="webhook-url">URL</label>
+            <input class="form-input-styled" id="webhook-url" x-ref="newUrl" type="url" name="url" maxlength="500" required value="{{ submitted_url|default:'' }}" placeholder="https://example.com/hooks/brightbean">
+        </div>
+        <div class="field">
+            <span class="field-label">Events</span>
+            <div class="grid sm:grid-cols-2 gap-x-6">
+                {% for choice in event_choices %}
+                <label class="field-check" for="event-{{ choice.value }}">
+                    <input class="bb-checkbox" id="event-{{ choice.value }}" type="checkbox" name="events" value="{{ choice.value }}" {% if choice.checked %}checked{% endif %}>
+                    <span class="field-check-body"><span class="field-label">{{ choice.label }}</span><span class="field-hint"><code>{{ choice.value }}</code></span></span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn-pill-primary">Add endpoint</button>
+            <button type="button" class="btn-pill-secondary" @click="adding = false">Cancel</button>
+        </div>
+    </form>
 
-    <fieldset>
-      <legend>Events</legend>
-      {% for choice in event_choices %}
-        <label>
-          <input type="checkbox" name="events" value="{{ choice.value }}"
-                 {% if choice.checked %}checked{% endif %} />
-          {{ choice.label }} <code>{{ choice.value }}</code>
-        </label>
-      {% endfor %}
-    </fieldset>
-
-    <button type="submit">Add endpoint</button>
-  </form>
-
-  <h2>Endpoints</h2>
-  {% if webhooks %}
-    <table>
-      <thead><tr><th>URL</th><th>Events</th><th>Status</th><th>Last delivery</th><th></th></tr></thead>
-      <tbody>
+    <h2 class="section-title mb-3">Endpoints</h2>
+    {% if webhooks %}
+    <div class="card overflow-hidden">
         {% for webhook in webhooks %}
-          <tr>
-            <td><code>{{ webhook.url }}</code></td>
-            <td>{{ webhook.events|join:", " }}</td>
-            <td>
-              {% if webhook.enabled %}Enabled
-              {% else %}Disabled{% if webhook.disabled_at %} after repeated failures{% endif %}{% endif %}
-            </td>
-            <td>{{ webhook.last_delivery_at|default:"Never" }}</td>
-            <td>
-              <a href="{% url 'api_webhooks:detail' workspace_id=request.workspace.id webhook_id=webhook.id %}">
-                Open
-              </a>
-            </td>
-          </tr>
+        <div class="list-row flex-wrap">
+            <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="key" icon_size=19 %}</span>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2.5">
+                    <span class="list-row-title truncate"><code>{{ webhook.url }}</code></span>
+                    {% if webhook.enabled %}<span class="status-pill status-pill-active">Enabled</span>{% else %}<span class="status-pill status-pill-disabled">Disabled</span>{% endif %}
+                </div>
+                <div class="list-row-meta">
+                    {{ webhook.events|join:", " }} · last delivery {{ webhook.last_delivery_at|default:"never" }}{% if not webhook.enabled and webhook.disabled_at %} · disabled after repeated failures{% endif %}
+                </div>
+            </div>
+            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'api_webhooks:detail' workspace_id=request.workspace.id webhook_id=webhook.id %}">Open</a>
+        </div>
         {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="muted">No endpoints yet.</p>
-  {% endif %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="empty-state-title">No endpoints yet</p>
+        <p class="empty-state-body">
+            An endpoint is how something outside BrightBean Chat hears about a new message, a
+            finished flow or a tagged contact, as it happens.
+        </p>
+        <button type="button" class="btn-pill-secondary mt-4" @click="adding = true">Add an endpoint</button>
+    </div>
+    {% endif %}
+</div>
 {% endblock %}

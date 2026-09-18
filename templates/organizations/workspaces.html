@@ -1,47 +1,88 @@
 {% extends "layouts/settings.html" %}
+{% comment %}
+The organization's workspaces, in the shape contacts/tag_list.html established.
+
+The create form moved above the list. It was below it, while the webhooks page
+put its add form above — the two pages are one click apart in the settings
+column, and disagreeing about where the "new" control lives is the kind of thing
+that makes a product feel assembled rather than designed.
+
+Archived state is the whole point of this page: it is the only way back to an
+archived workspace, so it reads as a pill on the row rather than as a word in a
+column.
+{% endcomment %}
 {% block title %}Workspaces · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Workspaces</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Status</th><th>Your access</th><th></th></tr>
-    </thead>
-    <tbody>
-      {% for workspace in workspaces %}
-        <tr>
-          <td>{{ workspace.icon }} {{ workspace.name }}</td>
-          <td>{% if workspace.is_archived %}Archived{% else %}Active{% endif %}</td>
-          <td>
-            {% if workspace.id in member_workspace_ids %}
-              {% if not workspace.is_archived %}
-                <a href="{% url 'workspaces:dashboard' workspace_id=workspace.id %}">Open</a>
-              {% else %}Member{% endif %}
-            {% else %}<span class="muted">No access</span>{% endif %}
-          </td>
-          <td>
-            {% if can_manage %}
-              <form method="post" action="{% url 'organizations:set_workspace_archived' target_id=workspace.id %}">
-                {% csrf_token %}
-                <input type="hidden" name="archived" value="{% if workspace.is_archived %}0{% else %}1{% endif %}" />
-                <button type="submit">{% if workspace.is_archived %}Restore{% else %}Archive{% endif %}</button>
-              </form>
-            {% endif %}
-          </td>
-        </tr>
-      {% empty %}
-        <tr><td colspan="4" class="muted">No workspaces yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="max-w-[860px] w-full" x-data="{ adding: false }">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">Workspaces</h1>
+            <p class="page-lede mt-1.5">
+                Each workspace has its own channels, contacts and inbox. Archiving one keeps
+                everything and takes it out of the switcher.
+            </p>
+        </div>
+        {% if can_manage %}
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newName.focus())">{% include "partials/_nav_icon.html" with name="grid" icon_size=16 %} New workspace</button>
+        {% endif %}
+    </div>
 
-  {% if can_manage %}
-    <h2>Create a workspace</h2>
-    <form method="post" action="{% url 'organizations:create_workspace' %}">
-      {% csrf_token %}
-      <label for="new-workspace">Name</label>
-      <input id="new-workspace" type="text" name="name" maxlength="100" required />
-      <button type="submit">Create</button>
+    {% if can_manage %}
+    <form class="card p-4 mb-5 flex flex-wrap items-end gap-3" method="post" action="{% url 'organizations:create_workspace' %}" x-show="adding" x-cloak>
+        {% csrf_token %}
+        <div class="field field-inline">
+            <label class="field-label" for="new-workspace">What is it called?</label>
+            <input class="form-input-styled" id="new-workspace" x-ref="newName" type="text" name="name" maxlength="100" required style="width: 18rem;">
+        </div>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">Create</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="adding = false">Cancel</button>
     </form>
-  {% endif %}
+    {% endif %}
+
+    {% if workspaces %}
+    <div class="card overflow-hidden">
+        {% for workspace in workspaces %}
+        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu() }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+            <span class="list-row-icon">{% if workspace.icon %}{{ workspace.icon }}{% else %}{% include "partials/_nav_icon.html" with name="grid" icon_size=19 %}{% endif %}</span>
+
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2.5">
+                    <span class="list-row-title truncate">{{ workspace.name }}</span>
+                    {% if workspace.is_archived %}<span class="status-pill status-pill-disabled">Archived</span>{% endif %}
+                </div>
+                <div class="list-row-meta">
+                    {% if workspace.id in member_workspace_ids %}You are a member{% else %}You do not have access{% endif %}
+                </div>
+            </div>
+
+            {% if workspace.id in member_workspace_ids and not workspace.is_archived %}
+            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'workspaces:dashboard' workspace_id=workspace.id %}">Open</a>
+            {% endif %}
+
+            {% if can_manage %}
+            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ workspace.name }}">
+                <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+            </button>
+            <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
+                <form method="post" action="{% url 'organizations:set_workspace_archived' target_id=workspace.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="archived" value="{% if workspace.is_archived %}0{% else %}1{% endif %}">
+                    <button type="submit" class="row-menu-item{% if not workspace.is_archived %} row-menu-item-danger{% endif %}" role="menuitem">{% if workspace.is_archived %}Restore{% else %}Archive{% endif %}</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="empty-state-title">No workspaces yet</p>
+        <p class="empty-state-body">A workspace is one shop, brand or team, with its own inbox.</p>
+    </div>
+    {% endif %}
+</div>
 {% endblock %}
+
+{% block alpine_components %}{{ block.super }}{% include "partials/_row_menu.html" %}{% endblock %}

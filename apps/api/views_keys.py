@@ -87,10 +87,23 @@ def _rows(request: OrgRequest) -> list[dict[str, Any]]:
 
 
 def _context(request: OrgRequest, **extra: Any) -> dict[str, Any]:
+    """The list, plus whatever the operator last typed into the issue form.
+
+    ``issue_key`` re-renders this page on a refusal rather than redirecting,
+    and its docstring says that is "so the operator keeps what they typed" —
+    which only held once these three were echoed. ``request.POST`` is empty on
+    the GET path, so they are blank there, which is what the form wants.
+
+    Nothing secret passes through here: a key's value is never stored, only a
+    keyed digest of it, so there is no secret on this page to echo by accident.
+    """
     return {
         "rows": _rows(request),
         "workspaces": _issuable_workspaces(request),
         "scope_choices": known_scopes(),
+        "submitted_name": request.POST.get("name", ""),
+        "submitted_workspace": request.POST.get("workspace", ""),
+        "submitted_scopes": request.POST.getlist("scopes"),
         **extra,
     }
 
