@@ -1,101 +1,154 @@
 {% extends "layouts/settings.html" %}
+{% comment %}
+The team, in the shape contacts/tag_list.html established — but three lists on
+one page rather than one, so each gets its own .section-title over its own card.
+
+The invite form's field names are untouched: apps/members/views.py parses
+`ws_<id>` and `ws_role_<id>` by exact string, so the per-workspace pairs have to
+keep spelling themselves that way however they are laid out.
+
+Changing somebody's role is an inline reveal off the "…" rather than a select
+sitting in every row. A dropdown that silently posts on change, on a control that
+can demote the person reading it, is not a thing to leave lying in a list.
+{% endcomment %}
 {% block title %}Team members · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Team members</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <table>
-    <thead><tr><th>Member</th><th>Organization role</th><th>Workspaces</th><th></th></tr></thead>
-    <tbody>
-      {% for row in rows %}
-        <tr>
-          <td>{{ row.membership.user.display_name }}<br /><span class="muted">{{ row.membership.user.email }}</span></td>
-          <td>
-            {% if is_admin and row.can_manage %}
-              <form method="post" action="{% url 'members:update_role' membership_id=row.membership.id %}">
-                {% csrf_token %}
-                <select name="org_role" aria-label="Organization role">
-                  {% for value, label in org_role_choices %}
-                    <option value="{{ value }}" {% if row.membership.org_role == value %}selected{% endif %}>
-                      {{ label }}
-                    </option>
-                  {% endfor %}
-                </select>
-                <button type="submit">Update</button>
-              </form>
-            {% else %}
-              {{ row.membership.get_org_role_display }}
-            {% endif %}
-          </td>
-          <td><a href="{% url 'members:manage_workspaces' membership_id=row.membership.id %}">Manage access</a></td>
-          <td>
-            {% if is_admin and row.can_manage %}
-              <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}">
-                {% csrf_token %}
-                <button type="submit">Remove</button>
-              </form>
-            {% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="max-w-[860px] w-full" x-data="{ inviting: false }">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">Team members</h1>
+            <p class="page-lede mt-1.5">
+                Everybody in this organization, what they can do across it, and which workspaces they
+                can reach.
+            </p>
+        </div>
+        {% if can_invite %}
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="inviting = true; $nextTick(() => $refs.inviteEmail.focus())">{% include "partials/_nav_icon.html" with name="users" icon_size=16 %} Invite someone</button>
+        {% endif %}
+    </div>
 
-  <h2>Pending invitations</h2>
-  <table>
-    <thead><tr><th>Email</th><th>Role</th><th>Expires</th><th></th></tr></thead>
-    <tbody>
-      {% for invite in invitations %}
-        <tr>
-          <td>{{ invite.email }}</td>
-          <td>{{ invite.get_org_role_display }}</td>
-          <td>{{ invite.expires_at }}</td>
-          <td>
-            {% if is_admin %}
-              <form method="post" action="{% url 'members:resend_invite' invitation_id=invite.id %}">
-                {% csrf_token %}<button type="submit">Resend</button>
-              </form>
-              <form method="post" action="{% url 'members:revoke_invite' invitation_id=invite.id %}">
-                {% csrf_token %}<button type="submit">Revoke</button>
-              </form>
-            {% endif %}
-          </td>
-        </tr>
-      {% empty %}
-        <tr><td colspan="4" class="muted">No pending invitations.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  {% if can_invite %}
-    <h2>Invite someone</h2>
-    <form method="post" action="{% url 'members:invite' %}">
-      {% csrf_token %}
-      <p>
-        <label for="invite-email">Email</label><br />
-        <input id="invite-email" type="email" name="email" required />
-      </p>
-      <p>
-        <label for="invite-role">Organization role</label><br />
-        <select id="invite-role" name="org_role">
-          {% for value, label in org_role_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-        </select>
-      </p>
-      <fieldset>
-        <legend>Workspace access</legend>
-        {% for workspace in workspaces %}
-          <p>
-            <label>
-              <input type="checkbox" name="ws_{{ workspace.id }}" value="1" /> {{ workspace.name }}
-            </label>
-            <select name="ws_role_{{ workspace.id }}" aria-label="Role in {{ workspace.name }}">
-              {% for value, label in workspace_roles %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    {% if can_invite %}
+    <form class="card p-6 mb-5" method="post" action="{% url 'members:invite' %}" x-show="inviting" x-cloak>
+        {% csrf_token %}
+        <h2 class="section-title mb-5">Invite someone</h2>
+        <div class="field">
+            <label class="field-label" for="invite-email">Email</label>
+            <input class="form-input-styled" id="invite-email" x-ref="inviteEmail" type="email" name="email" required style="width: 22rem;">
+        </div>
+        <div class="field">
+            <label class="field-label" for="invite-role">Organization role</label>
+            <select class="form-input-styled bb-select" id="invite-role" name="org_role" style="width: 14rem;">
+                {% for value, label in org_role_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
             </select>
-          </p>
-        {% empty %}
-          <p class="muted">You cannot manage members in any workspace yet.</p>
-        {% endfor %}
-      </fieldset>
-      <button type="submit">Send invitation</button>
+        </div>
+        <div class="field">
+            <span class="field-label">Workspace access</span>
+            {% for workspace in workspaces %}
+            <div class="flex flex-wrap items-center gap-3 py-2">
+                <label class="field-check field-check-inline" for="ws-{{ workspace.id }}">
+                    <input class="bb-checkbox" id="ws-{{ workspace.id }}" type="checkbox" name="ws_{{ workspace.id }}" value="1">
+                    <span class="field-check-body"><span class="field-label">{{ workspace.name }}</span></span>
+                </label>
+                <select class="form-input-styled bb-select" name="ws_role_{{ workspace.id }}" aria-label="Role in {{ workspace.name }}" style="width: 12rem;">
+                    {% for value, label in workspace_roles %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                </select>
+            </div>
+            {% empty %}
+            <p class="section-note">You cannot manage members in any workspace yet.</p>
+            {% endfor %}
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn-pill-primary">Send invitation</button>
+            <button type="button" class="btn-pill-secondary" @click="inviting = false">Cancel</button>
+        </div>
     </form>
-  {% endif %}
+    {% endif %}
+
+    <h2 class="section-title mb-3">Members</h2>
+    {% if rows %}
+    <div class="card overflow-hidden mb-8">
+        {% for row in rows %}
+        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), changing: false }">
+            <span class="avatar">{{ row.membership.user.display_name|make_list|first|upper }}</span>
+
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2.5">
+                    <span class="list-row-title truncate">{{ row.membership.user.display_name }}</span>
+                    <span class="status-pill">{{ row.membership.get_org_role_display }}</span>
+                </div>
+                <div class="list-row-meta truncate">{{ row.membership.user.email }}</div>
+            </div>
+
+            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'members:manage_workspaces' membership_id=row.membership.id %}">Manage access</a>
+
+            {% if is_admin and row.can_manage %}
+            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ row.membership.user.display_name }}">
+                <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+            </button>
+            <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
+                <button type="button" class="row-menu-item" role="menuitem" @click="changing = true; menuOpen = false">Change role…</button>
+                <div class="row-menu-sep"></div>
+                <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}">
+                    {% csrf_token %}
+                    <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">Remove from organization</button>
+                </form>
+            </div>
+
+            <form x-show="changing" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" method="post" action="{% url 'members:update_role' membership_id=row.membership.id %}">
+                {% csrf_token %}
+                <label class="sr-only" for="role-{{ row.membership.id }}">Organization role</label>
+                <select class="form-input-styled bb-select" id="role-{{ row.membership.id }}" name="org_role" style="width: 14rem;">
+                    {% for value, label in org_role_choices %}<option value="{{ value }}" {% if row.membership.org_role == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                </select>
+                <button type="submit" class="btn-pill-secondary btn-pill-sm">Update</button>
+                <button type="button" class="btn-pill-secondary btn-pill-sm" @click="changing = false">Cancel</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state mb-8">
+        <p class="empty-state-title">Nobody here yet</p>
+        <p class="empty-state-body">Invite the people who answer messages with you.</p>
+    </div>
+    {% endif %}
+
+    <h2 class="section-title mb-3">Pending invitations</h2>
+    {% if invitations %}
+    <div class="card overflow-hidden">
+        {% for invite in invitations %}
+        <div class="list-row flex-wrap">
+            <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="user" icon_size=19 %}</span>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2.5">
+                    <span class="list-row-title truncate">{{ invite.email }}</span>
+                    <span class="status-pill">{{ invite.get_org_role_display }}</span>
+                </div>
+                <div class="list-row-meta">Expires {{ invite.expires_at }}</div>
+            </div>
+            {% if is_admin %}
+            <form method="post" action="{% url 'members:resend_invite' invitation_id=invite.id %}">
+                {% csrf_token %}
+                <button type="submit" class="btn-pill-secondary btn-pill-sm">Resend</button>
+            </form>
+            <form method="post" action="{% url 'members:revoke_invite' invitation_id=invite.id %}">
+                {% csrf_token %}
+                <button type="submit" class="btn-pill-secondary btn-pill-sm" style="color: var(--error-700);">Revoke</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="empty-state-title">No pending invitations</p>
+        <p class="empty-state-body">Invitations you send appear here until they are accepted.</p>
+    </div>
+    {% endif %}
+</div>
 {% endblock %}
+
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}

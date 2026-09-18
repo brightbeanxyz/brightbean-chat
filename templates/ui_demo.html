@@ -60,10 +60,20 @@ nothing but a form posting to a toast_response view.
         <div class="flex flex-wrap gap-4">
             {% for platform in ui_demo_platforms %}
             <div class="flex flex-col items-center gap-1.5 w-20">
-                <span class="pi-chip {{ platform|platform_class }} w-8 h-8">{% include "partials/_platform_icon.html" with platform=platform size="md" %}</span>
+                <span class="pi-chip pi-chip-md {{ platform|platform_class }} w-8 h-8">{% include "partials/_platform_icon.html" with platform=platform size="md" %}</span>
                 <span class="{{ platform|platform_ink_class }}">{% include "partials/_platform_icon.html" with platform=platform size="sm" %}</span>
                 <span class="text-[10px] truncate w-full text-center" style="color: var(--text-tertiary);">{{ platform }}</span>
             </div>
+            {% endfor %}
+        </div>
+        <p class="text-xs mt-4 mb-2" style="color: var(--text-tertiary);">
+            <code>.pi-chip-hero</code> at <code>size="lg"</code> — the channel connect pages' mark. The
+            radius has to be a class: <code>.pi-chip</code> sets <code>border-radius</code> unlayered,
+            so a <code>rounded-*</code> utility beside it loses silently.
+        </p>
+        <div class="flex flex-wrap gap-3">
+            {% for platform in ui_demo_platforms %}
+            <span class="pi-chip pi-chip-hero {{ platform|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform size="lg" only %}</span>
             {% endfor %}
         </div>
     </section>
@@ -102,6 +112,60 @@ nothing but a form posting to a toast_response view.
                 <span class="bb-toggle"><input type="checkbox" checked><span class="bb-toggle-track"></span></span>
                 Toggle switch
             </label>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Form fields</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            Label, control, hint, error — the shape every settings page repeats. Spacing between
+            fields is <code>.field</code>'s own margin; the control's width stays a call-site
+            decision, which is why none of these classes sets one.
+        </p>
+        <div class="card p-5 max-w-md">
+            <div class="field">
+                <label class="field-label" for="demo-name">Name</label>
+                <input class="form-input-styled" id="demo-name" type="text" value="Marta's shop">
+                <p class="field-hint">What your team sees in the workspace switcher.</p>
+            </div>
+            <div class="field">
+                <label class="field-label" for="demo-tz">Timezone<span class="field-label-optional">optional</span></label>
+                <select class="form-input-styled bb-select" id="demo-tz"><option>Europe/Berlin</option></select>
+            </div>
+            <div class="field">
+                <label class="field-label" for="demo-colour">Colour</label>
+                <div class="field-swatch">
+                    <input class="field-swatch-well" type="color" value="#F97316" aria-label="Pick a colour">
+                    <input class="form-input-styled is-error" id="demo-colour" type="text" value="octarine" style="width: 9rem;">
+                </div>
+                <p class="field-error">Colours must be a 6-digit hex value like #3B82F6.</p>
+            </div>
+            <label class="field-check" for="demo-check">
+                <input class="bb-checkbox" id="demo-check" type="checkbox" checked>
+                <span class="field-check-body">
+                    <span class="field-label">Rewrite links in email bodies</span>
+                    <span class="field-hint">Every link is replaced with one that records the click.</span>
+                </span>
+            </label>
+            <div class="form-actions">
+                <button type="button" class="btn-pill-primary">Save changes</button>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Setup steps, and a copy field</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            The channel connect pages' two pieces. Tailwind's preflight zeroes <code>ol</code> and
+            nothing restored it, so these steps are the first numbered list in the product.
+        </p>
+        <div class="card p-5 max-w-lg">
+            <ol class="cn-steps mb-5" role="list">
+                <li class="cn-step">Open <code>@BotFather</code> in Telegram and send <code>/newbot</code>.</li>
+                <li class="cn-step">Choose a display name and a username ending in <code>bot</code>.</li>
+                <li class="cn-step">Copy the token it replies with.</li>
+            </ol>
+            {% include "partials/_copy_field.html" with label="Deliveries arrive at" value="https://example.com/hooks/telegram/" hint="Reachable from the public internet over HTTPS." only %}
         </div>
     </section>
 

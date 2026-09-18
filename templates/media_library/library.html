@@ -63,7 +63,7 @@ design-system classes, so they live in theme/static_src/src/styles.css as
 
   {# ── Folder rail ─────────────────────────────────────────────── #}
   <aside class="xl:w-56 flex-shrink-0">
-    <h2>Folders</h2>
+    <h2 class="section-eyebrow mb-2">Folders</h2>
     {% include "media_library/_folder_rail.html" %}
 
     {% if can_manage %}
@@ -77,11 +77,11 @@ design-system classes, so they live in theme/static_src/src/styles.css as
             hx-swap="none"
             hx-on::after-request="if (event.detail.successful) this.reset()">
         <label for="new-folder" class="sr-only">New folder name</label>
-        <input type="text" id="new-folder" name="name" placeholder="New folder" maxlength="255" required>
+        <input class="form-input-styled" type="text" id="new-folder" name="name" placeholder="New folder" maxlength="255" required>
         {% if current_folder and current_folder != 'root' %}
           <input type="hidden" name="parent" value="{{ current_folder }}">
         {% endif %}
-        <button type="submit" class="mt-1.5">Create folder</button>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm mt-1.5">Create folder</button>
       </form>
     {% endif %}
   </aside>
@@ -96,7 +96,7 @@ design-system classes, so they live in theme/static_src/src/styles.css as
             hx-swap="outerHTML"
             hx-trigger="input changed delay:300ms, submit">
         <label for="media-search" class="sr-only">Search media</label>
-        <input type="search" id="media-search" name="q" value="{{ query }}"
+        <input class="form-input-styled" type="search" id="media-search" name="q" value="{{ query }}"
                placeholder="Search filenames, titles and alt text">
         <input type="hidden" name="folder" value="{{ current_folder }}">
         <input type="hidden" name="kind" value="{{ current_kind }}">

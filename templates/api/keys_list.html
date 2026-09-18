@@ -1,93 +1,128 @@
 {% extends "layouts/settings.html" %}
+{% comment %}
+API keys, in the shape contacts/tag_list.html established.
+
+The issue form re-opens on an error — `adding || error` — because issue_key
+answers a refusal by re-rendering this page at status 400 rather than
+redirecting, and a disclosure that closed itself would hide the form that
+produced the message.
+
+No named action on a row: the only thing you can do to a key is revoke it, and a
+destructive action is the one thing that must not be the row's obvious button.
+{% endcomment %}
 {% block title %}API keys · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">API keys</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    A key authenticates calls to the <a href="{% url 'api_docs' %}">public API</a>
-    as one workspace. Keys are organization-level because they span every
-    workspace in the organization, but each key acts inside exactly one.
-  </p>
+<div class="max-w-[860px] w-full" x-data="{ adding: {% if error %}true{% else %}false{% endif %} }">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">API keys</h1>
+            <p class="page-lede mt-1.5">
+                A key authenticates calls to the <a href="{% url 'api_docs' %}">public API</a> as one
+                workspace. Keys are organization-level because they span every workspace in the
+                organization, but each key acts inside exactly one.
+            </p>
+        </div>
+        {% if workspaces %}
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newName.focus())">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} Issue a key</button>
+        {% endif %}
+    </div>
 
-  {% if error %}<div class="alert-error"><p>{{ error }}</p></div>{% endif %}
+    {% if error %}<div class="alert-error mb-5">{{ error }}</div>{% endif %}
 
-  <h2>Issue a key</h2>
-  {% if workspaces %}
-    <form method="post" action="{% url 'api_keys_issue' %}">
-      {% csrf_token %}
-      <label for="key-name">Name</label>
-      <input id="key-name" type="text" name="name" maxlength="100" required
-             placeholder="Zapier scenario" />
-
-      <label for="key-workspace">Workspace</label>
-      <select id="key-workspace" name="workspace" required>
-        {% for workspace in workspaces %}
-          <option value="{{ workspace.id }}">{{ workspace.name }}</option>
-        {% endfor %}
-      </select>
-
-      <fieldset>
-        <legend>Scopes</legend>
-        {% for value, label in scope_choices %}
-          <label><input type="checkbox" name="scopes" value="{{ value }}" /> {{ label }}</label>
-        {% endfor %}
-        <p class="muted">
-          <strong>Read</strong> lists contacts, tags, fields and flows.
-          <strong>Write</strong> adds creating and updating contacts, tagging,
-          setting field values, starting flows and sending messages. No scope
-          grants channel, member or key management.
-        </p>
-      </fieldset>
-
-      <button type="submit">Issue key</button>
+    {% if workspaces %}
+    <form class="card p-6 mb-5" method="post" action="{% url 'api_keys_issue' %}" x-show="adding" x-cloak>
+        {% csrf_token %}
+        <h2 class="section-title mb-5">Issue a key</h2>
+        <div class="field">
+            <label class="field-label" for="key-name">Name</label>
+            <input class="form-input-styled" id="key-name" x-ref="newName" type="text" name="name" maxlength="100" required placeholder="Zapier scenario" value="{{ submitted_name }}" style="width: 20rem;">
+        </div>
+        <div class="field">
+            <label class="field-label" for="key-workspace">Workspace</label>
+            <select class="form-input-styled bb-select" id="key-workspace" name="workspace" required style="width: 20rem;">
+                {% for workspace in workspaces %}<option value="{{ workspace.id }}" {% if workspace.id|stringformat:'s' == submitted_workspace %}selected{% endif %}>{{ workspace.name }}</option>{% endfor %}
+            </select>
+        </div>
+        <div class="field">
+            <span class="field-label">Scopes</span>
+            {% for value, label in scope_choices %}
+            <label class="field-check" for="scope-{{ value }}">
+                <input class="bb-checkbox" id="scope-{{ value }}" type="checkbox" name="scopes" value="{{ value }}" {% if value in submitted_scopes %}checked{% endif %}>
+                <span class="field-check-body"><span class="field-label">{{ label }} <code>{{ value }}</code></span></span>
+            </label>
+            {% endfor %}
+            <p class="section-note">
+                <strong>Read</strong> lists contacts, tags, fields and flows. <strong>Write</strong>
+                adds creating and updating contacts, tagging, setting field values, starting flows
+                and sending messages. No scope grants channel, member or key management.
+            </p>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn-pill-primary">Issue key</button>
+            <button type="button" class="btn-pill-secondary" @click="adding = false">Cancel</button>
+        </div>
     </form>
-  {% else %}
+    {% else %}
     {% comment %}
     Both gates have to pass to issue a key: organization admin (which the page
     already required) and manage_api_keys in the target workspace. Saying so is
     the difference between a fixable state and an empty dropdown.
     {% endcomment %}
-    <p class="muted">
-      You are an organization admin, but you do not hold the
-      <code>manage_api_keys</code> permission in any workspace, so there is
-      nowhere to issue a key. A workspace admin can grant it.
-    </p>
-  {% endif %}
+    <div class="alert-info mb-5">
+        You are an organization admin, but you do not hold the <code>manage_api_keys</code>
+        permission in any workspace, so there is nowhere to issue a key. A workspace admin can grant
+        it.
+    </div>
+    {% endif %}
 
-  <h2>Existing keys</h2>
-  {% if rows %}
-    <table>
-      <thead>
-        <tr><th>Name</th><th>Workspace</th><th>Key</th><th>Scopes</th><th>Last used</th><th>Status</th><th></th></tr>
-      </thead>
-      <tbody>
+    <h2 class="section-title mb-3">Existing keys</h2>
+    {% if rows %}
+    <div class="card overflow-hidden">
         {% for row in rows %}
-          <tr>
-            <td>{{ row.key.name }}</td>
-            <td>{{ row.workspace.name }}</td>
-            {% comment %}
-            The prefix, never the key. Nothing can render the value again — it
-            is not stored (CONTRIBUTING → Secrets), only a keyed digest of it.
-            {% endcomment %}
-            <td><code>{{ row.key.display_handle }}</code></td>
-            <td>{{ row.scopes }}</td>
-            <td>{{ row.key.last_used_at|default:"Never" }}</td>
-            <td>
-              {% if row.key.is_active %}Active{% else %}Revoked {{ row.key.revoked_at }}{% endif %}
-            </td>
-            <td>
-              {% if row.key.is_active %}
+        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu() }">
+            <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="key" icon_size=19 %}</span>
+
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2.5">
+                    <span class="list-row-title truncate">{{ row.key.name }}</span>
+                    {% if row.key.is_active %}<span class="status-pill status-pill-active">Active</span>{% else %}<span class="status-pill status-pill-disabled">Revoked</span>{% endif %}
+                </div>
+                {% comment %}
+                The prefix, never the key. Nothing can render the value again —
+                it is not stored (CONTRIBUTING → Secrets), only a keyed digest.
+                {% endcomment %}
+                <div class="list-row-meta">
+                    {{ row.workspace.name }} · <code>{{ row.key.display_handle }}</code> · {{ row.scopes }} ·
+                    {% if row.key.is_active %}last used {{ row.key.last_used_at|default:"never" }}{% else %}revoked {{ row.key.revoked_at }}{% endif %}
+                </div>
+            </div>
+
+            {% if row.key.is_active %}
+            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ row.key.name }}">
+                <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+            </button>
+            <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
                 <form method="post" action="{% url 'api_keys_revoke' api_key_id=row.key.id %}">
-                  {% csrf_token %}
-                  <button type="submit">Revoke</button>
+                    {% csrf_token %}
+                    <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">Revoke this key</button>
                 </form>
-              {% endif %}
-            </td>
-          </tr>
+            </div>
+            {% endif %}
+        </div>
         {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p class="muted">No keys yet.</p>
-  {% endif %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p class="empty-state-title">No keys yet</p>
+        <p class="empty-state-body">
+            A key lets something outside BrightBean Chat — a Zapier scenario, a script, your own
+            backend — read and write in one workspace.
+        </p>
+    </div>
+    {% endif %}
+</div>
 {% endblock %}
+
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}

@@ -25,11 +25,11 @@ deliver never.
 import logging
 from datetime import datetime, time, timedelta, tzinfo
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from django.utils import timezone
 
-__all__ = ["WEEKDAYS", "clock_for", "into_window", "zone"]
+__all__ = ["WEEKDAYS", "clock_for", "into_window", "is_valid_timezone", "timezone_choices", "zone"]
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,57 @@ def zone(name: Any) -> tzinfo | None:
     except (ZoneInfoNotFoundError, ValueError):
         logger.warning("%r is not a timezone; falling back.", name)
         return None
+
+
+def is_valid_timezone(name: str) -> bool:
+    """Is ``name`` a zone we can store? Quiet, unlike :func:`zone`.
+
+    ``zone`` exists for attacker-supplied contact timezones and *logs* every
+    value it rejects, because there the fallback is the interesting event. Using
+    it as a form validator turned each refused submission into a WARNING line
+    carrying user-supplied text, and one whose message ("falling back") was not
+    even what the view then did.
+
+    Deliberately broader than :func:`timezone_choices`: that list is what the
+    picker offers, this is what the column accepts. A legacy alias already in
+    the database has to keep saving.
+    """
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
+
+
+def timezone_choices(current: str = "") -> list[str]:
+    """Every zone a ``<select>`` may offer, plus whatever is already stored.
+
+    ``Etc/*`` is dropped because its signs are POSIX-inverted — ``Etc/GMT+5`` is
+    five hours *behind* UTC — which is a trap to offer rather than a choice. The
+    single-word legacy aliases (``EST``, ``Japan``, ``Zulu``) go with it: they
+    exist for compatibility, not for picking.
+
+    **``UTC`` is kept, and is the reason this is not just a ``"/" in name``
+    test.** It is the only slash-less name that is a real choice rather than an
+    alias, and it is ``Organization.default_timezone``'s own default — filtering
+    it out left an organization that had moved to a named zone with no way back
+    to it, and a workspace with no way to be set to it at all.
+
+    ``current`` is folded back in so a value stored before this list existed
+    still renders as the selected option. Without it, a ``<select>`` quietly
+    posts a *different* zone the next time somebody saves an untouched form —
+    the field has been free text with no validation since it was added, so
+    values outside this list genuinely exist.
+
+    This is the UI's list, not the validation rule. Anything :func:`zone`
+    accepts is storable; see the settings views, which check with that rather
+    than with membership here, so an ``Etc/UTC`` already in the database is not
+    rejected the first time its owner opens the page.
+    """
+    names = {name for name in available_timezones() if name == "UTC" or ("/" in name and not name.startswith("Etc/"))}
+    if current and current.strip():
+        names.add(current.strip())
+    return sorted(names)
 
 
 def clock_for(contact: Any, workspace: Any, *, use_contact_timezone: bool) -> tzinfo:

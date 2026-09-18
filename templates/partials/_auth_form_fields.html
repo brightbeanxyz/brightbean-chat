@@ -1,13 +1,20 @@
 {% comment %}
-Renders a Django form with the design system's input styling.
+Renders a Django form with the design system's field classes.
 
-Shared by login, signup and the invite pages so the three cannot drift, and so
-error presentation is identical everywhere.
+Used by the login page and by the WhatsApp connect page — the two places in the
+product that hand a real Form object to a template. Everything else writes its
+inputs out longhand, where a `class="form-input-styled"` is visible at the call
+site; here the widget is rendered by Django and a template cannot reach it, so
+the caller scopes the controls instead (.auth-card, .cn-form).
 
-Checkboxes are laid out inline. The generic label-above-input shape is wrong
-for them — allauth's "Remember Me" rendered as a heading with a stray box
-underneath — and a form partial that gets one field type visibly wrong is worse
-than no partial.
+Checkboxes are laid out inline. The generic label-above-input shape is wrong for
+them — allauth's "Remember Me" rendered as a heading with a stray box underneath
+— and a form partial that gets one field type visibly wrong is worse than no
+partial.
+
+Errors render inside the field rather than after it. They used to be pulled back
+up with a negative margin tuned to the wrapper's own `mb-4`, which is the kind
+of coupling that breaks silently the day the wrapper's spacing changes.
 {% endcomment %}
 {% if form.non_field_errors %}
 <div class="alert-error mb-4">
@@ -16,22 +23,20 @@ than no partial.
 {% endif %}
 {% for field in form %}
 {% if field.field.widget.input_type == "checkbox" %}
-<label class="flex items-center gap-2 mb-4 text-sm cursor-pointer" style="color: var(--text-secondary);">
+<label class="field-check" for="{{ field.id_for_label }}">
     {{ field }}
-    <span>{{ field.label }}</span>
+    <span class="field-check-body">
+        <span class="field-label">{{ field.label }}</span>
+        {% if field.help_text %}<span class="field-hint">{{ field.help_text }}</span>{% endif %}
+        {% for error in field.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+    </span>
 </label>
 {% else %}
-<div class="mb-4">
-    <label for="{{ field.id_for_label }}" class="block text-sm font-medium mb-1.5" style="color: var(--text-primary);">
-        {{ field.label }}
-    </label>
+<div class="field">
+    <label class="field-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
     {{ field }}
-    {% if field.help_text %}
-    <p class="text-xs mt-1.5" style="color: var(--text-tertiary);">{{ field.help_text }}</p>
-    {% endif %}
+    {% if field.help_text %}<p class="field-hint">{{ field.help_text }}</p>{% endif %}
+    {% for error in field.errors %}<p class="field-error">{{ error }}</p>{% endfor %}
 </div>
 {% endif %}
-{% for error in field.errors %}
-<p class="text-xs -mt-3 mb-4" style="color: var(--error-700);">{{ error }}</p>
-{% endfor %}
 {% endfor %}

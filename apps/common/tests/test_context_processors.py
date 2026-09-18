@@ -289,6 +289,23 @@ class TestReverseCache:
 
 
 class TestNavStructure:
+    def test_the_channels_row_lights_up_on_every_guided_connect_page(self):
+        """The settings column is how you got to a connect page — "Set up" is a
+        link in it — so leaving those routes out of `url_names` means the whole
+        232px column sits unlit on the page you just clicked into, which reads
+        as having navigated out of settings.
+
+        Spelled out in the nav rather than derived, because that module keeps
+        itself free of module-level ``apps.channels`` imports; this is what
+        stops the two drifting when an adapter lands.
+        """
+        from apps.channels.registry import CONNECT_ROUTES
+        from apps.common.context_processors import SETTINGS_NAV
+
+        row = next(i for g in SETTINGS_NAV for i in g.items if i.key == "ws_channels")
+
+        assert set(CONNECT_ROUTES.values()) <= row.url_names
+
     def test_every_nav_target_resolves_to_a_real_url(self):
         """A nav entry pointing at a name nothing registers renders "#", which
         is silent. Catch it here instead."""

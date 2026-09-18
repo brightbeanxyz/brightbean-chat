@@ -1,163 +1,194 @@
 {% extends "layouts/workspace_settings.html" %}
+{% load common_extras %}
+{% comment %}
+Connect an email sender. Same shape as telegram_connect.html — see the note
+there for why content_wrap is cleared and why the platform key is written once.
+
+The provider picker is three links rather than the GET form with a submit button
+it used to be. views_email._chosen_provider reads request.GET, so a link does the
+whole job: no JavaScript (which the nonce-based CSP would refuse in an onchange
+anyway), and the page's one primary button is spent on Connect rather than on a
+control that only changes which fields are visible.
+
+Every credential input below is type="password" with autocomplete="off", for the
+reason the Telegram page gives: these are live credentials and must not end up in
+the browser's saved form data. None of them is ever echoed back on a failed
+submit either — the view's `_echoed` names only non-secret fields.
+{% endcomment %}
 {% block title %}Connect email · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Connect an email sender</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    Email is outbound only. BrightBean Chat sends through your own provider:
-    your SMTP server, Resend, or Amazon SES. So the sending reputation, the
-    domain and the bill stay yours.
-  </p>
+{% with platform_key="email" %}
+<div class="cn-page">
 
-  <h2>Before you start</h2>
-  <p class="muted">
-    Set up SPF, DKIM and DMARC on the domain you are going to send from. All
-    three, not one: without them a meaningful share of what you send goes to
-    spam, and Gmail and Yahoo reject bulk mail from domains that lack them
-    outright. Your provider publishes the exact records. The full checklist is
-    in <code>docs/channels/email.md</code>.
-  </p>
+    <div class="flex items-start gap-4 mb-7">
+        <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
+        <div class="min-w-0">
+            <h1 class="page-title">Connect an email sender</h1>
+            <p class="page-lede mt-1.5">
+                Email is outbound only. BrightBean Chat sends through your own provider: your SMTP
+                server, Resend, or Amazon SES. So the sending reputation, the domain and the bill
+                stay yours.
+            </p>
+        </div>
+    </div>
 
-  {% if error %}
-    <div class="alert-error"><p>{{ error }}</p></div>
-  {% endif %}
+    {% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
 
-  {% comment %}
-  A GET form with a real submit button rather than an onchange handler: the CSP
-  on every page is nonce-based (SECURITY-BASELINE §8), which blocks inline event
-  attributes, and this way the page also works with no JavaScript at all.
-  {% endcomment %}
-  <form method="get">
-    <p>
-      <label for="provider-select">Provider</label><br />
-      <select id="provider-select" name="provider">
-        {% for value in providers %}
-          <option value="{{ value }}" {% if value == provider %}selected{% endif %}>
-            {% if value == "smtp" %}Your own SMTP server{% elif value == "resend" %}Resend{% else %}Amazon SES{% endif %}
-          </option>
-        {% endfor %}
-      </select>
-      <button type="submit">Show these fields</button>
-    </p>
-  </form>
+    <section class="card p-6 mb-5">
+        <h2 class="section-title mb-4">Before you start</h2>
+        <ol class="cn-steps" role="list">
+            <li class="cn-step">
+                Set up SPF, DKIM and DMARC on the domain you are going to send from. All three, not
+                one: without them a meaningful share of what you send goes to spam, and Gmail and
+                Yahoo reject bulk mail from domains that lack them outright. Your provider publishes
+                the exact records. The full checklist is in docs/channels/email.md.
+            </li>
+            <li class="cn-step">
+                Have that provider's credentials to hand: an SMTP host and password, a Resend API
+                key, or an AWS access key and secret.
+            </li>
+        </ol>
+    </section>
 
-  <form method="post">
-    {% csrf_token %}
-    <input type="hidden" name="provider" value="{{ provider }}" />
+    <section class="card p-6 mb-5">
+        <h2 class="section-title mb-1">Which provider sends the mail</h2>
+        <p class="section-note mb-4">Pick one and the fields below change to match.</p>
+        <div class="grid gap-3 sm:grid-cols-3">
+            {% for value in providers %}
+            <a class="tile cn-provider p-4{% if value == provider %} tile-selected{% endif %}" href="?provider={{ value }}"{% if value == provider %} aria-current="true"{% endif %}>
+                <span class="cn-provider-name">{% if value == "smtp" %}Your own SMTP server{% elif value == "resend" %}Resend{% else %}Amazon SES{% endif %}</span>
+                <span class="cn-provider-note">{% if value == "smtp" %}Any server you already run{% elif value == "resend" %}An API key from the dashboard{% else %}An IAM access key{% endif %}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
 
-    <p>
-      <label for="from_address">From address</label><br />
-      <input type="email" id="from_address" name="from_address" value="{{ form.from_address }}" required />
-      <span class="muted">Its domain becomes this channel's identity, and only one workspace can claim a domain.</span>
-    </p>
-    <p>
-      <label for="from_name">From name</label><br />
-      <input type="text" id="from_name" name="from_name" value="{{ form.from_name }}" maxlength="200" />
-    </p>
-    <p>
-      <label for="display_name">Channel name</label><br />
-      <input type="text" id="display_name" name="display_name" value="{{ form.display_name }}" maxlength="200" />
-      <span class="muted">What this channel is called in BrightBean Chat. Defaults to the domain.</span>
-    </p>
+    <form class="card p-6 mb-5" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="provider" value="{{ provider }}" />
 
-    {% comment %}
-    Every credential input below is type="password" with autocomplete="off", for
-    the reason the Telegram page gives: these are live credentials and must not
-    end up in the browser's saved form data. None of them is ever echoed back on
-    a failed submit either — the view's `_echoed` names only non-secret fields.
-    {% endcomment %}
+        <h2 class="section-title mb-4">Who it comes from</h2>
+        <div class="field">
+            <label class="field-label" for="from_address">From address</label>
+            <input class="form-input-styled" type="email" id="from_address" name="from_address" value="{{ form.from_address }}" required>
+            <p class="field-hint">Its domain becomes this channel's identity, and only one workspace can claim a domain.</p>
+        </div>
+        <div class="field">
+            <label class="field-label" for="from_name">From name</label>
+            <input class="form-input-styled" type="text" id="from_name" name="from_name" value="{{ form.from_name }}" maxlength="200">
+        </div>
+        <div class="field">
+            <label class="field-label" for="display_name">Channel name</label>
+            <input class="form-input-styled" type="text" id="display_name" name="display_name" value="{{ form.display_name }}" maxlength="200">
+            <p class="field-hint">What this channel is called in BrightBean Chat. Defaults to the domain.</p>
+        </div>
 
-    {% if provider == "smtp" %}
-      <h2>Your SMTP server</h2>
-      <p>
-        <label for="host">Host</label><br />
-        <input type="text" id="host" name="host" value="{{ form.host }}" required spellcheck="false" />
-      </p>
-      <p>
-        <label for="port">Port</label><br />
-        <input type="text" id="port" name="port" value="{{ form.port|default:'587' }}" inputmode="numeric" />
-      </p>
-      <p>
-        <label for="security">Encryption</label><br />
-        <select id="security" name="security">
-          <option value="starttls" {% if form.security == "starttls" or not form.security %}selected{% endif %}>STARTTLS (port 587)</option>
-          <option value="ssl" {% if form.security == "ssl" %}selected{% endif %}>SSL/TLS (port 465)</option>
-          <option value="none" {% if form.security == "none" %}selected{% endif %}>None</option>
-        </select>
-        <span class="muted">Choose "none" only for a relay on your own private network.</span>
-      </p>
-      <p>
-        <label for="username">Username</label><br />
-        <input type="text" id="username" name="username" value="{{ form.username }}" autocomplete="off" spellcheck="false" />
-      </p>
-      <p>
-        <label for="password">Password</label><br />
-        <input type="password" id="password" name="password" autocomplete="off" spellcheck="false" />
-        <span class="muted">Stored encrypted and never shown again.</span>
-      </p>
+        {% if provider == "smtp" %}
+        <div class="card-row pt-6 mt-6">
+            <h3 class="section-title mb-4">Your SMTP server</h3>
+            <div class="field">
+                <label class="field-label" for="host">Host</label>
+                <input class="form-input-styled" type="text" id="host" name="host" value="{{ form.host }}" required spellcheck="false">
+            </div>
+            <div class="field">
+                <label class="field-label" for="port">Port</label>
+                <input class="form-input-styled" type="text" id="port" name="port" value="{{ form.port|default:'587' }}" inputmode="numeric" style="width: 8rem;">
+            </div>
+            <div class="field">
+                <label class="field-label" for="security">Encryption</label>
+                <select class="form-input-styled bb-select" id="security" name="security" style="width: 18rem;">
+                    <option value="starttls" {% if form.security == "starttls" or not form.security %}selected{% endif %}>STARTTLS (port 587)</option>
+                    <option value="ssl" {% if form.security == "ssl" %}selected{% endif %}>SSL/TLS (port 465)</option>
+                    <option value="none" {% if form.security == "none" %}selected{% endif %}>None</option>
+                </select>
+                <p class="field-hint">Choose "none" only for a relay on your own private network.</p>
+            </div>
+            <div class="field">
+                <label class="field-label" for="username">Username</label>
+                <input class="form-input-styled" type="text" id="username" name="username" value="{{ form.username }}" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field">
+                <label class="field-label" for="password">Password</label>
+                <input class="form-input-styled" type="password" id="password" name="password" autocomplete="off" spellcheck="false">
+                <p class="field-hint">Stored encrypted and never shown again.</p>
+            </div>
+        </div>
 
-    {% elif provider == "resend" %}
-      <h2>Resend</h2>
-      <p>
-        <label for="api_key">API key</label><br />
-        <input type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" required />
-        <span class="muted">From the Resend dashboard. Stored encrypted and never shown again.</span>
-      </p>
-      <p>
-        <label for="signing_secret">Webhook signing secret</label><br />
-        <input type="password" id="signing_secret" name="signing_secret" autocomplete="off" spellcheck="false" />
-        <span class="muted">
-          Optional now, required for bounce handling. Create a webhook endpoint in Resend pointing at
-          the URL this page shows after you connect, then paste the secret it gives you.
-        </span>
-      </p>
+        {% elif provider == "resend" %}
+        <div class="card-row pt-6 mt-6">
+            <h3 class="section-title mb-4">Resend</h3>
+            <div class="field">
+                <label class="field-label" for="api_key">API key</label>
+                <input class="form-input-styled" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" required>
+                <p class="field-hint">From the Resend dashboard. Stored encrypted and never shown again.</p>
+            </div>
+            <div class="field">
+                <label class="field-label" for="signing_secret">Webhook signing secret</label>
+                <input class="form-input-styled" type="password" id="signing_secret" name="signing_secret" autocomplete="off" spellcheck="false">
+                <p class="field-hint">
+                    Optional now, required for bounce handling. Create a webhook endpoint in Resend
+                    pointing at the URL this page shows after you connect, then paste the secret it
+                    gives you.
+                </p>
+            </div>
+        </div>
 
-    {% else %}
-      <h2>Amazon SES</h2>
-      <p>
-        <label for="access_key_id">Access key ID</label><br />
-        <input type="text" id="access_key_id" name="access_key_id" autocomplete="off" spellcheck="false" required />
-      </p>
-      <p>
-        <label for="secret_access_key">Secret access key</label><br />
-        <input type="password" id="secret_access_key" name="secret_access_key" autocomplete="off" spellcheck="false" required />
-        <span class="muted">Stored encrypted and never shown again.</span>
-      </p>
-      <p>
-        <label for="region">Region</label><br />
-        <input type="text" id="region" name="region" value="{{ form.region }}" placeholder="eu-west-1" spellcheck="false" required />
-      </p>
-      <p>
-        <label for="topic_arn">Bounce topic ARN</label><br />
-        <input type="text" id="topic_arn" name="topic_arn" value="{{ form.topic_arn }}"
-               placeholder="arn:aws:sns:eu-west-1:123456789012:bounces" spellcheck="false" />
-        <span class="muted">
-          Optional. Set it and only that topic's notifications are accepted; leave it blank and the
-          first subscription this channel confirms is pinned instead.
-        </span>
-      </p>
-      <p class="muted">
-        The key needs <code>ses:SendEmail</code>, and <code>sns:ConfirmSubscription</code> if you want
-        bounce handling. See <code>docs/channels/email.md</code>.
-      </p>
-    {% endif %}
+        {% else %}
+        <div class="card-row pt-6 mt-6">
+            <h3 class="section-title mb-4">Amazon SES</h3>
+            <div class="field">
+                <label class="field-label" for="access_key_id">Access key ID</label>
+                <input class="form-input-styled" type="text" id="access_key_id" name="access_key_id" autocomplete="off" spellcheck="false" required>
+            </div>
+            <div class="field">
+                <label class="field-label" for="secret_access_key">Secret access key</label>
+                <input class="form-input-styled" type="password" id="secret_access_key" name="secret_access_key" autocomplete="off" spellcheck="false" required>
+                <p class="field-hint">Stored encrypted and never shown again.</p>
+            </div>
+            <div class="field">
+                <label class="field-label" for="region">Region</label>
+                <input class="form-input-styled" type="text" id="region" name="region" value="{{ form.region }}" placeholder="eu-west-1" spellcheck="false" required style="width: 14rem;">
+            </div>
+            <div class="field">
+                <label class="field-label" for="topic_arn">Bounce topic ARN</label>
+                <input class="form-input-styled" type="text" id="topic_arn" name="topic_arn" value="{{ form.topic_arn }}" placeholder="arn:aws:sns:eu-west-1:123456789012:bounces" spellcheck="false">
+                <p class="field-hint">
+                    Optional. Set it and only that topic's notifications are accepted; leave it blank
+                    and the first subscription this channel confirms is pinned instead.
+                </p>
+            </div>
+            <p class="field-hint">
+                The key needs <code>ses:SendEmail</code>, and <code>sns:ConfirmSubscription</code> if
+                you want bounce handling. See docs/channels/email.md.
+            </p>
+        </div>
+        {% endif %}
 
-    <button type="submit">Connect</button>
-  </form>
+        <div class="form-actions">
+            <button type="submit" class="btn-pill-primary">Connect</button>
+        </div>
+    </form>
 
-  <h2>What happens next</h2>
-  <p class="muted">
-    We check the credentials with your provider before saving anything. Once the
-    channel exists, its page shows the webhook URL to paste into Resend or to
-    subscribe an SNS topic to, and a button that sends a test email to your own
-    address.
-  </p>
-  <p class="muted">
-    Every email BrightBean Chat sends carries a <code>List-Unsubscribe</code>
-    header and an unsubscribe link in the footer. That is not configurable:
-    it is what keeps the channel compliant, and it is what the unsubscribe and
-    suppression handling is built on.
-  </p>
+    <section class="card p-6 mb-5">
+        <h2 class="section-title mb-3">What happens next</h2>
+        <p class="section-note">
+            We check the credentials with your provider before saving anything. Once the channel
+            exists, its page shows the webhook URL to paste into Resend or to subscribe an SNS topic
+            to, and a button that sends a test email to your own address.
+        </p>
+        <p class="field-hint">
+            Every email BrightBean Chat sends carries a <code>List-Unsubscribe</code> header and an
+            unsubscribe link in the footer. That is not configurable: it is what keeps the channel
+            compliant, and it is what the unsubscribe and suppression handling is built on.
+        </p>
+    </section>
 
-  <p><a href="{{ list_url }}">Back to channels</a></p>
+    <a class="cn-back" href="{{ list_url }}">
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+        Back to channels
+    </a>
+</div>
+{% endwith %}
 {% endblock %}

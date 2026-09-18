@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.billing.entitlements import organization_locked
+from apps.common.windows import is_valid_timezone, timezone_choices
 from apps.members.decorators import require_org_role
 from apps.members.models import WorkspaceMembership
 from apps.members.requests import OrgRequest
@@ -30,7 +31,14 @@ def _can_manage(request: OrgRequest) -> bool:
 @require_org_role("member")
 @require_GET
 def settings_view(request: OrgRequest) -> HttpResponse:
-    return render(request, "organizations/settings.html", {"can_manage": _can_manage(request)})
+    return render(
+        request,
+        "organizations/settings.html",
+        {
+            "can_manage": _can_manage(request),
+            "timezone_choices": timezone_choices(request.org.default_timezone),
+        },
+    )
 
 
 @login_required
@@ -44,7 +52,15 @@ def update_settings(request: OrgRequest) -> HttpResponse:
         messages.error(request, "An organization needs a name.")
         return redirect(reverse("organizations:settings"))
     org.name = name
-    org.default_timezone = (request.POST.get("default_timezone") or org.default_timezone).strip()[:63]
+    # Unlike a workspace's, this one is never blank — it is the fallback every
+    # workspace without its own clock reads — so an empty post keeps the current
+    # value rather than clearing it. See apps/workspaces/views.py for why the
+    # check is is_valid_timezone and not membership of timezone_choices().
+    submitted_timezone = (request.POST.get("default_timezone") or org.default_timezone).strip()[:63]
+    if not is_valid_timezone(submitted_timezone):
+        messages.error(request, "That is not a timezone we recognise.")
+        return redirect(reverse("organizations:settings"))
+    org.default_timezone = submitted_timezone
     org.logo_url = (request.POST.get("logo_url") or "").strip()
     org.save(update_fields=["name", "default_timezone", "logo_url", "updated_at"])
     messages.success(request, "Organization settings saved.")

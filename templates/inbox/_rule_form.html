@@ -138,7 +138,7 @@ prevent. Its script half has to come with it — see the include at the bottom.
       </p>
     </fieldset>
 
-    <button type="submit">Save rule</button>
+    <button type="submit" class="btn-pill-primary">Save rule</button>
     <button type="button"
             hx-post="{% url 'inbox:rule_test' workspace_id=request.workspace.id %}"
             hx-include="closest form"
