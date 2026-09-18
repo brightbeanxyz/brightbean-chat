@@ -22,12 +22,37 @@ media query and slid in with a transform. A *second* nav would mean a second
 `nav-badge-inbox`, and an out-of-band swap only ever finds the first —
 apps/notifications/tests/test_shell.py forbids it.
 
-**No `{% templatetag openblock %} block sidebar_nav {% templatetag closeblock %}`.**
-Studio has one and every settings layout overrides it, which is how its badge
-targets came to go missing on whole archetypes. Here the settings nav is a
-second column beside this one, and
-apps/notifications/tests/test_shell.py::test_no_layout_replaces_the_navigation_any_more
-fails the moment a layout replaces it.
+**`settings_groups`.** A settings page draws its nav HERE, in place of the
+product's, rather than in a second column beside it — the two-column shell put
+232px of settings rows next to 240px of app rows the reader had just left. The
+argument comes from the layout (see layouts/settings.html), because "this is a
+settings page" is exactly what a layout knows and nothing else does. One
+<aside>, one renderer, one set of collapse rules; what changes is the rows in
+it and the block above them.
+
+ONE argument, and the rows themselves are it. A `settings_mode` flag beside it
+read better and had a silent failure: a layout passing the flag but naming the
+rows wrong — `settings_nav_groups`, which is what the context key is actually
+called — drew a sidebar with a back button, no rows and no error. Django
+resolves an unknown variable to the empty string, so nothing could raise. With
+the rows as the switch, the two cannot disagree: no rows, no settings mode.
+
+**The bell is on both sets of rows, and that is what keeps its badge honest.**
+Studio's settings layouts override a `sidebar_nav` block while base.html goes
+on rendering the poll outside it, so the 60s out-of-band swap aims at a badge
+id the page no longer has — what partials/_nav_badge_sinks.html existed to
+paper over. Two things stop that here. The poll is a child of the row
+(notifications/partials/_bell.html), so it can never outlive its own target;
+and the row is pinned to the foot of the settings nav as well, from the same
+`notifications_row` the product's nav draws, so every page in the product has
+it exactly once. It is the only unread indicator there is — a settings page
+without it is a page where an arriving channel_needs_reauth alert is invisible
+until you leave, and Plan & billing and the Library are both surfaces people
+sit on.
+
+ONE row, never two: `notifications_row` IS the row out of `nav_groups`, and the
+two branches below are exclusive. A second copy would put two elements on
+`nav-badge-notifications` and send every swap to whichever came first.
 
 `wsOpen` is local again. It sat on the shell wrapper while two controls opened
 one panel — the header's workspace button and the rail's logo mark — and with
@@ -52,6 +77,42 @@ the header gone there is one trigger, inside the panel's own wrapper, so the
        {% endcomment %}
        @click="if (window.innerWidth < 1024 && $event.target.closest('a')) { mobileMenuOpen = false }">
 
+    {% if settings_groups %}
+    {% comment %}
+      The way out, in the slot the workspace switcher holds everywhere else —
+      same height, same divider, so the rows below start where they always do.
+      Switching workspace from inside settings is not a thing to offer: half
+      these rows are scoped to the workspace you are standing in, and the panel
+      would silently retarget them.
+
+      `.sidebar-ws-btn` rather than a nav row, for the collapse rules: at 60px
+      it centres itself and `.sidebar-ws-name` goes, leaving the arrow.
+    {% endcomment %}
+    <div class="sidebar-ws">
+        {% comment %}
+          Named for the workspace, not just for "app". Half these rows are
+          scoped to the workspace you are standing in, and with the switcher
+          gone this row is the only thing left on the screen that says which
+          one — a reader with "Acme" and "Acme Staging" was otherwise editing
+          tags with nothing to tell the two apart. `default` covers the user
+          whose workspaces are all archived, whom app_home_url sends to the
+          org's workspace list instead.
+
+          `|default:'/'` on the url for the same reason the account menu's row
+          below carries one: sidebar_context returns {} for a request with no
+          session, and a bare {{ }} would render href="" — a link that reloads
+          the page it is on.
+        {% endcomment %}
+        <a href="{{ app_home_url|default:'/' }}" class="sidebar-ws-btn sidebar-back"
+           title="Back to {{ current_workspace.name|default:'app' }}">
+            <span class="sidebar-back-mark" aria-hidden="true">
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                     stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            </span>
+            <span class="sidebar-ws-name">Back to {{ current_workspace.name|default:"app" }}</span>
+        </a>
+    </div>
+    {% else %}
     <div class="sidebar-ws relative" x-data="{ wsOpen: false }" @click.away="wsOpen = false"
          @keydown.escape.window="wsOpen = false">
         {% if sidebar_workspaces %}
@@ -133,8 +194,33 @@ the header gone there is one trigger, inside the panel's own wrapper, so the
         </div>
         {% endif %}
     </div>
+    {% endif %}
 
-    <nav class="sidebar-nav" aria-label="Main">
+    {% comment %}
+      One renderer for both sets of rows, so a settings row collapses to a
+      glyph, carries a `title` at 60px and lights up by the same `active` the
+      sidebar has always used — the settings column had its own markup for all
+      three. `aria-label` follows the rows rather than staying "Main": with the
+      product's nav not on the page, calling this one "Main" would announce a
+      list that is not there.
+    {% endcomment %}
+    <nav class="sidebar-nav" aria-label="{% if settings_groups %}Settings{% else %}Main{% endif %}">
+        {% if settings_groups %}
+        {% include "partials/_sidebar_items.html" with groups=settings_groups %}
+        {% comment %}
+          The bell, pinned below the settings rows rather than listed among
+          them: it is not a settings destination, it is the product's one
+          unread indicator, and it has to be on every page or the count it
+          carries is only true on some of them. Rendered straight from its own
+          row — the same dict partials/_sidebar_items.html would hand it — so
+          the label, the count and the `active` flag have one source.
+        {% endcomment %}
+        {% if notifications_row %}
+        <div class="sidebar-nav-pinned">
+            {% include notifications_row.partial with item=notifications_row %}
+        </div>
+        {% endif %}
+        {% else %}
         {% include "partials/_sidebar_items.html" with groups=nav_groups %}
         {% comment %}
           The workspace's channels, and the ones it could connect next. Inside
@@ -144,6 +230,7 @@ the header gone there is one trigger, inside the panel's own wrapper, so the
           once, not twice.
         {% endcomment %}
         {% include "partials/_sidebar_channels.html" %}
+        {% endif %}
     </nav>
 
     {% comment %}
@@ -227,9 +314,17 @@ the header gone there is one trigger, inside the panel's own wrapper, so the
                 </a>
                 {% endif %}
                 <div class="sidebar-menu-section">
+                    {% comment %}
+                      Named for where it lands, not for what it is: this row
+                      opens the settings shell on your profile, and the shell's
+                      Organisation group is the rest of what is behind it. It
+                      read "Settings" while there was a second one beside it in
+                      the switcher; "Organization Settings" is what tells the
+                      two apart from the account menu.
+                    {% endcomment %}
                     <a href="{{ settings_home_url|default:'#' }}" class="sidebar-menu-row">
                         {% include "partials/_nav_icon.html" with name="settings" icon_size=16 only %}
-                        <span>Settings</span>
+                        <span>Organization Settings</span>
                     </a>
                 </div>
                 {% if logout_url %}

@@ -317,8 +317,9 @@ body {
    that x-init removes.
    ═══════════════════════════════════════════════════════════════ */
 :root {
-  /* Shared by .mobile-topbar's height and .setnav's mobile offset, which have
-     to agree or the settings strip slides under the bar. */
+  /* .mobile-topbar's height. It was shared with the settings strip that used
+     to hang below the bar on a phone; the settings rows are in the sidebar
+     now, so there is one consumer and nothing left to drift against. */
   --mobile-bar-h: 60px;
 }
 
@@ -339,10 +340,33 @@ body {
   background: transparent;
   border-bottom-right-radius: var(--radius-lg);
   text-align: left;
+  /* Not inherited from anywhere: this was a <button> and a <div> until the
+     back row wore it as an <a>, and every other anchor row in this file
+     (.sidebar-nav-item, .sidebar-menu-item) resets it by hand rather than
+     leaning on Tailwind's preflight doing it for them. */
+  text-decoration: none;
   cursor: pointer;
   transition: background var(--dur-fast) ease;
 }
 .sidebar-ws-btn:hover { background: rgba(var(--scrim-rgb), 0.04); }
+/* The way out of settings, in the switcher's slot. Quieter than the workspace
+   name it stands in for — it is a door, not a title — and its mark is sized
+   like the logo mark so the rows below line up the same in both modes. */
+.sidebar-back { color: var(--text-secondary); }
+.sidebar-back:hover { color: var(--text-primary); }
+.sidebar-back .sidebar-ws-name { font-weight: 600; }
+/* The logo mark's box, with nothing in it but the arrow: that is what puts the
+   arrow on the same x as the glyphs below and keeps the block the switcher's
+   height. No ground of its own — a tinted square here reads as a button
+   floating above rows that have none. */
+.sidebar-back-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+}
 .sidebar-ws-name {
   flex: 1;
   min-width: 0;
@@ -641,6 +665,21 @@ body {
    carrying anything. Colour is the whole signal, so it is drained rather than
    badged — the badge is reserved for the state that needs a person. */
 .sidebar-channel-mark.is-off .pi-chip { filter: grayscale(1); opacity: 0.55; }
+/* The bell under the settings rows. Separated rather than listed with them —
+   it is the product's unread indicator, not a settings destination — and the
+   rule is a margin plus a hairline rather than a heading, because a heading
+   over one row reads as a section that lost the rest of itself. */
+.sidebar-nav-pinned {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+}
+
+/* The offer sits under the workspace's own channels, and its heading's 14px
+   is not enough of a gap to read as a second list rather than as more of the
+   first. The extra space is on the block so it lands above the heading in the
+   rail too — where the whole block is hidden, which costs nothing. */
+.sidebar-connect { padding-top: 10px; }
 /* A connected channel's glyph is white on the platform's colour (.pi-chip);
    one you could connect is the platform's colour on a quiet ground, so the
    two lists read as "mine" and "available" before a word is read. */
@@ -924,87 +963,6 @@ body {
   font-weight: 700;
   color: var(--text-primary);
   box-shadow: inset 0 -2px 0 var(--brand-500);
-}
-
-/* --- Settings nav (the 232px second column) ------------------------------ */
-.setnav {
-  width: 232px;
-  flex: 0 0 232px;
-  overflow-y: auto;
-  background: var(--surface-0);
-  border-right: 1px solid var(--border);
-  padding: 16px 12px;
-}
-.setnav-label {
-  font-size: var(--fs-sm);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-ghost);
-  padding: 20px 10px 10px;
-}
-.setnav-label:first-child { padding-top: 0; }
-.setnav-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 10px;
-  margin-bottom: 1px;
-  border-radius: var(--radius-control);
-  font-size: var(--fs-body-lg);
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-decoration: none;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
-}
-.setnav-item:hover { background: var(--surface-page); color: var(--text-primary); }
-.setnav-item.active {
-  background: var(--primary-tint);
-  color: var(--brand-700);
-  font-weight: 600;
-}
-
-/* Below `lg` the second column would leave 143px of a 375px phone for the page
-   itself, which clips every form on it. It becomes a scrolling strip above the
-   content instead: the same rows, laid out the way the sub-nav already is, so
-   a phone reader still has every settings destination without losing the page.
-
-   Group labels are hidden rather than inlined. In a horizontal strip they read
-   as items, and the row labels are unambiguous on their own. */
-@media (max-width: 1023px) {
-  .setnav {
-    position: absolute;
-    /* Clears .mobile-topbar, which is the only chrome above it now — the
-       appbar this offset was originally written for is gone. Both read the
-       same token so they cannot drift. */
-    top: var(--mobile-bar-h);
-    left: 0;
-    right: 0;
-    z-index: 20;
-    width: 100%;
-    flex: none;
-    display: flex;
-    gap: 6px;
-    height: 48px;
-    padding: 6px 12px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-  .setnav-label { display: none; }
-  .setnav-item {
-    flex: 0 0 auto;
-    margin-bottom: 0;
-    padding: 6px 12px;
-    border-radius: var(--radius-full);
-    background: var(--surface-page);
-    font-size: var(--fs-body);
-    white-space: nowrap;
-  }
-  /* The strip is positioned over the top of the page, so the content it covers
-     has to start below it. */
-  .setnav ~ div .app-shell-main { padding-top: 48px; }
 }
 
 .sidebar-logo-mark {

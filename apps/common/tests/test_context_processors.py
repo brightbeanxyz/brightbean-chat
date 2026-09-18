@@ -106,10 +106,10 @@ class TestActiveFlag:
     @pytest.mark.django_db
     def test_the_library_lights_its_settings_row_and_no_sidebar_row(self, tenancy):
         """Library moved out of the sidebar's footer and into the workspace
-        settings nav. The page renders that column (see
+        settings nav. The page renders that nav (see
         templates/media_library/library.html), so the row it lives in has to
-        light up on it — and nothing in the sidebar may, because nothing in the
-        sidebar leads there any more."""
+        light up on it — and no *product* row may, because nothing in the
+        product's nav leads there any more."""
         path = f"/w/{tenancy.workspace.id}/media/"
         context = navigation_context(_request(path, workspace=tenancy.workspace, user=tenancy.owner))
 
@@ -459,7 +459,7 @@ class TestNavStructure:
         assert "notifications" not in keys
 
     def test_settings_groups_match_the_design(self):
-        assert [g.label for g in SETTINGS_NAV] == ["Workspace", "Organisation", "You"]
+        assert [g.label for g in SETTINGS_NAV] == ["Workspace", "Organisation"]
 
     @pytest.mark.django_db
     def test_badges_default_to_zero_and_render_nothing(self, tenancy):
@@ -761,8 +761,9 @@ class TestTenancyIntegration:
         assert context["settings_home_url"] == "/accounts/settings/"
         # The Workspace group empties for the same reason: no workspace means
         # no workspace membership, so none of its rows are visible either.
-        # Organisation and You survive — they point somewhere real.
-        assert [g["label"] for g in context["workspace_settings_nav_groups"]] == ["Organisation", "You"]
+        # Organisation survives — its rows, Profile included, point somewhere
+        # real without one.
+        assert [g["label"] for g in context["workspace_settings_nav_groups"]] == ["Organisation"]
 
     def test_the_channel_block_is_empty_for_a_request_with_no_tenancy(self):
         """It was a `# TODO(L2-B)` empty list until ChannelConnection existed;

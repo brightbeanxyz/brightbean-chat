@@ -1,7 +1,7 @@
 {% comment %}
 One nav row's badge, in both of its states.
 
-Shared by the shell's first render (partials/_nav_groups.html) and by the
+Shared by the shell's first render (partials/_sidebar_items.html) and by the
 out-of-band response fragments that keep the number live
 (notifications/partials/_badge.html), because the two have to agree: an
 out-of-band swap replaces the whole element, so the markup one swap puts in is
@@ -15,8 +15,8 @@ the span unconditionally, empty and `hidden`, gives the swap a permanent target
 without breaking the shell's contract that a zero badge shows nothing at all:
 the `sidebar-badge` class *is* the visible pill, and it is on the non-zero
 branch only. An empty `display: none` span takes no space either, so it cannot
-push the glyph off-centre in .sidebar-nav-item or open a gap in .setnav-item's row —
-the two places this slot is rendered since the redesign.
+push the glyph off-centre in the .sidebar-nav-item it sits in — the one place
+this slot is rendered, now that the settings rows are sidebar rows too.
 
 Args:
   key: the nav item's key. The id is `nav-badge-<key>`.

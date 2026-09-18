@@ -1,21 +1,17 @@
 {% extends "layouts/settings.html" %}
 {% comment %}
-Workspace-scoped settings. Same structure as layouts/settings.html — the sidebar,
-a 232px settings column, the page — but a different nav, because the two are
-different permission scopes: an Editor reaches workspace settings without being
-able to see organisation settings, so showing one nav for both would advertise
-pages the viewer cannot open.
+Workspace-scoped settings. Same structure as layouts/settings.html — the
+sidebar carrying the settings rows, then the page — but a different context
+key, because the two are different permission scopes: an Editor reaches
+workspace settings without being able to see organisation settings, so showing
+one nav for both would advertise pages the viewer cannot open.
 
-The redesign draws a single settings list with all three groups. That is the
-Admin's view of this same structure — an Admin reaches both layouts — not a
-third nav. Both navs come from the one SETTINGS_NAV in
-apps.common.context_processors; the split is a filter over it, not a copy to
-keep in sync. "You" appears in both because it is neither scope: a viewer's own
-profile should not vanish depending on which settings page they are standing on.
+The redesign draws a single settings list with both groups. That is the Admin's
+view of this same structure — an Admin reaches both layouts — not a third nav.
+Both come from the one SETTINGS_NAV in apps.common.context_processors; the
+split is a filter over it, not a copy to keep in sync. Profile appears in both
+because it is neither scope: a viewer's own profile should not vanish depending
+on which settings page they are standing on.
 {% endcomment %}
 
-{% block secondary_nav %}
-<nav class="setnav" aria-label="Settings">
-    {% include "partials/_nav_groups.html" with groups=workspace_settings_nav_groups %}
-</nav>
-{% endblock %}
+{% block app_sidebar %}{% include "partials/_app_sidebar.html" with settings_groups=workspace_settings_nav_groups %}{% endblock %}

@@ -4,11 +4,12 @@ The media library browser (issue #16).
 
 **Why a settings layout.** Library used to be a sidebar row, pinned to the
 footer beside Settings; it is a row in the workspace settings nav now. A page
-whose own nav row is in a column it does not render would light nothing and
+whose own nav row is in a list it does not render would light nothing and
 strand the reader on a screen with no way back into settings, so it renders the
-column it lives in. The layout only adds that column: `content_wrap` is cleared
-below, so this page keeps the bare `.app-content` flex container it has always
-filled rather than the card the settings archetype wraps text pages in.
+list it lives in — which the layout puts in the sidebar itself. That is all the
+layout adds here: `content_wrap` is cleared below, so this page keeps the bare
+`.app-content` flex container it has always filled rather than the card the
+settings archetype wraps text pages in.
 
 A folder rail, a filter bar, a drop zone and the asset grid. Filters are plain
 links so the state lives in the querystring and a view is bookmarkable; search,
