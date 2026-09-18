@@ -1487,10 +1487,17 @@ img.sidebar-logo-mark {
    columns — is deliberately left unset, so `style="width: 9rem"` and
    `grid sm:grid-cols-2` keep working. Same trade as .card.
    ═══════════════════════════════════════════════════════════════ */
-.field { margin-bottom: 1.25rem; }
-.field:last-child { margin-bottom: 0; }
+/* Spacing as an adjacent-sibling rule, not a margin on .field itself. Same
+   rhythm, but it leaves `margin-bottom` unset — and everything in this file is
+   unlayered, so a `.field mb-2` at a call site would have lost silently against
+   it, which is exactly the trap .card's comment above warns about. The same
+   shape .card-row and .list-row already use. */
+.field + .field,
+/* A checkbox after a stack of ordinary fields — allauth's "Remember me" sits
+   exactly here, and .field no longer carries a bottom margin to space it. */
+.field + .field-check { margin-top: 1.25rem; }
 /* A field sitting in a toolbar row rather than in a stack. */
-.field-inline { margin-bottom: 0; }
+.field-inline { margin-top: 0; }
 
 .field-label {
   display: block;
@@ -1505,17 +1512,31 @@ img.sidebar-logo-mark {
   font-weight: 500;
   color: var(--text-ghost);
 }
+/* display:block because the margin below is the point, and vertical margins do
+   nothing on a non-replaced inline box — several call sites render these as a
+   <span> inside .field-check-body, where the gap silently never appeared. */
 .field-hint {
+  display: block;
   font-size: var(--fs-body);
   line-height: 1.45;
   color: var(--text-tertiary);
   margin-top: 0.375rem;
 }
 .field-error {
+  display: block;
   font-size: var(--fs-body);
   line-height: 1.45;
   color: var(--error-700);
   margin-top: 0.375rem;
+}
+/* The same type as a hint, with no margin of its own: the explanatory line that
+   opens a card section, rather than one that hangs under a control. It exists
+   because twenty call sites were writing `field-hint` and then cancelling its
+   margin-top with an inline style — one class doing two jobs. */
+.section-note {
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--text-tertiary);
 }
 
 /* The @layer base defaults in .app-content cap every input at 26rem. They
@@ -1529,12 +1550,20 @@ img.sidebar-logo-mark {
 /* A checkbox or toggle with its label and hint stacked beside it. The
    generic label-above-control shape is wrong for these — the same thing
    partials/_auth_form_fields.html learned with allauth's "Remember me". */
+/* margin-bottom here rather than the adjacent-sibling form .field uses, and
+   deliberately: a run of checkboxes is usually followed by a .section-note or a
+   .form-actions that wants the same gap after the last one, and the webhook
+   event list lays them out in a two-column grid where an adjacent-sibling rule
+   would put a stray top margin on the first item of the second column.
+   .field-check-inline is the escape hatch for the one caller that stacks it
+   inside a flex row instead. */
 .field-check {
   display: flex;
   align-items: flex-start;
   gap: 0.625rem;
   margin-bottom: 1.25rem;
 }
+.field-check-inline { margin-bottom: 0; }
 .field-check-body { min-width: 0; }
 .field-check .field-label { margin-bottom: 0; cursor: pointer; }
 .field-check input[type="checkbox"],

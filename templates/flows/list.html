@@ -26,6 +26,7 @@ swap in styles.css meaningful.
 {% block title %}Flows · BrightBean Chat{% endblock %}
 
 {% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full"

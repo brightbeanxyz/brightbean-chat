@@ -24,7 +24,7 @@ the menu with the other twice-a-year action.
   {% if tags %}
   <div class="card overflow-hidden">
     {% for tag in tags %}
-    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), renaming: false, merging: false }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), renaming: false, merging: false }">
       <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="tag" icon_size=19 %}</span>
 
       <div class="flex-1 min-w-0">
@@ -48,14 +48,14 @@ the menu with the other twice-a-year action.
         Full-width and ordered last, so an open editor drops onto its own line
         under the row rather than colliding with the action buttons.
       {% endcomment %}
-      <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_rename' workspace_id=request.workspace.id tag_id=tag.id %}" @htmx:after-request="if ($event.detail.successful) renaming = false">
+      <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_rename' workspace_id=request.workspace.id tag_id=tag.id %}" @htmx:after-request="if (bbChanged($event, 'tagsChanged')) renaming = false">
         <label class="sr-only" for="tag-name-{{ tag.id }}">Name</label>
         <input class="form-input-styled" id="tag-name-{{ tag.id }}" x-ref="name" type="text" name="name" value="{{ tag.name }}" maxlength="100" required style="width: 16rem;">
         <button type="submit" class="btn-pill-secondary btn-pill-sm">Save</button>
         <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
       </form>
 
-      <form x-show="merging" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_merge' workspace_id=request.workspace.id tag_id=tag.id %}" hx-confirm="Merge “{{ tag.name }}” into the chosen tag? “{{ tag.name }}” is deleted and its {{ tag.contact_count }} contact{{ tag.contact_count|pluralize }} keep the other one." @htmx:after-request="if ($event.detail.successful) merging = false">
+      <form x-show="merging" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_merge' workspace_id=request.workspace.id tag_id=tag.id %}" hx-confirm="Merge “{{ tag.name }}” into the chosen tag? “{{ tag.name }}” is deleted and its {{ tag.contact_count }} contact{{ tag.contact_count|pluralize }} keep the other one." @htmx:after-request="if (bbChanged($event, 'tagsChanged')) merging = false">
         <label class="sr-only" for="tag-merge-{{ tag.id }}">Merge {{ tag.name }} into</label>
         <select class="form-input-styled bb-select" id="tag-merge-{{ tag.id }}" name="target_id" required style="width: 16rem;">
           <option value="">Choose a tag…</option>

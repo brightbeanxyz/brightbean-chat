@@ -47,7 +47,7 @@ can demote the person reading it, is not a thing to leave lying in a list.
             <span class="field-label">Workspace access</span>
             {% for workspace in workspaces %}
             <div class="flex flex-wrap items-center gap-3 py-2">
-                <label class="field-check" style="margin-bottom: 0;" for="ws-{{ workspace.id }}">
+                <label class="field-check field-check-inline" for="ws-{{ workspace.id }}">
                     <input class="bb-checkbox" id="ws-{{ workspace.id }}" type="checkbox" name="ws_{{ workspace.id }}" value="1">
                     <span class="field-check-body"><span class="field-label">{{ workspace.name }}</span></span>
                 </label>
@@ -56,7 +56,7 @@ can demote the person reading it, is not a thing to leave lying in a list.
                 </select>
             </div>
             {% empty %}
-            <p class="field-hint" style="margin-top: 0;">You cannot manage members in any workspace yet.</p>
+            <p class="section-note">You cannot manage members in any workspace yet.</p>
             {% endfor %}
         </div>
         <div class="form-actions">
@@ -70,7 +70,7 @@ can demote the person reading it, is not a thing to leave lying in a list.
     {% if rows %}
     <div class="card overflow-hidden mb-8">
         {% for row in rows %}
-        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), changing: false }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), changing: false }">
             <span class="avatar">{{ row.membership.user.display_name|make_list|first|upper }}</span>
 
             <div class="flex-1 min-w-0">
@@ -151,4 +151,4 @@ can demote the person reading it, is not a thing to leave lying in a list.
 </div>
 {% endblock %}
 
-{% block alpine_components %}{{ block.super }}{% include "partials/_row_menu.html" %}{% endblock %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}

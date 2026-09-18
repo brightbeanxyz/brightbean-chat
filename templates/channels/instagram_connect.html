@@ -56,7 +56,7 @@ with in another tab, so none of them is a detail to tidy away.
     <form class="card p-6 mb-5" method="post">
         {% csrf_token %}
         <h2 class="section-title mb-1">Authorise the account</h2>
-        <p class="field-hint mb-5" style="margin-top: 0;">
+        <p class="section-note mb-5">
             You will be sent to Instagram to sign in and pick the account.
         </p>
         <button type="submit" class="btn-pill-primary">{% include "partials/_platform_icon.html" with platform=platform_key size="sm" only %} Continue to Instagram</button>

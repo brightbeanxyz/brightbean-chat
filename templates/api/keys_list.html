@@ -53,7 +53,7 @@ destructive action is the one thing that must not be the row's obvious button.
                 <span class="field-check-body"><span class="field-label">{{ label }} <code>{{ value }}</code></span></span>
             </label>
             {% endfor %}
-            <p class="field-hint" style="margin-top: 0;">
+            <p class="section-note">
                 <strong>Read</strong> lists contacts, tags, fields and flows. <strong>Write</strong>
                 adds creating and updating contacts, tagging, setting field values, starting flows
                 and sending messages. No scope grants channel, member or key management.
@@ -81,7 +81,7 @@ destructive action is the one thing that must not be the row's obvious button.
     {% if rows %}
     <div class="card overflow-hidden">
         {% for row in rows %}
-        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu() }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu() }">
             <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="key" icon_size=19 %}</span>
 
             <div class="flex-1 min-w-0">
@@ -125,4 +125,4 @@ destructive action is the one thing that must not be the row's obvious button.
 </div>
 {% endblock %}
 
-{% block alpine_components %}{{ block.super }}{% include "partials/_row_menu.html" %}{% endblock %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}

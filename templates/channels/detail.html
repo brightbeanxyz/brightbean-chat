@@ -93,7 +93,7 @@ Never renders the webhook secret — see the views module docstring.
     <form class="card p-6 mb-5" method="post" action="{% url 'channels:email_credentials' workspace_id=request.workspace.id connection_id=connection.id %}">
         {% csrf_token %}
         <h2 class="section-title mb-1">Bounce handling</h2>
-        <p class="field-hint mb-5" style="margin-top: 0;">
+        <p class="section-note mb-5">
             Both of these can only be set after the channel exists, because the webhook URL above
             contains its id, so you create the endpoint in your provider first, then paste back what
             it gives you. Until the relevant one is set, bounce and complaint notifications are
@@ -111,14 +111,14 @@ Never renders the webhook secret — see the views module docstring.
         </div>
         <div class="form-actions">
             <button type="submit" class="btn-pill-primary">Save</button>
-            <span class="field-hint" style="margin-top: 0;">Leave a field blank to keep what is already stored.</span>
+            <span class="section-note">Leave a field blank to keep what is already stored.</span>
         </div>
     </form>
 
     <form class="card p-6 mb-5" method="post" action="{% url 'channels:send_test_email' workspace_id=request.workspace.id connection_id=connection.id %}">
         {% csrf_token %}
         <h2 class="section-title mb-1">Send a test email</h2>
-        <p class="field-hint mb-5" style="margin-top: 0;">
+        <p class="section-note mb-5">
             Sends one real email to your own account address, through this connection, carrying the
             same <code>List-Unsubscribe</code> headers and footer every other send does, so a
             provider that strips them shows up here rather than after a campaign.
@@ -130,7 +130,7 @@ Never renders the webhook secret — see the views module docstring.
     <form class="card p-6 mb-5" method="post" action="{% url 'channels:rotate_secret' workspace_id=request.workspace.id connection_id=connection.id %}">
         {% csrf_token %}
         <h2 class="section-title mb-1">Webhook secret</h2>
-        <p class="field-hint mb-5" style="margin-top: 0;">
+        <p class="section-note mb-5">
             Stored encrypted and never displayed again. Rotating issues a new secret immediately, so
             deliveries carrying the old one are rejected until the platform has the new one. Where
             the platform accepts it over its own API, as Telegram does, that happens as part of

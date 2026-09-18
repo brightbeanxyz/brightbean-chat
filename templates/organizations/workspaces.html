@@ -44,7 +44,7 @@ column.
     {% if workspaces %}
     <div class="card overflow-hidden">
         {% for workspace in workspaces %}
-        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu() }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+        <div class="list-row flex-wrap" x-data="{ ...bbRowMenu() }">
             <span class="list-row-icon">{% if workspace.icon %}{{ workspace.icon }}{% else %}{% include "partials/_nav_icon.html" with name="grid" icon_size=19 %}{% endif %}</span>
 
             <div class="flex-1 min-w-0">
@@ -85,4 +85,4 @@ column.
 </div>
 {% endblock %}
 
-{% block alpine_components %}{{ block.super }}{% include "partials/_row_menu.html" %}{% endblock %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}

@@ -26,7 +26,7 @@ even with one item in it, so these rows do not disagree with the tag rows.
   {% if fields %}
   <div class="card overflow-hidden">
     {% for field in fields %}
-    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), renaming: false }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), renaming: false }">
       <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="fields" icon_size=19 %}</span>
 
       <div class="flex-1 min-w-0">
@@ -47,7 +47,7 @@ even with one item in it, so these rows do not disagree with the tag rows.
         <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'contacts:field_delete' workspace_id=request.workspace.id field_id=field.id %}" hx-confirm="Delete “{{ field.name }}”? {{ field.value_count }} stored value{{ field.value_count|pluralize }} will go with it." @click="menuOpen = false">Delete</button>
       </div>
 
-      <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:field_rename' workspace_id=request.workspace.id field_id=field.id %}" @htmx:after-request="if ($event.detail.successful) renaming = false">
+      <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:field_rename' workspace_id=request.workspace.id field_id=field.id %}" @htmx:after-request="if (bbChanged($event, 'fieldsChanged')) renaming = false">
         <label class="sr-only" for="field-name-{{ field.id }}">Name</label>
         <input class="form-input-styled" id="field-name-{{ field.id }}" x-ref="name" type="text" name="name" value="{{ field.name }}" maxlength="100" required style="width: 16rem;">
         <button type="submit" class="btn-pill-secondary btn-pill-sm">Save</button>

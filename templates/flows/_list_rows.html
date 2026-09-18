@@ -12,8 +12,10 @@ somebody started and left — and the rest sit behind the "…".
 The menu panel is `position: fixed` and anchored on open, the same way
 components/ui_select.html does it and for the same reason: these rows live in a
 scrolling container, and an absolutely positioned panel is clipped by that
-overflow. The coordinates are captured once, so scrolling closes the menu rather
-than letting it drift away from its button.
+overflow. The coordinates are captured once, and partials/_list_behaviours.html
+closes the menu on scroll so it cannot drift away from its button — that listener
+is registered once for the page, and in the capture phase, because .app-content
+is what scrolls and a scroll event never bubbles out of it.
 {% endcomment %}
 {% if not groups %}
 <div class="empty-state">
@@ -31,16 +33,7 @@ than letting it drift away from its button.
 <div class="section-eyebrow mb-2.5">{{ group.label }}</div>
 <div class="card overflow-hidden mb-6">
     {% for flow in group.flows %}
-    <div class="list-row flex-wrap" x-data="{ renaming: false, menuOpen: false, menuTop: 0, menuLeft: 0,
-            openMenu(e){ if (this.menuOpen) { this.menuOpen = false; return; }
-                const r = e.currentTarget.getBoundingClientRect();
-                this.menuTop = r.bottom + 6;
-                // Clamped at both ends. Right-aligning to the button puts the
-                // panel off the left edge on a narrow viewport, where its first
-                // items are clipped with no way to scroll to them.
-                this.menuLeft = Math.max(8, Math.min(r.right - 200, window.innerWidth - 212));
-                this.menuOpen = true; } }"
-         @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), renaming: false }">
 
         <span class="list-row-icon{% if flow.status == 'active' %} list-row-icon-live{% endif %}">
             {% include "partials/_nav_icon.html" with name="flows" icon_size=19 %}

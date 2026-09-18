@@ -61,7 +61,7 @@ follows along with in another tab, so they stay on the page.
     <form class="card p-6 mb-5" method="post">
         {% csrf_token %}
         <h2 class="section-title mb-1">Choose the page</h2>
-        <p class="field-hint mb-5" style="margin-top: 0;">
+        <p class="section-note mb-5">
             You will be sent to Facebook to sign in and pick which page to connect.
         </p>
         <button type="submit" class="btn-pill-primary" {% if not configured %}disabled{% endif %}>{% include "partials/_platform_icon.html" with platform=platform_key size="sm" only %} Continue with Facebook</button>
@@ -74,7 +74,7 @@ follows along with in another tab, so they stay on the page.
             {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
         </ul>
         <div class="section-eyebrow mb-1.5">Webhook fields we subscribe the page to</div>
-        <p class="field-hint mb-2" style="margin-top: 0;">
+        <p class="section-note mb-2">
             Once you pick a page we subscribe it to these and configure its Get Started button, so
             the welcome trigger can fire.
         </p>

@@ -54,7 +54,7 @@ submit either — the view's `_echoed` names only non-secret fields.
 
     <section class="card p-6 mb-5">
         <h2 class="section-title mb-1">Which provider sends the mail</h2>
-        <p class="field-hint mb-4" style="margin-top: 0;">Pick one and the fields below change to match.</p>
+        <p class="section-note mb-4">Pick one and the fields below change to match.</p>
         <div class="grid gap-3 sm:grid-cols-3">
             {% for value in providers %}
             <a class="tile cn-provider p-4{% if value == provider %} tile-selected{% endif %}" href="?provider={{ value }}"{% if value == provider %} aria-current="true"{% endif %}>
@@ -173,7 +173,7 @@ submit either — the view's `_echoed` names only non-secret fields.
 
     <section class="card p-6 mb-5">
         <h2 class="section-title mb-3">What happens next</h2>
-        <p class="field-hint" style="margin-top: 0;">
+        <p class="section-note">
             We check the credentials with your provider before saving anything. Once the channel
             exists, its page shows the webhook URL to paste into Resend or to subscribe an SNS topic
             to, and a button that sends a test email to your own address.

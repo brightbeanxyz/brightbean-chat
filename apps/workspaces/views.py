@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.validators import is_valid_hex_color
-from apps.common.windows import timezone_choices, zone
+from apps.common.windows import is_valid_timezone, timezone_choices
 from apps.flows.portability.library import gallery_entries
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
@@ -356,10 +356,11 @@ def update_settings(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     # been free text with no validation, and a typo does not raise — it reaches
     # ZoneInfo through effective_timezone, gets caught, and silently falls back,
     # which is a wrong-clock bug with nothing on screen to explain it. Checked
-    # with zone() rather than against timezone_choices() so a value already in
-    # the database is not rejected the first time its owner opens this page.
+    # against is_valid_timezone rather than timezone_choices() so a legacy value
+    # already in the database is not rejected the first time its owner opens
+    # this page — the picker's list is narrower than the column's rule.
     submitted_timezone = (request.POST.get("timezone") or "").strip()[:63]
-    if submitted_timezone and zone(submitted_timezone) is None:
+    if submitted_timezone and not is_valid_timezone(submitted_timezone):
         messages.error(request, "That is not a timezone we recognise.")
         return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
     workspace.timezone = submitted_timezone

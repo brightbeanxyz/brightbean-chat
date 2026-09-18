@@ -64,7 +64,7 @@ Full setup notes live in docs/channels/sms.md.
 
         <div class="card-row pt-6 mt-6">
             <h3 class="section-title mb-1">Where messages are sent from</h3>
-            <p class="field-hint mb-4" style="margin-top: 0;">Give one or the other, not both.</p>
+            <p class="section-note mb-4">Give one or the other, not both.</p>
 
             <div class="field">
                 <label class="field-label" for="from_number">From number</label>
@@ -89,7 +89,7 @@ Full setup notes live in docs/channels/sms.md.
           exist until this form succeeds. It lives on the connection's own page,
           which is where somebody pasting it into Twilio is already standing.
         {% endcomment %}
-        <p class="field-hint" style="margin-top: 0;">
+        <p class="section-note">
             We check the credentials and confirm the sender belongs to the account, then store the
             connection. Twilio has no way for us to configure your number remotely, so the last step
             is yours: open the number (or the messaging service) in the Twilio console and paste the

@@ -6,12 +6,24 @@
 {% comment %}
 `editorOpen` hides the header's primary while the editor is on screen: the
 editor carries its own "Save rule" primary, and two orange buttons on one page
-is two calls to action. It flips on the htmx swap that fills #inbox-rule-editor
-— which is also the only signal there is, since that partial arrives long after
-Alpine booted.
+is two calls to action. It flips on the htmx swap that fills #inbox-rule-editor,
+which is the only signal there is — that partial arrives long after Alpine booted.
+
+**And it has to flip back, which is the whole reason the second handler exists.**
+inbox:rule_save answers with toast_response — a 204 — so htmx swaps nothing and
+the saved form just sits there. A flag set on open and never reset left the
+header button hidden for the rest of the session, with no way to start a second
+rule short of reloading.
+
+Two guards on that handler, both load-bearing. `bbChanged` rather than
+`detail.successful`, because a *refused* save is also a 204 and closing the
+editor on one would throw away the correction the operator is part-way through —
+only the success path sets inboxRulesChanged. And `$refs.editor.contains(...)`,
+because this listener sees every htmx request in the page: without it, deleting
+some other rule from its row menu would wipe the editor somebody is typing in.
 {% endcomment %}
 {% block content %}
-<div class="max-w-[860px] w-full" x-data="{ editorOpen: false }" @htmx:after-swap.window="if ($event.detail.target.id === 'inbox-rule-editor') editorOpen = true">
+<div class="max-w-[860px] w-full" x-data="{ editorOpen: false }" @htmx:after-swap.window="if ($event.detail.target.id === 'inbox-rule-editor') editorOpen = true" @htmx:after-request="if (bbChanged($event, 'inboxRulesChanged') && $refs.editor.contains($event.detail.elt)) { $refs.editor.innerHTML = ''; editorOpen = false }">
   <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
     <div>
       <h1 class="page-title">Inbox rules</h1>
@@ -31,7 +43,7 @@ Alpine booted.
 
   {% include "inbox/_rule_rows.html" %}
 
-  <div id="inbox-rule-editor" class="mt-5"></div>
+  <div id="inbox-rule-editor" x-ref="editor" class="mt-5"></div>
 </div>
 {% endblock %}
 
@@ -50,7 +62,7 @@ Alpine booted.
     uses, for the same reason.
   {% endcomment %}
   {% include "contacts/_filter_bar_script.html" %}
-  {% include "partials/_row_menu.html" %}
+  {% include "partials/_list_behaviours.html" %}
   <script src="{% static 'js/vendor/flatpickr.min.js' %}"></script>
   <script src="{% static 'js/vendor/sortable.min.js' %}"></script>
   <script nonce="{{ request.csp_nonce }}">

@@ -32,7 +32,7 @@ Alpine's scope chain.
       htmx request from one hidden input, and refuses to attach it to a
       cross-origin one.
     {% endcomment %}
-    <form class="card p-4 mb-5 flex flex-wrap items-end gap-3" x-show="adding" x-cloak hx-post="{% url 'contacts:tag_create' workspace_id=request.workspace.id %}" @htmx:after-request="if ($event.detail.successful) { $el.reset(); adding = false }">
+    <form class="card p-4 mb-5 flex flex-wrap items-end gap-3" x-show="adding" x-cloak hx-post="{% url 'contacts:tag_create' workspace_id=request.workspace.id %}" @htmx:after-request="if (bbChanged($event, 'tagsChanged')) { $el.reset(); adding = false }">
         <div class="field field-inline">
             <label class="field-label" for="new-tag-name">What is the tag called?</label>
             <input class="form-input-styled" id="new-tag-name" x-ref="newName" type="text" name="name" maxlength="100" required placeholder="VIP" style="width: 18rem;">
@@ -45,4 +45,4 @@ Alpine's scope chain.
 </div>
 {% endblock %}
 
-{% block alpine_components %}{{ block.super }}{% include "partials/_row_menu.html" %}{% endblock %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}

@@ -28,7 +28,7 @@ twice-a-year action.
   <form id="inbox-rule-order" class="card overflow-hidden" hx-post="{% url 'inbox:rule_reorder' workspace_id=request.workspace.id %}" hx-trigger="rule-order-changed">
     <ol class="ib-rule-list" data-rule-list>
       {% for rule in rules %}
-      <li class="ib-rule flex-wrap" data-rule-id="{{ rule.id }}" x-data="{ ...bbRowMenu() }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+      <li class="ib-rule flex-wrap" data-rule-id="{{ rule.id }}" x-data="{ ...bbRowMenu() }">
         <input type="hidden" name="rule" value="{{ rule.id }}" />
         <span class="ib-rule-handle" data-rule-handle aria-hidden="true">⋮⋮</span>
         <div class="ib-rule-body">

@@ -381,7 +381,21 @@ class TestTheFragmentRoutes:
 
     def test_a_fragment_is_a_fraction_of_the_full_page(self, tenancy, client_for):
         """The saving is bytes and render work, not queries — sidebar_context is
-        a context processor and runs for every render() whatever the template."""
+        a context processor and runs for every render() whatever the template.
+
+        Five rather than the ten this started at. A row is no longer a table cell
+        with a text input in it: it carries an overflow menu and two inline edit
+        forms, so the fragment grew while the shell around it did not. Measured
+        with one tag when that changed: 3,895 bytes against 34,790, an 89%
+        saving that a ten-times bound rejected.
+
+        The bound is deliberately kept loose rather than tightened to whatever
+        today measures. What must not regress is the *structure* — no shell, no
+        sidebar — and ``test_a_fragment_renders_without_the_shell`` above asserts
+        that directly. This one only has to catch somebody wiring the fragment
+        route back to the full page template, which would put it within a few
+        per cent of the page rather than under a fifth of it.
+        """
         client = client_for(tenancy.owner)
         services.get_or_create_tag(tenancy.workspace, "VIP")
 
@@ -389,4 +403,4 @@ class TestTheFragmentRoutes:
         fragment = client.get(url(tenancy, "settings/tags/rows/")).content
 
         assert b"VIP" in fragment
-        assert len(fragment) * 10 < len(page)
+        assert len(fragment) * 5 < len(page)

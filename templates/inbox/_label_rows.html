@@ -21,7 +21,7 @@ colour IS its identity on this page, and no neutral glyph can carry it.
   {% if labels %}
   <div class="card overflow-hidden">
     {% for row in labels %}
-    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), editing: false }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), editing: false }">
       <span class="list-row-icon"><span class="ib-label-dot" style="--chip-ink: {{ row.chip.color }};"></span></span>
 
       <div class="flex-1 min-w-0">
@@ -39,7 +39,7 @@ colour IS its identity on this page, and no neutral glyph can carry it.
         <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'inbox:label_delete' workspace_id=request.workspace.id label_id=row.label.id %}" hx-confirm="Delete “{{ row.label.name }}”? It is removed from {{ row.used }} conversation{{ row.used|pluralize }}. Rules that add it keep running and will show it as deleted." @click="menuOpen = false">Delete</button>
       </div>
 
-      <form x-show="editing" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'inbox:label_update' workspace_id=request.workspace.id label_id=row.label.id %}" @htmx:after-request="if ($event.detail.successful) editing = false">
+      <form x-show="editing" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'inbox:label_update' workspace_id=request.workspace.id label_id=row.label.id %}" @htmx:after-request="if (bbChanged($event, 'inboxLabelsChanged')) editing = false">
         <label class="sr-only" for="label-name-{{ row.label.id }}">Name</label>
         <input class="form-input-styled" id="label-name-{{ row.label.id }}" x-ref="name" type="text" name="name" value="{{ row.label.name }}" maxlength="60" required style="width: 16rem;">
         <label class="sr-only" for="label-color-{{ row.label.id }}">Colour</label>

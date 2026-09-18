@@ -1,0 +1,80 @@
+{% comment %}
+The two behaviours every settings list needs, defined once for the page.
+
+**The "…" menu's anchoring.** position: fixed and anchored on open, the way
+templates/components/ui_select.html does it and for the same reason: these rows
+sit inside .app-content, which is overflow-y-auto, and an absolutely positioned
+panel is clipped by it.
+
+The scroll and Escape listeners are registered ONCE here rather than per row.
+Two reasons. A list of 200 rows was installing 400 window listeners for a menu
+of which at most one can be open. And `@scroll.window` never fired at all:
+.app-content is the scrolling element (templates/base.html), scroll events do
+not bubble, so a listener on window never saw them and the fixed panel simply
+drifted away from its row. A capture-phase listener on the document does see
+them, whatever scrolls.
+
+**`bbChanged`.** Whether a response actually changed anything. apps/common/htmx
+answers both success and refusal with a 204, so `detail.successful` is true for
+"Tag created" AND for "That tag already exists" — a create form keyed on it
+wiped what the operator typed on the one response where they needed it back.
+Only the success path sets the HX-Trigger, which is what this reads.
+
+A plain window function rather than Alpine.data(), because every call site also
+needs flags of its own and spreads this into them:
+
+    x-data="{ ...bbRowMenu(), renaming: false }"
+
+Included from {% templatetag openblock %} block alpine_components {% templatetag closeblock %}, which
+templates/base.html places after htmx and before the deferred Alpine — so the
+definitions exist by the time Alpine boots.
+{% endcomment %}
+<script nonce="{{ request.csp_nonce }}">
+  (function () {
+    // The one open menu, or null. Held here so the shared listeners can close
+    // whichever it is without every row carrying its own pair.
+    var open = null;
+
+    function closeOpen() {
+      if (!open) return;
+      open.menuOpen = false;
+      open = null;
+    }
+
+    // Capture, not bubble: a scroll inside .app-content never reaches a
+    // bubbling listener, and the panel's coordinates are captured once at open.
+    document.addEventListener('scroll', closeOpen, true);
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeOpen();
+    });
+
+    window.bbRowMenu = function () {
+      return {
+        menuOpen: false,
+        menuTop: 0,
+        menuLeft: 0,
+        openMenu: function (event) {
+          var reopening = this.menuOpen;
+          closeOpen();
+          if (reopening) return;
+          var rect = event.currentTarget.getBoundingClientRect();
+          this.menuTop = rect.bottom + 6;
+          // Clamped at both ends: right-aligning to the button alone puts the
+          // panel off the left edge on a narrow viewport, where its first items
+          // are clipped with no way to scroll to them.
+          this.menuLeft = Math.max(8, Math.min(rect.right - 200, window.innerWidth - 212));
+          this.menuOpen = true;
+          open = this;
+        },
+        closeMenu: closeOpen,
+      };
+    };
+
+    window.bbChanged = function (event, name) {
+      if (!event.detail || !event.detail.successful) return false;
+      var xhr = event.detail.xhr;
+      var triggered = (xhr && xhr.getResponseHeader('HX-Trigger')) || '';
+      return triggered.indexOf(name) !== -1;
+    };
+  })();
+</script>

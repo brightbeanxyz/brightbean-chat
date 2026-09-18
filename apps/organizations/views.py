@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.billing.entitlements import organization_locked
-from apps.common.windows import timezone_choices, zone
+from apps.common.windows import is_valid_timezone, timezone_choices
 from apps.members.decorators import require_org_role
 from apps.members.models import WorkspaceMembership
 from apps.members.requests import OrgRequest
@@ -55,9 +55,9 @@ def update_settings(request: OrgRequest) -> HttpResponse:
     # Unlike a workspace's, this one is never blank — it is the fallback every
     # workspace without its own clock reads — so an empty post keeps the current
     # value rather than clearing it. See apps/workspaces/views.py for why the
-    # check is zone() and not membership of timezone_choices().
+    # check is is_valid_timezone and not membership of timezone_choices().
     submitted_timezone = (request.POST.get("default_timezone") or org.default_timezone).strip()[:63]
-    if zone(submitted_timezone) is None:
+    if not is_valid_timezone(submitted_timezone):
         messages.error(request, "That is not a timezone we recognise.")
         return redirect(reverse("organizations:settings"))
     org.default_timezone = submitted_timezone
