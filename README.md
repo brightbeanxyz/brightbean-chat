@@ -295,8 +295,20 @@ middle.
 
    One URI for the whole deployment, not one per workspace. Meta matches it
    character for character, and the workspace travels in a signed `state`.
-3. Request these permissions: `instagram_business_basic`,
-   `instagram_business_manage_messages`, `instagram_business_manage_comments`.
+3. In the App Dashboard, go to *Instagram → Permissions and features* and add
+   the permissions this deployment requests:
+
+   **Use case: "Instagram API"** (the *Instagram API with Instagram Login*
+   setup from step 1)
+   - Add these permissions: `instagram_business_basic` (the account's id and
+     username, which everything else is built on),
+     `instagram_business_manage_messages` (reading and sending DMs, story
+     replies, and story mentions), `instagram_business_manage_comments`
+     (reading comments and posting public replies — the comment trigger)
+
+   All three are requested at connect time rather than incrementally.
+   Connecting without `manage_comments` succeeds and then fails every public
+   reply, which is a worse thing to discover later.
 4. Copy the *Instagram app ID* and *Instagram app secret* from the Instagram
    product's API setup. These are not the plain Facebook app id and secret.
 5. Set:
@@ -326,8 +338,24 @@ minutes. See [`docs/channels/instagram.md`](docs/channels/instagram.md).
    ```
    https://<your-host>/channels/messenger/callback/
    ```
-3. Request these permissions: `pages_messaging`, `pages_show_list`,
-   `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement`.
+3. In the App Dashboard, go to **Use cases** and add the two use cases below.
+   Click into each one and go to **Permissions and features** to add the
+   optional permissions:
+
+   **Use case: "Messenger from Meta"**
+   - Required to enable `pages_messaging`, which is not available under the
+     Page use case
+   - Add the optional permission: `pages_messaging` — sending and receiving
+     DMs, the channel itself
+
+   **Use case: "Manage everything on your Page"**
+   - Auto-includes `pages_show_list`, which is what makes `/me/accounts` return
+     anything, so an operator can pick a page
+   - Add these optional permissions: `pages_manage_metadata` (permits
+     `subscribed_apps` and the Get Started button — without it a page
+     connects and then silently never delivers), `pages_read_engagement`
+     (read the comment that fires a comment trigger),
+     `pages_manage_engagement` (post the public reply and the like)
 4. Copy the app ID and app secret from *App settings → Basic*.
 5. Set:
 
@@ -358,9 +386,17 @@ because it is what every inbound delivery's signature is verified against.
    verification. Note the **phone number ID** (the numeric API id, not the
    phone number) and the **WhatsApp Business Account ID**.
 3. Create a system user in *Business Settings*, give it access to the WABA, and
-   generate a token with `whatsapp_business_messaging` and
-   `whatsapp_business_management`. Choose **never expires**; a 60-day token
-   becomes a silent outage two months after launch.
+   generate a token carrying these permissions:
+
+   **System user token** (there is no use case to add them under — WhatsApp
+   runs no login dialog, so nobody is ever shown a consent screen)
+   - Add these permissions: `whatsapp_business_messaging` (sending and
+     receiving messages, the channel itself), `whatsapp_business_management`
+     (reading the number back to prove the token, subscribing the WABA to
+     webhooks, and managing templates)
+
+   Choose **never expires**; a 60-day token becomes a silent outage two months
+   after launch.
 4. Copy the app ID and app secret from *App settings → Basic*.
 5. Set:
 
@@ -376,6 +412,29 @@ because it is what every inbound delivery's signature is verified against.
 Then finish in the app at *Settings → Channels → WhatsApp → set it up*, which
 reads the number back from Meta to prove the token before storing anything. See
 [`docs/channels/whatsapp.md`](docs/channels/whatsapp.md).
+
+### What Meta has to approve
+
+A new Meta app starts with **Standard Access**, which reaches only accounts
+whose users hold a role on the app itself — the owner, and anyone added as a
+developer or tester. That is enough to build against, and enough for a
+self-hoster running their own accounts. Connecting an account belonging to
+someone else means asking Meta for **Advanced Access** on each permission
+through **App Review**, backed by **Business Verification** of the business
+behind the app.
+
+| Platform | Permissions to request | Also required |
+|---|---|---|
+| **Instagram** | `instagram_business_basic`, `instagram_business_manage_messages`, `instagram_business_manage_comments` | App Review, submitted per permission with a screencast showing each one used end to end; Business Verification |
+| **Facebook Messenger** | `pages_messaging`, plus `pages_read_engagement` and `pages_manage_engagement` if you use the comment trigger | Business Verification; a privacy policy URL and a data-deletion callback on the app |
+| **WhatsApp** | `whatsapp_business_messaging`, `whatsapp_business_management`, on the system user token | No App Review — a system user token has no consent screen to review. Business Verification and message quality set the per-number messaging limit, and every template is approved individually |
+
+Budget weeks rather than days, and expect at least one rejection asking for a
+clearer screencast. This is Meta's process; nothing in this product changes it.
+
+Telegram, SMS, and email have nothing to request. A BotFather token, a Twilio
+account SID and auth token, and an SMTP or provider key are all issued on the
+spot and reach every contact from the first message.
 
 ## API & webhooks
 
