@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.validators import is_valid_hex_color
+from apps.common.windows import timezone_choices, zone
 from apps.flows.portability.library import gallery_entries
 from apps.members.decorators import require_permission
 from apps.members.models import WorkspaceMembership
@@ -319,7 +320,14 @@ def switch(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 @require_permission("manage_workspace_settings")
 @require_GET
 def settings_view(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
-    return render(request, "workspaces/settings.html")
+    # The stored value is passed in so a zone this list filters out — a legacy
+    # alias, an Etc/* — still renders as the selected option rather than being
+    # silently swapped for the first entry on the next save.
+    return render(
+        request,
+        "workspaces/settings.html",
+        {"timezone_choices": timezone_choices(request.workspace.timezone)},
+    )
 
 
 @login_required
@@ -343,7 +351,18 @@ def update_settings(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     workspace.name = name
     workspace.icon = (request.POST.get("icon") or "").strip()[:8]
     workspace.description = (request.POST.get("description") or "").strip()[:500]
-    workspace.timezone = (request.POST.get("timezone") or "").strip()[:63]
+    # Blank means "use the organization default" (Workspace.effective_timezone),
+    # so it stays allowed. Anything else has to be a real zone: the field has
+    # been free text with no validation, and a typo does not raise — it reaches
+    # ZoneInfo through effective_timezone, gets caught, and silently falls back,
+    # which is a wrong-clock bug with nothing on screen to explain it. Checked
+    # with zone() rather than against timezone_choices() so a value already in
+    # the database is not rejected the first time its owner opens this page.
+    submitted_timezone = (request.POST.get("timezone") or "").strip()[:63]
+    if submitted_timezone and zone(submitted_timezone) is None:
+        messages.error(request, "That is not a timezone we recognise.")
+        return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
+    workspace.timezone = submitted_timezone
 
     for field in ("primary_color", "secondary_color"):
         value = (request.POST.get(field) or "").strip()

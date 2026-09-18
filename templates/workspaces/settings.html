@@ -1,38 +1,93 @@
 {% extends "layouts/workspace_settings.html" %}
+{% comment %}
+Was six `<p><label><br><input></p>` blocks leaning on the @layer base defaults in
+.app-content — the barest page in the product. Three cards now, split along the
+lines somebody actually thinks in: what it is called, what clock it keeps, and
+the two colours.
+
+{% templatetag openblock %} block content_wrap {% templatetag closeblock %} is cleared because this page
+brings its own cards; layouts/settings.html only wraps pages still written as
+bare semantic HTML.
+
+The colour fields are a swatch bound to a hex box, and the BOX is what carries
+`name` — the swatch has none. A bare <input type="color"> always submits,
+defaulting to #000000, so it cannot express "no override"; primary_color is
+blank=True and "" means exactly that. Binding the two keeps the empty state
+reachable, which is what the Clear button is for.
+
+`pattern` mirrors _HEX_COLOR_RE in apps/common/validators.py, so the browser
+refuses what the view would refuse.
+{% endcomment %}
 {% block title %}Workspace settings · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Workspace settings</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <form method="post" action="{% url 'workspaces:update_settings' workspace_id=request.workspace.id %}">
-    {% csrf_token %}
-    <p>
-      <label for="ws-name">Name</label><br />
-      <input id="ws-name" type="text" name="name" value="{{ request.workspace.name }}" maxlength="100" required />
-    </p>
-    <p>
-      <label for="ws-icon">Icon (one emoji)</label><br />
-      <input id="ws-icon" type="text" name="icon" value="{{ request.workspace.icon }}" maxlength="8" />
-    </p>
-    <p>
-      <label for="ws-description">Description</label><br />
-      <input id="ws-description" type="text" name="description"
-             value="{{ request.workspace.description }}" maxlength="500" />
-    </p>
-    <p>
-      <label for="ws-timezone">Timezone</label><br />
-      <input id="ws-timezone" type="text" name="timezone" value="{{ request.workspace.timezone }}" maxlength="63" />
-      <span class="muted">Blank uses the organization default ({{ request.org.default_timezone }}).</span>
-    </p>
-    <p>
-      <label for="ws-primary">Primary colour</label><br />
-      <input id="ws-primary" type="text" name="primary_color"
-             value="{{ request.workspace.primary_color }}" placeholder="#F97316" maxlength="7" />
-    </p>
-    <p>
-      <label for="ws-secondary">Secondary colour</label><br />
-      <input id="ws-secondary" type="text" name="secondary_color"
-             value="{{ request.workspace.secondary_color }}" placeholder="#0F172A" maxlength="7" />
-    </p>
-    <button type="submit">Save</button>
-  </form>
+<div class="max-w-[620px] w-full">
+    <h1 class="page-title">Workspace settings</h1>
+    <p class="page-lede mt-1.5 mb-6">What this workspace is called, and what clock it keeps.</p>
+
+    <form method="post" action="{% url 'workspaces:update_settings' workspace_id=request.workspace.id %}">
+        {% csrf_token %}
+
+        <section class="card p-6 mb-5">
+            <h2 class="section-title mb-5">Name and description</h2>
+            <div class="field">
+                <label class="field-label" for="ws-name">Name</label>
+                <input class="form-input-styled" id="ws-name" type="text" name="name" value="{{ request.workspace.name }}" maxlength="100" required>
+            </div>
+            <div class="field">
+                <label class="field-label" for="ws-icon">Icon<span class="field-label-optional">optional</span></label>
+                <input class="form-input-styled" id="ws-icon" type="text" name="icon" value="{{ request.workspace.icon }}" maxlength="8" style="width: 5rem;">
+                <p class="field-hint">One emoji. It sits beside the name in the workspace switcher.</p>
+            </div>
+            <div class="field">
+                <label class="field-label" for="ws-description">Description<span class="field-label-optional">optional</span></label>
+                <input class="form-input-styled" id="ws-description" type="text" name="description" value="{{ request.workspace.description }}" maxlength="500">
+            </div>
+        </section>
+
+        <section class="card p-6 mb-5">
+            <h2 class="section-title">Clock</h2>
+            <p class="field-hint mb-5" style="margin-top: 0;">
+                Scheduled broadcasts, sending windows and every "today" on a filter are read in this
+                zone.
+            </p>
+            <div class="field">
+                <label class="field-label" for="ws-timezone">Timezone</label>
+                <select class="form-input-styled bb-select" id="ws-timezone" name="timezone">
+                    <option value="">Use the organization default ({{ request.org.default_timezone }})</option>
+                    {% for name in timezone_choices %}<option value="{{ name }}" {% if name == request.workspace.timezone %}selected{% endif %}>{{ name }}</option>{% endfor %}
+                </select>
+            </div>
+        </section>
+
+        <section class="card p-6 mb-5">
+            <h2 class="section-title">Colours</h2>
+            <p class="field-hint mb-5" style="margin-top: 0;">Kept for a white-labelled inbox.</p>
+
+            <div class="field" x-data="{ hex: '{{ request.workspace.primary_color|escapejs }}' }">
+                <label class="field-label" for="ws-primary">Primary</label>
+                <div class="field-swatch">
+                    <input class="field-swatch-well" type="color" aria-label="Pick the primary colour" :value="hex || '#F97316'" @input="hex = $event.target.value">
+                    <input class="form-input-styled" id="ws-primary" type="text" name="primary_color" x-model="hex" maxlength="7" placeholder="#F97316" pattern="#[0-9A-Fa-f]{6}" style="width: 9rem;">
+                    <button type="button" class="btn-pill-secondary btn-pill-sm" x-show="hex" x-cloak @click="hex = ''">Clear</button>
+                </div>
+                <p class="field-hint">Leave it blank to use the BrightBean orange.</p>
+            </div>
+
+            <div class="field" x-data="{ hex: '{{ request.workspace.secondary_color|escapejs }}' }">
+                <label class="field-label" for="ws-secondary">Secondary</label>
+                <div class="field-swatch">
+                    <input class="field-swatch-well" type="color" aria-label="Pick the secondary colour" :value="hex || '#0F172A'" @input="hex = $event.target.value">
+                    <input class="form-input-styled" id="ws-secondary" type="text" name="secondary_color" x-model="hex" maxlength="7" placeholder="#0F172A" pattern="#[0-9A-Fa-f]{6}" style="width: 9rem;">
+                    <button type="button" class="btn-pill-secondary btn-pill-sm" x-show="hex" x-cloak @click="hex = ''">Clear</button>
+                </div>
+            </div>
+        </section>
+
+        <div class="form-actions form-actions-bare">
+            <button type="submit" class="btn-pill-primary">Save changes</button>
+        </div>
+    </form>
+</div>
 {% endblock %}

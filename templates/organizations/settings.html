@@ -1,31 +1,59 @@
 {% extends "layouts/settings.html" %}
+{% comment %}
+The organization's own name and clock. Was a run of `<p><label><br><input></p>`
+with a <dl> fallback for everybody who cannot edit it.
+
+The read-only branch is the same card as the editable one now, using .card-row
+for the rule between facts, so a member and an admin are looking at one page
+rather than at two different ones.
+
+Unlike a workspace's, default_timezone is never blank — it is the fallback every
+workspace without its own clock reads — so its select has no blank option.
+{% endcomment %}
 {% block title %}Organization · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Organization</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  {% if can_manage %}
+<div class="max-w-[620px] w-full">
+    <h1 class="page-title">Organization</h1>
+    <p class="page-lede mt-1.5 mb-6">The account every workspace in it belongs to.</p>
+
+    {% if can_manage %}
     <form method="post" action="{% url 'organizations:update_settings' %}">
-      {% csrf_token %}
-      <p>
-        <label for="org-name">Name</label><br />
-        <input id="org-name" type="text" name="name" value="{{ request.org.name }}" maxlength="100" required />
-      </p>
-      <p>
-        <label for="org-tz">Default timezone</label><br />
-        <input id="org-tz" type="text" name="default_timezone"
-               value="{{ request.org.default_timezone }}" maxlength="63" />
-      </p>
-      <p>
-        <label for="org-logo">Logo URL</label><br />
-        <input id="org-logo" type="url" name="logo_url" value="{{ request.org.logo_url }}" />
-      </p>
-      <button type="submit">Save</button>
+        {% csrf_token %}
+        <section class="card p-6 mb-5">
+            <div class="field">
+                <label class="field-label" for="org-name">Name</label>
+                <input class="form-input-styled" id="org-name" type="text" name="name" value="{{ request.org.name }}" maxlength="100" required>
+            </div>
+            <div class="field">
+                <label class="field-label" for="org-tz">Default timezone</label>
+                <select class="form-input-styled bb-select" id="org-tz" name="default_timezone">
+                    {% for name in timezone_choices %}<option value="{{ name }}" {% if name == request.org.default_timezone %}selected{% endif %}>{{ name }}</option>{% endfor %}
+                </select>
+                <p class="field-hint">Every workspace that has not set its own clock keeps this one.</p>
+            </div>
+            <div class="field">
+                <label class="field-label" for="org-logo">Logo URL<span class="field-label-optional">optional</span></label>
+                <input class="form-input-styled" id="org-logo" type="url" name="logo_url" value="{{ request.org.logo_url }}" placeholder="https://example.com/logo.png">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn-pill-primary">Save changes</button>
+            </div>
+        </section>
     </form>
-  {% else %}
-    <dl>
-      <dt>Name</dt><dd>{{ request.org.name }}</dd>
-      <dt>Default timezone</dt><dd>{{ request.org.default_timezone }}</dd>
-    </dl>
-    <p class="muted">Only organization admins can change these.</p>
-  {% endif %}
+    {% else %}
+    <div class="card mb-4">
+        <div class="card-row flex flex-wrap items-baseline justify-between gap-4 p-5">
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Name</span>
+            <span class="text-sm" style="color: var(--text-primary);">{{ request.org.name }}</span>
+        </div>
+        <div class="card-row flex flex-wrap items-baseline justify-between gap-4 p-5">
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Default timezone</span>
+            <span class="text-sm" style="color: var(--text-primary);">{{ request.org.default_timezone }}</span>
+        </div>
+    </div>
+    <p class="text-[13px]" style="color: var(--text-tertiary);">Only organization admins can change these.</p>
+    {% endif %}
+</div>
 {% endblock %}
