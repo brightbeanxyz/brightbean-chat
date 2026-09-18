@@ -1,23 +1,29 @@
 {% extends "base.html" %}
 {% comment %}
-Settings layout: the sidebar, then a 232px settings column, then the page.
+Settings layout: the sidebar, carrying the settings rows instead of the
+product's, and the page.
 
-**What changed in the redesign.** This layout used to express "a settings
-section" by overriding {% block sidebar_nav %} and replacing the product's
-whole navigation with the settings one — which is why it also had to render a
-"Back to app" link, and why partials/_nav_badge_sinks.html had to exist at all
-(replacing the nav took the badge ids with it while leaving the bell's poll
-behind, and all 14 settings pages logged htmx:oobErrorNoTarget once a minute).
+**What changed, twice.** This layout first expressed "a settings section" by
+overriding {% block sidebar_nav %}
+and replacing the product's whole navigation — which is why
+partials/_nav_badge_sinks.html had to exist at all: base.html went on rendering
+the bell's 60s poll outside the nav it had just swapped away, and all 14
+settings pages logged htmx:oobErrorNoTarget once a minute. The fix was a SECOND
+column beside the sidebar, which fixed the badges and left 232px of settings
+rows standing next to 240px of app rows nobody was using any more.
 
-Now the settings nav is a SECOND column beside the sidebar rather than a
-replacement for it. Three consequences, all good: no "Back to app", because the
-sidebar never left; no badge sinks, because no archetype strands an id any more;
-and no layout in the product overrides the main nav.
+Now the settings rows are IN the sidebar, and the poll is not stranded because
+the poll was never outside the nav: it lives in the Notifications row, so a
+page with no product nav is a page that never polls. All this layout does is
+hand partials/_app_sidebar.html the rows to draw — hence a block around the
+include rather than a block around the nav. A "Back to app" row replaces the
+workspace switcher above the rows; see the partial.
 
 What has NOT changed is how the active row is decided. Studio uses a
 `settings_active` string that 11 views across 8 apps have to remember to set —
 a second convention on top of the resolver_match checks the main nav uses. The
-settings nav is the same data structure the sidebar's nav is, active flag included.
+settings rows are the same data structure the sidebar's rows are, active flag
+included, and now the same renderer too.
 
 Concrete settings pages extend this and fill {% block content %}, which is
 re-declared empty below so it is available to grandchildren.
@@ -25,11 +31,7 @@ re-declared empty below so it is available to grandchildren.
 
 {% block page_header %}{% endblock %}
 
-{% block secondary_nav %}
-<nav class="setnav" aria-label="Settings">
-    {% include "partials/_nav_groups.html" with groups=settings_nav_groups %}
-</nav>
-{% endblock %}
+{% block app_sidebar %}{% include "partials/_app_sidebar.html" with settings_groups=settings_nav_groups %}{% endblock %}
 
 {% comment %}
   Settings pages are still largely bare semantic HTML leaning on the

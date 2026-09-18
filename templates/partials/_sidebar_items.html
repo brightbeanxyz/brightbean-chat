@@ -1,15 +1,15 @@
 {% comment %}
-One run of sidebar rows. Same data as partials/_nav_groups.html renders for the
-settings nav — the NavGroup/NavItem structure from
-apps.common.context_processors, with `active` already resolved in Python.
+One run of sidebar rows, for both sets of them: the product's nav and, on a
+settings page, the settings nav (see partials/_app_sidebar.html). Both are the
+NavGroup/NavItem structure from apps.common.context_processors, with `active`
+already resolved in Python.
 
-Still two renderers rather than one with a variant flag, but not for the old
-reason (a rail row stacked its label under its glyph; both are icon-beside-
-label now). What is left is real and smaller: a sidebar row has the collapse
-hooks the settings column has no use for — `.sidebar-nav-label`, which every
-collapsed rule keys on, and a `title`, which is the only affordance left at
-60px — and it can be a trigger rather than a link. A flag would have to branch
-on all three.
+There were two renderers while the settings nav was a 232px column of its own —
+partials/_nav_groups.html, with its own row markup, its own group label and its
+own active class. The rows are in the sidebar now, so the second copy is gone
+and a settings row gets what every other row here gets: the collapse hooks
+(`.sidebar-nav-label`, which every collapsed rule keys on, and a `title`, the
+only affordance left at 60px) without anything having to mirror them.
 
 `item.partial` is that last case: a row that is more than an anchor renders
 itself. Exactly one row uses it — Notifications, which is also the bell's

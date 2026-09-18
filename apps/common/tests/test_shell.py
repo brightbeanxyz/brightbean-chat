@@ -353,6 +353,60 @@ class TestTheChannelBlockInTheSidebar:
         # Telegram is connected, so it is in the list above and not in this one.
         assert sidebar.count(">Telegram</span>") == 0
 
+    def test_only_the_first_three_platforms_are_offered(self, tenant_client, shell_url):
+        """The offer is a nudge under somebody's own channels, not the whole
+        registry: six chips of platforms you do not have is a wall.
+
+        Counted by the + badge, which only a connectable row carries — "More
+        channels" has the plain glyph and stays whatever the list is doing.
+        """
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert sidebar.count("sidebar-connect-plus") == 3
+        assert ">Telegram</span>" in sidebar
+        assert ">Instagram</span>" in sidebar
+        assert ">Facebook Messenger</span>" in sidebar
+        # The other three are waiting, not gone — "More channels" is the way
+        # to them until one of the first three is connected.
+        assert ">WhatsApp</span>" not in sidebar
+        assert ">SMS</span>" not in sidebar
+        assert ">More channels</span>" in sidebar
+
+    def test_connecting_one_of_the_three_brings_the_next_one_up(self, tenant_client, shell_url, tenancy):
+        """The list refills itself. Connecting a platform takes it off
+        `connectable`, so the fourth moves into the gap and the offer stays
+        three long — otherwise it would shrink to nothing while three
+        platforms nobody has were never once offered."""
+        make_connection(tenancy.workspace, platform="telegram")
+
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert sidebar.count("sidebar-connect-plus") == 3
+        # Instagram and Messenger stay put; WhatsApp is the one promoted.
+        assert ">WhatsApp</span>" in sidebar
+        assert ">SMS</span>" not in sidebar
+
+    def test_the_offer_goes_when_there_is_nothing_left_to_connect(self, tenant_client, shell_url, tenancy):
+        """A workspace running every platform has nothing to be sold, and the
+        heading, the rows and "More channels" go together — a lone "More
+        channels" under an empty heading is a link to a page of things you
+        already have."""
+        from apps.channels.registry import CONNECT_ROUTES
+
+        for platform in CONNECT_ROUTES:
+            make_connection(tenancy.workspace, platform=platform)
+
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert ">Connect channels</div>" not in sidebar
+        assert "sidebar-connect-plus" not in sidebar
+        assert ">More channels</span>" not in sidebar
+        # The channels themselves are still listed above it.
+        assert ">Channels</div>" in sidebar
+
     def test_a_member_who_cannot_connect_a_channel_sees_no_block(self, client_for, tenancy, shell_url, connected):
         body = client_for(tenancy.user_for("agent")).get(shell_url).content.decode()
         sidebar = body[body.index("<aside") : body.index("</aside>")]
@@ -384,10 +438,15 @@ class TestTheChannelBlockInTheSidebar:
 class TestTheNavBadge:
     def test_the_badge_markup_exists_for_a_non_zero_count(self):
         """Pairs with the allowance above: the class is unreachable today only
-        because every badge count is 0, not because nothing renders it."""
+        because every badge count is 0, not because nothing renders it.
+
+        Through partials/_sidebar_items.html, which is the one nav renderer
+        left — the settings column had a second copy of this loop until its
+        rows moved into the sidebar.
+        """
         from django.template import Context, Template
 
-        html = Template('{% include "partials/_nav_groups.html" %}').render(
+        html = Template('{% include "partials/_sidebar_items.html" %}').render(
             Context(
                 {
                     "groups": [
@@ -416,7 +475,7 @@ class TestTheNavBadge:
     def test_a_zero_badge_renders_nothing_rather_than_a_zero(self):
         from django.template import Context, Template
 
-        html = Template('{% include "partials/_nav_groups.html" %}').render(
+        html = Template('{% include "partials/_sidebar_items.html" %}').render(
             Context(
                 {
                     "groups": [
@@ -451,7 +510,7 @@ class TestTheNavBadge:
         """
         from django.template import Context, Template
 
-        html = Template('{% include "partials/_nav_groups.html" %}').render(
+        html = Template('{% include "partials/_sidebar_items.html" %}').render(
             Context(
                 {
                     "groups": [
@@ -483,13 +542,12 @@ class TestTheNavBadge:
         assert "hidden" in slot.group(0)
 
     def test_a_row_no_app_badges_gets_no_slot_at_all(self):
-        """An id nothing ever swaps is dead weight on every page, and
-        partials/_nav_badge_sinks.html has to mirror whatever this loop
-        renders for the layouts that replace the nav wholesale — two lists
-        worth keeping to the rows an app actually owns."""
+        """An id nothing ever swaps is dead weight on every page, and a
+        duplicate of one that does is a swap landing somewhere arbitrary — a
+        list worth keeping to the rows an app actually owns."""
         from django.template import Context, Template
 
-        html = Template('{% include "partials/_nav_groups.html" %}').render(
+        html = Template('{% include "partials/_sidebar_items.html" %}').render(
             Context(
                 {
                     "groups": [
@@ -890,24 +948,63 @@ class TestLogoSizing:
 
 @pytest.mark.django_db
 class TestSettingsLayouts:
-    def test_the_settings_nav_sits_beside_the_sidebar_rather_than_replacing_it(self, tenant_client, shell_urls):
-        """The redesign's structural change, and the reason the badge sinks
-        could be deleted.
+    def test_the_settings_rows_are_the_sidebar_rather_than_a_second_column(self, tenant_client, shell_urls):
+        """One sidebar, two sets of rows.
 
-        The settings layouts used to override {% block sidebar_nav %} and swap
-        the product's whole navigation out, which took the bell's out-of-band
-        badge targets with it and left its poll aiming at nothing — every
-        settings page logged htmx:oobErrorNoTarget once a minute. A second
-        column leaves the sidebar in place, so no archetype strands an id.
+        The settings nav was a 232px column beside the sidebar, which put the
+        settings rows next to 240px of product rows the reader had just left.
+        It sits in the sidebar now — same <aside>, same renderer, same collapse
+        rules — so the product's rows are not on a settings page and there is a
+        way back for the first time since the column arrived.
         """
         body = tenant_client.get("/accounts/settings/").content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
 
-        assert 'class="setnav"' in body
-        # The sidebar is still there, with the rest of the product on it.
-        assert "sidebar-nav-item" in body
-        assert ">Broadcasts</span>" in body
-        # And so there is nothing to go "back" to.
-        assert "Back to app" not in body
+        assert "setnav" not in body
+        # The settings rows, drawn as sidebar rows.
+        assert ">Channels</span>" in sidebar
+        assert "sidebar-nav-item" in sidebar
+        # The product's own rows are not, so the sidebar needs its way out.
+        assert ">Broadcasts</span>" not in sidebar
+        assert "sidebar-back" in sidebar
+        # One product row survives: the bell is the only unread indicator there
+        # is, so it is pinned below the settings rows rather than left off the
+        # page — see partials/_app_sidebar.html.
+        assert ">Notifications</span>" in sidebar
+
+    def test_the_way_back_lands_on_the_workspace_you_left_and_names_it(self, tenant_client, shell_urls, tenancy):
+        """`app_home_url`, the same value the old pre-column layouts used. A
+        user with no workspace left to go back to is sent to the org's
+        workspace list instead — see navigation_context.
+
+        It names the workspace because with the switcher gone this row is the
+        only thing on a settings page that says which one you are editing, and
+        half of these rows are workspace-scoped. Asserted as three independent
+        claims rather than one literal run of attributes: the old form pinned
+        `href` and `class` in that order with that exact class list, so adding
+        a utility class failed a test about where the button goes.
+        """
+        body = tenant_client.get("/accounts/settings/").content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert f'href="/w/{tenancy.workspace.id}/"' in sidebar
+        assert "sidebar-back" in sidebar
+        assert f">Back to {tenancy.workspace.name}</span>" in sidebar
+        # The switcher is not offered from inside settings: half these rows are
+        # scoped to the workspace you are standing in.
+        assert "sidebar-ws-chevron" not in sidebar
+
+    def test_the_account_menu_names_where_its_settings_row_lands(self, tenant_client, shell_url):
+        """It read "Settings" while the workspace switcher carried a second row
+        called "Workspace settings", and from the account menu the two needed
+        telling apart. The row is unmoved and still lands on your profile —
+        what the copy names is the group that opens with it."""
+        body = tenant_client.get(shell_url).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert ">Organization Settings</span>" in sidebar
+        assert ">Settings</span>" not in sidebar
+        assert 'href="/accounts/settings/" class="sidebar-menu-row"' in sidebar
 
     def test_both_settings_layouts_render_one_filtered_nav(self, tenant_client, shell_urls, tenancy):
         """There used to be two group lists, so an Editor on workspace settings
@@ -928,7 +1025,23 @@ class TestSettingsLayouts:
             assert "People &amp; roles" in body
             assert ">Tags</span>" in body
             assert ">Channels</span>" in body
-            assert "Profile" in body
+            assert ">Profile</span>" in body
+
+    def test_the_second_column_is_gone_from_the_compiled_bundle(self):
+        """Half of the column is worse than all of it.
+
+        `.setnav` carried a phone rule that positioned it over the page and
+        pushed `.app-shell-main` down by its height. A partial restore — the
+        rules back without the markup, or the markup back without the sidebar
+        change — reopens a 48px gap above every settings page on a phone with
+        nothing in it. Read from the bundle rather than the source, because the
+        bundle is what ships.
+        """
+        from django.contrib.staticfiles import finders
+
+        bundle = Path(finders.find("css/dist/styles.css")).read_text()
+
+        assert "setnav" not in bundle
 
     def test_no_view_supplied_settings_active_string_is_needed(self, tenant_client, shell_urls):
         """Deviation 4: the layouts read the same nav structure the sidebar does.
@@ -942,7 +1055,8 @@ class TestSettingsLayouts:
         """
         body = tenant_client.get("/accounts/settings/").content.decode()
 
-        assert 'setnav-item active"' in body
+        assert 'class="sidebar-nav-item active"' in body
+        assert 'aria-current="page"' in body
 
 
 class TestTemplateHygiene:

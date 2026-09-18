@@ -29,9 +29,12 @@ class TestTheBellInTheShell:
         when it was deleted.
 
         The requirement never changed: it is the only unread indicator in the
-        product — no second copy, no mobile-bar duplicate — so it has to be
-        somewhere every page renders. The sidebar is, including on settings
-        pages. A nav row can carry the count and still open the panel.
+        product — no second copy, no mobile-bar duplicate — so it has to be on
+        the product's own nav, which is every page with the product's nav on
+        it. Settings is the exception and pays for itself: the rows there are
+        the settings rows, and the poll leaves with the row rather than aiming
+        at an id the page no longer has. A nav row can carry the count and
+        still open the panel.
         """
         sidebar = shell_body[shell_body.index("<aside") : shell_body.index("</aside>")]
 
@@ -255,11 +258,18 @@ class TestThePolledBadgeAlwaysHasATarget:
         """Generalised twice over: across the response's targets, so a fourth
         surface cannot be added to _badge.html without being added to the
         shell, and across the shell's *layouts*, because they are not
-        interchangeable. layouts/settings.html replaces {% block sidebar_nav %}
-        wholesale while base.html keeps rendering the poll outside it, so a
-        settings page carried the bell and none of the nav's badge ids — the
-        error this whole class is about, on 14 pages, missed by sampling only
-        the dashboard.
+        interchangeable — this class exists because a settings page carried the
+        bell and none of the nav's badge ids, on 14 pages, missed by sampling
+        only the dashboard.
+
+        Unconditional on purpose. A settings page draws the settings rows in
+        place of the product's, so for a while it carried neither the poll nor
+        the target and this asserted only that the two agreed — which is green
+        for a page that has lost both, and so would have passed through a
+        regression that dropped the bell everywhere. The row is pinned to the
+        settings nav as well now (partials/_app_sidebar.html), so every
+        archetype renders the target and the check can be a presence check
+        again.
         """
         client = client_for(tenancy.owner)
         response = client.get(reverse("notifications:badge")).content.decode()
@@ -268,6 +278,7 @@ class TestThePolledBadgeAlwaysHasATarget:
 
         for url in self.page_archetypes(tenancy):
             shell = client.get(url).content.decode()
+            assert reverse("notifications:badge") in shell, f"{url} renders no poll"
             for target in targets:
                 assert f'id="{target}"' in shell, f"{target} missing from {url}"
 
@@ -284,57 +295,118 @@ class TestThePolledBadgeAlwaysHasATarget:
                 assert shell.count(f'id="{target}"') == 1, f"{target} in {url}"
 
     def test_the_settings_archetype_carries_the_target_like_any_other(self, tenancy, client_for):
-        """What the sinks used to work around, now true by construction.
+        """What the sinks used to work around, now true by construction twice.
 
-        A settings page used to replace the whole nav, taking the badge ids with
-        it while base.html went on rendering the poll — so
-        partials/_nav_badge_sinks.html existed to put hidden copies back. The
-        settings nav is a second column beside the rail now, the header renders
-        there too, and the bell's target is simply present the way it is
-        everywhere else.
+        A settings page draws the settings rows in place of the product's, so
+        the old shape of this was the bug: the nav went, base.html kept
+        rendering the poll, and the swap aimed at nothing —
+        partials/_nav_badge_sinks.html existed to put hidden copies of the ids
+        back. Two things replace it. The poll is a child of the row it updates,
+        so it cannot outlive its target; and the row is pinned to the settings
+        nav from the same `notifications_row`, so the count is on every page in
+        the product rather than on most of them.
         """
         Notification.objects.create(user=tenancy.owner, event_type="inbox_reminder", title="Ping")
 
         body = client_for(tenancy.owner).get("/accounts/settings/").content.decode()
 
         assert body.count('id="nav-badge-notifications"') == 1
+        assert body.count(reverse("notifications:badge")) == 1
         assert reverse("notifications:bell") in body
+
+    def test_the_settings_nav_does_not_carry_the_bell_twice(self, tenancy, client_for):
+        """`notifications_row` IS the row out of `nav_groups`, and the two
+        branches in the sidebar are exclusive — but nothing about the markup
+        says so, and two copies is the one failure mode this whole class is
+        about."""
+        body = client_for(tenancy.owner).get("/accounts/settings/").content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
+
+        assert sidebar.count(">Notifications</span>") == 1
+        # ...and the settings rows are still the nav around it, not the
+        # product's — this is a pinned utility row, not the nav coming back.
+        assert ">Broadcasts</span>" not in sidebar
 
     @staticmethod
     def page_archetypes(tenancy):
-        """One URL per sidebar_nav layout in the product. The guard test below
-        fails if a new layout appears and this list does not grow."""
+        """One URL per sidebar layout in the product.
+
+        Hand-kept, and the two tests below are what stop that being a liability:
+        one holds every layout that takes the sidebar block to rendering it
+        through the single shared partial, so a new layout cannot invent an
+        <aside> of its own; the other holds the poll to one home. Between them
+        a layout missing from this list still cannot strand or duplicate an id.
+        """
         return [
             f"/w/{tenancy.workspace.id}/",
             "/accounts/settings/",
             reverse("workspaces:settings", kwargs={"workspace_id": tenancy.workspace.id}),
         ]
 
-    def test_no_layout_replaces_the_navigation_any_more(self):
-        """The guard that took the sinks' place.
+    def test_the_poll_is_rendered_only_by_the_row_it_updates(self):
+        """The structural half of the pairing above, and the guard that took
+        the sinks' place.
 
         partials/_nav_badge_sinks.html existed because a layout could swap the
-        whole nav out and strand the badge ids the bell's poll aims at. Nothing
-        does that now — the settings nav is a second column — so the sinks were
-        deleted. Discovery rather than a hand-kept list: a template that brings
-        the override back has to bring the sinks back with it, and should fail
-        here rather than in a console nobody reads.
+        nav out while base.html went on rendering the poll beside it, stranding
+        every badge id the swap aims at. A settings layout does swap the nav
+        out — that is how settings rows reach the sidebar — so what makes the
+        sinks unnecessary is no longer "nothing replaces the nav". It is that
+        the poll has exactly one home, inside the Notifications row, and so
+        cannot outlive the ids it targets.
+
+        Discovery rather than a hand-kept list: a template that starts the poll
+        anywhere else should fail here rather than in a console nobody reads.
         """
         templates = BASE_HTML.parent
         offenders = []
         for path in sorted(templates.rglob("*.html")):
-            if path == BASE_HTML:
-                continue
-            # Comments stripped first: several templates *describe* the old
-            # override in prose, and matching prose would fire on files that
-            # render no nav at all.
+            # Comments stripped first: several templates *describe* the poll in
+            # prose, and matching prose would fire on files that render none.
             markup = re.sub(r"{%\s*comment\s*%}.*?{%\s*endcomment\s*%}", "", path.read_text(), flags=re.S)
-            if re.search(r"{%\s*block sidebar_nav\s*%}", markup):
-                offenders.append(path.relative_to(templates))
+            # Both spellings of the same endpoint, and anywhere in the markup
+            # rather than only in an hx-get: a partial that polls it as the
+            # hardcoded "/notifications/badge/" copied out of a network tab, or
+            # from an htmx.ajax call in a script, strands exactly the same ids
+            # as one that reverses the name.
+            if re.search(r"notifications:badge|/notifications/badge/", markup):
+                offenders.append(str(path.relative_to(templates)))
+
+        assert offenders == ["notifications/partials/_bell.html"], (
+            "the 60s badge poll belongs to the Notifications row; started anywhere else it outlives "
+            f"the ids it swaps into and needs partials/_nav_badge_sinks.html back: {offenders}"
+        )
+
+    def test_every_layout_that_takes_the_sidebar_block_uses_the_one_partial(self):
+        """The other half of what `test_no_layout_replaces_the_navigation_any_more`
+        used to cover, for a shell where replacing the nav is now legal.
+
+        That test forbade a layout swapping the navigation out at all, which is
+        exactly what a settings layout does today — the settings rows reach the
+        sidebar through {% templatetag openblock %} block app_sidebar
+        {% templatetag closeblock %}. So the rule is no longer "nobody
+        replaces it" but "everybody who does goes through the one <aside>":
+        a layout that hand-rolled its own would put a second `nav-badge-inbox`
+        on every page it serves, and an out-of-band swap only ever finds the
+        first.
+
+        Discovery rather than a hand-kept list, because `page_archetypes` above
+        IS a hand-kept list and a new layout that never reaches it would
+        otherwise be checked by nothing.
+        """
+        templates = BASE_HTML.parent
+        offenders = []
+        for path in sorted(templates.rglob("*.html")):
+            if path == BASE_HTML:  # where the block is declared, not overridden
+                continue
+            markup = re.sub(r"{%\s*comment\s*%}.*?{%\s*endcomment\s*%}", "", path.read_text(), flags=re.S)
+            for override in re.findall(r"{%\s*block app_sidebar\s*%}(.*?){%\s*endblock", markup, flags=re.S):
+                if '{% include "partials/_app_sidebar.html"' not in override:
+                    offenders.append(str(path.relative_to(templates)))
 
         assert not offenders, (
-            "replaces the navigation wholesale, which strands the bell's out-of-band badge targets; "
-            f"restore partials/_nav_badge_sinks.html with it: {offenders}"
+            "overrides the sidebar block with markup of its own instead of including "
+            f"partials/_app_sidebar.html, which duplicates every badge id in it: {offenders}"
         )
 
 

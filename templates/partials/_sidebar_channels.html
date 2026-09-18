@@ -72,7 +72,22 @@ and Studio hides it in the rail for the same reason.
 {% if channels.connectable %}
 <div class="sidebar-connect">
     <div class="sidebar-section-label">Connect channels</div>
-    {% for row in channels.connectable %}
+    {% comment %}
+      Three rows, not the whole registry. The list is a nudge sitting under the
+      channels somebody actually has, and six chips of platforms they do not is
+      a wall rather than a suggestion. Sliced here rather than in the context
+      processor because `connectable` is the block's truth — it is what
+      test_the_connect_list_agrees_with_connected_platforms pins against
+      apps.flows.capabilities.connected_platforms — and this is how much of it
+      the sidebar draws.
+
+      Connecting one of the three takes it off `connectable`, so the fourth
+      platform moves up into the gap on the next render and the list stays
+      three long until it runs out. When nothing is left to connect the `if`
+      above drops the heading, the rows and "More channels" together: a
+      workspace with every platform live has nothing to be offered.
+    {% endcomment %}
+    {% for row in channels.connectable|slice:":3" %}
     <a href="{{ row.url }}" class="sidebar-nav-item" title="Connect {{ row.label }}">
         <span class="sidebar-channel-mark">
             <span class="sidebar-connect-chip {{ row.platform|platform_ink_class }}">

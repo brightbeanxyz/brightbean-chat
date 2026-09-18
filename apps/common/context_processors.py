@@ -367,19 +367,20 @@ SETTINGS_NAV: list[NavGroup] = [
                 # lit while the operator is copying the key off it.
                 url_names=frozenset({"settings_org_api_keys", "api_keys_issue"}),
             ),
-        ),
-    ),
-    NavGroup(
-        label="You",
-        items=(
+            # Your own profile, in the organisation's group rather than under a
+            # "You" heading of its own. The heading was one row long, and the
+            # row is where the account menu's "Organization Settings" lands —
+            # so the group that opens is the group it belongs to. Ungated like
+            # the Library row above: every viewer has a profile.
+            #
+            # "Notifications" used to sit beside it, pointing at the placeholder
+            # in config/urls.py's _GLOBAL_STUBS. A settings row whose whole
+            # content is "Preferences is not built yet. Lands with issue #31
+            # follow-up." is a dead end with an issue number on it — worse than
+            # no row at all. The route stays (it is a real endpoint, and tests
+            # walk it); what is gone is the promise in the nav. Put the row back
+            # in the same commit as the page.
             NavItem(key="profile", label="Profile", icon="user", url_name="accounts:settings"),
-            # "Notifications" used to be here, pointing at the placeholder in
-            # config/urls.py's _GLOBAL_STUBS. A settings row whose whole content
-            # is "Preferences is not built yet. Lands with issue #31 follow-up."
-            # is a dead end with an issue number on it — worse than no row at
-            # all. The route stays (it is a real endpoint, and tests walk it);
-            # what is gone is the promise in the nav. Put the row back in the
-            # same commit as the page.
         ),
     ),
 ]
@@ -589,6 +590,11 @@ def _sidebar_channels(request: HttpRequest, workspace: Any, membership: Any, wor
     budget; ``test_the_connect_list_agrees_with_connected_platforms`` pins the
     two against each other so they cannot drift.
 
+    The whole list is returned, and partials/_sidebar_channels.html draws only
+    the first three of it — how many rows fit under a heading is the template's
+    business, and the rule above is only checkable against
+    ``connected_platforms`` while this stays the complete answer.
+
     Everything is resolved defensively, because a context processor runs on
     every response including error pages: the app may not be installed
     (``installed_model``), and the routes may not be mounted (``reverse_cached``
@@ -791,10 +797,26 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
     members_url = reverse_cached("members:list") if org_membership is not None else None
 
     settings_nav = _render_nav(SETTINGS_NAV, request, badges, workspace_id)
+    main_nav = _render_nav(MAIN_NAV, request, badges, workspace_id)
+    # The bell's row, pulled out by key so a settings page can pin it without
+    # rendering the product's nav around it (partials/_app_sidebar.html).
+    #
+    # Not a second copy: it IS the row from `nav_groups`, and the two are never
+    # drawn together — a page draws the product's rows or the settings ones.
+    # That matters because notifications/partials/_bell.html carries the id the
+    # 60s poll swaps into, and a page holding two of them sends every swap to
+    # whichever comes first. Pulled out here rather than filtered in the
+    # template so partials/_sidebar_items.html stays a renderer that does not
+    # know what any particular row is.
+    notifications_row = next(
+        (item for group in main_nav for item in group["items"] if item["key"] == "notifications"),
+        None,
+    )
     return {
         # The sidebar's nav. One group now: the footer holds the account
         # block and the collapse toggle, and no rows.
-        "nav_groups": _render_nav(MAIN_NAV, request, badges, workspace_id),
+        "nav_groups": main_nav,
+        "notifications_row": notifications_row,
         "flow_tab_groups": _render_nav(FLOWS_TABS, request, badges, workspace_id),
         # One nav, two names. Both layouts render the same filtered list; the
         # second key is kept so the fourteen templates extending either layout

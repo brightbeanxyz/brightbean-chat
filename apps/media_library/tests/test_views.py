@@ -1,5 +1,7 @@
 """The library UI: what renders, for whom, and what a mutation returns."""
 
+import re
+
 import pytest
 from django.urls import reverse
 
@@ -33,20 +35,25 @@ class TestLibraryPage:
         assert "media-dropzone" in editor.content.decode()
         assert "media-dropzone" not in agent.content.decode()
 
-    def test_it_renders_the_settings_column_its_nav_row_lives_in(self, editor_client, workspace):
+    def test_it_renders_the_settings_rows_its_nav_row_lives_in(self, editor_client, workspace):
         """Library is a workspace settings row now, not a sidebar one.
 
-        A page whose own nav row sits in a column it does not render would
-        light nothing and leave the reader with no way back into settings, so
-        the two move together: the row is in SETTINGS_NAV and this page extends
-        layouts/workspace_settings.html.
+        A page whose own nav row is in a list it does not render would light
+        nothing and leave the reader with no way back into settings, so the two
+        move together: the row is in SETTINGS_NAV and this page extends
+        layouts/workspace_settings.html, which puts those rows in the sidebar.
         """
         body = editor_client.get(_library(workspace)).content.decode()
+        sidebar = body[body.index("<aside") : body.index("</aside>")]
 
-        assert 'class="setnav"' in body
-        assert 'class="setnav-item active"' in body
-        # And the sidebar is still beside it, with the rest of the product.
-        assert "sidebar-nav-item" in body
+        # One anchor carrying both, not two independent assertions: "some row
+        # is lit" and "Library is on the page" are both true when the WRONG row
+        # is lit, which is the failure this test is named for. `[^>]*` is what
+        # keeps the match inside a single opening tag — `.*?` would happily
+        # span from one row's `active` to another row's label.
+        assert re.search(r'class="sidebar-nav-item active"[^>]*title="Library"', sidebar)
+        # The settings rows are the sidebar here, so the way out is on it.
+        assert "sidebar-back" in sidebar
 
     def test_an_htmx_request_returns_only_the_grid(self, editor_client, workspace):
         f.make_asset(workspace)
