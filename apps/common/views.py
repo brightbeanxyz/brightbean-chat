@@ -8,7 +8,9 @@ existed only while there was no way to log in.
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
+from uuid import UUID
 
 from django.contrib.auth.decorators import login_required
 from django.db import Error as DatabaseError
@@ -47,6 +49,31 @@ def healthz(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"status": "ok", "database": "ok"})
 
 
+@dataclass(frozen=True)
+class _DemoWorkspace:
+    """The workspace ``/ui/`` pretends to be standing in.
+
+    Every sidebar row is workspace-scoped, so the style guide — which has no
+    session and therefore no workspace — would otherwise draw a sidebar with no
+    rows at all: an empty shell on the one page whose job is to show what a row
+    looks like.
+
+    It is shaped like the three attributes the chrome reads (partials/_logo.html
+    takes ``icon`` then falls back to the name's initial), and it is set on the
+    request rather than passed into ``navigation_context``, so the navigation
+    keeps one code path and needs no idea that this page exists. The id is the
+    nil UUID: a link followed out of /ui/ lands on a 404 that reads as "no such
+    workspace" rather than on somebody's real one.
+    """
+
+    id: UUID = UUID(int=0)
+    name: str = "BrightBean Chat"
+    icon: str = ""
+
+
+_UI_DEMO_WORKSPACE = _DemoWorkspace()
+
+
 def ui_demo(request: HttpRequest) -> HttpResponse:
     """The design system's living style guide.
 
@@ -60,7 +87,25 @@ def ui_demo(request: HttpRequest) -> HttpResponse:
     page until issue #31 merges, and a design system nobody can look at is a
     design system nobody reviews. Nothing here reads a database or a session —
     it is static markup plus the context processor's model-free navigation.
+
+    The nav rows need a workspace to point at and this request has none — they
+    used to survive on the one row that did not, Settings, and that row has left
+    the sidebar. So the request is handed a stand-in, the way RBACMiddleware
+    hands a real one to every other request. It is a constant, not a lookup, and
+    it carries no membership, so the parts of the chrome that read the database
+    (the channel block, the inbox badge) stay switched off and the promise above
+    holds.
     """
+    # Only when there is not a real one. A signed-in visitor reaches /ui/ with
+    # their own workspace resolved by RBACMiddleware, and sees the style guide
+    # inside their own chrome — which is what it did before the stand-in
+    # existed. The membership goes with it: this request has none by
+    # construction, and leaving a real one beside a stand-in workspace would
+    # point the parts of the chrome that read the database (the channel block,
+    # the inbox badge) at a workspace that is not a row in any table.
+    if getattr(request, "workspace", None) is None:
+        request.workspace = _UI_DEMO_WORKSPACE  # type: ignore[attr-defined]
+        request.workspace_membership = None  # type: ignore[attr-defined]
     context = navigation_context(request)
     context["ui_demo_platforms"] = ["telegram", "instagram", "messenger", "whatsapp", "sms", "email", "carrier-pigeon"]
     context["ui_demo_statuses"] = [("open", "Open"), ("snoozed", "Snoozed"), ("closed", "Closed")]

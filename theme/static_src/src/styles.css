@@ -543,7 +543,10 @@ body {
   border: none;
   background: transparent;
   border-radius: var(--radius-md);
-  font-size: var(--fs-body);
+  /* 15px, the same size the settings column's rows are. The nav used to be a
+     size down from them, which read as secondary on the one surface that is
+     on every page. */
+  font-size: var(--fs-body-lg);
   font-weight: 500;
   color: var(--text-secondary);
   text-align: left;
@@ -573,6 +576,108 @@ body {
   letter-spacing: 0.08em;
   color: var(--text-ghost);
   padding: 14px 10px 4px;
+}
+
+/* --- The channel block ---------------------------------------------------
+   Two lists in the nav: what this workspace has connected, and what it could
+   connect next (partials/_sidebar_channels.html). The rows are plain
+   .sidebar-nav-items — that is what makes them collapse at 60px with
+   everything else — and what is new is only the mark at the start of each:
+   a brand chip for a channel that exists, a muted chip with a + for one that
+   does not. */
+
+/* A heading with a control on the end of it. The label keeps its own padding,
+   so this sets none of its own. */
+.sidebar-section-label-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+/* Revealed on hover or keyboard focus. Opacity rather than display, so it does
+   not reflow the heading it sits in, and `:focus-visible` because a control
+   that only exists under a pointer cannot be tabbed to. */
+.sidebar-section-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-ghost);
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+}
+.sidebar-section-label-wrap:hover .sidebar-section-action,
+.sidebar-section-action:focus-visible { opacity: 1; }
+.sidebar-section-action:hover {
+  background: rgba(var(--scrim-rgb), 0.06);
+  color: var(--text-secondary);
+}
+
+/* The 20px square every channel row starts with, and the anchor the two
+   badges hang off. Same width as a nav glyph, so the rows line up with Home
+   and Inbox above them rather than stepping in and out. */
+.sidebar-channel-mark {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+/* Size only. The radius is .pi-chip's (--radius-sm), which is defined further
+   down this file and therefore beats anything set here — everything in this
+   stylesheet is unlayered, so between two single-class selectors the later one
+   wins. .sidebar-connect-chip below takes the same radius by hand so the two
+   lists line up. */
+.sidebar-channel-chip {
+  width: 20px;
+  height: 20px;
+}
+/* A channel somebody has switched off: present, reachable, and plainly not
+   carrying anything. Colour is the whole signal, so it is drained rather than
+   badged — the badge is reserved for the state that needs a person. */
+.sidebar-channel-mark.is-off .pi-chip { filter: grayscale(1); opacity: 0.55; }
+/* A connected channel's glyph is white on the platform's colour (.pi-chip);
+   one you could connect is the platform's colour on a quiet ground, so the
+   two lists read as "mine" and "available" before a word is read. */
+.sidebar-connect-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-tertiary);
+}
+/* The + on a connectable platform, and the alert on a channel that has stopped
+   working. Both are 10px discs in the mark's bottom-right corner with a ring
+   in the sidebar's own colour, so they read as attached to the glyph rather
+   than as a second icon. */
+.sidebar-connect-plus,
+.sidebar-channel-flag {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 1.5px var(--surface-0);
+  color: var(--text-inverse);
+}
+.sidebar-connect-plus { background: var(--primary); }
+.sidebar-channel-flag {
+  background: var(--warning-500);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 /* --- Footer: account, collapse toggle ------------------------------------ */
@@ -694,6 +799,18 @@ body {
   html.sidebar-is-collapsed .sidebar-initial .sidebar-section-label,
   html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-name,
   html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-chevron { display: none; }
+
+  /* The channel block in the rail. The connected rows stay — they are nav rows
+     and their chips are exactly as readable at 60px as Home's glyph — but the
+     "Connect channels" list and the two headings go: a list of platforms you
+     have NOT connected is a reading exercise, and at 60px it would be six
+     anonymous chips under no heading at all. The + beside the Channels heading
+     goes with its heading, and the channels page it opens is still one click
+     away in workspace settings. */
+  .sidebar-collapsed .sidebar-connect,
+  .sidebar-collapsed .sidebar-section-label-wrap,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-connect,
+  html.sidebar-is-collapsed .sidebar-initial .sidebar-section-label-wrap { display: none; }
 
   .sidebar-collapsed .sidebar-ws-btn,
   html.sidebar-is-collapsed .sidebar-initial .sidebar-ws-btn {
@@ -2184,6 +2301,25 @@ span.flatpickr-weekday {
    needs to vary (spacing, grid columns) is deliberately NOT set here;
    see the cascade note at the top of this file.
    ═══════════════════════════════════════════════════════════════ */
+/* The detail panel is empty until a card is clicked, and its width utility
+   holds 320px whether or not anything is in it. That was already a third of the
+   browser's width spent on nothing; with the settings column beside this page
+   it was half. An id selector rather than a utility because it has to beat
+   that utility, which it does twice over — id specificity, and unlayered rules
+   beating Tailwind's layered utilities (see the cascade note at the top).
+
+   Collapsed to zero width rather than `display: none`, and that is the whole
+   point of writing it this way: the panel is an `aria-live` region, and htmx
+   fills it in the same instant the rule stops matching. A region that was
+   display:none at the moment its content arrived is not reliably announced —
+   several screen readers treat it as not-live — whereas a zero-width one is in
+   the accessibility tree the whole time. The flex gap beside it stays; 24px is
+   the price of the region staying live.
+
+   htmx swaps the panel's content in and out, so the rule tracks the state
+   rather than being toggled by anything. */
+#media-detail:empty { width: 0; padding: 0; overflow: hidden; }
+
 .media-dropzone {
   border: 2px dashed var(--border);
   border-radius: var(--radius-xl);

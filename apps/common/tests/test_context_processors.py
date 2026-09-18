@@ -15,6 +15,7 @@ from apps.common.context_processors import (
     sidebar_context,
 )
 from apps.members.roles import WorkspaceRole
+from tests.support import make_connection
 
 
 def _request(path="/", *, workspace=None, user=None, org_membership=None, workspace_membership=None):
@@ -87,22 +88,36 @@ class TestActiveFlag:
             # own, so it lights the row its tab strip hangs under.
             ("sequences/", "flows"),
             ("broadcasts/", "broadcasts"),
-            ("media/", "media"),
         ],
     )
     def test_exactly_one_main_nav_item_is_active_per_route(self, suffix, expected, tenancy):
         """Every main-nav row is workspace-scoped now — issue #31 put the app
         under /w/<uuid>/ (SPEC §16), so the dashboard is the workspace root.
 
-        Both halves of the rail are searched: Library and Settings sit in the
-        bottom group, and a route lighting a row there is still exactly one row.
+        The Library route is not here any more and should not be: its row is in
+        the settings nav, and the case below covers it.
         """
         path = f"/w/{tenancy.workspace.id}/{suffix}"
         context = navigation_context(_request(path, workspace=tenancy.workspace, user=tenancy.owner))
 
-        rail = context["nav_groups"] + context["nav_footer_groups"]
-        active = [i["key"] for g in rail for i in g["items"] if i["active"]]
+        active = [i["key"] for g in context["nav_groups"] for i in g["items"] if i["active"]]
         assert active == [expected]
+
+    @pytest.mark.django_db
+    def test_the_library_lights_its_settings_row_and_no_sidebar_row(self, tenancy):
+        """Library moved out of the sidebar's footer and into the workspace
+        settings nav. The page renders that column (see
+        templates/media_library/library.html), so the row it lives in has to
+        light up on it — and nothing in the sidebar may, because nothing in the
+        sidebar leads there any more."""
+        path = f"/w/{tenancy.workspace.id}/media/"
+        context = navigation_context(_request(path, workspace=tenancy.workspace, user=tenancy.owner))
+
+        settings_active = [
+            i["key"] for g in context["workspace_settings_nav_groups"] for i in g["items"] if i["active"]
+        ]
+        assert settings_active == ["media"]
+        assert not [i["key"] for g in context["nav_groups"] for i in g["items"] if i["active"]]
 
     @pytest.mark.django_db
     @pytest.mark.parametrize(
@@ -365,9 +380,11 @@ class TestNavStructure:
         Library, which is what keeps every cross-app test that looks a row up by
         key working through a rename.
 
-        One row left the nav rather than the product: `sequences` became a tab
-        on the flows page. `notifications` left for the app header and came
-        back when the header was deleted — the sidebar is the surface that
+        Three rows left the nav rather than the product: `sequences` became a
+        tab on the flows page; `settings` went, because the account menu and
+        the workspace switcher already lead there; and `media` went to the
+        workspace settings nav. `notifications` left for the app header and
+        came back when the header was deleted — the sidebar is the surface that
         renders on every page now, and its row is the bell's trigger.
         """
         keys = [i.key for g in MAIN_NAV for i in g.items]
@@ -380,18 +397,19 @@ class TestNavStructure:
             "contacts",
             "analytics",
             "notifications",
-            "media",
-            "settings",
         }
 
-    def test_the_nav_is_split_into_a_top_and_a_bottom_group(self):
-        """Library and Settings sit in the sidebar's footer, away from the rows
-        that answer "what am I doing"."""
-        top = [i.key for g in MAIN_NAV if g.placement == "top" for i in g.items]
-        bottom = [i.key for g in MAIN_NAV if g.placement == "bottom" for i in g.items]
+    def test_the_library_row_is_in_the_workspace_settings_nav(self):
+        """It keeps its key through the move, which is what keeps every
+        cross-app test that looks the row up by key working."""
+        workspace_group = next(g for g in SETTINGS_NAV if g.label == "Workspace")
+        row = next(i for i in workspace_group.items if i.key == "media")
 
-        assert top == ["dashboard", "inbox", "flows", "broadcasts", "contacts", "analytics", "notifications"]
-        assert bottom == ["media", "settings"]
+        assert row.label == "Library"
+        assert row.workspace_scoped is True
+        # media_library.views.library gates uploads and mutations on
+        # manage_media, not browsing, so any member of the workspace sees it.
+        assert row.permission == ""
 
     def test_the_notifications_row_is_not_workspace_scoped(self):
         """A notification is addressed to a person and the feed spans every
@@ -423,16 +441,6 @@ class TestNavStructure:
         keys = [item["key"] for group in context["nav_groups"] for item in group["items"]]
         assert "notifications" not in keys
 
-    def test_the_settings_row_lights_up_on_every_settings_page(self):
-        """Derived from SETTINGS_NAV rather than hand-listed, so a settings page
-        added later cannot leave the rail row dark."""
-        settings_row = next(i for g in MAIN_NAV for i in g.items if i.key == "settings")
-        every_settings_route = {
-            name for g in SETTINGS_NAV for i in g.items for name in (i.url_names or frozenset({i.url_name}))
-        }
-
-        assert settings_row.url_names == every_settings_route
-
     def test_settings_groups_match_the_design(self):
         assert [g.label for g in SETTINGS_NAV] == ["Workspace", "Organisation", "You"]
 
@@ -444,6 +452,205 @@ class TestNavStructure:
 
         inbox = next(i for g in context["nav_groups"] for i in g["items"] if i["key"] == "inbox")
         assert inbox["badge"] == 0
+
+
+class TestTheChannelBlock:
+    """The sidebar's two channel lists (SPEC §5's connections in the shell).
+
+    Studio carries the same pair for social accounts: what you have connected,
+    then what you could connect next. The rows are data, not NavItems — a
+    NavItem is a fixed row in a fixed list, and these are per-workspace.
+    """
+
+    def _context(self, tenancy, user=None, path=None):
+        return navigation_context(
+            _request(
+                path or f"/w/{tenancy.workspace.id}/",
+                workspace=tenancy.workspace,
+                user=user or tenancy.owner,
+            )
+        )
+
+    @pytest.mark.django_db
+    def test_a_connected_channel_gets_a_row_pointing_at_its_settings(self, tenancy):
+        connection = make_connection(tenancy.workspace, display_name="Acme support bot")
+
+        channels = self._context(tenancy)["channels"]
+
+        assert channels["connections"] == [
+            {
+                "name": "Acme support bot",
+                "platform": "telegram",
+                "url": f"/w/{tenancy.workspace.id}/settings/channels/{connection.pk}/",
+                "active": False,
+                "needs_reauth": False,
+                "disabled": False,
+            }
+        ]
+
+    @pytest.mark.django_db
+    def test_the_row_for_the_channel_you_are_looking_at_is_active(self, tenancy):
+        """The one active-state convention this module exists to keep (deviation
+        4): resolved in Python, never by a template comparing ids."""
+        mine = make_connection(tenancy.workspace, platform="telegram")
+        other = make_connection(tenancy.workspace, platform="whatsapp")
+
+        channels = self._context(tenancy, path=f"/w/{tenancy.workspace.id}/settings/channels/{mine.pk}/")["channels"]
+
+        active = [row["platform"] for row in channels["connections"] if row["active"]]
+        assert active == [mine.platform]
+        assert other.platform not in active
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        ("status", "flag"),
+        [("needs_reauth", "needs_reauth"), ("disabled", "disabled")],
+    )
+    def test_a_channel_that_is_not_carrying_messages_is_marked(self, tenancy, status, flag):
+        """Both states worth a mark in the shell: a connection the platform has
+        stopped accepting, and one somebody switched off. Either looks exactly
+        like a quiet healthy channel until the settings page is opened."""
+        make_connection(tenancy.workspace, status=status)
+
+        row = self._context(tenancy)["channels"]["connections"][0]
+
+        assert row[flag] is True
+
+    @pytest.mark.django_db
+    def test_a_live_platform_leaves_the_connect_list(self, tenancy):
+        """Otherwise the block repeats itself: WhatsApp under "Channels" and
+        WhatsApp under "Connect channels", two rows apart."""
+        make_connection(tenancy.workspace, platform="whatsapp")
+
+        offered = [row["platform"] for row in self._context(tenancy)["channels"]["connectable"]]
+
+        assert "whatsapp" not in offered
+        assert offered == ["telegram", "instagram", "messenger", "sms", "email"]
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize("status", ["needs_reauth", "disabled"])
+    def test_a_dead_connection_does_not_take_its_platform_off_the_offer(self, tenancy, status):
+        """ACTIVE, not merely present — the rule apps.flows.capabilities
+        .connected_platforms and the dashboard checklist both apply.
+
+        A workspace whose only Telegram bot was revoked has no working Telegram.
+        Counting the dead row as "connected" would leave the surface that renders
+        on every page offering no way to connect Telegram at all.
+        """
+        make_connection(tenancy.workspace, platform="telegram", status=status)
+
+        offered = [row["platform"] for row in self._context(tenancy)["channels"]["connectable"]]
+
+        assert "telegram" in offered
+
+    @pytest.mark.django_db
+    def test_the_connect_list_agrees_with_connected_platforms(self, tenancy):
+        """Pins this block's rule against the project's own helper.
+
+        The set is derived from the rows this block already loads rather than by
+        calling ``connected_platforms`` — one query is the budget on a path that
+        runs for every render — so the two implementations are checked against
+        each other here instead, over a workspace holding one of every state.
+        """
+        from apps.channels.registry import CONNECT_ROUTES
+        from apps.flows.capabilities import connected_platforms
+
+        make_connection(tenancy.workspace, platform="telegram")
+        make_connection(tenancy.workspace, platform="whatsapp", status="needs_reauth")
+        make_connection(tenancy.workspace, platform="sms", status="disabled")
+
+        offered = {row["platform"] for row in self._context(tenancy)["channels"]["connectable"]}
+
+        assert offered == set(CONNECT_ROUTES) - set(connected_platforms(tenancy.workspace))
+
+    @pytest.mark.django_db
+    def test_every_platform_with_a_guided_flow_is_offered(self, tenancy):
+        """Derived from the registry rather than listed here, so a platform
+        whose connect flow lands later cannot be missing from the shell — and
+        one whose route is removed cannot leave a dead row."""
+        from apps.channels.registry import CONNECT_ROUTES
+
+        channels = self._context(tenancy)["channels"]
+
+        assert {row["platform"] for row in channels["connectable"]} == set(CONNECT_ROUTES)
+        for row in channels["connectable"]:
+            assert row["url"].startswith(f"/w/{tenancy.workspace.id}/settings/channels/")
+            assert row["label"]
+
+    @pytest.mark.django_db
+    def test_a_member_without_manage_channels_sees_no_block(self, tenancy):
+        """Every page behind these rows takes `manage_channels`, so an Agent
+        would be looking at a list of links that all answer 403 — the thing
+        NavItem.visible_to exists to prevent."""
+        make_connection(tenancy.workspace)
+
+        channels = self._context(tenancy, user=tenancy.user_for(WorkspaceRole.AGENT.value))["channels"]
+
+        assert channels["connections"] == []
+        assert channels["connectable"] == []
+        assert channels["home_url"] is None
+
+    @pytest.mark.django_db
+    def test_a_neighbouring_workspaces_channels_never_leak(self, tenancy, other_tenancy):
+        make_connection(tenancy.workspace, display_name="Ours")
+        make_connection(other_tenancy.workspace, display_name="Theirs")
+
+        channels = self._context(tenancy)["channels"]
+
+        assert [row["name"] for row in channels["connections"]] == ["Ours"]
+
+    @pytest.mark.django_db
+    def test_nothing_is_queried_until_the_sidebar_asks(self, tenancy, django_assert_num_queries):
+        """Most renders in this product are htmx fragments — the bell badge
+        every 60s per tab, the inbox list every 3s — and they swap a span
+        without drawing a sidebar. The block is deferred so those pay nothing;
+        touching it is what spends the query.
+        """
+        make_connection(tenancy.workspace)
+        request = _request(f"/w/{tenancy.workspace.id}/", workspace=tenancy.workspace, user=tenancy.owner)
+
+        context = navigation_context(request)
+
+        with django_assert_num_queries(0):
+            assert context["channels"] is not None
+        with django_assert_num_queries(1):
+            assert context["channels"]["connections"]
+        # And once evaluated it is not re-queried.
+        with django_assert_num_queries(0):
+            assert context["channels"]["connectable"]
+
+    @pytest.mark.django_db
+    def test_the_block_steps_aside_when_the_channel_routes_are_not_mounted(self, tenancy, settings):
+        """A context processor runs on every response, including the error
+        pages. Reversing a route that is not there has to answer "no block",
+        never raise — an exception here would turn one unmounted include into a
+        blank 500 on every page of the product.
+        """
+        make_connection(tenancy.workspace)
+        settings.ROOT_URLCONF = "tests.urls_without_channels"
+
+        channels = self._context(tenancy)["channels"]
+
+        assert channels == {"connections": [], "connectable": [], "home_url": None}
+
+    @pytest.mark.django_db
+    def test_the_block_vanishes_without_a_workspace(self, tenancy):
+        """Same rule the workspace-scoped nav rows follow: a row pointing into
+        a workspace that is not there is worse than no row."""
+        channels = navigation_context(_request("/organization/settings/", user=tenancy.owner))["channels"]
+
+        assert channels["connections"] == []
+        assert channels["connectable"] == []
+        assert channels["home_url"] is None
+
+    def test_the_style_guide_reads_no_channels(self):
+        """/ui/ renders the chrome for an anonymous visitor and promises to read
+        no database. Its stand-in workspace carries no membership, so the block
+        is off before any query is considered."""
+        context = navigation_context(_request("/ui/"))
+
+        assert context["channels"]["connections"] == []
+        assert context["channels"]["connectable"] == []
 
 
 class TestTenancyIntegration:
@@ -520,30 +727,34 @@ class TestTenancyIntegration:
         archived. A row pointing into a workspace that is not there is worse
         than no row.
 
-        Settings survives, and should: it is per-user rather than
-        workspace-scoped, so it still has somewhere real to point when the
-        person has no current workspace — which is exactly when they need to
-        reach the organisation's workspace list to bring one back.
+        The way back is the account menu, which is not a nav row: its Settings
+        row is per-user rather than workspace-scoped, so it still points
+        somewhere real when the person has no current workspace — which is
+        exactly when they need to reach the organisation's workspace list to
+        bring one back.
         """
         context = navigation_context(_request("/organization/settings/", user=tenancy.owner))
 
         top = [item["key"] for group in context["nav_groups"] for item in group["items"]]
-        bottom = [item["key"] for group in context["nav_footer_groups"] for item in group["items"]]
-        # Notifications survives for the same reason Settings does, and more
-        # sharply: it is addressed to the person, not the workspace, and a
+        # Notifications survives, and more sharply than anything else: it is
+        # addressed to the person, not the workspace, and a
         # channel_needs_reauth alert is most of what there is to read when
         # every workspace has been archived.
         assert top == ["notifications"]
-        assert bottom == ["settings"]
+        assert context["settings_home_url"] == "/accounts/settings/"
         # The Workspace group empties for the same reason: no workspace means
         # no workspace membership, so none of its rows are visible either.
         # Organisation and You survive — they point somewhere real.
         assert [g["label"] for g in context["workspace_settings_nav_groups"]] == ["Organisation", "You"]
 
-    def test_channel_connections_is_still_a_placeholder(self):
-        """Issue #4 owns ChannelConnection; #31's credential store is
-        per-platform configuration, not a connected account."""
-        assert navigation_context(_request())["channel_connections"] == []
+    def test_the_channel_block_is_empty_for_a_request_with_no_tenancy(self):
+        """It was a `# TODO(L2-B)` empty list until ChannelConnection existed;
+        it reads the real thing now, and a request the middleware never touched
+        still gets the same shape rather than an exception. TestTheChannelBlock
+        covers what it holds when there is a workspace."""
+        channels = navigation_context(_request())["channels"]
+
+        assert channels == {"connections": [], "connectable": [], "home_url": None}
 
     def test_show_app_shell_is_set(self):
         assert navigation_context(_request())["show_app_shell"] is True

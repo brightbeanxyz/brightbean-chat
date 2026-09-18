@@ -29,6 +29,40 @@ def create_user(email: str, **extra: Any) -> Any:
     return get_user_model().objects.create_user(email=email, password=TEST_PASSWORD, **extra)
 
 
+def make_connection(
+    workspace: Any,
+    *,
+    platform: str = "telegram",
+    suffix: str = "",
+    display_name: str = "",
+    external_id: str = "",
+    **fields: Any,
+) -> Any:
+    """One channel connection, active unless ``status`` says otherwise.
+
+    The one builder for this model. There were four — in the messaging
+    conftest, in the channels model tests, and once per test class that needed
+    a connection for the shell — which is three places to miss the
+    ``rotate_webhook_secret()`` a saved connection needs.
+
+    ``external_id`` is namespaced by default: SPEC §5's unique on ``(platform,
+    external_id)`` is deployment-wide, so a fixed literal makes two tenancies in
+    one test collide.
+    """
+    from apps.channels.models import ChannelConnection
+
+    connection = ChannelConnection(
+        workspace=workspace,
+        platform=platform,
+        display_name=display_name or f"{platform} {suffix or workspace.pk}",
+        external_id=external_id or f"{platform}-{suffix or workspace.pk}",
+        **fields,
+    )
+    connection.rotate_webhook_secret()
+    connection.save()
+    return connection
+
+
 @dataclass
 class Tenancy:
     """One organization, one workspace, and a user holding each role.

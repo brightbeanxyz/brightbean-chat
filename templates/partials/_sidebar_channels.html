@@ -1,0 +1,99 @@
+{% comment %}
+The shell's channel block: what this workspace has connected, then what it
+could connect next. Studio's sidebar carries the same two sections for social
+accounts; these are chat channels, and the difference shows in the mark on each
+row — a social account has a profile picture, a Telegram bot or a sending
+domain has a platform and a name.
+
+Each row is `row`, not `channel`: `{{ channel.url }}` reads better and trips
+apps/common/tests/test_template_field_access.py, whose sweep cannot tell a dict
+from a model and sees `channel` — a CharField on NotificationDelivery — with a
+FieldFile attribute after it. The sweep is right to be blunt about that name;
+this block just does not need it.
+
+Everything comes from apps.common.context_processors._sidebar_channels, gated
+on `manage_channels` — the key every page behind these rows is gated on — so a
+viewer who cannot connect a channel sees no block rather than rows that answer
+403. Nothing here is a NavItem: a NavItem is a fixed row in a fixed list, and
+these are per-workspace data. `active` is resolved in Python all the same, so
+this block follows the one active-state convention the rest of the nav does.
+
+Reading `channels.*` is what runs the query behind it — the context processor
+defers it, because most renders are htmx fragments that draw no sidebar.
+
+The block lives inside `.sidebar-nav`, which is what makes the existing
+collapsed rules apply to its rows without a second copy of them: the glyphs
+survive at 60px and the labels go. The two headings and the connect list go
+with them (styles.css, beside the other collapsed rules and their pre-paint
+twins) — a "Connect channels" list is a reading exercise, not a rail of icons,
+and Studio hides it in the rail for the same reason.
+{% endcomment %}
+{% load common_extras %}
+
+{% if channels.connections %}
+<div class="sidebar-section-label-wrap">
+    <div class="sidebar-section-label">Channels</div>
+    {% comment %}
+      The heading's own affordance, revealed on hover the way Studio's is. It
+      is a shortcut, not the only way in: "More channels" below is always
+      visible, because a control that appears only under a pointer is no
+      control at all on a touch screen.
+    {% endcomment %}
+    <a href="{{ channels.home_url }}" class="sidebar-section-action"
+       title="Connect a channel" aria-label="Connect a channel">
+        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    </a>
+</div>
+
+{% for row in channels.connections %}
+<a href="{{ row.url }}" class="sidebar-nav-item{% if row.active %} active{% endif %}"
+   {% if row.active %}aria-current="page"{% endif %}
+   title="{{ row.name }}{% if row.needs_reauth %} — needs reconnecting{% elif row.disabled %} — turned off{% endif %}">
+    {% comment %}
+      Two states mean the channel is not carrying messages, and they are not the
+      same news: `needs_reauth` is something to fix, `disabled` is somebody's
+      own decision. A revoked channel gets the badge Studio spends on the
+      platform — the platform is already the chip underneath — and a turned-off
+      one is drained of colour instead, which is what "off" looks like
+      everywhere else in the product.
+    {% endcomment %}
+    <span class="sidebar-channel-mark{% if row.disabled %} is-off{% endif %}">
+        <span class="pi-chip {{ row.platform|platform_class }} sidebar-channel-chip">
+            {% include "partials/_platform_icon.html" with platform=row.platform only %}
+        </span>
+        {% if row.needs_reauth %}<span class="sidebar-channel-flag" aria-hidden="true">!</span>{% endif %}
+    </span>
+    <span class="sidebar-nav-label">{{ row.name }}</span>
+</a>
+{% endfor %}
+{% endif %}
+
+{% if channels.connectable %}
+<div class="sidebar-connect">
+    <div class="sidebar-section-label">Connect channels</div>
+    {% for row in channels.connectable %}
+    <a href="{{ row.url }}" class="sidebar-nav-item" title="Connect {{ row.label }}">
+        <span class="sidebar-channel-mark">
+            <span class="sidebar-connect-chip {{ row.platform|platform_ink_class }}">
+                {% include "partials/_platform_icon.html" with platform=row.platform only %}
+            </span>
+            <span class="sidebar-connect-plus" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" width="6" height="6" stroke="currentColor" stroke-width="4"
+                     stroke-linecap="round" stroke-linejoin="round"><path d="M5 12H19M12 5V19"/></svg>
+            </span>
+        </span>
+        <span class="sidebar-nav-label">{{ row.label }}</span>
+    </a>
+    {% endfor %}
+    <a href="{{ channels.home_url }}" class="sidebar-nav-item" title="More channels">
+        <span class="sidebar-channel-mark">
+            <span class="sidebar-connect-chip">
+                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </span>
+        </span>
+        <span class="sidebar-nav-label">More channels</span>
+    </a>
+</div>
+{% endif %}
