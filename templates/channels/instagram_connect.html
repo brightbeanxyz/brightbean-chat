@@ -1,62 +1,82 @@
 {% extends "layouts/workspace_settings.html" %}
+{% load common_extras %}
+{% comment %}
+Connect an Instagram account. Same shape as telegram_connect.html — see the note
+there for why content_wrap is cleared and why the platform key is written once.
+
+Credential-free: the operator never pastes anything, so the "form" is one button
+that POSTs and redirects to Meta. The POST stays a real <form method="post">
+because assert_page_permits_its_redirect checks this page's own form-action
+policy against the 302 it answers with.
+
+Restyled only. Every sentence here is the one that was on the page before —
+the env var names and Meta's own UI labels are what somebody follows along
+with in another tab, so none of them is a detail to tidy away.
+{% endcomment %}
 {% block title %}Connect Instagram · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Connect an Instagram account</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    BrightBean Chat uses the <strong>Instagram API with Instagram Login</strong>, so
-    the account you connect must be a <strong>professional</strong> account,
-    Business or Creator. You will be sent to Instagram to authorise it, and we
-    never see your password.
-  </p>
+{% with platform_key="instagram" %}
+<div class="cn-page">
 
-  <h2>Before you start</h2>
-  <ol>
-    <li>Create a Meta app with the <em>Instagram</em> product added.</li>
-    <li>
-      Add this deployment's callback URL to the app's
-      <em>Business login settings</em>, exactly as written:
-      <br /><code>{{ callback_url }}</code>
-    </li>
-    <li>
-      Set the app's Instagram app ID and secret on this deployment as
-      <code>PLATFORM_INSTAGRAM_CLIENT_ID</code> and
-      <code>PLATFORM_INSTAGRAM_CLIENT_SECRET</code>.
-    </li>
-    <li>In the account's Instagram settings, allow access to messages.</li>
-  </ol>
+    <div class="flex items-start gap-4 mb-7">
+        <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
+        <div class="min-w-0">
+            <h1 class="page-title">Connect an Instagram account</h1>
+            <p class="page-lede mt-1.5">
+                BrightBean Chat uses the <strong>Instagram API with Instagram Login</strong>, so the
+                account you connect must be a <strong>professional</strong> account, Business or
+                Creator. You will be sent to Instagram to authorise it, and we never see your
+                password.
+            </p>
+        </div>
+    </div>
 
-  <p class="muted">
-    We ask for these permissions:
-    {% for scope in scopes %}<code>{{ scope }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}.
-    Reading and answering comments needs the last one, so it is requested up
-    front rather than when a comment trigger is first used.
-  </p>
+    {% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
 
-  {% if error %}
-    <div class="alert-error"><p>{{ error }}</p></div>
-  {% endif %}
+    <section class="card p-6 mb-5">
+        <h2 class="section-title mb-4">Before you start</h2>
+        <ol class="cn-steps" role="list">
+            <li class="cn-step">Create a Meta app with the <em>Instagram</em> product added.</li>
+            <li class="cn-step">
+                Add this deployment's callback URL to the app's <em>Business login settings</em>,
+                exactly as written.
+                <div class="mt-2.5">{% include "partials/_copy_field.html" with label="Callback URL" value=callback_url only %}</div>
+            </li>
+            <li class="cn-step">
+                Set the app's Instagram app ID and secret on this deployment as
+                <code>PLATFORM_INSTAGRAM_CLIENT_ID</code> and
+                <code>PLATFORM_INSTAGRAM_CLIENT_SECRET</code>.
+            </li>
+            <li class="cn-step">In the account's Instagram settings, allow access to messages.</li>
+        </ol>
+    </section>
 
-  <form method="post">
-    {% csrf_token %}
-    <button type="submit">Continue to Instagram</button>
-  </form>
+    <form class="card p-6 mb-5" method="post">
+        {% csrf_token %}
+        <h2 class="section-title mb-1">Authorise the account</h2>
+        <p class="field-hint mb-5" style="margin-top: 0;">
+            You will be sent to Instagram to sign in and pick the account.
+        </p>
+        <button type="submit" class="btn-pill-primary">{% include "partials/_platform_icon.html" with platform=platform_key size="sm" only %} Continue to Instagram</button>
+    </form>
 
-  <h2>What happens next</h2>
-  <p class="muted">
-    Instagram sends you back here with a one-time code. We exchange it for a
-    long-lived token, store it encrypted, and refresh it automatically before it
-    expires, so you should not have to reconnect. If a token is ever revoked,
-    the channel is marked <em>Needs reconnection</em> and you get a notification.
-  </p>
-  <p class="muted">
-    One more step is not automatable: subscribe your Meta app to this account's
-    webhook fields (<code>messages</code>, <code>messaging_postbacks</code>,
-    <code>comments</code>, <code>mentions</code>,
-    <code>message_deletions</code>). Serving accounts other than your own also
-    needs Advanced Access, App Review and Business Verification from Meta. Both
-    are written up in <code>docs/channels/instagram.md</code>.
-  </p>
+    <section class="card p-6 mb-5">
+        <h2 class="section-title mb-3">What we ask Instagram for</h2>
+        <ul class="flex flex-wrap gap-1.5">
+            {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
+        </ul>
+        <p class="field-hint">
+            Reading and answering comments needs the last one, so it is requested up front rather
+            than when a comment trigger is first used.
+        </p>
+    </section>
 
-  <p><a href="{{ list_url }}">Back to channels</a></p>
+    <a class="cn-back" href="{{ list_url }}">
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+        Back to channels
+    </a>
+</div>
+{% endwith %}
 {% endblock %}

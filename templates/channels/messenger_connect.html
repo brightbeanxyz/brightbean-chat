@@ -1,56 +1,96 @@
 {% extends "layouts/workspace_settings.html" %}
+{% load common_extras %}
+{% comment %}
+Connect a Facebook page. Same shape as telegram_connect.html — see the note
+there for why content_wrap is cleared and why the platform key is written once.
+
+The standing "not configured" banner is .alert-warning rather than .alert-error:
+it describes a deployment state, usually somebody else's job and true before the
+operator has done anything at all. The messages.error raised on POST stays an
+error, because that one IS the answer to an action.
+
+Restyled only. The env var names and Meta's own UI labels are what somebody
+follows along with in another tab, so they stay on the page.
+{% endcomment %}
 {% block title %}Connect Facebook Messenger · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Connect a Facebook page</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    Messenger connects through Facebook Login for Business. You sign in to
-    Facebook, choose which page to connect, and we store that page's access
-    token encrypted. It is never shown again.
-  </p>
+{% with platform_key="messenger" %}
+<div class="cn-page">
 
-  {% if not configured %}
-    <div class="alert-error">
-      <p>{{ not_configured_message }}</p>
+    <div class="flex items-start gap-4 mb-7">
+        <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
+        <div class="min-w-0">
+            <h1 class="page-title">Connect a Facebook page</h1>
+            <p class="page-lede mt-1.5">
+                Messenger connects through Facebook Login for Business. You sign in to Facebook,
+                choose which page to connect, and we store that page's access token encrypted. It is
+                never shown again.
+            </p>
+        </div>
     </div>
-  {% endif %}
 
-  <h2>Before you start</h2>
-  <ol>
-    <li>Create a Meta app of type <strong>Business</strong> and add the
-      <strong>Messenger</strong> and <strong>Facebook Login for Business</strong>
-      products to it.</li>
-    <li>Add this exact redirect URI to Facebook Login for Business →
-      <em>Valid OAuth Redirect URIs</em>:
-      <br /><code>{{ callback_url }}</code></li>
-    <li>Set the app's ID and secret on this deployment as
-      <code>PLATFORM_MESSENGER_CLIENT_ID</code> and
-      <code>PLATFORM_MESSENGER_CLIENT_SECRET</code>.</li>
-    <li>Set <code>PLATFORM_MESSENGER_VERIFY_TOKEN</code> and paste the same value
-      into the Messenger webhook's <em>Verify token</em> field.</li>
-  </ol>
+    {% if not configured %}<div class="alert-warning">{{ not_configured_message }}</div>{% endif %}
 
-  <form method="post">
-    {% csrf_token %}
-    <button type="submit" {% if not configured %}disabled{% endif %}>Continue with Facebook</button>
-  </form>
+    <section class="card p-6 mb-5">
+        <h2 class="section-title mb-4">Before you start</h2>
+        <ol class="cn-steps" role="list">
+            <li class="cn-step">
+                Create a Meta app of type <strong>Business</strong> and add the
+                <strong>Messenger</strong> and <strong>Facebook Login for Business</strong> products
+                to it.
+            </li>
+            <li class="cn-step">
+                Add this exact redirect URI to Facebook Login for Business →
+                <em>Valid OAuth Redirect URIs</em>.
+                <div class="mt-2.5">{% include "partials/_copy_field.html" with label="Valid OAuth Redirect URI" value=callback_url only %}</div>
+            </li>
+            <li class="cn-step">
+                Set the app's ID and secret on this deployment as
+                <code>PLATFORM_MESSENGER_CLIENT_ID</code> and
+                <code>PLATFORM_MESSENGER_CLIENT_SECRET</code>.
+            </li>
+            <li class="cn-step">
+                Set <code>PLATFORM_MESSENGER_VERIFY_TOKEN</code> and paste the same value into the
+                Messenger webhook's <em>Verify token</em> field.
+            </li>
+        </ol>
+    </section>
 
-  <h2>What we ask Facebook for</h2>
-  <ul class="muted">
-    {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
-  </ul>
-  <p class="muted">
-    Once you pick a page we subscribe it to these webhook fields and configure its
-    Get Started button, so the welcome trigger can fire:
-  </p>
-  <ul class="muted">
-    {% for field in subscribed_fields %}<li><code>{{ field }}</code></li>{% endfor %}
-  </ul>
-  <p class="muted">
-    To serve pages other than your own app's test page, Meta requires App Review
-    and Business Verification. Full setup notes are in
-    <code>docs/channels/messenger.md</code>.
-  </p>
+    <form class="card p-6 mb-5" method="post">
+        {% csrf_token %}
+        <h2 class="section-title mb-1">Choose the page</h2>
+        <p class="field-hint mb-5" style="margin-top: 0;">
+            You will be sent to Facebook to sign in and pick which page to connect.
+        </p>
+        <button type="submit" class="btn-pill-primary" {% if not configured %}disabled{% endif %}>{% include "partials/_platform_icon.html" with platform=platform_key size="sm" only %} Continue with Facebook</button>
+    </form>
 
-  <p><a href="{{ list_url }}">Back to channels</a></p>
+    <section class="card p-6 mb-5">
+        <h2 class="section-title mb-3">What happens next</h2>
+        <div class="section-eyebrow mb-1.5">What we ask Facebook for</div>
+        <ul class="flex flex-wrap gap-1.5 mb-4">
+            {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
+        </ul>
+        <div class="section-eyebrow mb-1.5">Webhook fields we subscribe the page to</div>
+        <p class="field-hint mb-2" style="margin-top: 0;">
+            Once you pick a page we subscribe it to these and configure its Get Started button, so
+            the welcome trigger can fire.
+        </p>
+        <ul class="flex flex-wrap gap-1.5">
+            {% for field in subscribed_fields %}<li><code>{{ field }}</code></li>{% endfor %}
+        </ul>
+        <p class="field-hint">
+            To serve pages other than your own app's test page, Meta requires App Review and
+            Business Verification. Full setup notes are in docs/channels/messenger.md.
+        </p>
+    </section>
+
+    <a class="cn-back" href="{{ list_url }}">
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+        Back to channels
+    </a>
+</div>
+{% endwith %}
 {% endblock %}

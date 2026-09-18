@@ -4615,6 +4615,14 @@ a.an-card:hover { border-color: var(--border-hover); }
    and the width of a pasted token do not change between platforms. */
 .cn-page { width: 100%; max-width: 680px; }
 
+/* The error banner's rhythm, here rather than as an `mb-5` at the call site:
+   apps/channels/tests/test_whatsapp_connect.py matches the rendered alert with
+   `<div class="alert-error">` exactly, to prove every rejection reason produces
+   one identical string and so cannot be used as an oracle for which of an id or
+   a token was wrong. An extra utility in that attribute breaks the check. */
+.cn-page .alert-error,
+.cn-page .alert-warning { margin-bottom: 1.25rem; }
+
 /* ── The numbered sequence ──────────────────────────────────────
    Tailwind's preflight zeroes `ol` and nothing in this file restored it —
    only .app-content ul:not([class]) and .fb-rich-text ol have list styling

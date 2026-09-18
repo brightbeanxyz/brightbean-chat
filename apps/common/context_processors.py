@@ -241,7 +241,27 @@ SETTINGS_NAV: list[NavGroup] = [
                 label="Channels",
                 icon="channels",
                 url_name="channels:list",
-                url_names=frozenset({"channels:list", "channels:create", "channels:detail"}),
+                # The six guided connect flows are in here too, or the whole
+                # settings column sits unlit on the page somebody reached by
+                # clicking "Set up" in it. Spelled out rather than derived from
+                # apps.channels.registry.CONNECT_ROUTES: this module is
+                # deliberately free of module-level apps.channels imports,
+                # because that app is one a deployment may leave out and an
+                # ImportError here would take down every page. Keep in step with
+                # CONNECT_ROUTES when an adapter lands.
+                url_names=frozenset(
+                    {
+                        "channels:list",
+                        "channels:create",
+                        "channels:detail",
+                        "channels:telegram_connect",
+                        "channels:whatsapp_connect",
+                        "channels:instagram_connect",
+                        "channels:messenger_connect",
+                        "channels:sms_connect",
+                        "channels:email_connect",
+                    }
+                ),
                 workspace_scoped=True,
             ),
             # Library was a sidebar row, in the footer group beside Settings.
