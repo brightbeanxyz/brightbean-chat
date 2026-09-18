@@ -134,16 +134,19 @@
          @click="mobileMenuOpen = false"
          class="sidebar-backdrop fixed inset-0 z-30 lg:hidden"></div>
 
-    {% include "partials/_app_sidebar.html" %}
-
     {% comment %}
-      The 232px settings column, when a settings layout fills it. It sits
-      BESIDE the sidebar rather than replacing it — which is why no layout
-      overrides the main nav any more, and why partials/_nav_badge_sinks.html
-      could be deleted: with the sidebar on every page, no archetype strands the
-      out-of-band badge targets the bell's poll aims at.
+      The one sidebar, on every page of the product. The block is not a seam
+      for replacing it — a second <aside> would mean a second `nav-badge-inbox`
+      — it is how a settings layout hands this same partial its rows, which is
+      the only thing about the sidebar a layout may decide. The guard is
+      apps/notifications/tests/test_shell.py::test_every_layout_that_takes_the_sidebar_block_uses_the_one_partial.
+      See partials/_app_sidebar.html and layouts/settings.html.
+
+      There used to be a 232px settings column rendered after it, in a
+      {% block secondary_nav %}. The settings rows are in the sidebar itself
+      now, so the column and its block are both gone.
     {% endcomment %}
-    {% block secondary_nav %}{% endblock %}
+    {% block app_sidebar %}{% include "partials/_app_sidebar.html" %}{% endblock %}
 
     <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
         {% comment %}
