@@ -44,11 +44,11 @@ folder name was permanent outside the Django admin.
         <form x-show="renaming" x-cloak
               hx-post="{% url 'media:folder_rename' workspace_id=request.workspace.id folder_id=row.id %}"
               hx-swap="none"
-              hx-on::after-request="if (event.detail.successful) renaming = false">
+              @htmx:after-request="if ($event.detail.successful) renaming = false">
           <label for="rename-{{ row.id }}" class="sr-only">New name for {{ row.name }}</label>
-          <input type="text" id="rename-{{ row.id }}" name="name" value="{{ row.name }}" maxlength="255" required>
-          <button type="submit" class="mt-1.5">Save</button>
-          <button type="button" class="mt-1.5" x-on:click="renaming = false">Cancel</button>
+          <input class="form-input-styled" type="text" id="rename-{{ row.id }}" name="name" value="{{ row.name }}" maxlength="255" required>
+          <button type="submit" class="btn-pill-secondary btn-pill-sm mt-1.5">Save</button>
+          <button type="button" class="btn-pill-secondary btn-pill-sm mt-1.5" x-on:click="renaming = false">Cancel</button>
         </form>
       {% endif %}
     </div>

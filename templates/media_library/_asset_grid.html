@@ -62,8 +62,14 @@ page it is rendered on.
     {% endif %}
 
   {% else %}
-    <p class="muted py-8 text-center">
-      {% if query %}Nothing matches “{{ query }}”.{% else %}No media here yet.{% endif %}
-    </p>
+    {% comment %}
+      The last list in the product still hand-rolling its own empty state.
+    {% endcomment %}
+    <div class="empty-state">
+      <p class="empty-state-title">{% if query %}Nothing matches “{{ query }}”.{% else %}No media here yet.{% endif %}</p>
+      <p class="empty-state-body">
+        {% if query %}Try a shorter word, or clear the filter.{% else %}Drop a picture or a file above and it is ready to use in any flow, broadcast or email.{% endif %}
+      </p>
+    </div>
   {% endif %}
 </div>

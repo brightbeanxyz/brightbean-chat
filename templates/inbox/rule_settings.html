@@ -1,26 +1,38 @@
 {% extends "layouts/workspace_settings.html" %}
 {% load static %}
 {% block title %}Inbox rules · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Inbox rules</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
+{% comment %}
+`editorOpen` hides the header's primary while the editor is on screen: the
+editor carries its own "Save rule" primary, and two orange buttons on one page
+is two calls to action. It flips on the htmx swap that fills #inbox-rule-editor
+— which is also the only signal there is, since that partial arrives long after
+Alpine booted.
+{% endcomment %}
 {% block content %}
-  <p class="muted">
-    A rule reads every message that arrives and files, assigns or closes the
-    conversation it belongs to. It runs before any flow replies, and it keeps
-    running even where somebody has paused automation on a thread.
-  </p>
-  <p class="muted">
-    Triggers stop at the first match. Rules do not: <strong>every</strong> rule
-    that matches applies, in the order below.
-  </p>
+<div class="max-w-[860px] w-full" x-data="{ editorOpen: false }" @htmx:after-swap.window="if ($event.detail.target.id === 'inbox-rule-editor') editorOpen = true">
+  <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+    <div>
+      <h1 class="page-title">Inbox rules</h1>
+      <p class="page-lede mt-1.5">
+        A rule reads every message that arrives and files, assigns or closes the conversation it
+        belongs to. It runs before any flow replies, and it keeps running even where somebody has
+        paused automation on a thread.
+      </p>
+    </div>
+    <button type="button" class="btn-pill-primary flex-shrink-0" x-show="!editorOpen" hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}" hx-target="#inbox-rule-editor">{% include "partials/_nav_icon.html" with name="sliders" icon_size=16 %} New rule</button>
+  </div>
 
-  <button type="button"
-          hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}"
-          hx-target="#inbox-rule-editor">New rule</button>
+  <div class="alert-info mb-5">
+    Triggers stop at the first match. Rules do not: <strong>every</strong> rule that matches
+    applies, in the order below.
+  </div>
 
   {% include "inbox/_rule_rows.html" %}
 
-  <div id="inbox-rule-editor"></div>
+  <div id="inbox-rule-editor" class="mt-5"></div>
+</div>
 {% endblock %}
 
 {% block extra_head %}
@@ -38,6 +50,7 @@
     uses, for the same reason.
   {% endcomment %}
   {% include "contacts/_filter_bar_script.html" %}
+  {% include "partials/_row_menu.html" %}
   <script src="{% static 'js/vendor/flatpickr.min.js' %}"></script>
   <script src="{% static 'js/vendor/sortable.min.js' %}"></script>
   <script nonce="{{ request.csp_nonce }}">

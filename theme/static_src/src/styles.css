@@ -3741,20 +3741,31 @@ span.flatpickr-weekday {
 
 .ib-rule-list { list-style: none; margin: 0; padding: 0; }
 
+/* Was a grey --surface-1 box with its own border and a gap under it, so a
+   list of rules read as a stack of unrelated tiles. It is a row inside a
+   .card now: the box and the gap go, and the rule between rows comes from
+   the divider token, matching .list-row.
+
+   The flex shape, the handle and the data-* hooks are untouched. The
+   reorder handler in rule_settings.html moves these <li> elements and the
+   hidden inputs inside them, and Sortable is bound to the <ol>, so the
+   <li> has to stay a direct child of [data-rule-list]. */
 .ib-rule {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  margin-bottom: 0.5rem;
-  background: var(--surface-1);
+  gap: 16px;
+  padding: 18px 20px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  margin-bottom: 0;
 }
+.ib-rule + .ib-rule { border-top: 1px solid var(--divider); }
+.ib-rule:hover { background: var(--surface-sunken); }
 
-.ib-rule-handle { cursor: grab; color: var(--text-ghost); user-select: none; }
+.ib-rule-handle { cursor: grab; color: var(--text-ghost); user-select: none; padding-top: 2px; }
 .ib-rule-body { flex: 1 1 auto; min-width: 0; }
-.ib-rule-controls { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.ib-rule-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; }
 
 .ib-rule-clauses,
 .ib-rule-actions {
