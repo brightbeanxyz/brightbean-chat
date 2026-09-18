@@ -3628,6 +3628,19 @@ span.flatpickr-weekday {
 
 .ib-label-chip form { display: inline; }
 
+/* The label's colour as a row mark, for the settings list. The chip itself is a
+   pill with the label's NAME in it, so dropped into a 40px .list-row-icon it
+   wrapped to three lines inside a circle. The colour is the only thing the chip
+   carries that a neutral glyph cannot, so the row shows the colour and puts the
+   name in the title where it can breathe. --chip-ink is still the vetted value
+   from apps.inbox.rendering, never the stored column. */
+.ib-label-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--chip-ink, var(--neutral-300));
+}
+
 .ib-thread-labels {
   display: flex;
   flex-wrap: wrap;

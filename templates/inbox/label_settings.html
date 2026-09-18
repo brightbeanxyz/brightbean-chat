@@ -1,26 +1,46 @@
 {% extends "layouts/workspace_settings.html" %}
+{% comment %}
+Labels, in the shape contacts/tag_list.html established — see the note there for
+why `adding` lives on this wrapper rather than inside the swapped partial.
+
+The lede keeps the tag-versus-label distinction in full. It is the only place in
+the product that draws it, and the two pages sit next to each other in the
+settings column, so somebody who has just come from Tags needs the sentence that
+says why this is not that.
+{% endcomment %}
 {% block title %}Labels · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Labels</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    Labels file a conversation. They are the inbox's own filing system, and they
-    are not contact tags: a tag like “VIP” follows a person across every channel
-    they use, while a label like “waiting on shipping” is true of one thread and
-    stops being true when it is answered. Inbox rules can add labels
-    automatically. Deleting a label removes it from every conversation carrying
-    it.
-  </p>
+<div class="max-w-[860px] w-full" x-data="{ adding: false }">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">Labels</h1>
+            <p class="page-lede mt-1.5">
+                Labels file a conversation. They are the inbox's own filing system, and they are not
+                contact tags: a tag like "VIP" follows a person across every channel they use, while
+                a label like "waiting on shipping" is true of one thread and stops being true when
+                it is answered. Inbox rules can add labels automatically.
+            </p>
+        </div>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newName.focus())">{% include "partials/_nav_icon.html" with name="tag" icon_size=16 %} New label</button>
+    </div>
 
-  <form hx-post="{% url 'inbox:label_create' workspace_id=request.workspace.id %}">
-    <label for="new-label-name">New label</label>
-    <input id="new-label-name" type="text" name="name" maxlength="60" required placeholder="Waiting on shipping" />
-    <label class="sr-only" for="new-label-color">Colour</label>
-    <input id="new-label-color" type="color" name="color" value="{{ default_color }}" />
-    <button type="submit">Add label</button>
-  </form>
+    <form class="card p-4 mb-5 flex flex-wrap items-end gap-3" x-show="adding" x-cloak hx-post="{% url 'inbox:label_create' workspace_id=request.workspace.id %}" @htmx:after-request="if ($event.detail.successful) { $el.reset(); adding = false }">
+        <div class="field field-inline">
+            <label class="field-label" for="new-label-name">What is the label called?</label>
+            <input class="form-input-styled" id="new-label-name" x-ref="newName" type="text" name="name" maxlength="60" required placeholder="Waiting on shipping" style="width: 18rem;">
+        </div>
+        <div class="field field-inline">
+            <label class="field-label" for="new-label-color">Colour</label>
+            <input class="field-swatch-well" id="new-label-color" type="color" name="color" value="{{ default_color }}">
+        </div>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">Add it</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="adding = false">Cancel</button>
+    </form>
 
-  <hr />
-
-  {% include "inbox/_label_rows.html" %}
+    {% include "inbox/_label_rows.html" %}
+</div>
 {% endblock %}
+
+{% block alpine_components %}{{ block.super }}{% include "partials/_row_menu.html" %}{% endblock %}

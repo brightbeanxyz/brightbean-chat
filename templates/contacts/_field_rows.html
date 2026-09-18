@@ -1,47 +1,69 @@
 {% comment %}
-The refreshable half of the custom-fields page. The list page renders this inline;
-every mutation's toast_response carries a `fieldsChanged` HX-Trigger, and this
-container answers it by re-fetching itself from `contacts:field_rows` — a view that
-renders this template alone. Fetching the full page and picking one div out
-of it with hx-select also works, and costs a whole shell render (sidebar,
+The refreshable half of the custom-fields page. The list page renders this
+inline; every mutation's toast_response carries a `fieldsChanged` HX-Trigger, and
+this container answers it by re-fetching itself from `contacts:field_rows` — a
+view that renders this template alone. Fetching the full page and picking one div
+out of it with hx-select also works, and costs a whole shell render (sidebar,
 workspace switcher, every context-processor query) per keystroke-sized edit.
-{% endcomment %}
-{% comment %}
-A field's type is shown but never editable: changing it would orphan every
-stored value in the column the old type used, where the condition engine reads
-the new type's column and sees nothing. See services.rename_custom_field.
+
+The root element's id, hx-get, hx-trigger and hx-swap="outerHTML" are that seam
+and must stay on it — see contacts/_tag_rows.html for what moving them breaks.
+
+A field's type is shown but never editable: changing it would orphan every stored
+value in the column the old type used, where the condition engine reads the new
+type's column and sees nothing. See services.rename_custom_field. It is a pill
+beside the name rather than a control, so the page does not look like it is
+offering something it refuses.
+
+Delete is the only other thing you can do, and it is destructive, so it sits
+behind the "…" rather than as a second button of equal weight. The menu stays
+even with one item in it, so these rows do not disagree with the tag rows.
 {% endcomment %}
 <div id="field-rows"
      hx-get="{% url 'contacts:field_rows' workspace_id=request.workspace.id %}"
      hx-trigger="fieldsChanged from:body"
      hx-swap="outerHTML">
   {% if fields %}
-    <table>
-      <thead><tr><th>Field</th><th>Type</th><th>Values stored</th><th></th></tr></thead>
-      <tbody>
-        {% for field in fields %}
-          <tr>
-            <td>
-              <form hx-post="{% url 'contacts:field_rename' workspace_id=request.workspace.id field_id=field.id %}">
-                <label class="sr-only" for="field-name-{{ field.id }}">Name</label>
-                <input id="field-name-{{ field.id }}" type="text" name="name" value="{{ field.name }}"
-                       maxlength="100" required />
-                <button type="submit">Rename</button>
-              </form>
-            </td>
-            <td>{{ field.get_type_display }}</td>
-            <td>{{ field.value_count }}</td>
-            <td>
-              <form hx-post="{% url 'contacts:field_delete' workspace_id=request.workspace.id field_id=field.id %}"
-                    hx-confirm="Delete “{{ field.name }}”? {{ field.value_count }} stored value{{ field.value_count|pluralize }} will go with it.">
-                <button type="submit">Delete</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="card overflow-hidden">
+    {% for field in fields %}
+    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), renaming: false }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+      <span class="list-row-icon">{% include "partials/_nav_icon.html" with name="fields" icon_size=19 %}</span>
+
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2.5">
+          <span class="list-row-title truncate">{{ field.name }}</span>
+          <span class="status-pill">{{ field.get_type_display }}</span>
+        </div>
+        <div class="list-row-meta">{{ field.value_count }} value{{ field.value_count|pluralize }} stored</div>
+      </div>
+
+      <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="renaming = true; $nextTick(() => $refs.name.focus())">Rename</button>
+
+      <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ field.name }}">
+        <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+      </button>
+
+      <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
+        <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'contacts:field_delete' workspace_id=request.workspace.id field_id=field.id %}" hx-confirm="Delete “{{ field.name }}”? {{ field.value_count }} stored value{{ field.value_count|pluralize }} will go with it." @click="menuOpen = false">Delete</button>
+      </div>
+
+      <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:field_rename' workspace_id=request.workspace.id field_id=field.id %}" @htmx:after-request="if ($event.detail.successful) renaming = false">
+        <label class="sr-only" for="field-name-{{ field.id }}">Name</label>
+        <input class="form-input-styled" id="field-name-{{ field.id }}" x-ref="name" type="text" name="name" value="{{ field.name }}" maxlength="100" required style="width: 16rem;">
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">Save</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
   {% else %}
-    <p class="muted">No custom fields yet.</p>
+  <div class="empty-state">
+    <p class="empty-state-title">No custom fields yet</p>
+    <p class="empty-state-body">
+      A field is where a flow puts an answer it collected — a size, a booking date, a plan — so a
+      filter can search on it later.
+    </p>
+    <button type="button" class="btn-pill-secondary mt-4" @click="adding = true">New field</button>
+  </div>
   {% endif %}
 </div>

@@ -1,20 +1,48 @@
 {% extends "layouts/workspace_settings.html" %}
+{% comment %}
+Tags, as rows rather than as a table of forms.
+
+The create form is a disclosure rather than an always-open box above the list:
+the thing you do once should not be as loud as the list you came to read. Same
+move templates/flows/list.html made.
+
+`adding` lives on this wrapper, NOT inside contacts/_tag_rows.html — that
+partial replaces itself on every mutation, so a flag declared inside it would
+reset on each refresh. The empty state's button reaches this one through
+Alpine's scope chain.
+{% endcomment %}
 {% block title %}Tags · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Tags</h1>{% endblock %}
+{% block content_wrap %}{% endblock %}
 
 {% block content %}
-  <p class="muted">
-    Tags label contacts. Flows add and remove them, and segments filter on them.
-    Deleting a tag removes it from every contact that carries it.
-  </p>
+<div class="max-w-[860px] w-full" x-data="{ adding: false }">
+    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
+        <div>
+            <h1 class="page-title">Tags</h1>
+            <p class="page-lede mt-1.5">
+                A tag labels a person. Flows add and remove them, segments filter on them, and
+                deleting one takes it off every contact carrying it.
+            </p>
+        </div>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newName.focus())">{% include "partials/_nav_icon.html" with name="tag" icon_size=16 %} New tag</button>
+    </div>
 
-  <form hx-post="{% url 'contacts:tag_create' workspace_id=request.workspace.id %}">
-    <label for="new-tag-name">New tag</label>
-    <input id="new-tag-name" type="text" name="name" maxlength="100" required placeholder="VIP" />
-    <button type="submit">Add tag</button>
-  </form>
+    {% comment %}
+      No csrf_token: templates/base.html attaches the token to every same-origin
+      htmx request from one hidden input, and refuses to attach it to a
+      cross-origin one.
+    {% endcomment %}
+    <form class="card p-4 mb-5 flex flex-wrap items-end gap-3" x-show="adding" x-cloak hx-post="{% url 'contacts:tag_create' workspace_id=request.workspace.id %}" @htmx:after-request="if ($event.detail.successful) { $el.reset(); adding = false }">
+        <div class="field field-inline">
+            <label class="field-label" for="new-tag-name">What is the tag called?</label>
+            <input class="form-input-styled" id="new-tag-name" x-ref="newName" type="text" name="name" maxlength="100" required placeholder="VIP" style="width: 18rem;">
+        </div>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">Add it</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="adding = false">Cancel</button>
+    </form>
 
-  <hr />
-
-  {% include "contacts/_tag_rows.html" %}
+    {% include "contacts/_tag_rows.html" %}
+</div>
 {% endblock %}
+
+{% block alpine_components %}{{ block.super }}{% include "partials/_row_menu.html" %}{% endblock %}

@@ -303,7 +303,12 @@ class TestCountsExcludeTombstones:
 
         body = client_for(tenancy.owner).get(url(tenancy, "settings/tags/")).content.decode()
 
-        assert ">1<" in body.replace(" ", "").replace("\n", "")
+        # The count now reads as a sentence in the row rather than sitting alone
+        # in a <td>, so this asserts the phrase instead of ">1<". Naming the
+        # wrong answer too is what ">1<" could not do: it matched any stray 1 in
+        # the page, including one in an id or a date.
+        assert "On 1 contact" in body
+        assert "On 2 contacts" not in body
 
     def test_a_fields_value_count_ignores_soft_deleted_contacts(self, tenancy, client_for, custom_field):
         live = services.create_contact(tenancy.workspace, first_name="Live")
@@ -314,7 +319,9 @@ class TestCountsExcludeTombstones:
 
         body = client_for(tenancy.owner).get(url(tenancy, "settings/fields/")).content.decode()
 
-        assert ">1<" in body.replace(" ", "").replace("\n", "")
+        # See the tag test above for why this is the phrase and not ">1<".
+        assert "1 value stored" in body
+        assert "2 values stored" not in body
 
     def test_the_delete_toast_counts_live_contacts_only(self, tenancy, client_for):
         tag, _ = services.get_or_create_tag(tenancy.workspace, "VIP")

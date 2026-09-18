@@ -4,44 +4,60 @@ established: every mutation's toast_response carries an `inboxLabelsChanged`
 HX-Trigger and this container answers it by re-fetching itself, rather than
 pulling the whole shell down and picking one div out of it.
 
+The root element's id, hx-get, hx-trigger and hx-swap="outerHTML" are that seam
+and must stay on it — see contacts/_tag_rows.html for what moving them breaks.
+
 `chip.color` is the vetted value from apps.inbox.rendering, never the stored
 column. style-src carries 'unsafe-inline' and Django's escape() does not cover
 `;`, `:` or `(`, so a hex that reached this attribute unchecked would be a CSS
-beacon inside the quotes. See LabelChip's docstring.
+beacon inside the quotes. See LabelChip's docstring. That is also why the chip
+stands in for the .list-row-icon here rather than sitting beside one: the label's
+colour IS its identity on this page, and no neutral glyph can carry it.
 {% endcomment %}
 <div id="inbox-label-rows"
      hx-get="{% url 'inbox:label_rows' workspace_id=request.workspace.id %}"
      hx-trigger="inboxLabelsChanged from:body"
      hx-swap="outerHTML">
   {% if labels %}
-    <table>
-      <thead><tr><th>Label</th><th>Colour</th><th>Conversations</th><th></th></tr></thead>
-      <tbody>
-        {% for row in labels %}
-          <tr>
-            <td colspan="2">
-              <form hx-post="{% url 'inbox:label_update' workspace_id=request.workspace.id label_id=row.label.id %}">
-                <span class="ib-label-chip" style="--chip-ink: {{ row.chip.color }};">{{ row.chip.name }}</span>
-                <label class="sr-only" for="label-name-{{ row.label.id }}">Name</label>
-                <input id="label-name-{{ row.label.id }}" type="text" name="name" value="{{ row.label.name }}"
-                       maxlength="60" required />
-                <label class="sr-only" for="label-color-{{ row.label.id }}">Colour</label>
-                <input id="label-color-{{ row.label.id }}" type="color" name="color" value="{{ row.chip.color }}" />
-                <button type="submit">Save</button>
-              </form>
-            </td>
-            <td>{{ row.used }}</td>
-            <td>
-              <form hx-post="{% url 'inbox:label_delete' workspace_id=request.workspace.id label_id=row.label.id %}"
-                    hx-confirm="Delete “{{ row.label.name }}”? It is removed from {{ row.used }} conversation{{ row.used|pluralize }}. Rules that add it keep running and will show it as deleted.">
-                <button type="submit">Delete</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="card overflow-hidden">
+    {% for row in labels %}
+    <div class="list-row flex-wrap" x-data="{ ...bbRowMenu(), editing: false }" @keydown.escape.window="menuOpen = false" @scroll.window="menuOpen = false">
+      <span class="list-row-icon"><span class="ib-label-dot" style="--chip-ink: {{ row.chip.color }};"></span></span>
+
+      <div class="flex-1 min-w-0">
+        <div class="list-row-title truncate">{{ row.label.name }}</div>
+        <div class="list-row-meta">On {{ row.used }} conversation{{ row.used|pluralize }}</div>
+      </div>
+
+      <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="editing = true; $nextTick(() => $refs.name.focus())">Edit</button>
+
+      <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ row.label.name }}">
+        <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+      </button>
+
+      <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
+        <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'inbox:label_delete' workspace_id=request.workspace.id label_id=row.label.id %}" hx-confirm="Delete “{{ row.label.name }}”? It is removed from {{ row.used }} conversation{{ row.used|pluralize }}. Rules that add it keep running and will show it as deleted." @click="menuOpen = false">Delete</button>
+      </div>
+
+      <form x-show="editing" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'inbox:label_update' workspace_id=request.workspace.id label_id=row.label.id %}" @htmx:after-request="if ($event.detail.successful) editing = false">
+        <label class="sr-only" for="label-name-{{ row.label.id }}">Name</label>
+        <input class="form-input-styled" id="label-name-{{ row.label.id }}" x-ref="name" type="text" name="name" value="{{ row.label.name }}" maxlength="60" required style="width: 16rem;">
+        <label class="sr-only" for="label-color-{{ row.label.id }}">Colour</label>
+        <input class="field-swatch-well" id="label-color-{{ row.label.id }}" type="color" name="color" value="{{ row.chip.color }}">
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">Save</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="editing = false">Cancel</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
   {% else %}
-    <p class="muted">No labels yet. Labels file a conversation; contact tags follow the person.</p>
+  <div class="empty-state">
+    <p class="empty-state-title">No labels yet</p>
+    <p class="empty-state-body">
+      A label files one conversation — "waiting on shipping", "needs a refund" — and stops being
+      true when the thread is answered.
+    </p>
+    <button type="button" class="btn-pill-secondary mt-4" @click="adding = true">New label</button>
+  </div>
   {% endif %}
 </div>
