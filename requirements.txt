@@ -66,7 +66,7 @@ segno==1.6.6
 # resolve an API key to a workspace. Pulls pydantic 2 transitively — that is the
 # schema layer, and it is what enforces `extra="forbid"` on every request body
 # (SECURITY-BASELINE §7's mass-assignment guard).
-django-ninja==1.6.3
+django-ninja==1.7.0
 
 # Stripe, for the optional hosted billing integration (apps/billing). Inert
 # unless STRIPE_SECRET_KEY and both price ids are set, which is never true on a
