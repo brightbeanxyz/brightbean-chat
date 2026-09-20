@@ -51,7 +51,7 @@ Threat model in one paragraph: a self-hosted deployment exposes webhook endpoint
 - Per-file and per-workspace size quotas. Delivery URLs signed and unguessable.
 
 ## 10. Supply chain
-- `requirements.txt`/lockfile and `package-lock.json` pinned; `pip-audit` and `npm audit` run in CI (build fails on known-vulnerable deps without a documented waiver); Dependabot enabled; Bandit (or ruff security rules) in lint.
+- Python dependencies pinned to exact versions in `requirements.txt` / `requirements-dev.txt`. These pin **direct** dependencies only: the transitive tree is resolved at install time and is not hash-verified, so a build is reproducible in what it asks for, not in every artefact it receives. `package-lock.json` locks the JavaScript tree in full. `pip-audit` and `npm audit` run in CI (build fails on known-vulnerable deps without a documented waiver); Dependabot enabled; Bandit (or ruff security rules) in lint.
 
 ## 11. Gate policy
 - **Per PR**: applicable checklist items above + tests. Security-critical issues (webhook framework #4, External Request #15, media library #16, public API #25, and every channel adapter) additionally get a dedicated security review at PR time.

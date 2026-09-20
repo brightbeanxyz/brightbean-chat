@@ -8,7 +8,7 @@ the protocol over a real socket on a loopback port, so the message that arrives
 is the message the wire carried, headers and MIME structure included.
 
 Roughly fifty lines rather than a dependency: ``aiosmtpd`` would be a new pin in
-``requirements-dev.in`` for a server that only has to say "250 OK" a few times.
+``requirements-dev.txt`` for a server that only has to say "250 OK" a few times.
 """
 
 import socketserver

@@ -14,7 +14,7 @@ grammar has enough corners (multiple signatures during a rotation, a legacy
 would be writing new crypto-adjacent parsing on the one endpoint where a mistake
 is indistinguishable from a customer paying. ``stripe.WebhookSignature`` is the
 implementation Stripe tests, and using it is the argument for taking the SDK at
-all (``requirements.in``).
+all (``requirements.txt``).
 
 **The order matters and is asserted by a test.** The signature is checked against
 the raw bytes *before* anything parses them. Re-serialising parsed JSON changes

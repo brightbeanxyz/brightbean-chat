@@ -1,13 +1,12 @@
 """The deployment configurations stay secure by default (issue #28).
 
-`docs/self-hosting.md` makes promises on behalf of five files nothing else in
-this repository reads: `docker-compose.prod.yml`, `deploy/Caddyfile`,
-`deploy/env.prod.example`, `app.json` and `render.yaml`. A regression in any of
-them is invisible to the running stack: it still boots and the blueprint still
-validates, while the deployment is less safe than the guide says. CI's `build`
-job proves the compose stack works end to end;
-these assert the properties that would still be true of a working-but-weakened
-one.
+`docs/self-hosting.md` makes promises on behalf of four files nothing else in
+this repository reads: `docker-compose.prod.yml`,
+`deploy/docker-compose.external-tls.yml`, `deploy/Caddyfile` and
+`deploy/env.prod.example`. A regression in any of them is invisible to the
+running stack: it still boots, while the deployment is less safe than the guide
+says. CI's `build` job proves the compose stack works end to end; these assert
+the properties that would still be true of a working-but-weakened one.
 
 Each test says which promise it is holding. The expensive ones — that the stack
 actually starts, that the headers actually arrive, that the database is actually
@@ -15,7 +14,6 @@ unreachable — belong to `scripts/smoke.sh` and the `build` job, not here.
 """
 
 import ipaddress
-import json
 import re
 from pathlib import Path
 from typing import Any
@@ -31,8 +29,34 @@ PROD_COMPOSE = REPO_ROOT / "docker-compose.prod.yml"
 EXTERNAL_TLS_COMPOSE = REPO_ROOT / "deploy" / "docker-compose.external-tls.yml"
 CADDYFILE = REPO_ROOT / "deploy" / "Caddyfile"
 ENV_TEMPLATE = REPO_ROOT / "deploy" / "env.prod.example"
-APP_JSON = REPO_ROOT / "app.json"
-RENDER_YAML = REPO_ROOT / "render.yaml"
+SELF_HOSTING = REPO_ROOT / "docs" / "self-hosting.md"
+
+#: The two values that decrypt a database dump. Both must be generated once and
+#: shared by every process — see the Railway section below for why this is
+#: asserted against prose rather than against a configuration file.
+CRYPTO_SECRETS = ("SECRET_KEY", "ENCRYPTION_KEY_SALT")
+
+#: Settings a split web/worker deployment is broken without, and which the
+#: compose stack gets for free because both services read one `.env`.
+#:
+#: ``TRUSTED_PROXIES``: apps.common.net.get_client_ip returns REMOTE_ADDR unless
+#: the peer is trusted, and on a PaaS the peer is always the platform router.
+#: Left unset, auth rate limiting, the API auth-failure throttle and the webhook
+#: signature ban all attribute every request to that one address.
+#:
+#: ``STORAGE_BACKEND`` + ``S3_*``: a CSV contact import is written by the web
+#: process (apps/contacts/views.py) and opened by the worker
+#: (apps/contacts/imports.py). Compose gives both the media_data volume;
+#: separate PaaS services share no filesystem at all.
+SPLIT_PROCESS_SETTINGS = (
+    "TRUSTED_PROXIES",
+    "STORAGE_BACKEND",
+    "S3_BUCKET_NAME",
+    "S3_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_ENDPOINT_URL",
+    "S3_REGION_NAME",
+)
 
 #: Services built from the application image, which therefore need production
 #: settings and the same environment. `caddy` and `postgres` are third-party
@@ -52,44 +76,11 @@ REQUIRED_VARIABLES = (
     "ACME_EMAIL",
 )
 
-#: The two values that decrypt a database dump. Both must be generated once and
-#: shared by every process, which is what the PaaS blueprints are checked for.
-CRYPTO_SECRETS = ("SECRET_KEY", "ENCRYPTION_KEY_SALT")
-
-#: Settings a split web/worker deployment is broken without, and which the
-#: compose stack gets for free — so only the PaaS blueprints are checked.
-#:
-#: ``TRUSTED_PROXIES``: apps.common.net.get_client_ip returns REMOTE_ADDR unless
-#: the peer is trusted, and on a PaaS the peer is always the platform router. Left
-#: unset, auth rate limiting, the API auth-failure throttle and the webhook
-#: signature ban all attribute every request to that one address.
-#:
-#: ``STORAGE_BACKEND`` + ``S3_*``: a CSV contact import is written by the web
-#: process (apps/contacts/views.py) and opened by the worker
-#: (apps/contacts/imports.py). Compose gives both the media_data volume; separate
-#: PaaS processes share no filesystem at all.
-SPLIT_PROCESS_SETTINGS = (
-    "TRUSTED_PROXIES",
-    "STORAGE_BACKEND",
-    "S3_BUCKET_NAME",
-    "S3_ACCESS_KEY_ID",
-    "S3_SECRET_ACCESS_KEY",
-    "S3_ENDPOINT_URL",
-    "S3_REGION_NAME",
-)
-
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle)
     assert isinstance(loaded, dict), f"{path.name} did not parse as a mapping"
-    return loaded
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as handle:
-        loaded = json.load(handle)
-    assert isinstance(loaded, dict), f"{path.name} did not parse as an object"
     return loaded
 
 
@@ -385,198 +376,99 @@ def test_the_template_documents_every_knob_the_deploy_files_read(variable: str) 
 
 
 # ---------------------------------------------------------------------------
-# app.json (Heroku)
+# The Railway setup, which lives in prose
 # ---------------------------------------------------------------------------
+#
+# Railway is configured in its dashboard and in a template this repository does
+# not contain, so there is no file to assert against the way `app.json` and
+# `render.yaml` once were. What is left is the procedure `docs/self-hosting.md`
+# tells an operator to follow, and these hold that procedure to the same
+# split-process invariants the deleted blueprint tests held.
+#
+# This is genuinely weaker: it proves the guide still says the right thing, not
+# that any deployment does it. It is here because the alternative — after the
+# Heroku and Render blueprints were removed — is no check at all on the one
+# remaining PaaS target, and the failure it guards is silent and expensive.
 
 
-@pytest.fixture(scope="module")
-def app_json() -> dict[str, Any]:
-    return _load_json(APP_JSON)
+def _railway_variables() -> dict[str, tuple[str, str]]:
+    """``{key cell: (web cell, worker cell)}`` from Railway → Variables."""
+    section = SELF_HOSTING.read_text(encoding="utf-8").partition("\n### Variables\n")[2].partition("\n### ")[0]
+    assert section.strip(), "docs/self-hosting.md has no Railway 'Variables' section"
+
+    rows = {}
+    for line in section.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 3 or cells[0] == "Variable" or set(cells[0]) <= {"-"}:
+            continue
+        rows[cells[0]] = (cells[1], cells[2])
+    assert rows, "the Railway variables table parsed to nothing"
+    return rows
+
+
+def _railway_row(variable: str) -> tuple[str, str]:
+    match = next((cells for key, cells in _railway_variables().items() if variable in key), None)
+    assert match is not None, f"the Railway variables table does not mention {variable}"
+    return match
 
 
 @pytest.mark.parametrize("variable", CRYPTO_SECRETS)
-def test_heroku_generates_its_secrets(app_json: dict[str, Any], variable: str) -> None:
-    """`generator: secret`, never a literal — a committed key is not a secret."""
-    entry = app_json["env"][variable]
-    assert entry.get("generator") == "secret"
-    assert "value" not in entry
+def test_the_railway_worker_takes_its_crypto_secrets_from_the_web_service(variable: str) -> None:
+    """The bug the deleted blueprint tests existed to prevent.
 
-
-def test_heroku_runs_production_settings(app_json: dict[str, Any]) -> None:
-    env = app_json["env"]
-    assert env["DJANGO_SETTINGS_MODULE"]["value"] == "config.settings.production"
-    assert env["DJANGO_ENV_FILE"]["value"] == "/nonexistent"
-    assert "DEBUG" not in env
-
-
-def test_heroku_asks_for_its_hostname_rather_than_guessing(app_json: dict[str, Any]) -> None:
-    """A wildcard would be a Host-header attack against every link the app builds."""
-    for variable in ("ALLOWED_HOSTS", "APP_URL"):
-        entry = app_json["env"][variable]
-        assert entry.get("required") is True
-        assert "value" not in entry
-        assert entry.get("description")
-
-
-def test_heroku_runs_a_worker(app_json: dict[str, Any]) -> None:
-    """Both dynos, and neither on a plan that sleeps.
-
-    An Eco dyno stops after 30 minutes of inactivity: a sleeping web dyno drops
-    the webhook that would have woken it, and a sleeping worker is no worker.
+    Two services that each generate their own value deploy green and stay green:
+    nothing fails until the worker tries to read a channel credential the web
+    process encrypted, days later, as one broken feature. The guide must tell
+    the operator to *reference* web's value, never to generate a second one.
     """
-    formation = app_json["formation"]
-    assert set(formation) == {"web", "worker"}
-    for process, spec in formation.items():
-        assert spec["quantity"] >= 1
-        assert spec["size"] != "eco", process
+    _web, worker = _railway_row(variable)
+
+    assert "${{web." + variable + "}}" in worker, (
+        f"the Railway guide no longer tells the worker to reference "
+        f"${{{{web.{variable}}}}}. A worker that generates its own {variable} "
+        f"cannot decrypt anything the web process wrote."
+    )
 
 
-def test_heroku_provisions_postgres(app_json: dict[str, Any]) -> None:
-    plans = [addon["plan"] if isinstance(addon, dict) else addon for addon in app_json["addons"]]
-    assert any(plan.startswith("heroku-postgresql") for plan in plans)
+def test_the_railway_guide_puts_both_services_on_s3() -> None:
+    """A Railway volume attaches to one service, so `local` is not an option."""
+    web, worker = _railway_row("STORAGE_BACKEND")
+
+    assert "s3" in web and "s3" in worker, f"STORAGE_BACKEND is not s3 on both services: {web!r} / {worker!r}"
+    assert "local" not in web and "local" not in worker, (
+        "the Railway guide offers STORAGE_BACKEND=local, which loses uploaded "
+        "media on restart and breaks queued contact imports"
+    )
 
 
-def test_the_node_buildpack_runs_before_the_python_one(app_json: dict[str, Any]) -> None:
-    """Order is load-bearing.
-
-    The Python buildpack runs `collectstatic`, and production uses
-    CompressedManifestStaticFilesStorage, which hard-fails on a `{% static %}`
-    reference it cannot resolve. The Tailwind bundle and the flow-builder island
-    have to exist by then, and the Node buildpack is what builds them.
-    """
-    urls = [buildpack["url"] for buildpack in app_json["buildpacks"]]
-    assert urls.index("heroku/nodejs") < urls.index("heroku/python")
-
-
-@pytest.mark.parametrize("variable", SPLIT_PROCESS_SETTINGS)
-def test_heroku_configures_the_split_process_settings(app_json: dict[str, Any], variable: str) -> None:
-    """A web dyno and a worker dyno share a database and nothing else."""
-    assert variable in app_json["env"]
-
-
-def test_heroku_trusts_its_router_for_client_addresses(app_json: dict[str, Any]) -> None:
-    """Set, and set to private ranges only.
-
-    A public client can never present a private REMOTE_ADDR, so trusting those
-    peers cannot be abused from the internet — whereas a public range here would
-    let a caller forge X-Forwarded-For and evade the limiters entirely.
-    """
-    value = app_json["env"]["TRUSTED_PROXIES"]["value"]
-    assert value
-    for entry in value.split(","):
-        assert ipaddress.ip_network(entry.strip(), strict=False).is_private, entry
-
-
-# ---------------------------------------------------------------------------
-# render.yaml
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def render() -> dict[str, Any]:
-    return _load_yaml(RENDER_YAML)
-
-
-@pytest.mark.parametrize("variable", CRYPTO_SECRETS)
-def test_render_shares_one_generated_key_between_both_services(render: dict[str, Any], variable: str) -> None:
-    """The bug this file's shape exists to prevent.
-
-    `generateValue: true` generates a DIFFERENT value per service it is written
-    on. Written on the web service and the worker separately, each would get its
-    own SECRET_KEY and ENCRYPTION_KEY_SALT — and every platform credential the
-    worker encrypted would be undecryptable by the web process. It deploys
-    green and fails on the first channel connection.
-    """
-    groups = {group["name"]: group for group in render["envVarGroups"]}
-    owning = [
+def test_the_railway_guide_covers_every_split_process_setting() -> None:
+    """Each of these is a setting the compose stack gets for free and a split
+    deployment does not. A missing row is a deployment that looks healthy."""
+    keys = " ".join(_railway_variables())
+    missing = [
         name
-        for name, group in groups.items()
-        if any(var.get("key") == variable and var.get("generateValue") for var in group["envVars"])
+        for name in SPLIT_PROCESS_SETTINGS
+        # The table covers the bucket credentials with one `S3_*` row.
+        if name not in keys and not (name.startswith("S3_") and "S3_*" in keys)
     ]
-    assert len(owning) == 1, f"{variable} is not generated in exactly one env group: {owning}"
 
-    for service in render["services"]:
-        keys = [var.get("key") for var in service["envVars"]]
-        assert variable not in keys, f"{service['name']} declares {variable} instead of sharing the group's"
-        assert owning[0] in [var.get("fromGroup") for var in service["envVars"]], service["name"]
+    assert not missing, f"the Railway variables table documents no value for: {missing}"
 
 
-def test_render_runs_a_web_service_and_a_worker(render: dict[str, Any]) -> None:
-    services = {service["type"]: service for service in render["services"]}
-    assert set(services) == {"web", "worker"}
-    assert services["web"]["healthCheckPath"] == "/healthz"
-    assert "migrate" in services["web"]["preDeployCommand"]
-    assert services["worker"]["dockerCommand"] == "python manage.py process_tasks"
+def test_the_railway_guide_trusts_only_private_ranges_for_client_addresses() -> None:
+    """Without this the platform router is the client for every request, and
+    auth rate limiting, API throttling and the webhook signature ban all
+    collapse into one shared bucket — one caller can throttle everybody."""
+    web, _worker = _railway_row("TRUSTED_PROXIES")
 
-
-def test_render_runs_production_settings(render: dict[str, Any]) -> None:
-    for service in render["services"]:
-        values = {var["key"]: var.get("value") for var in service["envVars"] if "key" in var}
-        assert values["DJANGO_SETTINGS_MODULE"] == "config.settings.production"
-        assert values["DJANGO_ENV_FILE"] == "/nonexistent"
-        assert "DEBUG" not in values
-        # Prompted, not defaulted: a blueprint cannot know the hostname, and
-        # guessing it with a wildcard is the failure mode.
-        assert values["ALLOWED_HOSTS"] is None
-        assert values["APP_URL"] is None
-
-
-def test_the_render_database_is_not_open_to_the_internet(render: dict[str, Any]) -> None:
-    """An empty allow list closes it to everything but Render services.
-
-    Omitting the key entirely is what leaves it reachable from any address.
-    """
-    for database in render["databases"]:
-        assert database["ipAllowList"] == []
-
-
-@pytest.mark.parametrize("variable", SPLIT_PROCESS_SETTINGS)
-def test_render_configures_the_split_process_settings_on_both(render: dict[str, Any], variable: str) -> None:
-    """Both services, not just the web one.
-
-    The worker is the process that opens a contact-import file and the one whose
-    outbound deliveries are rate limited, so a setting present only on the web
-    service fixes the half of the problem that was easiest to see.
-    """
-    for service in render["services"]:
-        keys = [var.get("key") for var in service["envVars"] if "key" in var]
-        assert variable in keys, f"{service['name']} is missing {variable}"
-
-
-def test_render_trusts_its_router_for_client_addresses(render: dict[str, Any]) -> None:
-    """Private ranges only, and identical on both services."""
-    values = set()
-    for service in render["services"]:
-        value = next(var["value"] for var in service["envVars"] if var.get("key") == "TRUSTED_PROXIES")
-        values.add(value)
-        for entry in value.split(","):
-            assert ipaddress.ip_network(entry.strip(), strict=False).is_private, entry
-    assert len(values) == 1, f"the services disagree about TRUSTED_PROXIES: {values}"
-
-
-def test_render_lets_the_storage_switch_survive_a_sync(render: dict[str, Any]) -> None:
-    """`value:` here would revert the operator's choice on the next deploy.
-
-    Render re-applies a blueprint `value` on every sync and ignores `sync: false`
-    entries after the first. Pinned to `local`, a switch to `s3` made in the
-    dashboard would silently come back as `local` — and queued contact imports
-    would start failing again in a way that reads as an import bug.
-    """
-    for service in render["services"]:
-        entry = next(var for var in service["envVars"] if var.get("key") == "STORAGE_BACKEND")
-        assert entry.get("sync") is False, f"{service['name']} pins STORAGE_BACKEND to {entry.get('value')!r}"
-        assert "value" not in entry
-
-
-def test_heroku_gives_the_s3_region_a_real_default(app_json: dict[str, Any]) -> None:
-    """An empty config var is not an absent one.
-
-    environ.Env returns its default only when the variable is unset, so a prompt
-    left blank would reach boto3 as region_name="" rather than as the documented
-    "auto". config/settings/base.py now coerces the blank back; this keeps the
-    blueprint from creating it in the first place.
-    """
-    assert app_json["env"]["S3_REGION_NAME"]["value"] == "auto"
+    entries = [entry.strip() for entry in web.strip("`").split(",")]
+    assert entries, "TRUSTED_PROXIES is documented with no value"
+    for entry in entries:
+        assert ipaddress.ip_network(entry, strict=False).is_private, (
+            f"{entry} is publicly routable; a client could present it and be believed"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -136,10 +136,11 @@ __all__ = [
 # The time budget
 # ---------------------------------------------------------------------------
 #
-# **This runs on a web worker, and that is the whole constraint.** The Procfile
-# and the Dockerfile both start ``gunicorn --workers 2 --threads 2`` with no
-# ``--timeout``, so the deployment has *four* concurrent request slots and
-# gunicorn's default 30-second worker timeout. A request that outlives that
+# **This runs on a web worker, and that is the whole constraint.** The
+# Dockerfile starts ``gunicorn --workers 2 --threads 2`` and
+# docker-compose.prod.yml four workers, neither with a ``--timeout`` — so the
+# deployment has *four to eight* concurrent request slots and gunicorn's
+# default 30-second worker timeout. A request that outlives that
 # budget is not slow, it is a SIGKILL that takes every other request sharing the
 # worker down with it.
 #

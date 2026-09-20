@@ -3,8 +3,8 @@
 Everything needed to run this yourself: first boot, TLS, the background worker,
 backups, upgrades, and how to tell whether what you deployed is healthy.
 
-The reference deployment is Docker Compose on one machine. Heroku and Render
-have deployment configurations; Railway has a multi-service setup guide below.
+The reference deployment is Docker Compose on one machine. Railway is the
+one-click option and has a template, plus a manual setup guide below.
 Production settings require real secrets and disable `DEBUG`.
 
 > The security expectations behind every choice here are in
@@ -21,8 +21,6 @@ Production settings require real secrets and disable `DEBUG`.
 - [Verifying the deployment](#verifying-the-deployment)
 - [TLS termination](#tls-termination)
 - [Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate)
-- [Heroku](#heroku)
-- [Render](#render)
 - [Railway](#railway)
 - [Running without a worker (tick mode)](#running-without-a-worker-tick-mode)
 - [Environment variables](#environment-variables)
@@ -61,7 +59,7 @@ The app runs as **two** long-lived processes against one database:
 | web | `gunicorn config.wsgi:application` | Serves pages, the API, and the webhook endpoints. Executes the first step of a flow *inline* when it can do so within 1.5 seconds. |
 | worker | `python manage.py process_tasks` | Claims and runs everything time-based from the queue table. |
 
-Both compose files, the `Procfile` and every PaaS configuration here run both.
+Both compose files run both, and so do the Railway services described below.
 
 **If only the web process is up**, the app looks fine and is quietly half
 broken. Inbound webhooks are still acknowledged, and a flow whose first step is
@@ -331,8 +329,6 @@ filesystem:
 | Target | Do they? | What to do |
 |---|---|---|
 | Docker Compose | **Yes.** `app` and `worker` both mount the `media_data` volume. | Nothing. `local` is fine. |
-| Heroku | **No.** Each dyno has its own ephemeral filesystem, wiped on every restart. | Set `STORAGE_BACKEND=s3` and the `S3_*` variables. |
-| Render | **No.** Service filesystems are ephemeral and cannot be shared between services. | Set `STORAGE_BACKEND=s3` and the `S3_*` variables. |
 | Railway | **No.** A volume attaches to one service. | Set `STORAGE_BACKEND=s3` and the `S3_*` variables. |
 
 Left on `local`, a PaaS deployment looks healthy and fails in two specific ways:
@@ -352,19 +348,12 @@ S3_ENDPOINT_URL=            # blank for AWS; set it for R2, B2 or MinIO
 S3_REGION_NAME=auto
 ```
 
-**Every process needs identical values.** On Heroku that is automatic — config
-vars belong to the app, not the dyno. On Render, `STORAGE_BACKEND` and the
-`S3_*` variables are prompted **per service** at deploy time; answer `s3` and
-the same credentials on both. They are prompts rather than fixed blueprint
-values on purpose: Render re-applies a blueprint `value:` on every sync, so a
-pinned `local` would silently overwrite your switch to `s3` on the next deploy
-and imports would start failing again. (Render does not allow `sync: false`
-inside an environment group, which is why these cannot be shared declaratively
-the way the crypto secrets are — move them into a shared environment group from
-the dashboard once you have deployed.) On Railway, set them on `web` and
+**Every process needs identical values.** On Railway, set them on `web` and
 reference them from the worker (`${{web.S3_BUCKET_NAME}}` and so on), or hold
 them in a project shared variable; a template has no project-level variables at
-all, so references are the only option there.
+all, so references are the only option there. Two processes holding two
+different buckets is the same failure as no bucket at all, arrived at less
+obviously.
 
 Leave `S3_REGION_NAME` at `auto` unless your provider needs a real region —
 AWS does, R2 does not.
@@ -375,77 +364,25 @@ hands out every uploaded file to anyone who guesses a key.
 
 ---
 
-## Heroku
-
-[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/brightbeanxyz/brightbean-chat)
-
-[`app.json`](../app.json) provisions Postgres, generates `SECRET_KEY`,
-`ENCRYPTION_KEY_SALT` and `TICK_TOKEN`, and creates both a `web` and a `worker`
-dyno. `Procfile`'s release phase runs the migrations on every deploy.
-
-You are prompted for two values, because neither can be guessed:
-
-- `ALLOWED_HOSTS` — the hostname the app answers on. If you name the app
-  `my-chat`, that is `my-chat.herokuapp.com`.
-- `APP_URL` — the same thing with `https://` in front.
-
-Update both when you attach a custom domain, or Django will answer 400 to
-every request on it.
-
-`TRUSTED_PROXIES` is pre-filled with the private ranges Heroku's router lives
-in. Leave it: without it every request is attributed to the router rather than
-to the caller, and auth rate limiting, API throttling and the webhook signature
-ban all collapse into one shared bucket — one caller could keep login and
-password reset throttled for everybody.
-
-**Set `STORAGE_BACKEND=s3` and the `S3_*` variables**, or contact imports will
-fail and uploaded media will vanish on the next restart — see
-[Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate).
-The prompt defaults to `local` so the button completes without a bucket; it is
-not a working production setting on Heroku.
-
-**Use Basic dynos or larger, both of them.** Eco dynos sleep after 30 minutes of
-inactivity. A sleeping web dyno drops the webhook that would have woken it, and
-a sleeping worker is no worker at all.
-
-```bash
-heroku ps:scale web=1:basic worker=1:basic -a my-chat
-heroku logs --tail -a my-chat
-```
-
-## Render
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/brightbeanxyz/brightbean-chat)
-
-[`render.yaml`](../render.yaml) creates a Postgres instance closed to the public
-internet (`ipAllowList: []`), a Docker web service with `/healthz` as its health
-check and `migrate` as its pre-deploy command, and a Docker background worker
-running `process_tasks`.
-
-The two crypto secrets live in a shared **environment group**, and both services
-read them from it. This matters more than it looks: `generateValue: true`
-written directly on each service would generate a *different* value per service,
-and every credential the worker encrypted would be undecryptable by the web
-process. The deployment would go green and fail on your first channel
-connection.
-
-You are prompted for `ALLOWED_HOSTS` and `APP_URL` at deploy time — use
-`<your-service>.onrender.com` until you attach a domain.
-
-`TRUSTED_PROXIES` is set for you to the private ranges Render's router lives in,
-for the same reason it is on Heroku: without it every request is attributed to
-the router and the rate limiters stop telling callers apart.
-
-**Answer `s3` to the `STORAGE_BACKEND` prompt and supply the `S3_*` values on
-both services**, with the same answers on each — Render prompts per service
-because `sync: false` is not allowed inside an environment group, so this is the
-one thing the blueprint cannot keep in step for you. Move them into a shared
-environment group from the dashboard once you have deployed. See
-[Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate).
-
 ## Railway
 
-The Dockerfile is ready for Railway. Configure the project in Railway's
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/brightbean-chat?referralCode=niwfCQ&utm_medium=integration&utm_source=template&utm_campaign=generic)
+
+The template provisions `Postgres`, `web` and `worker`, generates `SECRET_KEY`
+and `ENCRYPTION_KEY_SALT` once and shares them across both app services, and
+points `ALLOWED_HOSTS` and `APP_URL` at the domain Railway generates. It prompts
+for the one thing it cannot provision for you: a private S3-compatible bucket.
+
+[Cloudflare R2](#cloudflare-r2) below is the worked example for creating that
+bucket — AWS S3, Backblaze B2 and Railway Bucket differ only in how you fill the
+same five `S3_*` variables. Then read [First deploy](#first-deploy): `web` has
+to go green before `worker` starts, and that ordering applies to a template copy
+exactly as it does to a hand-built project.
+
+**The rest of this section builds the same three services by hand**, for a fork
+that needs its own template or a project that has to differ from it.
+
+The Dockerfile is what Railway builds. Configure the project in Railway's
 dashboard or use its `.railway/railway.ts` Infrastructure as Code. The old
 per-service `railway.json` files were removed because Railway no longer allows
 new services to opt into that format. Existing Railway services that used those
@@ -454,10 +391,7 @@ Railway's December 1, 2026 cutoff. See [Railway's Infrastructure as Code
 guide](https://docs.railway.com/infrastructure-as-code). A `railway.toml` added
 to this repository today would be read by nothing.
 
-The layout is three services — `Postgres`, `web`, `worker` — plus a private
-S3-compatible bucket. Cloudflare R2 is the worked example below; AWS S3,
-Backblaze B2 and Railway Bucket differ only in how you fill the same five
-`S3_*` variables.
+The layout is three services — `Postgres`, `web`, `worker` — plus that bucket.
 
 ### Before you start
 
@@ -642,46 +576,6 @@ callback URL per app or number, so staging needs its own Telegram bot and its
 own Meta test app. Pointing production's credentials at a staging domain
 redirects live traffic.
 
-### Create a Railway template
-
-Deploy and verify the three-service project first. In the project canvas, open
-**Settings → Generate Template from Project → Create Template**.
-
-The template composer is not the project dashboard: there are no project-level
-shared variables in it, and Template Settings carries only the name, icon and
-description. Variables belong to each service card — click one, then its
-**Variables** tab. A card reading "No config required" has no variables at all,
-which deploys a copy that cannot boot.
-
-Check the GitHub source for both app services, the worker start command,
-web-only public networking and health check, the web pre-deploy migration, the
-Postgres reference, and all required variables. Then:
-
-- **Generate each secret exactly once.** Put `${{secret(50)}}` on `web` for
-  `SECRET_KEY` and `ENCRYPTION_KEY_SALT`, and reference them from the worker as
-  `${{web.SECRET_KEY}}` and `${{web.ENCRYPTION_KEY_SALT}}`. The function runs at
-  deploy time and substitutes its result, so `${{secret(50)}}` written on both
-  services produces two *different* values — a copy that deploys green and
-  cannot read its own encrypted credentials.
-- **Make the domain self-configuring**: `ALLOWED_HOSTS` =
-  `${{RAILWAY_PUBLIC_DOMAIN}},healthcheck.railway.app` and `APP_URL` =
-  `https://${{RAILWAY_PUBLIC_DOMAIN}}` on `web`, with
-  `${{web.RAILWAY_PUBLIC_DOMAIN}}` in place of the same-service reference on the
-  worker (assuming the web service is named `web`). Both resolve during
-  provisioning — but only if `web` generates a domain, so confirm public
-  networking is enabled in the composer. Without it `ALLOWED_HOSTS` deploys
-  empty and every copy stops at `common.E003`.
-- **Prompt for the bucket, do not ship one.** Leave `S3_BUCKET_NAME`,
-  `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` and `S3_ENDPOINT_URL` empty on
-  `web` so they become deploy-time inputs, give each a description naming the
-  format, and reference them from the worker. Say in the template description
-  that the bucket must be private.
-
-Create the template, deploy one copy to verify it, then publish it from your
-Railway workspace if you want it listed in the marketplace. Railway provides a
-shareable template URL before marketplace publication. See [Railway's template
-guide](https://docs.railway.com/templates/create).
-
 ---
 
 ## Running without a worker (tick mode)
@@ -704,10 +598,15 @@ ticks:
 
 | Scheduler | Granularity | A 1-minute Smart Delay fires |
 |---|---|---|
-| Uptime pinger / cron-job.org | 1 minute | within ~1 minute |
 | `cron` on a host you control | 1 minute | within ~1 minute |
-| Heroku Scheduler | 10 minutes | within ~10 minutes |
-| Render cron job | 1 minute | within ~1 minute |
+| Uptime pinger / cron-job.org | 1 minute | within ~1 minute |
+| A scheduler with a 5-minute floor | 5 minutes | within ~5 minutes |
+| A scheduler with a 10-minute floor | 10 minutes | within ~10 minutes |
+
+The bottom two rows are the reason to check your scheduler's *minimum* interval
+before relying on tick mode. Many managed cron products will not go below five
+or ten minutes, and that number becomes the latency of every delay, every
+sequence step and every retry in the deployment.
 
 One request drains up to 10 actions and gives up after 20 seconds — deliberately
 inside gunicorn's 30-second worker timeout, so a tick is never killed mid-batch.
@@ -876,7 +775,7 @@ job and CI enforces the automatable ones. These are yours:
       loads anything else, so this is true by construction — but confirm the
       settings module is what you think it is if you customised anything.
 - [ ] **`ALLOWED_HOSTS` names your hosts and nothing else.** No `*`, no bare
-      `.herokuapp.com` or `.onrender.com` — a wildcard on shared PaaS apex is a
+      `.up.railway.app` — a wildcard on a shared PaaS apex is a
       Host-header attack against every link the app generates.
 - [ ] **The secrets are real and unique to this deployment.** The app refuses to
       boot on a blank or placeholder value, but it cannot tell you that you
@@ -929,7 +828,7 @@ the two failed.
 
 **Messages send, but delays and sequences never fire.** The worker is not
 running. `docker compose -f docker-compose.prod.yml ps` should show a `worker`
-service; on a PaaS, check the worker dyno/service is scaled above zero. See
+service; on Railway, check the `worker` service is deployed and not crash-looping. See
 [Two processes, not one](#two-processes-not-one).
 
 **A Meta webhook subscription fails verification.** The platform's

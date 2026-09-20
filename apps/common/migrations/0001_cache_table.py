@@ -1,14 +1,15 @@
 """Provision the database cache table.
 
 ``CACHE_URL`` defaults to ``dbcache://cache_table``: LocMemCache is per-process
-and both the Dockerfile and the Procfile run gunicorn with two workers, so a
-per-IP counter kept there is evaded by landing on the other worker — which is
-exactly what the auth rate limiter must not allow (SECURITY-BASELINE §8).
+and every deployment runs gunicorn with more than one worker, so a per-IP
+counter kept there is evaded by landing on another worker — which is exactly
+what the auth rate limiter must not allow (SECURITY-BASELINE §8).
 Postgres is the rate limiter (SPEC §22, no Redis).
 
 ``manage.py createcachetable`` would be a second, forgettable deploy step; every
-path that already runs migrations (``docker compose up``, the Procfile release
-phase, pytest's test-database setup) gets the table from here instead.
+path that already runs migrations (``docker compose up``, the compose stack's
+one-shot ``migrate`` service, Railway's pre-deploy command, pytest's
+test-database setup) gets the table from here instead.
 
 The table name is **not** hardcoded. ``createcachetable`` with no arguments reads
 ``settings.CACHES`` and creates the table each database-backed alias actually

@@ -225,9 +225,10 @@ WSGI_APPLICATION = "config.wsgi.application"
 # also the rate limiter (SPEC §22).
 #
 # The default is the DATABASE cache, not LocMemCache, because LocMemCache is per
-# process and both the Dockerfile and the Procfile run gunicorn with two
-# workers: anything counted there is counted once per worker and is evaded by
-# landing on the other one. A per-process default is a trap for the next thing
+# process and every deployment runs gunicorn with more than one worker — two in
+# the Dockerfile's CMD, four in docker-compose.prod.yml: anything counted there
+# is counted once per worker and is evaded by landing on another one. A
+# per-process default is a trap for the next thing
 # that needs to count across requests, so the shared backend is the default and
 # the single-process case is the override. The table is created by
 # apps/common/migrations/0001_cache_table.py, so `manage.py migrate` is enough
@@ -264,7 +265,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # bcrypt(sha256) first, PBKDF2 retained so existing hashes still verify and are
-# upgraded transparently. Requires the `bcrypt` package (requirements.in).
+# upgraded transparently. Requires the `bcrypt` package (requirements.txt).
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
@@ -454,7 +455,9 @@ EXTERNAL_REQUEST_MAX_RESPONSE_BYTES = env.int("EXTERNAL_REQUEST_MAX_RESPONSE_BYT
 #
 # It is an allocation bound, not a bandwidth one: the guard buffers what it
 # reads, so this times the number of concurrent readers is memory the web
-# process will hold. Four request slots ship by default (see the Procfile).
+# process will hold. Size it for the stack you run, not for the image: the
+# Dockerfile's CMD is four request slots (2 workers x 2 threads), while
+# docker-compose.prod.yml overrides it to eight (4 x 2).
 INBOUND_MEDIA_MAX_BYTES = env.int("INBOUND_MEDIA_MAX_BYTES", default=16 * 1024 * 1024)
 
 # ---------------------------------------------------------------------------

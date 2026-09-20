@@ -39,7 +39,6 @@ apps/flows/static/flows/builder/
 docs/
 tests/
 conftest.py
-requirements-dev.in
 requirements-dev.txt
 Makefile
 docker-compose*.yml
@@ -53,6 +52,4 @@ SECURITY.md
 # which is bind-mounted into the caddy container from the host, and the
 # production env template.
 deploy/
-app.json
-render.yaml
 scripts/smoke.sh

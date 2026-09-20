@@ -66,16 +66,14 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-          cache-dependency-glob: requirements-dev.txt
+          cache-dependency-glob: requirements*.txt
 
       - name: Install dependencies
-        # --require-hashes: CI installs exactly the artefacts the lock records.
-        # uv enforces the hashes exactly as pip does — verified against a lock
-        # with a deliberately corrupted hash, which it rejects with exit 1 — and
-        # resolves and installs the tree in a fraction of the time. uv's own
-        # cache replaces setup-python's pip cache, which only ever cached the
-        # downloads and still paid to reinstall every wheel.
-        run: uv pip install --system --require-hashes -r requirements-dev.txt
+        # uv rather than pip: it resolves and installs the tree in a fraction
+        # of the time, and its own cache replaces setup-python's pip cache,
+        # which only ever cached the downloads and still paid to reinstall
+        # every wheel.
+        run: uv pip install --system -r requirements-dev.txt
 
       - name: mypy
         # django-stubs loads config.settings.test, which supplies its own
@@ -148,11 +146,11 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-          cache-dependency-glob: requirements-dev.txt
+          cache-dependency-glob: requirements*.txt
 
       - name: Install dependencies
         # See the typecheck job for why this is uv rather than pip.
-        run: uv pip install --system --require-hashes -r requirements-dev.txt
+        run: uv pip install --system -r requirements-dev.txt
 
       - name: Set up Node
         # .nvmrc is the single version CI runs on. It cannot be the only copy:
@@ -252,34 +250,6 @@ jobs:
         # `--ignore-vuln GHSA-xxxx` with a comment naming the advisory, why it
         # does not apply, and when it gets revisited (SECURITY-BASELINE §10).
         run: pip-audit --strict --requirement requirements.txt --requirement requirements-dev.txt
-
-      - name: Compiled requirements are in sync with their .in files
-        # Recompiling from unchanged .in files must produce the same pins. If it
-        # does not, someone edited a requirements*.in without running
-        # `make lock`, and the pins CI installs are not the ones under review.
-        #
-        # Everything is compared byte for byte except one line: pip-compile's
-        # provenance header, `#    pip-compile <the invocation>`. That line
-        # records the *command*, not a dependency, and it drifts on its own —
-        # it gained `--no-index` here when the runner's pip moved to 26.x, with
-        # no requirements*.in touched and no pin changed, which failed every PR
-        # in the repo. Diffing it asserted something this check was never about.
-        # The `# via …` comments are NOT stripped: those describe the dependency
-        # graph, and a change in one is a real change.
-        run: |
-          pip install "pip-tools==7.6.1"
-          for pair in "requirements.in:requirements.txt" "requirements-dev.in:requirements-dev.txt"; do
-            src="${pair%%:*}"; lock="${pair##*:}"
-            grep -v '^#    pip-compile ' "${lock}" > "/tmp/$(basename "${lock}").before"
-            pip-compile --generate-hashes --strip-extras --allow-unsafe --quiet \
-              --output-file "${lock}" "${src}"
-            grep -v '^#    pip-compile ' "${lock}" > "/tmp/$(basename "${lock}").after"
-            if ! diff -u "/tmp/$(basename "${lock}").before" "/tmp/$(basename "${lock}").after"; then
-              echo "::error::${lock} is stale — run \`make lock\` and commit the result."
-              exit 1
-            fi
-          done
-          echo "Locks are in sync."
 
       - name: pip-audit gate self-test
         # Proves the gate actually fails on a vulnerable pin rather than
