@@ -1,4 +1,6 @@
-"""The long-lived worker (SPEC §15). ``Procfile``'s ``worker:`` process.
+"""The long-lived worker (SPEC §15). What every ``worker`` process runs:
+the compose stacks' ``worker`` service, Railway's worker service, and
+``make worker`` locally.
 
 Loop shape, per SPEC §15: "every 1 s, claim up to 50 due rows ... process each".
 With one refinement: the sleep happens only when a batch came back *short*. A

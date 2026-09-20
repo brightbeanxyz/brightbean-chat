@@ -36,9 +36,10 @@ logger = logging.getLogger(__name__)
 
 #: Deliberately shorter than ``manage.py tick``'s 55 s.
 #:
-#: The Procfile and the Dockerfile run gunicorn at its default 30 s worker
-#: timeout, so a request that worked for 55 s would be killed mid-batch — the
-#: rows would sit in ``running`` until zombie recovery ten minutes later, and
+#: Gunicorn runs at its default 30 s worker timeout in the Dockerfile and the
+#: compose stack alike, so a request that worked for 55 s would be killed
+#: mid-batch — the rows would sit in ``running`` until zombie recovery ten
+#: minutes later, and
 #: the operator would see a 502 from a tick that was working perfectly well.
 #: The budget is checked between batches, so the real ceiling is this plus one
 #: batch.

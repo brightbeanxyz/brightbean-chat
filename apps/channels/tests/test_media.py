@@ -349,17 +349,18 @@ class TestAnAdapterThatMisbehaves:
 
 
 class TestTheTimeBudget:
-    """The deployment ships four request slots and a 30 s worker timeout.
+    """Every deployment shares one 30 s worker timeout.
 
-    ``Procfile`` and ``Dockerfile`` both run ``gunicorn --workers 2 --threads 2``
-    with no ``--timeout``. A media request that can outlive gunicorn's default
-    is not slow, it is a SIGKILL that takes its worker's other requests with it,
-    so the two halves of the budget are asserted together rather than left as a
-    sum nobody recomputes when one of them changes.
+    ``Dockerfile`` runs ``gunicorn --workers 2 --threads 2`` and
+    ``docker-compose.prod.yml`` four workers, neither passing ``--timeout``. A
+    media request that can outlive gunicorn's default is not slow, it is a
+    SIGKILL that takes its worker's other requests with it, so the two halves of
+    the budget are asserted together rather than left as a sum nobody
+    recomputes when one of them changes.
     """
 
-    #: gunicorn's default ``--timeout``, restated because neither the Procfile
-    #: nor the Dockerfile passes one.
+    #: gunicorn's default ``--timeout``, restated because neither the Dockerfile
+    #: nor the compose stack passes one.
     WORKER_TIMEOUT = 30.0
 
     def test_the_whole_resolution_fits_inside_a_worker_timeout(self):

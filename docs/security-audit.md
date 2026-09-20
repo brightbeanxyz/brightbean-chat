@@ -106,7 +106,7 @@ without a linked passing test": an unmapped item cannot be given a legal status.
 
 | ID | Requirement | Enforcing tests | Status |
 |---|---|---|---|
-| §10.1 | Lockfiles pinned; `pip-audit` and `npm audit` in CI; Dependabot; Bandit or ruff security rules | `tests/test_gitleaks_config.py`, CI job `audit` (`.github/workflows/ci.yml`), CI job `lint` | COVERED — `pip-audit --strict` over both requirement files, a lockfile-staleness diff, `npm audit --audit-level=low`, and a **gate self-test** that runs pip-audit against a deliberately vulnerable fixture and asserts it exits 1. Bandit is substituted by ruff's `S` ruleset, which §10 permits. No waivers exist. |
+| §10.1 | Dependencies pinned; `pip-audit` and `npm audit` in CI; Dependabot; Bandit or ruff security rules | `tests/test_gitleaks_config.py`, CI job `audit` (`.github/workflows/ci.yml`), CI job `lint` | PARTIAL — `pip-audit --strict` over both requirement files, `npm audit --audit-level=low`, and a **gate self-test** that runs pip-audit against a deliberately vulnerable fixture and asserts it exits 1. Bandit is substituted by ruff's `S` ruleset, which §10 permits. No waivers exist. **Gap:** Python pins direct dependencies only. There is no lockfile and no `--require-hashes`, so the transitive tree is resolved at install time and artefacts are not hash-verified; `package-lock.json` still locks the JavaScript tree in full. See SECURITY-BASELINE §10. |
 
 ## §11 Gate policy
 

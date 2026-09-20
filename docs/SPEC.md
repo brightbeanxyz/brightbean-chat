@@ -46,7 +46,7 @@ Identical conventions to brightbean-studio. Where this spec is silent, copy the 
 - Background work: DB-backed task queue, worker via `python manage.py process_tasks` (same pattern as Studio), plus a `manage.py tick` fallback entry point
 - Web server: Gunicorn (WSGI). SSE is not used in v1; inbox uses HTMX polling
 - Media: local disk or S3/R2 (env-switched, same as Studio)
-- Deploy targets: Docker Compose (reference), one-click Heroku / Render / Railway
+- Deploy targets: Docker Compose (reference), one-click Railway template
 - Credential encryption at rest: reuse Studio's encrypted field implementation
 
 Repo layout (Django apps). Packages live under `apps/` — `apps/contacts/`,
@@ -522,9 +522,7 @@ Per-node counters (sent, delivered, failed, clicked) via `node_stat_daily` upser
 ## 20. Deployment
 
 - `docker-compose.prod.yml`: app (gunicorn, 4 workers 2 threads), worker (process_tasks), postgres, caddy (auto-HTTPS), one-shot migrate service. Same shape as Studio.
-- Heroku: web + worker dynos, Basic or higher (sleeping dynos break webhooks); no worker -> Scheduler every 10 min + external pinger on `/internal/tick` for minute-granularity, documented as degraded mode.
-- Render: paid web service + background worker, or web + cron/tick.
-- Railway: web service + worker service from the same image (different start command).
+- Railway: web service + worker service from the same image (different start command), plus Postgres and an S3-compatible bucket; published as a one-click template. A host that cannot run a second always-on process instead points a scheduler at `/internal/tick`, documented as degraded mode (granularity is the scheduler's interval).
 - Health: `/healthz` (DB check). Readiness for webhooks requires public HTTPS; Caddy or platform TLS.
 - Env vars: everything from Studio's base set plus `PLATFORM_*` app credentials per platform, `TICK_TOKEN`, `EXTERNAL_REQUEST_ALLOW_PRIVATE`, `DEFAULT_SEND_RATE_OVERRIDES` (json, optional).
 

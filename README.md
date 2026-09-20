@@ -60,7 +60,7 @@ between you and your audience.
 
 | | ManyChat | BrightBean Chat |
 |---|---|---|
-| **Hosting** | Managed SaaS | Self-hosted: Docker Compose, Railway, Render, or Heroku |
+| **Hosting** | Managed SaaS | Self-hosted: Docker Compose on your own server, or one-click on Railway |
 | **Pricing** | Per-contact tiers, with features gated by plan | One tier, every feature, no contact limits. Your only cost is the server |
 | **Your data** | Lives in ManyChat's account | Your PostgreSQL and your object storage |
 | **Platform access** | Through ManyChat's Meta app | Your own Meta, Twilio, and SMTP credentials, called directly. No aggregator |
@@ -165,17 +165,21 @@ background worker, and Caddy with automatic HTTPS. Uploaded media is stored in
 the shared Docker volume. See [storage guidance](docs/self-hosting.md#storage-when-web-and-worker-are-separate)
 when web and worker run on separate hosts or a PaaS.
 
-### Platform deployment
+### One click on Railway
 
-| Heroku | Render | Railway |
-|:------:|:------:|:-------:|
-| [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/brightbeanxyz/brightbean-chat) | [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/brightbeanxyz/brightbean-chat) | [Railway setup](docs/self-hosting.md#railway) |
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/brightbean-chat?referralCode=niwfCQ&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
-Heroku and Render provision the web and worker processes from the repository
-configuration. Railway is documented as a multi-service setup. Heroku, Render,
-and Railway use ephemeral or non-shared filesystems, so configure S3-compatible
-storage such as AWS S3, Cloudflare R2, Backblaze B2, or MinIO for persistent
-media and contact-import files.
+The template provisions PostgreSQL, the web service, and the worker, generates
+the two crypto secrets once and shares them, and points the app at its own
+generated domain. You supply one thing: an S3-compatible bucket.
+
+That bucket is not optional. A Railway volume attaches to a single service, so
+the web and worker processes share no filesystem — without `STORAGE_BACKEND=s3`
+a queued contact import cannot find the file the web process wrote, and
+uploaded media disappears on the next restart. AWS S3, Cloudflare R2, Backblaze
+B2, and MinIO all work through the same five `S3_*` variables. The
+[Railway guide](docs/self-hosting.md#railway) has a worked R2 example and the
+manual three-service setup if you would rather build it yourself.
 
 ### The worker is required
 
@@ -207,8 +211,8 @@ source .venv/bin/activate
 make setup
 ```
 
-`make setup` copies `.env.example`, installs the hashed development
-dependencies, builds the frontend bundles, and runs migrations. Then use two
+`make setup` copies `.env.example`, installs the development dependencies,
+builds the frontend bundles, and runs migrations. Then use two
 terminals:
 
 ```bash
@@ -468,7 +472,7 @@ errors, endpoints, webhook verification, and a complete integration scenario.
 | UI | Django templates, HTMX, Alpine.js, Tailwind CSS 4 |
 | Flow builder | React 19, React DOM, `@xyflow/react`, Vite, TypeScript |
 | Data and queue | PostgreSQL 16; the database also provides locking, rate limiting, and scheduled-action storage |
-| Deployment | Docker Compose, Caddy, Heroku, Render, and Railway configurations |
+| Deployment | Docker Compose, Caddy, and a one-click Railway template |
 
 ## Project structure
 

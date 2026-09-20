@@ -64,7 +64,7 @@ Message.body block  →  inbox:media route  →  Adapter.media_source  →  guar
 ## The time budget
 
 This path runs on a **web worker**, and that is the constraint everything else
-bends around. `Procfile` and `Dockerfile` both start
+bends around. `Dockerfile` starts
 `gunicorn --workers 2 --threads 2` with no `--timeout`, so a deployment has four
 concurrent request slots and gunicorn's default 30-second worker timeout. A
 request that outlives that budget is not slow — it is a SIGKILL that takes every

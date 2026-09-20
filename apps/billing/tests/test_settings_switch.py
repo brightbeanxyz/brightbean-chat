@@ -2,7 +2,7 @@
 
 The trap this exists for is written out in ``config/settings/base.py``:
 django-environ returns a default only when a variable is **unset**, and every
-one-click deploy target — Render, Railway, Heroku — sets an *empty* config
+one-click deploy target, Railway's template included, sets an *empty* config
 variable for a prompt the operator left blank. So ``STRIPE_SECRET_KEY=`` has to
 read as "off". Read as "on with a blank key", it produces a deployment that
 offers a Subscribe button and then fails on the first click, which is the worst

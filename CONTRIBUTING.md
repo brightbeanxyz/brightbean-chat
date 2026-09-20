@@ -54,8 +54,8 @@ make worker
 ```
 
 Run as many as you like: the claim statement uses `FOR UPDATE SKIP LOCKED`, so
-concurrent workers take disjoint batches. `Procfile`, `docker-compose.yml` and
-`docker-compose.prod.yml` all carry a worker process already. The `TICK_TOKEN`
+concurrent workers take disjoint batches. `docker-compose.yml` and
+`docker-compose.prod.yml` both carry a worker process already. The `TICK_TOKEN`
 fallback for hosts with no always-on process is a deployment concern —
 `docs/self-hosting.md` covers it.
 
@@ -272,18 +272,19 @@ the change — and every `request.org` consumer inherits it.
 
 ## Dependencies
 
-`requirements.in` and `requirements-dev.in` list direct dependencies and are the
-files humans edit. `requirements.txt` and `requirements-dev.txt` are compiled
-from them and are what actually gets installed: they pin the whole transitive
-tree with hashes, so `pip install --require-hashes` verifies every artefact
-rather than just naming a version. After changing either input:
+`requirements.txt` (runtime) and `requirements-dev.txt` (tooling) list direct
+dependencies at exact versions, and are both edited by hand — there is no
+compile step. `requirements-dev.txt` includes `-r requirements.txt`, so it
+installs a complete development environment on its own.
 
-```bash
-make lock
-```
+Add a dependency by adding the pinned line and a comment saying why it is
+there, in the section it belongs to. Pin exactly (`==`), never a range: a range
+lets CI resolve a newer version than your machine has, which is how you get a
+failure that reproduces nowhere.
 
-Commit both compiled files with the change. CI recompiles and diffs them, so a
-stale lock fails the build.
+Transitive dependencies are resolved at install time rather than pinned, so
+`make audit` below is the check that matters on a dependency change: it is what
+catches a vulnerability arriving through a package nobody listed.
 
 ## Before opening a PR
 
@@ -297,7 +298,7 @@ make audit
 
 CI runs all of that plus a production Docker build, a smoke test of the HTTPS
 stack in `docker-compose.prod.yml`, and a gitleaks scan. A change to any deploy
-configuration — the compose files, `deploy/`, `app.json`, and `render.yaml` —
-is checked by `tests/test_deploy_config.py`, which asserts the secure-by-default
-properties `docs/self-hosting.md` promises. Railway's dashboard setup is
+configuration — the compose files and `deploy/` — is checked by
+`tests/test_deploy_config.py`, which asserts the secure-by-default properties
+`docs/self-hosting.md` promises. Railway's template and manual setup are
 documented in that guide.
