@@ -38,10 +38,7 @@ credentials. There is no aggregator middleman, per-seat pricing, or required
 payment provider.
 
 Every self-hosted installation has one tier. All features are available, with
-no feature gates or contact limits. An optional Stripe integration exists only
-for operators running BrightBean Chat as a paid hosted service; leave its
-settings empty (the default) and billing stays invisible
-([`docs/billing.md`](docs/billing.md)).
+no feature gates or contact limits.
 
 > **Status: pre-1.0.** The core platform is in place: tenancy and RBAC, all six
 > channel adapters, the flow engine and builder, contacts, the inbox,
