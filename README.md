@@ -25,20 +25,16 @@
 
 ## About BrightBean Chat
 
-BrightBean Chat is an open-source, self-hostable chat-marketing automation
-platform, a ManyChat alternative you run on your own infrastructure. Connect
-the messaging channels your audience already uses, build automation in a visual
-flow editor, and manage contacts, conversations, and campaigns from one
-workspace.
+BrightBean Chat aims at ManyChat's feature set: keyword triggers, comment-to-DM,
+story mentions, drip sequences, broadcasts, a shared inbox, and a visual flow
+builder. The difference is where it runs. You bring your own server and your own
+platform developer apps, and in exchange there is no per-contact pricing, no
+plan that gates the feature you need, and nobody sitting between you and your
+audience.
 
-It is designed for creators, agencies, and teams that want to own their
-messaging stack rather than put customer conversations behind another SaaS
-vendor. The application calls each platform's official API directly using your
-credentials. There is no aggregator middleman, per-seat pricing, or required
-payment provider.
-
-Every self-hosted installation has one tier. All features are available, with
-no feature gates or contact limits.
+The application calls each platform's official API with your credentials.
+There is no aggregator in the middle and no payment provider to sign up for.
+Every installation has every feature.
 
 > **Status: pre-1.0.** The core platform is in place: tenancy and RBAC, all six
 > channel adapters, the flow engine and builder, contacts, the inbox,
@@ -46,14 +42,7 @@ no feature gates or contact limits.
 > Remaining work is tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md). Read
 > [`SECURITY.md`](SECURITY.md) before pointing a real audience at it.
 
-## An open-source ManyChat alternative
-
-BrightBean Chat aims at ManyChat's feature set: keyword triggers,
-comment-to-DM, story mentions, drip sequences, broadcasts, a shared inbox, and a
-visual flow builder. The difference is where it runs. You bring your own server
-and your own platform developer apps, and in exchange there is no per-contact
-pricing, no plan that gates the feature you need, and no third party sitting
-between you and your audience.
+## How it compares to ManyChat
 
 | | ManyChat | BrightBean Chat |
 |---|---|---|
@@ -115,8 +104,8 @@ webhook URLs, permissions, and platform quirks are in
 
 ## Try it locally
 
-The fastest way to see the flow builder, inbox, contacts, and campaign surfaces
-is to run the complete development stack:
+To see the flow builder, inbox, contacts, and campaign surfaces, run the
+development stack:
 
 ```bash
 git clone https://github.com/brightbeanxyz/brightbean-chat.git
@@ -130,8 +119,8 @@ at <http://localhost:8000>. No `.env` is required for development. Sign up at
 Email is written to the console, so verification messages are visible in
 `docker compose logs`.
 
-The design system's living style guide is available at
-<http://localhost:8000/ui/> on a running instance.
+A running instance serves the design system's style guide at
+<http://localhost:8000/ui/>.
 
 ## Deploy it
 
@@ -171,7 +160,7 @@ the two crypto secrets once and shares them, and points the app at its own
 generated domain. You supply one thing: an S3-compatible bucket.
 
 That bucket is not optional. A Railway volume attaches to a single service, so
-the web and worker processes share no filesystem — without `STORAGE_BACKEND=s3`
+the web and worker processes share no filesystem. Without `STORAGE_BACKEND=s3`
 a queued contact import cannot find the file the web process wrote, and
 uploaded media disappears on the next restart. AWS S3, Cloudflare R2, Backblaze
 B2, and MinIO all work through the same five `S3_*` variables. The
@@ -192,7 +181,7 @@ work undone. If your host cannot run a second long-lived process, the supported
 [tick mode](docs/self-hosting.md#running-without-a-worker-tick-mode) provides a
 cron or HTTP-triggered worker cycle with documented tradeoffs.
 
-## Run it locally
+## Run it from source
 
 ### Prerequisites
 
@@ -228,14 +217,11 @@ target.
 ## Platform credentials
 
 Connecting Instagram, Facebook Messenger, or WhatsApp needs a Meta developer app
-of your own. BrightBean Chat calls each platform's API directly with your
-credentials, so there is no shared app to borrow and nothing to register with
-us.
+of your own. There is no shared app to borrow and nothing to register with us.
 
-These are developer credentials, and they are set as environment variables.
-They belong in the deployment's `.env` beside `SECRET_KEY` and `DATABASE_URL`,
-not in a settings page. No workspace admin should be able to change which Meta
-app the deployment speaks as.
+These are developer credentials. They belong in the deployment's `.env` beside
+`SECRET_KEY` and `DATABASE_URL`, not in a settings page. No workspace admin
+should be able to change which Meta app the deployment speaks as.
 
 A deployment serving several organizations from one instance can give each its
 own Meta app id and secret instead, from the Django admin at
@@ -279,6 +265,29 @@ OAuth spelling used above. The full variable reference is
 [`.env.example`](.env.example), and each channel's permissions, sending rules,
 and platform quirks are in [`docs/channels/`](docs/channels/).
 
+### Which use cases to select
+
+Meta's App Dashboard is organized by use case rather than by permission, so
+you reach a channel's permissions through the use case that carries them. The
+names below are the dashboard's own, verbatim.
+
+| Channel | Use case | Permissions it carries |
+|---|---|---|
+| Instagram | Manage messaging & content on Instagram | `instagram_business_basic`, `instagram_business_manage_messages`, `instagram_business_manage_comments` |
+| Messenger | Engage with customers on Messenger from Meta | `pages_messaging` |
+| Messenger | Manage everything on your Page | `pages_show_list` (automatic), `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement` |
+| WhatsApp | Connect with customers through WhatsApp | `whatsapp_business_messaging` and `whatsapp_business_management`, carried on a system user token rather than a consent screen |
+
+Messenger needs both of its use cases. `pages_messaging` is not offered under
+the Page use case, and the Page use case is the only place the four Page
+permissions appear.
+
+Nothing else in the picker applies. The Marketing API, ads MCP server, Audience
+Network, app ads, Catalog, Threads, Instant Games, Live Video, oEmbed,
+fundraiser, data portability and ThreatExchange use cases are all unrelated to
+this product, and each one you add is another permission set to justify at App
+Review.
+
 ### Instagram
 
 Instagram runs on the Instagram API with Instagram Login, against
@@ -286,7 +295,7 @@ professional accounts, either Business or Creator. No Facebook Page in the
 middle.
 
 1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
-   app and add the **Instagram** product.
+   app and add the use case **Manage messaging & content on Instagram**.
 2. Under *Instagram → Business login settings*, add this deployment's redirect
    URI, exactly as written:
 
@@ -296,16 +305,15 @@ middle.
 
    One URI for the whole deployment, not one per workspace. Meta matches it
    character for character, and the workspace travels in a signed `state`.
-3. In the App Dashboard, go to *Instagram → Permissions and features* and add
-   the permissions this deployment requests:
+3. Under *Instagram → Permissions and features*, add the three permissions this
+   deployment requests:
 
-   **Use case: "Instagram API"** (the *Instagram API with Instagram Login*
-   setup from step 1)
-   - Add these permissions: `instagram_business_basic` (the account's id and
-     username, which everything else is built on),
-     `instagram_business_manage_messages` (reading and sending DMs, story
-     replies, and story mentions), `instagram_business_manage_comments`
-     (reading comments and posting public replies — the comment trigger)
+   - `instagram_business_basic`, the account's id and username, which
+     everything else is built on.
+   - `instagram_business_manage_messages`, for reading and sending DMs, story
+     replies, and story mentions.
+   - `instagram_business_manage_comments`, for reading comments and posting
+     public replies. This is the comment trigger.
 
    All three are requested at connect time rather than incrementally.
    Connecting without `manage_comments` succeeds and then fails every public
@@ -331,32 +339,31 @@ minutes. See [`docs/channels/instagram.md`](docs/channels/instagram.md).
 ### Facebook Messenger
 
 1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
-   app of type **Business** and add two products: **Messenger** and **Facebook
-   Login for Business**.
+   app of type **Business** and add both Messenger use cases: **Engage with
+   customers on Messenger from Meta** and **Manage everything on your Page**.
+   Add the **Facebook Login for Business** product as well, which is where the
+   redirect URI goes.
 2. Under *Facebook Login for Business → Settings → Valid OAuth Redirect URIs*,
    add this deployment's callback, exactly as written:
 
    ```
    https://<your-host>/channels/messenger/callback/
    ```
-3. In the App Dashboard, go to **Use cases** and add the two use cases below.
-   Click into each one and go to **Permissions and features** to add the
+3. Click into each use case, open **Permissions and features**, and add the
    optional permissions:
 
-   **Use case: "Messenger from Meta"**
-   - Required to enable `pages_messaging`, which is not available under the
-     Page use case
-   - Add the optional permission: `pages_messaging` — sending and receiving
-     DMs, the channel itself
+   - `pages_messaging`, on the Messenger use case. Sending and receiving DMs,
+     the channel itself.
+   - `pages_manage_metadata`, on the Page use case. Permits `subscribed_apps`
+     and the Get Started button. Without it a page connects and then silently
+     never delivers.
+   - `pages_read_engagement`, on the Page use case. Reads the comment that
+     fires a comment trigger.
+   - `pages_manage_engagement`, on the Page use case. Posts the public reply
+     and the like.
 
-   **Use case: "Manage everything on your Page"**
-   - Auto-includes `pages_show_list`, which is what makes `/me/accounts` return
-     anything, so an operator can pick a page
-   - Add these optional permissions: `pages_manage_metadata` (permits
-     `subscribed_apps` and the Get Started button — without it a page
-     connects and then silently never delivers), `pages_read_engagement`
-     (read the comment that fires a comment trigger),
-     `pages_manage_engagement` (post the public reply and the like)
+   `pages_show_list` arrives with the Page use case and needs no action. It is
+   what makes `/me/accounts` return anything, so an operator can pick a page.
 4. Copy the app ID and app secret from *App settings → Basic*.
 5. Set:
 
@@ -382,19 +389,19 @@ page rather than authorizing through Meta. The app secret is still required,
 because it is what every inbound delivery's signature is verified against.
 
 1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
-   app of type **Business** and add the **WhatsApp** product.
+   app of type **Business** and add the use case **Connect with customers
+   through WhatsApp**. It requires a business portfolio.
 2. Add a phone number under *WhatsApp → API Setup* and complete its
    verification. Note the **phone number ID** (the numeric API id, not the
    phone number) and the **WhatsApp Business Account ID**.
 3. Create a system user in *Business Settings*, give it access to the WABA, and
-   generate a token carrying these permissions:
+   generate a token carrying `whatsapp_business_messaging` (sending and
+   receiving messages, the channel itself) and `whatsapp_business_management`
+   (reading the number back to prove the token, subscribing the WABA to
+   webhooks, and managing templates).
 
-   **System user token** (there is no use case to add them under — WhatsApp
-   runs no login dialog, so nobody is ever shown a consent screen)
-   - Add these permissions: `whatsapp_business_messaging` (sending and
-     receiving messages, the channel itself), `whatsapp_business_management`
-     (reading the number back to prove the token, subscribing the WABA to
-     webhooks, and managing templates)
+   Both ride on the token rather than on the use case's permission list.
+   WhatsApp runs no login dialog, so nobody is ever shown a consent screen.
 
    Choose **never expires**; a 60-day token becomes a silent outage two months
    after launch.
@@ -417,7 +424,7 @@ reads the number back from Meta to prove the token before storing anything. See
 ### What Meta has to approve
 
 A new Meta app starts with **Standard Access**, which reaches only accounts
-whose users hold a role on the app itself — the owner, and anyone added as a
+whose users hold a role on the app itself: the owner, and anyone added as a
 developer or tester. That is enough to build against, and enough for a
 self-hoster running their own accounts. Connecting an account belonging to
 someone else means asking Meta for **Advanced Access** on each permission
@@ -428,7 +435,7 @@ behind the app.
 |---|---|---|
 | **Instagram** | `instagram_business_basic`, `instagram_business_manage_messages`, `instagram_business_manage_comments` | App Review, submitted per permission with a screencast showing each one used end to end; Business Verification |
 | **Facebook Messenger** | `pages_messaging`, plus `pages_read_engagement` and `pages_manage_engagement` if you use the comment trigger | Business Verification; a privacy policy URL and a data-deletion callback on the app |
-| **WhatsApp** | `whatsapp_business_messaging`, `whatsapp_business_management`, on the system user token | No App Review — a system user token has no consent screen to review. Business Verification and message quality set the per-number messaging limit, and every template is approved individually |
+| **WhatsApp** | `whatsapp_business_messaging`, `whatsapp_business_management`, on the system user token | No App Review; a system user token has no consent screen to review. Business Verification and message quality set the per-number messaging limit, and every template is approved individually |
 
 Budget weeks rather than days, and expect at least one rejection asking for a
 clearer screencast. This is Meta's process; nothing in this product changes it.
