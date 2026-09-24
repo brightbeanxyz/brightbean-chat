@@ -236,6 +236,15 @@ first: it never runs OAuth.
 One URL each per deployment, not one per workspace. Meta matches them character
 for character, and the workspace travels in a signed `state` instead.
 
+Instagram and Messenger keep **separate** allowlists, because they are separate
+OAuth systems: Instagram authorizes at `www.instagram.com`, Messenger at
+`www.facebook.com`. The **Redirect URI Validator** on the *Facebook Login for
+Business* page therefore only checks Messenger's list. Paste Instagram's
+callback into it and it answers *"This is an invalid redirect URI for this
+application"* however Instagram is configured, because Instagram's URI is not
+supposed to be on that list. It goes under *Instagram → Set up Instagram
+business login* instead.
+
 ### Use cases and permissions
 
 The App Dashboard is organized by use case. Add the use case, then open its
