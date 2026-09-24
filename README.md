@@ -216,231 +216,207 @@ target.
 
 ## Platform credentials
 
-Connecting Instagram, Facebook Messenger, or WhatsApp needs a Meta developer app
-of your own. There is no shared app to borrow and nothing to register with us.
+Instagram, Facebook Messenger and WhatsApp each need a Meta developer app of
+your own. There is no shared app to borrow and nothing to register with us.
 
-These are developer credentials. They belong in the deployment's `.env` beside
-`SECRET_KEY` and `DATABASE_URL`, not in a settings page. No workspace admin
-should be able to change which Meta app the deployment speaks as.
+### Two fields, both called "callback"
 
-A deployment serving several organizations from one instance can give each its
-own Meta app id and secret instead, from the Django admin at
-`https://<your-host>/admin/` → *Credentials → Platform credentials*. That page
-is superuser-only (`python manage.py createsuperuser`). The environment wins.
-When a platform is configured in both places, the environment value is the one
-in force and the admin row is never consulted. It is the fallback for
-organizations that have none, not an override.
+Meta asks for two different URLs and calls them similar things. They are not
+interchangeable, and putting the OAuth one in the webhook field fails with
+*"The callback URL or verify token couldn't be validated."*
 
-`PLATFORM_<PLATFORM>_VERIFY_TOKEN` is always deployment-level and must be set
-in the environment, including when the app id and secret come from an
-organization row. Meta's verification `GET` arrives at `/webhooks/<platform>/`
-unauthenticated, carrying nothing but the platform name. There is no
-organization to resolve a token against, so the endpoint reads only the
-environment. Leave it unset and that platform's verification answers 404, which
-means the webhook cannot be subscribed and no inbound events arrive at all.
+| Meta's field | Value |
+|---|---|
+| **Callback URL**, under the use case's *Configure webhooks* step, next to a **Verify token** box | `https://<your-host>/webhooks/<platform>/` |
+| **Valid OAuth Redirect URIs** (Messenger) or *Business login settings* (Instagram) | `https://<your-host>/channels/<platform>/callback/` |
 
-A level is used only when it is *complete*. Setting a secret without its id
-leaves that platform unconfigured rather than half-configured, because a
-half-filled app produces a 401 from Meta that names neither value.
+`<platform>` is `instagram`, `messenger` or `whatsapp`. WhatsApp has only the
+first: it never runs OAuth.
 
-Telegram, SMS, and email have no deployment-level credentials: a bot token comes
-from BotFather, Twilio ships an account SID, and SMTP logins are per sending
-domain. All three live on the individual channel connection.
+One URL each per deployment, not one per workspace. Meta matches them character
+for character, and the workspace travels in a signed `state` instead.
 
-| Variable | Required | Description |
-|---|---|---|
-| `PLATFORM_INSTAGRAM_CLIENT_ID` | For Instagram | Instagram app ID, from the Meta app's *Instagram* product |
-| `PLATFORM_INSTAGRAM_CLIENT_SECRET` | For Instagram | Instagram app secret. Neither value works without the other |
-| `PLATFORM_INSTAGRAM_VERIFY_TOKEN` | For Instagram | Any long random string you choose, pasted into Meta's *Verify token* field. Unset means the verification `GET` answers 404, so nothing can be subscribed by accident |
-| `PLATFORM_MESSENGER_CLIENT_ID` | For Messenger | Facebook app ID, from *App settings → Basic* |
-| `PLATFORM_MESSENGER_CLIENT_SECRET` | For Messenger | Facebook app secret |
-| `PLATFORM_MESSENGER_VERIFY_TOKEN` | For Messenger | As above, for the Messenger webhook |
-| `PLATFORM_WHATSAPP_CLIENT_ID` | For WhatsApp | Meta app ID that owns the WhatsApp Business account |
-| `PLATFORM_WHATSAPP_CLIENT_SECRET` | For WhatsApp | Meta app secret. This is what verifies every inbound delivery's signature, so it is required even though the WhatsApp setup never runs OAuth |
-| `PLATFORM_WHATSAPP_VERIFY_TOKEN` | For WhatsApp | As above, for the WhatsApp webhook |
+### Use cases and permissions
 
-Meta's console labels these *App ID* and *App Secret*;
-`PLATFORM_<PLATFORM>_APP_ID` and `_APP_SECRET` are accepted as aliases of the
-OAuth spelling used above. The full variable reference is
-[`.env.example`](.env.example), and each channel's permissions, sending rules,
-and platform quirks are in [`docs/channels/`](docs/channels/).
+The App Dashboard is organized by use case. Add the use case, then open its
+*Permissions and features* page and add the permissions.
 
-### Which use cases to select
-
-Meta's App Dashboard is organized by use case rather than by permission, so
-you reach a channel's permissions through the use case that carries them. The
-names below are the dashboard's own, verbatim.
-
-| Channel | Use case | Permissions it carries |
+| Channel | Use case, as the picker names it | Permissions to add |
 |---|---|---|
 | Instagram | Manage messaging & content on Instagram | `instagram_business_basic`, `instagram_business_manage_messages`, `instagram_business_manage_comments` |
 | Messenger | Engage with customers on Messenger from Meta | `pages_messaging` |
-| Messenger | Manage everything on your Page | `pages_show_list` (automatic), `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement` |
-| WhatsApp | Connect with customers through WhatsApp | `whatsapp_business_messaging` and `whatsapp_business_management`, carried on a system user token rather than a consent screen |
+| Messenger | Manage everything on your Page | `pages_manage_metadata`, `pages_read_engagement`, `pages_manage_engagement` |
+| WhatsApp | Connect with customers through WhatsApp | none here, the two WhatsApp permissions go on a system user token |
 
-Messenger needs both of its use cases. `pages_messaging` is not offered under
-the Page use case, and the Page use case is the only place the four Page
-permissions appear.
+Messenger needs both of its use cases: `pages_messaging` is not offered under
+the Page use case, and the Page use case is the only place the rest appear.
+`pages_show_list` comes with it automatically and needs no action.
 
-Nothing else in the picker applies. The Marketing API, ads MCP server, Audience
+Once a use case is added, the dashboard's use case switcher shortens its name.
+"Engage with customers on Messenger from Meta" becomes "Messenger from Meta".
+Same use case.
+
+Nothing else in the picker applies. Marketing API, ads MCP server, Audience
 Network, app ads, Catalog, Threads, Instant Games, Live Video, oEmbed,
-fundraiser, data portability and ThreatExchange use cases are all unrelated to
-this product, and each one you add is another permission set to justify at App
-Review.
+fundraiser, data portability and ThreatExchange are all unrelated, and each one
+you add is another permission set to justify at App Review.
 
 ### Instagram
 
-Instagram runs on the Instagram API with Instagram Login, against
-professional accounts, either Business or Creator. No Facebook Page in the
-middle.
+Runs on the Instagram API with Instagram Login, against professional accounts,
+Business or Creator. No Facebook Page in the middle.
 
-1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
-   app and add the use case **Manage messaging & content on Instagram**.
-2. Under *Instagram → Business login settings*, add this deployment's redirect
-   URI, exactly as written:
-
-   ```
-   https://<your-host>/channels/instagram/callback/
-   ```
-
-   One URI for the whole deployment, not one per workspace. Meta matches it
-   character for character, and the workspace travels in a signed `state`.
-3. Under *Instagram → Permissions and features*, add the three permissions this
-   deployment requests:
-
-   - `instagram_business_basic`, the account's id and username, which
-     everything else is built on.
-   - `instagram_business_manage_messages`, for reading and sending DMs, story
-     replies, and story mentions.
-   - `instagram_business_manage_comments`, for reading comments and posting
-     public replies. This is the comment trigger.
-
-   All three are requested at connect time rather than incrementally.
-   Connecting without `manage_comments` succeeds and then fails every public
-   reply, which is a worse thing to discover later.
-4. Copy the *Instagram app ID* and *Instagram app secret* from the Instagram
-   product's API setup. These are not the plain Facebook app id and secret.
-5. Set:
+1. Create an app and add the use case **Manage messaging & content on
+   Instagram**.
+2. *Permissions and features*: add the three `instagram_business_*` permissions
+   above. The dashboard's **Add all required permissions** button adds exactly
+   those three.
+3. *Instagram → Business login settings*: add the redirect URI
+   `https://<your-host>/channels/instagram/callback/`.
+4. *Instagram → API setup*: copy the **Instagram app ID** and **Instagram app
+   secret**, which are not the Facebook app id and secret, then set:
 
    ```dotenv
    PLATFORM_INSTAGRAM_CLIENT_ID=...
    PLATFORM_INSTAGRAM_CLIENT_SECRET=...
-   PLATFORM_INSTAGRAM_VERIFY_TOKEN=...
+   PLATFORM_INSTAGRAM_VERIFY_TOKEN=...   # any long random string you choose
    ```
-6. Under *Instagram → Webhooks*, set the callback URL to
-   `https://<your-host>/webhooks/instagram/` and the verify token to the value
-   above, then subscribe to `messages`, `messaging_postbacks`, `comments`,
-   `mentions`, and `message_deletions`.
+5. *Instagram → Configure webhooks*: callback URL
+   `https://<your-host>/webhooks/instagram/`, verify token from step 4, then
+   **Verify and save** and subscribe to `messages`, `messaging_postbacks`,
+   `comments`, `mentions` and `message_deletions`.
 
-Serving any account other than the app owner's own needs Advanced Access, App
-Review, and Business Verification, the step that takes weeks rather than
-minutes. See [`docs/channels/instagram.md`](docs/channels/instagram.md).
+All three permissions are requested at connect time rather than incrementally,
+because connecting without `manage_comments` succeeds and then fails every
+public reply. Verification passes while the app is in development, but no
+deliveries arrive until it is published. See
+[`docs/channels/instagram.md`](docs/channels/instagram.md).
 
 ### Facebook Messenger
 
-1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
-   app of type **Business** and add both Messenger use cases: **Engage with
-   customers on Messenger from Meta** and **Manage everything on your Page**.
-   Add the **Facebook Login for Business** product as well, which is where the
-   redirect URI goes.
-2. Under *Facebook Login for Business → Settings → Valid OAuth Redirect URIs*,
-   add this deployment's callback, exactly as written:
-
-   ```
-   https://<your-host>/channels/messenger/callback/
-   ```
-3. Click into each use case, open **Permissions and features**, and add the
-   optional permissions:
-
-   - `pages_messaging`, on the Messenger use case. Sending and receiving DMs,
-     the channel itself.
-   - `pages_manage_metadata`, on the Page use case. Permits `subscribed_apps`
-     and the Get Started button. Without it a page connects and then silently
-     never delivers.
-   - `pages_read_engagement`, on the Page use case. Reads the comment that
-     fires a comment trigger.
-   - `pages_manage_engagement`, on the Page use case. Posts the public reply
-     and the like.
-
-   `pages_show_list` arrives with the Page use case and needs no action. It is
-   what makes `/me/accounts` return anything, so an operator can pick a page.
-4. Copy the app ID and app secret from *App settings → Basic*.
-5. Set:
+1. Create an app of type **Business**, add both Messenger use cases, and add the
+   **Facebook Login for Business** product.
+2. *Permissions and features*, on each use case: add `pages_messaging` to the
+   Messenger one, and the three `pages_*` permissions to the Page one.
+3. *Facebook Login for Business → Settings*: add
+   `https://<your-host>/channels/messenger/callback/` to **Valid OAuth Redirect
+   URIs**. Strict Mode is forced on, so the match is exact. The **Redirect URI
+   Validator** at the top of that page checks a URI before you save it.
+4. *App settings → Basic*: copy the app ID and app secret, then set:
 
    ```dotenv
    PLATFORM_MESSENGER_CLIENT_ID=...
    PLATFORM_MESSENGER_CLIENT_SECRET=...
    PLATFORM_MESSENGER_VERIFY_TOKEN=...
    ```
-6. Under *Messenger → Settings → Webhooks*, set the callback URL to
-   `https://<your-host>/webhooks/messenger/` and the verify token to the value
-   above. Pages are subscribed to `messages`, `messaging_postbacks`,
-   `messaging_referrals`, `message_deliveries`, `message_reads`, and `feed`
-   automatically when they connect.
+5. *Messenger API Settings → Configure webhooks*: callback URL
+   `https://<your-host>/webhooks/messenger/`, verify token from step 4, then
+   **Verify and save**.
 
-This is the most expensive channel to set up: a Meta app, a page, App Review,
-and Business Verification. See
-[`docs/channels/messenger.md`](docs/channels/messenger.md).
+Skip the dashboard's **Generate access tokens** step. This deployment connects
+pages through its own OAuth flow and subscribes each one to `messages`,
+`messaging_postbacks`, `messaging_referrals`, `message_deliveries`,
+`message_reads` and `feed` at connect time. Without `pages_manage_metadata`
+that subscription fails, and a page then connects and silently never delivers.
+See [`docs/channels/messenger.md`](docs/channels/messenger.md).
 
 ### WhatsApp
 
-WhatsApp does not use OAuth. You paste a system-user token into the connect
-page rather than authorizing through Meta. The app secret is still required,
-because it is what every inbound delivery's signature is verified against.
+No OAuth. You paste a system user token into the connect page rather than
+authorizing through Meta. The app secret is still required, because it is what
+every inbound delivery's signature is verified against.
 
-1. At [Meta for Developers](https://developers.facebook.com/apps/), create an
-   app of type **Business** and add the use case **Connect with customers
-   through WhatsApp**. It requires a business portfolio.
-2. Add a phone number under *WhatsApp → API Setup* and complete its
-   verification. Note the **phone number ID** (the numeric API id, not the
-   phone number) and the **WhatsApp Business Account ID**.
-3. Create a system user in *Business Settings*, give it access to the WABA, and
-   generate a token carrying `whatsapp_business_messaging` (sending and
-   receiving messages, the channel itself) and `whatsapp_business_management`
-   (reading the number back to prove the token, subscribing the WABA to
-   webhooks, and managing templates).
-
-   Both ride on the token rather than on the use case's permission list.
-   WhatsApp runs no login dialog, so nobody is ever shown a consent screen.
-
-   Choose **never expires**; a 60-day token becomes a silent outage two months
-   after launch.
-4. Copy the app ID and app secret from *App settings → Basic*.
-5. Set:
+1. Create an app of type **Business** and add the use case **Connect with
+   customers through WhatsApp**. It needs a business portfolio.
+2. *WhatsApp → API Setup*: add a phone number and verify it. Note the **phone
+   number ID**, which is the numeric API id rather than the number itself, and
+   the **WhatsApp Business Account ID**.
+3. *Business Settings*: create a system user, give it access to the WABA, and
+   generate a token carrying `whatsapp_business_messaging` and
+   `whatsapp_business_management`. Choose **never expires**.
+4. *App settings → Basic*: copy the app ID and app secret, then set:
 
    ```dotenv
    PLATFORM_WHATSAPP_CLIENT_ID=...
    PLATFORM_WHATSAPP_CLIENT_SECRET=...
    PLATFORM_WHATSAPP_VERIFY_TOKEN=...
    ```
-6. Under *WhatsApp → Configuration*, set the callback URL to
-   `https://<your-host>/webhooks/whatsapp/` and the verify token to the value
-   above.
+5. *WhatsApp → Configuration*: callback URL
+   `https://<your-host>/webhooks/whatsapp/` and the verify token from step 4.
 
-Then finish in the app at *Settings → Channels → WhatsApp → set it up*, which
-reads the number back from Meta to prove the token before storing anything. See
-[`docs/channels/whatsapp.md`](docs/channels/whatsapp.md).
+Those two permissions ride on the token rather than on the use case's permission
+list, because WhatsApp runs no login dialog and nobody is ever shown a consent
+screen. A 60-day token becomes a silent outage two months after launch, which is
+why step 3 says never expires. Finish at *Settings → Channels → WhatsApp → set
+it up*, which reads the number back from Meta to prove the token before storing
+anything. See [`docs/channels/whatsapp.md`](docs/channels/whatsapp.md).
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `PLATFORM_INSTAGRAM_CLIENT_ID` | For Instagram | Instagram app ID, from *Instagram → API setup* |
+| `PLATFORM_INSTAGRAM_CLIENT_SECRET` | For Instagram | Instagram app secret. Neither value works without the other |
+| `PLATFORM_INSTAGRAM_VERIFY_TOKEN` | For Instagram | Any long random string you choose, pasted into Meta's *Verify token* box |
+| `PLATFORM_MESSENGER_CLIENT_ID` | For Messenger | Facebook app ID, from *App settings → Basic* |
+| `PLATFORM_MESSENGER_CLIENT_SECRET` | For Messenger | Facebook app secret |
+| `PLATFORM_MESSENGER_VERIFY_TOKEN` | For Messenger | As above, for the Messenger webhook |
+| `PLATFORM_WHATSAPP_CLIENT_ID` | For WhatsApp | Meta app ID that owns the WhatsApp Business account |
+| `PLATFORM_WHATSAPP_CLIENT_SECRET` | For WhatsApp | Meta app secret. Required even though WhatsApp runs no OAuth, because it verifies every inbound signature |
+| `PLATFORM_WHATSAPP_VERIFY_TOKEN` | For WhatsApp | As above, for the WhatsApp webhook |
+
+Meta's console labels the first two of each *App ID* and *App Secret*, and
+`PLATFORM_<PLATFORM>_APP_ID` and `_APP_SECRET` are accepted as aliases. The full
+variable reference is [`.env.example`](.env.example).
+
+### How credentials resolve
+
+These are developer credentials. They belong in the deployment's `.env` beside
+`SECRET_KEY` and `DATABASE_URL`, not in a settings page: no workspace admin
+should be able to change which Meta app the deployment speaks as.
+
+A deployment serving several organizations can give each its own app id and
+secret from the Django admin, at `/admin/` → *Credentials → Platform
+credentials*, which is superuser-only. The environment wins. When a platform is
+configured in both places the admin row is never consulted, so it is a fallback
+for organizations that have none rather than an override. A level is used only
+when it is complete, so a secret without its id leaves that platform
+unconfigured rather than half-configured.
+
+`PLATFORM_<PLATFORM>_VERIFY_TOKEN` is the exception and is always
+deployment-level, including when the app id and secret come from an organization
+row. Meta's verification `GET` arrives unauthenticated and names no
+organization, so the endpoint reads only the environment. Leave it unset and
+that platform's verification answers 404, which means the webhook cannot be
+subscribed and no inbound events arrive at all.
+
+Telegram, SMS and email have no deployment-level credentials. A BotFather token,
+a Twilio account SID and an SMTP login all live on the individual channel
+connection.
 
 ### What Meta has to approve
 
-A new Meta app starts with **Standard Access**, which reaches only accounts
-whose users hold a role on the app itself: the owner, and anyone added as a
-developer or tester. That is enough to build against, and enough for a
-self-hoster running their own accounts. Connecting an account belonging to
-someone else means asking Meta for **Advanced Access** on each permission
-through **App Review**, backed by **Business Verification** of the business
-behind the app.
+A new app starts with **Standard Access**, which reaches only accounts whose
+users hold a role on the app: the owner, and anyone added as a developer or
+tester. That is enough to build against and enough for a self-hoster running
+their own accounts, so until App Review, connect an account that holds one of
+those roles. For Instagram, assign the account the **Instagram Tester** role
+under the app's *Roles* tab first.
+
+Connecting an account belonging to someone else means asking Meta for **Advanced
+Access** on each permission through **App Review**, backed by **Business
+Verification** of the business behind the app.
 
 | Platform | Permissions to request | Also required |
 |---|---|---|
-| **Instagram** | `instagram_business_basic`, `instagram_business_manage_messages`, `instagram_business_manage_comments` | App Review, submitted per permission with a screencast showing each one used end to end; Business Verification |
-| **Facebook Messenger** | `pages_messaging`, plus `pages_read_engagement` and `pages_manage_engagement` if you use the comment trigger | Business Verification; a privacy policy URL and a data-deletion callback on the app |
-| **WhatsApp** | `whatsapp_business_messaging`, `whatsapp_business_management`, on the system user token | No App Review; a system user token has no consent screen to review. Business Verification and message quality set the per-number messaging limit, and every template is approved individually |
+| **Instagram** | All three `instagram_business_*` permissions | App Review, submitted per permission with a screencast showing each one used end to end; Business Verification |
+| **Facebook Messenger** | `pages_messaging`, plus `pages_read_engagement` and `pages_manage_engagement` if you use the comment trigger | Business Verification, a privacy policy URL, and a **Data Deletion Request URL** under *Facebook Login for Business → Settings* |
+| **WhatsApp** | `whatsapp_business_messaging`, `whatsapp_business_management`, on the system user token | No App Review, since a system user token has no consent screen to review. Business Verification and message quality set the per-number messaging limit, and every template is approved individually |
 
 Budget weeks rather than days, and expect at least one rejection asking for a
 clearer screencast. This is Meta's process; nothing in this product changes it.
 
-Telegram, SMS, and email have nothing to request. A BotFather token, a Twilio
+Telegram, SMS and email have nothing to request. A BotFather token, a Twilio
 account SID and auth token, and an SMTP or provider key are all issued on the
 spot and reach every contact from the first message.
 
