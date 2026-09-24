@@ -17,7 +17,8 @@ it, and a permanent system user token. There is no OAuth step: this is the
 direct integration, so the credential is one you generate yourself.
 
 1. **Create a Meta app** at [developers.facebook.com](https://developers.facebook.com)
-   and add the **WhatsApp** product. Note the app id and app secret.
+   and add the **Connect with customers through WhatsApp** use case, which
+   needs a business portfolio. Note the app id and app secret.
 
 2. **Add a phone number** under WhatsApp → API Setup, and complete its
    verification. Copy the **phone number ID** — the numeric API id, *not* the
@@ -25,8 +26,10 @@ direct integration, so the credential is one you generate yourself.
 
 3. **Create a system user** in Business Settings, give it access to the WABA,
    and generate a token with `whatsapp_business_messaging` and
-   `whatsapp_business_management`. Choose **never expires**; a 60-day token
-   turns into a silent outage two months after launch.
+   `whatsapp_business_management`. Both ride on the token rather than on the
+   use case's permission list — WhatsApp runs no login dialog, so nobody is
+   ever shown a consent screen. Choose **never expires**; a 60-day token turns
+   into a silent outage two months after launch.
 
 4. **Set the app credentials** on this deployment. Both are needed:
 

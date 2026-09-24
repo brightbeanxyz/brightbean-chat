@@ -22,10 +22,14 @@ Instagram to `graph.instagram.com`, so each adapter keeps its own — see
 ### 1. Create the Meta app
 
 At [developers.facebook.com](https://developers.facebook.com/apps/), create an
-app of type **Business** and add two products to it:
+app of type **Business** and add two use cases to it:
 
-- **Messenger** — the channel itself.
-- **Facebook Login for Business** — how an operator grants access to a page.
+- **Engage with customers on Messenger from Meta** — the channel itself, and
+  the only use case that offers `pages_messaging`.
+- **Manage everything on your Page** — the four Page permissions below.
+
+Add the **Facebook Login for Business** product as well: it is how an operator
+grants access to a page, and where the redirect URI in the next step lives.
 
 ### 2. Register the redirect URI
 
@@ -118,13 +122,16 @@ app's own header has to list it too. Issue #115.
 
 ### Permissions requested
 
-| Scope | Why |
-|---|---|
-| `pages_messaging` | Send and receive DMs. The channel itself. |
-| `pages_show_list` | Makes `/me/accounts` return anything, so you can pick a page. |
-| `pages_manage_metadata` | Permits `subscribed_apps` and the Get Started button. Without it a page connects and then silently never delivers. |
-| `pages_read_engagement` | Read the comment that fires a comment trigger. |
-| `pages_manage_engagement` | Post the public reply and the like. |
+| Scope | Use case | Why |
+|---|---|---|
+| `pages_messaging` | Engage with customers on Messenger from Meta | Send and receive DMs. The channel itself. |
+| `pages_show_list` | Manage everything on your Page (automatic) | Makes `/me/accounts` return anything, so you can pick a page. |
+| `pages_manage_metadata` | Manage everything on your Page | Permits `subscribed_apps` and the Get Started button. Without it a page connects and then silently never delivers. |
+| `pages_read_engagement` | Manage everything on your Page | Read the comment that fires a comment trigger. |
+| `pages_manage_engagement` | Manage everything on your Page | Post the public reply and the like. |
+
+`pages_messaging` is not offered under the Page use case, which is why the app
+needs both.
 
 ### App Review and Business Verification
 

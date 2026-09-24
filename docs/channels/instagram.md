@@ -20,7 +20,8 @@ to do here, Meta does not allow.
 
 Three things, and the third is the one that takes weeks rather than minutes.
 
-1. **A Meta app** with the *Instagram* product added, in the Meta app dashboard.
+1. **A Meta app** with the *Manage messaging & content on Instagram* use case
+   added, in the Meta app dashboard.
 2. **A professional Instagram account** (Settings → Account type and tools →
    Switch to professional account), with *Settings → Messages and story replies
    → Allow access to messages* turned on.
@@ -31,7 +32,7 @@ Three things, and the third is the one that takes weeks rather than minutes.
 ## Connecting an account
 
 1. **Add the callback URL.** In the Meta app dashboard, under the Instagram
-   product's *Business login settings*, add this deployment's redirect URI
+   use case's *Business login settings*, add this deployment's redirect URI
    **exactly** as the connect page shows it:
 
    ```
@@ -99,6 +100,9 @@ application ships them listed (`OAUTH_FORM_ACTION` in
 app's own header has to list them too. Issue #115.
 
 ### Permissions requested
+
+All three live under the *Manage messaging & content on Instagram* use case, in
+its *Permissions and features* list.
 
 | Scope | What it buys |
 |---|---|
