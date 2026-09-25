@@ -228,13 +228,22 @@ interchangeable, and putting the OAuth one in the webhook field fails with
 | Meta's field | Value |
 |---|---|
 | **Callback URL**, under the use case's *Configure webhooks* step, next to a **Verify token** box | `https://<your-host>/webhooks/<platform>/` |
-| **Valid OAuth Redirect URIs** (Messenger) or *Business login settings* (Instagram) | `https://<your-host>/channels/<platform>/callback/` |
+| **Redirect URI**, under *Set up Instagram business login* (Instagram) or **Valid OAuth Redirect URIs** (Messenger) | `https://<your-host>/channels/<platform>/callback/` |
 
 `<platform>` is `instagram`, `messenger` or `whatsapp`. WhatsApp has only the
 first: it never runs OAuth.
 
 One URL each per deployment, not one per workspace. Meta matches them character
 for character, and the workspace travels in a signed `state` instead.
+
+Instagram and Messenger keep **separate** allowlists, because they are separate
+OAuth systems: Instagram authorizes at `www.instagram.com`, Messenger at
+`www.facebook.com`. The **Redirect URI Validator** on the *Facebook Login for
+Business* page therefore only checks Messenger's list. Paste Instagram's
+callback into it and it answers *"This is an invalid redirect URI for this
+application"* however Instagram is configured, because Instagram's URI is not
+supposed to be on that list. It goes under *Instagram → Set up Instagram
+business login* instead.
 
 ### Use cases and permissions
 
@@ -271,8 +280,14 @@ Business or Creator. No Facebook Page in the middle.
 2. *Permissions and features*: add the three `instagram_business_*` permissions
    above. The dashboard's **Add all required permissions** button adds exactly
    those three.
-3. *Instagram → Business login settings*: add the redirect URI
-   `https://<your-host>/channels/instagram/callback/`.
+3. *Instagram → Set up Instagram business login*: open **Business login
+   settings** and put `https://<your-host>/channels/instagram/callback/` in the
+   **Redirect URI** field.
+
+   That screen leads with an embed URL to drop into an anchor tag or button on
+   your own website. Ignore it. This deployment builds its own authorize URL
+   and starts the flow from *Settings → Channels → Instagram*, so the redirect
+   URI is the only field on that screen you need.
 4. *Instagram → API setup*: copy the **Instagram app ID** and **Instagram app
    secret**, which are not the Facebook app id and secret, then set:
 
