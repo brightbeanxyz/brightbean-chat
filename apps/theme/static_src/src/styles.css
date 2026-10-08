@@ -4387,13 +4387,50 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
    correct for layout, spacing and flex, which nothing here touches.
    ═══════════════════════════════════════════════════════════════ */
 
+/* The list's controls, at the top of the rail they control: the view tabs,
+   then search and Filter, then any active filter chips. */
 .ib-filters {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  flex-direction: column;
   min-width: 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+.ib-tabs { gap: 16px; padding: 0 12px; height: 42px; border-bottom: 1px solid var(--divider); }
+.ib-tabs .tab { font-size: var(--fs-body); }
+.ib-toolbar { display: flex; align-items: center; gap: 6px; padding: 10px 12px 0; }
+.ib-toolbar .search-input { height: 34px; }
+.ib-toolbar .filter-trigger { height: 34px; padding: 0 10px; }
+
+/* The keyboard shortcuts beside the page title. */
+.ib-shortcuts { align-items: center; gap: 14px; font-size: var(--fs-sm); color: var(--text-tertiary); }
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The thread pane with nothing open: centred, with the unread count and a
+   way into the first one. */
+.ib-empty-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
 }
 
 .ib-shell {
@@ -4523,8 +4560,19 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   min-width: 0;
 }
 .ib-thread-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-left: auto; }
-.ib-thread-actions .btn-outline { padding: 0.5rem 0.875rem; border-radius: var(--radius-sm); }
-.ib-thread-actions .bb-select { min-height: 2.375rem; }
+.ib-thread-actions .bb-select { min-height: 36px; }
+/* The assignee picker reads as a quiet button: it is a property of the thread,
+   not a form to fill in. */
+.ib-assignee {
+  height: 36px;
+  padding-left: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-0);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
 
 /* Bubbles. */
 .ib-bubble {
@@ -4551,7 +4599,11 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.ib-bubble-in  { background: var(--surface-2); color: var(--text-primary); }
+/* The contact: white on the left, the way a chat app draws the other person. */
+.ib-bubble-in  { background: var(--surface-0); border-color: var(--border); color: var(--text-primary); }
+/* Automation — a flow, a broadcast: grey, so a reader scanning a thread can
+   tell at a glance which replies a person wrote. */
+.ib-bubble-auto { background: var(--surface-2); color: var(--text-primary); }
 /* Ink, not --primary: orange is the call-to-action colour, and a thread full
    of it competed with the Send button for attention. Same ink as an active
    .chip-filter, the other "this one is yours" state on the page. */
@@ -4835,7 +4887,28 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   font-size: 0.75rem;
   margin-bottom: 0.75rem;
 }
+/* Everything open: the green state, quiet — it is the normal one. */
+.ib-banner-open { background: var(--success-50); color: var(--success-700); }
 .ib-banner-paused { background: var(--warning-50); color: var(--warning-700); }
+.ib-banner { flex-wrap: wrap; }
+/* The bar's one action, as underlined text in the bar's own colour: it is the
+   state's next step, not a call to action competing with Send. */
+.ib-banner-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+/* A note is visibly not a reply: amber ground, the same tint the note bubble
+   wears in the thread. */
+.ib-compose-note { background: var(--warning-50); }
+.ib-compose-tabs { gap: 18px; }
+.ib-compose-tabs .tab { height: 32px; font-size: var(--fs-body); }
 .ib-banner-blocked { background: var(--error-50); color: var(--error-700); }
 .ib-banner-info { background: var(--surface-2); color: var(--text-secondary); }
 

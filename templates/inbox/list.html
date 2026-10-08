@@ -26,9 +26,21 @@ inert.
 {% block title %}Inbox · BrightBean Chat{% endblock %}
 
 {% block page_header %}
-  <div class="mb-5">
-    <h1 class="page-title">Inbox</h1>
-    <p class="page-lede mt-1.5">Every conversation across your connected channels.</p>
+  <div class="page-header mb-4">
+    <div class="page-header-text">
+      <h1 class="page-title">Inbox</h1>
+      <p class="page-lede">Every conversation across your connected channels.</p>
+    </div>
+    {% comment %}
+      The keyboard shortcuts, said out loud (HANDOFF §2.4). They have worked
+      since the inbox shipped and nothing on the page admitted they existed.
+      Hidden on a phone, where there is no keyboard to press them on.
+    {% endcomment %}
+    <p class="ib-shortcuts hidden md:flex" aria-label="Keyboard shortcuts">
+      <span><kbd>j</kbd> <kbd>k</kbd> navigate</span>
+      <span><kbd>e</kbd> done</span>
+      <span><kbd>r</kbd> reply</span>
+    </p>
   </div>
 {% endblock %}
 
@@ -46,8 +58,18 @@ inert.
      x-data="{
         state: '{{ state|escapejs }}',
         assignee: '{{ assignee|escapejs }}',
+        q: '{{ q|escapejs }}',
         filters: {{ filters|json_attr }},
-        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        openFirstUnread() {
+          const row = document.querySelector('#inbox-list .ib-row.is-unread') || document.querySelector('#inbox-list .ib-row');
+          if (row) { row.click(); row.scrollIntoView({ block: 'nearest' }); }
+        },
+        {% comment %}
+          By id rather than $refs: the form sits inside the rail's own x-data
+          (inboxSelection), and a ref registers with the closest component, not
+          with this one.
+        {% endcomment %}
+        reload() { this.$nextTick(() => document.getElementById('inbox-filters').dispatchEvent(new Event('filters-changed'))); },
         move(step) {
           const rows = Array.from(document.querySelectorAll('#inbox-list [data-conversation]'));
           if (!rows.length) return;
@@ -67,39 +89,6 @@ inert.
      }"
      @keydown.window="shortcut($event)">
 
-  <form id="inbox-filters" x-ref="filters"
-        class="ib-filters"
-        hx-get="{% url 'inbox:rows' workspace_id=request.workspace.id %}"
-        hx-target="#inbox-list"
-        hx-swap="innerHTML"
-        hx-trigger="filters-changed"
-        @submit.prevent>
-    <input type="hidden" name="state" x-model="state">
-    <input type="hidden" name="assignee" x-model="assignee">
-    <input type="hidden" name="open" value="{{ open_conversation_id }}">
-    {% comment %}
-      Four dropdowns became four views, and the views are underline tabs: they
-      are the one true "which slice am I looking at" control on this page
-      (HANDOFF §2.2 allows one). Between them they answer "everything / nothing
-      claimed yet / mine / done" — the two parameters conversations_for already
-      takes, asked as the questions instead of as the fields.
-
-      Channel and label, the genuinely long lists, are in the Filter popover
-      beside them, several of each at once.
-    {% endcomment %}
-    <div class="tabs tabs-inline" role="tablist" aria-label="Views">
-      {% for view in views %}
-      <button type="button" role="tab" class="tab" aria-controls="inbox-list"
-              :aria-selected="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') ? 'true' : 'false'"
-              @click="state = '{{ view.state|escapejs }}'; assignee = '{{ view.assignee|escapejs }}'; reload()">
-        {{ view.label }}{% if view.count %} <span class="tab-count">{{ view.count }}</span>{% endif %}
-      </button>
-      {% endfor %}
-    </div>
-    {% filter_popover groups=filter_groups onchange="reload()" noun="conversation" %}
-  </form>
-  {% filter_chips groups=filter_groups onchange="reload()" %}
-
   <div class="ib-shell">
     {# ── Conversation list ───────────────────────────────────────── #}
     {% comment %}
@@ -111,6 +100,50 @@ inert.
     <section class="ib-rail" aria-label="Conversations"
              x-data="inboxSelection()"
              x-on:inbox-list-changed.camel.window="clear()">
+      {% comment %}
+        The list's controls live at the top of the list they control (HANDOFF
+        §3, Inbox): the views as underline tabs with their counts, then search
+        and the Filter popover. One form, so the poll's hx-include carries all
+        of it.
+      {% endcomment %}
+      <form id="inbox-filters"
+            class="ib-filters"
+            hx-get="{% url 'inbox:rows' workspace_id=request.workspace.id %}"
+            hx-target="#inbox-list"
+            hx-swap="innerHTML"
+            hx-trigger="filters-changed, input changed delay:300ms from:#inbox-search"
+            @submit.prevent>
+        <input type="hidden" name="state" x-model="state">
+        <input type="hidden" name="assignee" x-model="assignee">
+        <input type="hidden" name="open" value="{{ open_conversation_id }}">
+        {% comment %}
+          Four dropdowns became four views, and the views are underline tabs:
+          they are the one true "which slice am I looking at" control on this
+          page (HANDOFF §2.2 allows one). Between them they answer "everything
+          / nothing claimed yet / mine / done" — the two parameters
+          conversations_for already takes, asked as the questions instead of as
+          the fields. Channel and label, the genuinely long lists, are in the
+          Filter popover below, several of each at once.
+        {% endcomment %}
+        <div class="tabs tabs-inline ib-tabs" role="tablist" aria-label="Views">
+          {% for view in views %}
+          <button type="button" role="tab" class="tab" aria-controls="inbox-list"
+                  :aria-selected="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') ? 'true' : 'false'"
+                  @click="state = '{{ view.state|escapejs }}'; assignee = '{{ view.assignee|escapejs }}'; reload()">
+            {{ view.label }}{% if view.count %} <span class="tab-count">{{ view.count }}</span>{% endif %}
+          </button>
+          {% endfor %}
+        </div>
+        <div class="ib-toolbar">
+          <label class="search-field flex-1 min-w-0">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input type="search" id="inbox-search" name="q" x-model="q" class="search-input"
+                   placeholder="Search conversations" aria-label="Search conversations" maxlength="100">
+          </label>
+          {% filter_popover groups=filter_groups onchange="reload()" noun="conversation" %}
+        </div>
+        <div class="px-3">{% filter_chips groups=filter_groups onchange="reload()" %}</div>
+      </form>
       {% comment %}
         The bulk bar. Outside #inbox-list so the three-second poll cannot swap it
         away mid-action, and hidden until something is selected.
@@ -156,7 +189,28 @@ inert.
       {% if conversation %}
         {% include "inbox/_thread.html" %}
       {% else %}
-        <div class="ib-thread"><div class="ib-empty">Pick a conversation to read it.</div></div>
+        {% comment %}
+          Nothing open yet (HANDOFF §3, Inbox): say how much is waiting, how to
+          move through it, and offer the first thing that needs a reply rather
+          than a blank pane.
+        {% endcomment %}
+        <div class="ib-thread">
+          <div class="ib-empty-state">
+            <span class="empty-state-icon" aria-hidden="true">{% include "partials/_nav_icon.html" with name="inbox" icon_size=20 %}</span>
+            <p class="empty-state-title">Select a conversation</p>
+            <p class="empty-state-body">
+              {% if unread_count %}{{ unread_count }} conversation{{ unread_count|pluralize }} need{{ unread_count|pluralize:"s," }} a reply.{% else %}You are all caught up.{% endif %}
+              Use <kbd>j</kbd> and <kbd>k</kbd> to move through the list.
+            </p>
+            {% if conversations %}
+            <div class="empty-state-actions">
+              <button type="button" class="btn-pill-secondary btn-pill-sm" @click="openFirstUnread()">
+                {% if unread_count %}Open first unread{% else %}Open the newest{% endif %}
+              </button>
+            </div>
+            {% endif %}
+          </div>
+        </div>
       {% endif %}
     </section>
   </div>
@@ -291,6 +345,8 @@ inert.
   function inboxComposer(config) {
     return {
       conversationId: config.conversationId,
+      // Reply or Internal note — which tab the compose box is on.
+      mode: 'reply',
       items: [],
       scheduling: false,
       picker: { open: false, loading: false, error: '', term: '', results: [] },

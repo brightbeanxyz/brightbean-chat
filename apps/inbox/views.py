@@ -147,6 +147,7 @@ def _filters(request: WorkspaceRequest) -> dict[str, Any]:
     state = (request.GET.get("state") or "").strip()
     return {
         "state": state if state in ConversationState.values else "",
+        "q": (request.GET.get("q") or "").strip()[: selectors.MAX_SEARCH_CHARS],
         "connection": multi(request.GET, "connection"),
         "assignee": (request.GET.get("assignee") or "").strip(),
         "label": multi(request.GET, "label"),
@@ -167,6 +168,7 @@ def _rows_context(request: WorkspaceRequest) -> tuple[dict[str, Any], Any]:
         connection_id=filters["connection"],
         assignee=filters["assignee"],
         label=filters["label"],
+        search=filters["q"],
     )
     return filters, rows
 
@@ -201,6 +203,9 @@ def _rendered_rows(request: WorkspaceRequest, rows: Any) -> dict[str, Any]:
             for conversation in conversations
         ],
         "open_conversation_id": request.GET.get("open", ""),
+        # For the empty thread pane's "N need a reply" — counted off the rows
+        # already in hand, so it is the list's own number and costs nothing.
+        "unread_count": sum(1 for conversation in conversations if getattr(conversation, "unread", False)),
     }
 
 
@@ -382,6 +387,11 @@ def _thread_body_context(
     disagree, and for ``deferred`` it would also be three more queries per poll.
     """
     page, has_more = selectors.thread_messages(request.workspace, conversation, limit=limit)
+    # Hung on the message so the template can say which flow a bubble came
+    # from without a dict lookup by variable key, which Django templates lack.
+    flow_names = selectors.flow_names_for(request.workspace, list(page))
+    for message in page:
+        message.flow_name = flow_names.get(message.pk, "")  # type: ignore[attr-defined]
     return {
         "conversation": conversation,
         "rendered": [render_message(message) for message in page],
@@ -633,6 +643,7 @@ def rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "inbox-rows",
         request.user.pk,
         filters["state"],
+        filters["q"],
         ",".join(filters["connection"]),
         filters["assignee"],
         ",".join(filters["label"]),
