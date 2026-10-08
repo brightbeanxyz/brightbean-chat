@@ -15,13 +15,14 @@ from typing import Any
 
 from django.apps import apps as django_apps
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.common.filters import multi
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
@@ -84,20 +85,21 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
     if query:
         flows = flows.filter(name__icontains=query)
 
-    # Anything unrecognised falls back to the default view rather than to no
-    # filtering at all: an if/elif here let `?status=bogus` match neither branch
-    # and so skip the exclusion, quietly listing archived flows among the live
-    # ones. Archived flows are out of the way by default but still findable —
-    # "Archived" in the status filter is the only way to see them, which is what
-    # archiving is for.
-    status = (request.GET.get("status") or "").strip()
-    flows = flows.filter(status=status) if status in FlowStatus.values else flows.exclude(status=FlowStatus.ARCHIVED)
+    # Both filters repeat (`?status=active&status=offline`): the Filter popover
+    # lets a reader pick several values in a group. multi() drops anything
+    # unrecognised, so `?status=bogus` reads as no status filter — and no status
+    # filter means the default view rather than no filtering at all: an
+    # unrecognised value once skipped the exclusion and quietly listed archived
+    # flows among the live ones. Archived flows are out of the way by default
+    # but still findable — "Archived" in the status filter is the only way to
+    # see them, which is what archiving is for.
+    statuses = multi(request.GET, "status", allowed=FlowStatus.values)
+    flows = flows.filter(status__in=statuses) if statuses else flows.exclude(status=FlowStatus.ARCHIVED)
 
-    folder = (request.GET.get("folder") or "").strip()
-    if folder == UNFILED_VALUE:
-        flows = flows.filter(folder="")
-    elif folder:
-        flows = flows.filter(folder=folder)
+    folders = multi(request.GET, "folder")
+    if folders:
+        named = Q(folder__in=[folder for folder in folders if folder != UNFILED_VALUE])
+        flows = flows.filter(named | Q(folder="") if UNFILED_VALUE in folders else named)
 
     return flows.order_by("folder", "name")
 
@@ -153,7 +155,9 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
 
     folder_names = list(folders)
     can_edit = request.workspace_membership.effective_permissions.get("edit_flows", False)
-    filtered = bool(request.GET.get("q") or request.GET.get("status") or request.GET.get("folder"))
+    statuses = multi(request.GET, "status", allowed=FlowStatus.values)
+    folder_values = multi(request.GET, "folder")
+    filtered = bool((request.GET.get("q") or "").strip() or statuses or folder_values)
 
     # Templates in the empty state, and only there: this is the exact moment
     # somebody has nothing and no idea what to build, and the page offered them
@@ -184,27 +188,38 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         "flow_count": len(flows),
         "template_cards": template_cards,
         "template_total": template_total,
-        # (value, label) pairs, which is what ui_select wants — and what keeps
-        # the "Unfiled" row's value distinct from a folder of the same name.
-        "folder_options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
-        "status_options": list(FlowStatus.choices),
-        # The chips, in the order a reader scans them, each carrying its own
-        # count so nobody has to select a filter to find out it is empty.
-        # Labels rather than the enum's: "Live" says what an active flow is
-        # doing, "Active" says what a column holds.
-        "status_chips": [
-            {"value": value, "label": label, "count": status_counts.get(str(value), 0)}
-            for value, label in (
-                ("", "All"),
-                (FlowStatus.ACTIVE, "Live"),
-                (FlowStatus.OFFLINE, "Offline"),
-                (FlowStatus.DRAFT, "Draft"),
-                (FlowStatus.ARCHIVED, "Archived"),
-            )
-        ],
         "query": request.GET.get("q", ""),
-        "status": request.GET.get("status", ""),
-        "folder": request.GET.get("folder", ""),
+        # The Filter popover's state and its sections. `filters` seeds the
+        # page's Alpine model, so a reload or a shared link opens with the same
+        # selection it was made with.
+        "filters": {"status": statuses, "folder": folder_values},
+        "filter_groups": [
+            # Each status carries its count, so nobody has to pick a filter to
+            # find out it is empty. Labels rather than the enum's: "Live" says
+            # what an active flow is doing, "Active" says what a column holds.
+            {
+                "key": "status",
+                "label": "Status",
+                "options": [
+                    {"value": value, "label": label, "count": status_counts.get(str(value), 0)}
+                    for value, label in (
+                        (FlowStatus.ACTIVE, "Live"),
+                        (FlowStatus.OFFLINE, "Offline"),
+                        (FlowStatus.DRAFT, "Draft"),
+                        (FlowStatus.ARCHIVED, "Archived"),
+                    )
+                ],
+            },
+            # (value, label) pairs, which keep the "Unfiled" option's value
+            # distinct from a folder of the same name. Every folder in the
+            # workspace, not just the ones surviving the current filter —
+            # otherwise picking one erases the rest and there is no way back.
+            {
+                "key": "folder",
+                "label": "Folder",
+                "options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
+            },
+        ],
         "can_edit": can_edit,
         # Issue #26's per-flow stats page. Gated on its own key rather than on
         # edit_flows: reading numbers and changing a graph are different rights,

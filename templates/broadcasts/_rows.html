@@ -11,6 +11,7 @@ The counters come off the row's stored `stats` (SPEC §5), not from a per-row
 aggregate — a list of fifty broadcasts must not be fifty GROUP BYs. The detail
 page is where the live figures are computed, and it writes them back here.
 {% endcomment %}
+<div data-result-count="{{ broadcasts|length }}" hidden></div>
 <table class="w-full text-sm">
     <thead>
         <tr style="color: var(--text-tertiary);">

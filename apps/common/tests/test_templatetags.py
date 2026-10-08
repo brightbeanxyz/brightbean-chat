@@ -9,7 +9,7 @@ import pytest
 from django.template import Context, Template
 from django.utils.translation import gettext_lazy
 
-from apps.common.templatetags.common_extras import json_attr, ui_select
+from apps.common.templatetags.common_extras import filter_chips, filter_popover, json_attr, ui_select
 
 
 class _Channel:
@@ -393,3 +393,75 @@ class TestModal:
         html = self.render('{% modal "m" title="T" %}{% endmodal %}[{{ title }}]', title="page")
 
         assert html.endswith("[page]")
+
+
+class TestFilterPopover:
+    GROUPS = [
+        {
+            "key": "status",
+            "label": "Status",
+            "options": [("active", "Live"), {"value": "draft", "label": "Draft", "count": 2}],
+        },
+        {
+            "key": "channel",
+            "label": "Channel",
+            "options": [{"value": uuid.UUID(int=1), "label": "Bot", "icon": "telegram"}],
+        },
+    ]
+
+    def test_options_take_the_ui_select_shapes_plus_a_count(self):
+        ctx = filter_popover(groups=self.GROUPS)
+
+        status, channel = ctx["groups"]
+        assert status["options"] == [
+            {"value": "active", "label": "Live", "count": None, "icon": None},
+            {"value": "draft", "label": "Draft", "count": 2, "icon": None},
+        ]
+        # A UUID becomes the string Alpine holds, or the pill never lights up.
+        assert channel["options"][0]["value"] == str(uuid.UUID(int=1))
+
+    def test_one_hidden_input_per_selected_value_is_rendered_by_alpine(self):
+        """The form must serialise a repeated parameter, so each group renders
+        an x-for over its array rather than one input holding a joined string."""
+        html = Template("{% load common_extras %}{% filter_popover groups=groups onchange='reload()' %}").render(
+            Context({"groups": self.GROUPS})
+        )
+
+        assert 'x-for="value in filters[&#x27;status&#x27;]"' in html or "x-for=\"value in filters['status']\"" in html
+        assert 'name="status" :value="value"' in html
+        assert 'name="channel" :value="value"' in html
+        assert 'role="dialog"' in html
+        assert "reload()" in html
+
+    def test_the_footer_says_how_many_rows_the_selection_leaves(self):
+        html = Template(
+            "{% load common_extras %}{% filter_popover groups=groups count=3 noun='person' noun_plural='people' %}"
+        ).render(Context({"groups": self.GROUPS}))
+
+        assert "n: 3," in html
+        assert "people" in html
+
+    def test_a_pill_carries_its_pressed_state(self):
+        html = Template("{% load common_extras %}{% filter_popover groups=groups %}").render(
+            Context({"groups": self.GROUPS})
+        )
+
+        assert html.count('class="filter-pill"') == 3
+        assert ':aria-pressed="filters[' in html
+
+
+class TestFilterChips:
+    def test_chips_label_values_with_their_option_labels(self):
+        """A chip says "Live", not "active", and a channel's name, not its id."""
+        ctx = filter_chips(groups=TestFilterPopover.GROUPS)
+
+        assert ctx["labels"]["status"] == {"active": "Live", "draft": "Draft"}
+        assert ctx["labels"]["channel"] == {str(uuid.UUID(int=1)): "Bot"}
+        assert ctx["group_labels"] == {"status": "Status", "channel": "Channel"}
+
+    def test_the_lookup_is_escaped_into_the_attribute(self):
+        groups = [{"key": "tag", "label": "Tag", "options": [("t", 'He said "hi"')]}]
+        html = Template("{% load common_extras %}{% filter_chips groups=groups %}").render(Context({"groups": groups}))
+
+        assert 'He said "hi"' not in html
+        assert "&quot;" in html

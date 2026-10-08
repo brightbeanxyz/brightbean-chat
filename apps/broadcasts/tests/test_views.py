@@ -53,6 +53,40 @@ class TestList:
 
         assert b"A draft" in rows.content
 
+    def test_several_statuses_combine(self, tenancy, client_for, connection, make_broadcast):
+        """The Filter popover sends a repeated parameter; every value counts."""
+        make_broadcast(connection=connection, name="A draft")
+        sent = make_broadcast(connection=connection, name="Went out")
+        Broadcast.objects.for_workspace(tenancy.workspace).filter(pk=sent.pk).update(status=BroadcastStatus.SENT)
+        cancelled = make_broadcast(connection=connection, name="Called off")
+        Broadcast.objects.for_workspace(tenancy.workspace).filter(pk=cancelled.pk).update(
+            status=BroadcastStatus.CANCELLED
+        )
+
+        rows = client_for(tenancy.owner).get(
+            _url("broadcasts:rows", tenancy), {"status": ["sent", "cancelled", "bogus"]}
+        )
+
+        assert b"Went out" in rows.content
+        assert b"Called off" in rows.content
+        assert b"A draft" not in rows.content
+        assert rows.context["filters"]["status"] == ["cancelled", "sent"]
+
+    def test_the_channel_filter_narrows_to_those_connections(
+        self, tenancy, client_for, connection, messenger_connection, make_broadcast
+    ):
+        make_broadcast(connection=connection, name="On Telegram")
+        make_broadcast(connection=messenger_connection, name="On Messenger")
+        client = client_for(tenancy.owner)
+
+        rows = client.get(_url("broadcasts:rows", tenancy), {"channel": [str(messenger_connection.pk), "not-a-uuid"]})
+        page = client.get(_url("broadcasts:list", tenancy))
+
+        assert b"On Messenger" in rows.content
+        assert b"On Telegram" not in rows.content
+        channel_group = next(g for g in page.context["filter_groups"] if g["key"] == "channel")
+        assert {str(o["value"]) for o in channel_group["options"]} == {str(connection.pk), str(messenger_connection.pk)}
+
     def test_creating_one_redirects_into_the_composer(self, tenancy, client_for, connection):
         response = client_for(tenancy.owner).post(
             _url("broadcasts:create", tenancy), {"name": "New one", "connection_id": str(connection.pk)}

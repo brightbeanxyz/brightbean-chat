@@ -103,14 +103,16 @@ inert — a button that looks fine and does nothing.
     segment's rules to the browser so the client could hydrate one would put a
     workspace's whole filter library in every page load.
   {% endcomment %}
-  <div class="flex flex-wrap items-center gap-2 mb-4">
-    <a class="chip-filter{% if not filter_config.segmentId %} active{% endif %}"
-       href="{% url 'contacts:list' workspace_id=request.workspace.id %}">Everyone</a>
+  {% if filter_config.segments %}
+  <nav class="tabs tabs-inline mb-4" aria-label="Saved filters">
+    <a class="tab" href="{% url 'contacts:list' workspace_id=request.workspace.id %}"
+       {% if not filter_config.segmentId %}aria-current="page"{% endif %}>Everyone</a>
     {% for segment in filter_config.segments %}
-      <a class="chip-filter{% if filter_config.segmentId == segment.value %} active{% endif %}"
-         href="{% url 'contacts:list' workspace_id=request.workspace.id %}?segment={{ segment.value }}">{{ segment.label }}</a>
+      <a class="tab" href="{% url 'contacts:list' workspace_id=request.workspace.id %}?segment={{ segment.value }}"
+         {% if filter_config.segmentId == segment.value %}aria-current="page"{% endif %}>{{ segment.label }}</a>
     {% endfor %}
-  </div>
+  </nav>
+  {% endif %}
 
   {% comment %}
     The filter component wraps BOTH forms rather than sitting on the toolbar.
@@ -119,33 +121,44 @@ inert — a button that looks fine and does nothing.
     segment could be saved as something other than what the list is showing.
   {% endcomment %}
   <div x-data="contactFilters({{ filter_config|json_attr }})">
-  <form id="contact-toolbar"
+  <form id="contact-toolbar" x-ref="filters"
+        x-data="{
+          filters: {{ filters|json_attr }},
+          reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+        }"
         hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}"
         hx-target="#contact-rows"
         hx-swap="outerHTML"
-        hx-trigger="submit, input changed delay:300ms from:#contact-search, change from:#contact-sort">
+        hx-trigger="submit, input changed delay:300ms from:#contact-search, change from:#contact-sort, filters-changed">
 
-    <div class="crm-toolbar">
-      <div class="flex-1 min-w-48">
-        <label for="contact-search" class="sr-only">Search contacts</label>
-        <input type="search" id="contact-search" name="q" value="{{ query.search_term }}"
-               placeholder="Search by name, email or phone" maxlength="200">
-      </div>
+    <div class="list-toolbar mb-3">
+      <label class="search-field flex-1 min-w-48 sm:max-w-80">
+        {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+        <input type="search" id="contact-search" name="q" value="{{ query.search_term }}" class="search-input"
+               placeholder="Search by name, email or phone" maxlength="200" aria-label="Search contacts">
+      </label>
+      {% comment %}
+        The three questions people ask of a contact list most — which channel,
+        which tag, still subscribed — in the one Filter popover every list has
+        (HANDOFF §2.2). Several values per group; they narrow whatever the
+        rules or the saved filter select. See apps/contacts/filters.py.
+      {% endcomment %}
+      {% filter_popover groups=filter_groups onchange="reload()" target="#contact-rows" count=page.paginator.count noun="contact" %}
       {% comment %}
         The rule builder is a powerful thing most readers do not want on most
         visits — it is how a segment gets made, not how a list gets read. It
-        starts closed behind this chip, and opens already open when the current
-        view has rules in it, so nobody is shown a filtered list with no visible
-        reason for it.
+        starts closed behind this button, and opens already open when the
+        current view has rules in it, so nobody is shown a filtered list with
+        no visible reason for it.
       {% endcomment %}
-      <button type="button" class="chip-filter chip-filter-add flex-shrink-0"
-              :class="rules.length && 'active'"
+      <button type="button" class="filter-trigger"
+              :class="rules.length && 'is-active'"
               @click="showBuilder = !showBuilder"
               :aria-expanded="showBuilder ? 'true' : 'false'">
-        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18"/><path d="M6 12h12"/><path d="M10 19h4"/></svg>
-        Filter<span x-show="rules.length" x-text="rules.length" x-cloak></span>
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18"/><path d="M6 12h12"/><path d="M10 19h4"/></svg>
+        Advanced rules<span class="filter-trigger-count" x-show="rules.length" x-text="rules.length" x-cloak></span>
       </button>
-      <div class="flex-shrink-0">
+      <div class="flex-shrink-0 ml-auto">
         <label for="contact-sort" class="sr-only">Sort</label>
         <select id="contact-sort" name="sort" class="w-48">
           {% for option in sorts %}
@@ -154,6 +167,7 @@ inert — a button that looks fine and does nothing.
         </select>
       </div>
     </div>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
 
     <div x-show="showBuilder" x-cloak>
       {% include "contacts/_filter_bar.html" %}

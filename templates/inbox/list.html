@@ -34,9 +34,9 @@ inert.
 
 {% block content %}
 {% comment %}
-  $nextTick in reload() is load bearing, same as on the flow list: ui_select
-  assigns to the model and calls reload() in one click handler, but Alpine
-  flushes the hidden inputs on the next tick — dispatching immediately
+  $nextTick in reload() is load bearing, same as on the flow list: the filter
+  popover assigns to the model and calls reload() in one click handler, but
+  Alpine renders the hidden inputs on the next tick — dispatching immediately
   serialises the form one pick behind.
 
   The shortcut handler ignores events from a field, so typing "j" into a reply
@@ -45,9 +45,8 @@ inert.
 <div class="flex flex-col flex-1 min-h-0"
      x-data="{
         state: '{{ state|escapejs }}',
-        connection: '{{ connection|escapejs }}',
         assignee: '{{ assignee|escapejs }}',
-        label: '{{ label|escapejs }}',
+        filters: {{ filters|json_attr }},
         reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
         move(step) {
           const rows = Array.from(document.querySelectorAll('#inbox-list [data-conversation]'));
@@ -76,31 +75,30 @@ inert.
         hx-trigger="filters-changed"
         @submit.prevent>
     <input type="hidden" name="state" x-model="state">
-    <input type="hidden" name="connection" x-model="connection">
     <input type="hidden" name="assignee" x-model="assignee">
-    <input type="hidden" name="label" x-model="label">
     <input type="hidden" name="open" value="{{ open_conversation_id }}">
     {% comment %}
-      Four dropdowns became four views. The state and assignee selects are gone:
-      between them they answered "everything / nothing claimed yet / mine /
-      done", and each had to be opened before it could say anything. These are
-      the same two parameters conversations_for already takes, asked as the
-      questions instead of as the fields.
+      Four dropdowns became four views, and the views are underline tabs: they
+      are the one true "which slice am I looking at" control on this page
+      (HANDOFF §2.2 allows one). Between them they answer "everything / nothing
+      claimed yet / mine / done" — the two parameters conversations_for already
+      takes, asked as the questions instead of as the fields.
 
-      Channel and label stay as selects — those are genuinely long lists, and a
-      chip per channel would be a second nav.
+      Channel and label, the genuinely long lists, are in the Filter popover
+      beside them, several of each at once.
     {% endcomment %}
-    {% for view in views %}
-    <button type="button" class="chip-filter flex-shrink-0"
-            :class="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') && 'active'"
-            :aria-pressed="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') ? 'true' : 'false'"
-            @click="state = '{{ view.state|escapejs }}'; assignee = '{{ view.assignee|escapejs }}'; reload()">
-      {{ view.label }}{% if view.count %}<span style="opacity: .65;">{{ view.count }}</span>{% endif %}
-    </button>
-    {% endfor %}
-    {% ui_select model="connection" options=connections placeholder="All channels" icon="channel" value_field="id" label_field="display_name" icon_field="platform" onchange="reload()" %}
-    {% ui_select model="label" options=label_options placeholder="Any label" icon="tag" onchange="reload()" %}
+    <div class="tabs tabs-inline" role="tablist" aria-label="Views">
+      {% for view in views %}
+      <button type="button" role="tab" class="tab" aria-controls="inbox-list"
+              :aria-selected="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') ? 'true' : 'false'"
+              @click="state = '{{ view.state|escapejs }}'; assignee = '{{ view.assignee|escapejs }}'; reload()">
+        {{ view.label }}{% if view.count %} <span class="tab-count">{{ view.count }}</span>{% endif %}
+      </button>
+      {% endfor %}
+    </div>
+    {% filter_popover groups=filter_groups onchange="reload()" noun="conversation" %}
   </form>
+  {% filter_chips groups=filter_groups onchange="reload()" %}
 
   <div class="ib-shell">
     {# ── Conversation list ───────────────────────────────────────── #}

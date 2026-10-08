@@ -17,17 +17,17 @@ closes the menu on scroll so it cannot drift away from its button — that liste
 is registered once for the page, and in the capture phase, because .app-content
 is what scrolls and a scroll event never bubbles out of it.
 {% endcomment %}
+{% comment %}
+  The filter popover's footer reads this after every swap, so "Show N flows"
+  stays true as the selection changes.
+{% endcomment %}
+<div data-result-count="{{ flow_count }}" hidden></div>
 {% if not groups %}
-<div class="empty-state">
-    <p class="empty-state-title">No flows here yet</p>
-    <p class="empty-state-body">
-        {% if query or status or folder %}
-            Nothing matches these filters.
-        {% else %}
-            Start from a template above, or create one from scratch.
-        {% endif %}
-    </p>
-</div>
+{% if query or filters.status or filters.folder %}
+{% include "components/empty_state.html" with icon="search" title="No flows match" body="Nothing matches these filters. Try a different word, or clear them." action_label="Clear filters" action_click="clearFilters()" %}
+{% else %}
+{% include "components/empty_state.html" with icon="flows" title="No flows here yet" body="Start from a template above, or create one from scratch." %}
+{% endif %}
 {% else %}
 {% for group in groups %}
 <div class="section-eyebrow mb-2.5">{{ group.label }}</div>

@@ -34,6 +34,7 @@ from apps.campaigns.models import (
     SequenceStatus,
     SequenceStep,
 )
+from apps.common.filters import multi
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.common.windows import WEEKDAYS
@@ -93,20 +94,19 @@ def _refused(exc: Exception, title: str) -> HttpResponse:
 def sequence_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The list. Answers the rows partial to HTMX and the page otherwise."""
     query = (request.GET.get("q") or "").strip()[:MAX_SEARCH_CHARS]
-    # Sanitised once, before the query. An unrecognised value falls back to the
-    # unfiltered view rather than to a filter matching nothing — the same
-    # correction `apps/flows/views.py::_visible_flows` documents: with the
-    # validation applied only to the context, `?status=bogus` returned an empty
-    # list under the "create your first one" empty state, with no visible filter
-    # to clear.
-    status = (request.GET.get("status") or "").strip()
-    if status not in SequenceStatus.values:
-        status = ""
+    # Sanitised once, before the query. An unrecognised value is dropped, so it
+    # falls back to the unfiltered view rather than to a filter matching
+    # nothing — the same correction `apps/flows/views.py::_visible_flows`
+    # documents: with the validation applied only to the context,
+    # `?status=bogus` returned an empty list under the "create your first one"
+    # empty state, with no visible filter to clear. Repeatable, because the
+    # Filter popover allows several statuses at once.
+    statuses = multi(request.GET, "status", allowed=SequenceStatus.values)
     context = {
-        "sequences": list(selectors.sequences_for(request.workspace, query=query, status=status)),
-        "status_options": list(SequenceStatus.choices),
+        "sequences": list(selectors.sequences_for(request.workspace, query=query, statuses=statuses)),
         "query": query,
-        "status": status,
+        "filters": {"status": statuses},
+        "filter_groups": [{"key": "status", "label": "Status", "options": list(SequenceStatus.choices)}],
         "can_edit": _can_edit(request),
     }
     template = "campaigns/_list_rows.html" if request.headers.get("HX-Request") else "campaigns/list.html"

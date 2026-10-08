@@ -15,7 +15,7 @@ inside Alpine's evaluator on every card, on every render of the core Flows page.
 {% endcomment %}
 <article class="rounded-xl border p-4 flex flex-col gap-3"
          style="border-color: var(--border); background: var(--surface-1);"
-         {% if searchable %}x-show="matches('{{ entry.card.name|escapejs }} {{ entry.card.summary|escapejs }}', '{{ entry.card.category|escapejs }}')"{% endif %}>
+         {% if searchable %}x-show="matches('{{ entry.card.name|escapejs }} {{ entry.card.summary|escapejs }}', '{{ entry.card.category|escapejs }}', '{% for platform in entry.platforms %}{{ platform.key|escapejs }} {% endfor %}')"{% endif %}>
     <div>
         <div class="flex items-start justify-between gap-2">
             <h2 class="text-sm font-semibold" style="color: var(--text-primary);">{{ entry.card.name }}</h2>

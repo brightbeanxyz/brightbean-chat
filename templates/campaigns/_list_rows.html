@@ -3,17 +3,13 @@ The sequence table. Rendered both inside list.html and on its own for every HTMX
 refresh — one renderer, so a filtered view and a post-mutation refresh can never
 disagree about what a row looks like.
 {% endcomment %}
+<div data-result-count="{{ sequences|length }}" hidden></div>
 {% if not sequences %}
-<div class="rounded-xl border p-8 text-center" style="border-color: var(--border); background: var(--surface-1);">
-    <p class="text-sm font-medium" style="color: var(--text-primary);">No sequences here yet</p>
-    <p class="text-sm mt-1" style="color: var(--text-secondary);">
-        {% if query or status %}
-            Nothing matches these filters.
-        {% else %}
-            Create one above, add a step, then subscribe contacts from a flow, a rule or the contact list.
-        {% endif %}
-    </p>
-</div>
+{% if query or filters.status %}
+{% include "components/empty_state.html" with icon="search" title="No sequences match" body="Nothing matches these filters. Try a different word, or clear them." action_label="Clear filters" action_click="clearFilters()" %}
+{% else %}
+{% include "components/empty_state.html" with icon="sequences" title="No sequences here yet" body="Create one above, add a step, then subscribe contacts from a flow, a rule or the contact list." %}
+{% endif %}
 {% else %}
 <div class="rounded-xl border divide-y" style="border-color: var(--border); background: var(--surface-1);">
     {% for sequence in sequences %}

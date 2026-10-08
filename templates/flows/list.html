@@ -32,16 +32,16 @@ swap in styles.css meaningful.
 <div class="max-w-[1060px] w-full"
      x-data="{
         q: '{{ query|escapejs }}',
-        status: '{{ status|escapejs }}',
-        folder: '{{ folder|escapejs }}',
+        filters: {{ filters|json_attr }},
         {% comment %}
-          $nextTick is load bearing. ui_select assigns to `folder` and calls
-          reload() in the same click handler, but Alpine flushes the binding on
-          the hidden inputs below on the next tick — dispatching immediately
-          makes htmx serialise the form one keystroke behind, so the first pick
-          of a filter appears to do nothing.
+          $nextTick is load bearing. The filter popover assigns to `filters`
+          and calls reload() in the same click handler, but Alpine renders the
+          hidden inputs it binds on the next tick — dispatching immediately
+          makes htmx serialise the form one click behind, so the first pick of
+          a filter appears to do nothing.
         {% endcomment %}
-        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        clearFilters() { this.q = ''; Object.keys(this.filters).forEach(k => this.filters[k] = []); this.reload(); }
      }">
 
     <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
@@ -81,31 +81,28 @@ swap in styles.css meaningful.
     {% endmodal %}
     {% endif %}
 
+    <div class="mb-5">
     <form id="flow-filters" x-ref="filters"
-          class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-1 mb-5"
+          class="list-toolbar"
           hx-get="{% url 'flows:list' workspace_id=request.workspace.id %}"
           hx-target="#flow-rows"
           hx-swap="innerHTML"
-          hx-trigger="input changed delay:300ms, filters-changed"
+          hx-trigger="input changed delay:300ms from:#flow-search, filters-changed"
           @submit.prevent>
-        <input type="search" name="q" x-model="q" placeholder="Search flows"
-               class="form-input-styled" style="width: 15rem;" aria-label="Search flows">
-        <input type="hidden" name="status" x-model="status">
-        <input type="hidden" name="folder" x-model="folder">
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input type="search" id="flow-search" name="q" x-model="q" placeholder="Search flows"
+                   class="search-input" aria-label="Search flows">
+        </label>
         {% comment %}
-          Chips rather than a select, and each one carries its count: a reader
-          can see there are two drafts without selecting the filter to find out.
-          Buttons rather than links so the list swaps in place — the whole
-          toolbar is one htmx form.
+          One Filter button for status and folder (HANDOFF §2.2), replacing the
+          status chips and the folder dropdown. Several values in a group are
+          allowed, and arrive as a repeated parameter.
         {% endcomment %}
-        {% for chip in status_chips %}
-        <button type="button" class="chip-filter" :class="status === '{{ chip.value|escapejs }}' && 'active'"
-                @click="status = '{{ chip.value|escapejs }}'; reload()">
-            {{ chip.label }}{% if chip.count %}<span style="opacity: .65;">{{ chip.count }}</span>{% endif %}
-        </button>
-        {% endfor %}
-        {% ui_select model="folder" options=folder_options placeholder="All folders" icon="tag" onchange="reload()" %}
+        {% filter_popover groups=filter_groups onchange="reload()" target="#flow-rows" count=flow_count noun="flow" %}
     </form>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
+    </div>
 
     {% if template_cards and can_edit %}
     <section class="card p-[22px] mb-7">

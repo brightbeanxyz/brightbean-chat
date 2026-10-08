@@ -1,0 +1,84 @@
+{% load common_extras %}{% comment %}
+The list toolbar's Filter button and its popover (HANDOFF §2.2) — see the
+`filter_popover` inclusion tag in apps/common/templatetags/common_extras.py.
+
+One button with a count badge; one panel of grouped toggle pills; filters
+apply as they are picked, so the footer button only closes the panel and says
+how many rows the current selection leaves. The removable chips under the
+toolbar are components/filter_chips.html.
+
+Bind `model` to an object in the ENCLOSING x-data holding one array per group.
+As in ui_select, every expression that reads it lives in a directive, which
+resolves through Alpine's scope chain; the methods in this component's own
+x-data are plain JS and cannot see the parent scope, which is why they only
+handle anchoring and the count.
+
+Hidden inputs: one per selected value, rendered by x-for, so the enclosing
+htmx form serialises `?status=active&status=offline`. The page's reload()
+dispatches on $nextTick for the same reason ui_select's callers do — the
+inputs appear on the next tick, and serialising before then sends the
+previous selection.
+
+The panel is position:fixed and anchored on open (ui_select's reasoning: a
+toolbar lives in scrolling containers that clip an absolute panel), so window
+scroll closes it. It is a non-modal dialog: Escape closes it and returns focus
+to the button, and tabbing out of it closes it too.
+{% endcomment %}
+<div class="relative flex-shrink-0"
+     x-data="{
+        open: false, top: 0, left: 0,
+        n: {% if count is None %}null{% else %}{{ count }}{% endif %},
+        fpToggle(e){ if (this.open) { this.open = false; return; } const r = e.currentTarget.getBoundingClientRect(); this.top = r.bottom + 6; this.left = Math.max(12, Math.min(r.left, window.innerWidth - 352)); this.open = true; this.$nextTick(() => { const first = this.$refs.panel.querySelector('button'); if (first) first.focus(); }); },
+        fpClose(){ this.open = false; this.$refs.trigger.focus(); },
+        fpCount(){ {% if target %}const el = document.querySelector('{{ target|escapejs }}'); if (!el) return; const c = el.hasAttribute('data-result-count') ? el : el.querySelector('[data-result-count]'); if (c) this.n = Number(c.dataset.resultCount);{% endif %} }
+     }"
+     @click.outside="open = false"
+     @keydown.escape="if (open) fpClose()"
+     @scroll.window="open = false"
+     @focusout="if (open && $event.relatedTarget && !$el.contains($event.relatedTarget)) open = false"
+     @htmx:after-settle.window="fpCount()">
+    {% for group in groups %}
+    <template x-for="value in {{ model }}['{{ group.key|escapejs }}']" :key="value"><input type="hidden" name="{{ group.key }}" :value="value"></template>
+    {% endfor %}
+    <button type="button" x-ref="trigger" class="filter-trigger"
+            :class="Object.values({{ model }}).some(a => a.length) && 'is-active'"
+            @click="fpToggle($event)"
+            aria-haspopup="dialog" :aria-expanded="open ? 'true' : 'false'">
+        {% include "partials/_nav_icon.html" with name="filter" icon_size=15 %}
+        Filter
+        <span class="filter-trigger-count" x-show="Object.values({{ model }}).some(a => a.length)" x-cloak
+              x-text="Object.values({{ model }}).reduce((n, a) => n + a.length, 0)"></span>
+    </button>
+    <div x-show="open" x-cloak x-ref="panel"
+         :style="`top:${top}px; left:${left}px;`"
+         class="filter-popover fixed z-50"
+         role="dialog" aria-label="Filters">
+        <div class="filter-popover-head">
+            <span class="filter-popover-title">Filters</span>
+            <button type="button" class="filter-clear"
+                    x-show="Object.values({{ model }}).some(a => a.length)"
+                    @click="Object.keys({{ model }}).forEach(k => {{ model }}[k] = []); {{ onchange }}">Clear all</button>
+        </div>
+        {% for group in groups %}
+        <div class="filter-section" role="group" aria-label="{{ group.label }}">
+            <p class="filter-section-title">{{ group.label }}</p>
+            <div class="filter-options">
+                {% for opt in group.options %}
+                <button type="button" class="filter-pill"
+                        :aria-pressed="{{ model }}['{{ group.key|escapejs }}'].includes('{{ opt.value|escapejs }}') ? 'true' : 'false'"
+                        @click="{{ model }}['{{ group.key|escapejs }}'] = {{ model }}['{{ group.key|escapejs }}'].includes('{{ opt.value|escapejs }}') ? {{ model }}['{{ group.key|escapejs }}'].filter(v => v !== '{{ opt.value|escapejs }}') : [...{{ model }}['{{ group.key|escapejs }}'], '{{ opt.value|escapejs }}']; {{ onchange }}">
+                    {% if opt.icon %}<span class="pi-chip {{ opt.icon|platform_class }} w-4 h-4">{% include "partials/_platform_icon.html" with platform=opt.icon size="sm" %}</span>{% endif %}
+                    {{ opt.label }}{% if opt.count is not None %} <span class="filter-pill-count">{{ opt.count }}</span>{% endif %}
+                </button>
+                {% empty %}
+                <p class="text-[13px]" style="color: var(--text-tertiary);">Nothing to filter by yet.</p>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+        <div class="filter-popover-foot">
+            <button type="button" class="btn-pill-secondary btn-pill-sm" @click="fpClose()"
+                    x-text="n === null ? 'Done' : (n === 0 ? 'No {{ noun_plural|escapejs }} match' : 'Show ' + n + ' ' + (n === 1 ? '{{ noun|escapejs }}' : '{{ noun_plural|escapejs }}'))">Done</button>
+        </div>
+    </div>
+</div>

@@ -40,6 +40,7 @@ from apps.channels.capabilities import capabilities_for
 from apps.channels.events import MediaBlock, OutboundMessage, TextBlock
 from apps.channels.media import MEDIA_CACHE_CONTROL, MediaUnavailableError, fetch_media, media_response
 from apps.channels.models import ChannelConnection
+from apps.common.filters import multi
 from apps.common.htmx import toast_response
 from apps.common.platforms import Platform
 from apps.common.polling import conditional, if_none_match, version_etag
@@ -131,19 +132,24 @@ def _can_edit_contact(request: WorkspaceRequest) -> bool:
     return bool(request.workspace_membership.effective_permissions.get("edit_contact_fields", False))
 
 
-def _filters(request: WorkspaceRequest) -> dict[str, str]:
+def _filters(request: WorkspaceRequest) -> dict[str, Any]:
     """The list's filter state, normalised.
 
     Normalised rather than passed through, because these values are part of the
     ETag: ``?state=open`` and ``?state=open&`` must produce the same token or a
-    poll would look like a change on every other request.
+    poll would look like a change on every other request. Channel and label
+    repeat — the Filter popover allows several of each — and ``multi`` returns
+    them deduplicated and sorted, so the same selection in a different order is
+    the same token too. They are kept as strings rather than parsed here: an id
+    that does not parse must still reach the selector, which answers it with an
+    empty list rather than by quietly dropping the filter.
     """
     state = (request.GET.get("state") or "").strip()
     return {
         "state": state if state in ConversationState.values else "",
-        "connection": (request.GET.get("connection") or "").strip(),
+        "connection": multi(request.GET, "connection"),
         "assignee": (request.GET.get("assignee") or "").strip(),
-        "label": (request.GET.get("label") or "").strip(),
+        "label": multi(request.GET, "label"),
     }
 
 
@@ -158,7 +164,7 @@ def _rows_context(request: WorkspaceRequest) -> tuple[dict[str, Any], Any]:
         request.workspace,
         viewer=request.user,
         state=filters["state"],
-        connection_id=filters["connection"] or None,
+        connection_id=filters["connection"],
         assignee=filters["assignee"],
         label=filters["label"],
     )
@@ -241,6 +247,29 @@ def _label_context_for(request: WorkspaceRequest, conversation: Conversation) ->
             {"value": str(row.pk), "label": row.name}
             for row in selectors.labels_for(request.workspace)
             if row.pk not in carried_ids
+        ],
+    }
+
+
+def _filter_context(request: WorkspaceRequest, filters: dict[str, Any]) -> dict[str, Any]:
+    """The Filter popover's sections and its starting selection.
+
+    Channel and label — the two genuinely long lists. Assignee and state are
+    not here: the view tabs (All, Unassigned, Mine, Done) already ask those as
+    questions, and a second control for the same parameter would let the two
+    disagree about what is showing.
+    """
+    return {
+        "filters": {"connection": filters["connection"], "label": filters["label"]},
+        "filter_groups": [
+            {
+                "key": "connection",
+                "label": "Channel",
+                "options": [
+                    {"value": c.pk, "label": c.display_name, "icon": c.platform} for c in _connections(request)
+                ],
+            },
+            {"key": "label", "label": "Label", "options": _label_options(request)},
         ],
     }
 
@@ -584,6 +613,7 @@ def inbox(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "label_options": _label_options(request),
         "can_reply": _can_reply(request),
         "views": _views_cached(request),
+        **_filter_context(request, filters),
     }
     return render(request, "inbox/list.html", context)
 
@@ -603,9 +633,9 @@ def rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "inbox-rows",
         request.user.pk,
         filters["state"],
-        filters["connection"],
+        ",".join(filters["connection"]),
         filters["assignee"],
-        filters["label"],
+        ",".join(filters["label"]),
         context["open_conversation_id"],
         *selectors.list_version(context["conversations"]),
     )
@@ -652,6 +682,7 @@ def thread(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
             "assignee_options": _assignee_options(request),
             "label_options": _label_options(request),
             "views": _views_cached(request),
+            **_filter_context(request, filters),
         }
     )
     return render(request, "inbox/list.html", context)

@@ -69,23 +69,28 @@ actually happens. There is no platform name in this file.
 
 <div x-data="{
         q: '{{ q|escapejs }}',
-        status: '{{ status|escapejs }}',
-        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+        filters: {{ filters|json_attr }},
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        clearFilters() { this.q = ''; Object.keys(this.filters).forEach(k => this.filters[k] = []); this.reload(); }
      }">
 
+    <div class="mb-5">
     <form id="broadcast-filters" x-ref="filters"
-          class="crm-toolbar"
+          class="list-toolbar"
           hx-get="{% url 'broadcasts:rows' workspace_id=request.workspace.id %}"
           hx-target="#broadcast-rows"
           hx-swap="innerHTML"
-          hx-trigger="input changed delay:300ms, filters-changed, broadcastsChanged from:body, broadcastChanged from:body"
+          hx-trigger="input changed delay:300ms from:#broadcast-q, filters-changed, broadcastsChanged from:body, broadcastChanged from:body"
           @submit.prevent>
-        <label class="sr-only" for="broadcast-q">Search</label>
-        <input id="broadcast-q" type="search" name="q" x-model="q" placeholder="Search broadcasts"
-               class="form-input-styled" style="width: 16rem;">
-        <input type="hidden" name="status" :value="status">
-        {% ui_select model="status" options=status_options placeholder="Any status" icon="status" onchange="reload()" %}
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input id="broadcast-q" type="search" name="q" x-model="q" placeholder="Search broadcasts"
+                   class="search-input" aria-label="Search broadcasts">
+        </label>
+        {% filter_popover groups=filter_groups onchange="reload()" target="#broadcast-rows" count=broadcasts|length noun="broadcast" %}
     </form>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
+    </div>
 
     <div id="broadcast-rows">
         {% include "broadcasts/_rows.html" %}

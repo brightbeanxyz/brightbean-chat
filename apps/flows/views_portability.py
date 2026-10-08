@@ -254,9 +254,22 @@ def _gallery_context(workspace: Any, workspace_id: str, *, errors: list[str] | N
     ``categories`` and silently drop the filter chips.
     """
     cards = template_cards()
+    entries = card_contexts(workspace, cards)
+    categories = list(dict.fromkeys(card.category for card in cards if card.category))
+    # Every channel some template runs on, in first-seen order, for the Filter
+    # popover's Channel section.
+    platforms = {p["key"]: p["label"] for entry in entries for p in entry["platforms"]}
     return {
-        "cards": card_contexts(workspace, cards),
-        "categories": list(dict.fromkeys(card.category for card in cards if card.category)),
+        "cards": entries,
+        "categories": categories,
+        "filter_groups": [
+            {"key": "category", "label": "Category", "options": categories},
+            {
+                "key": "channel",
+                "label": "Channel",
+                "options": [{"value": key, "label": label, "icon": key} for key, label in platforms.items()],
+            },
+        ],
         "errors": errors or [],
         "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
         "upload_url": reverse("flows:import_start", kwargs={"workspace_id": workspace_id}),

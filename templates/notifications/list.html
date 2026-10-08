@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load common_extras %}
 {% block title %}Notifications · BrightBean Chat{% endblock %}
 
 {% block page_header %}<h1 class="page-title">Notifications</h1>{% endblock %}
@@ -32,22 +33,31 @@
     </div>
 </div>
 
-<div class="flex flex-wrap items-center gap-2 mb-4">
-    <select name="event_type" aria-label="Filter by type" class="bb-filter-select"
-            hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
-            hx-include="[name='read_state']">
-        <option value="">All types</option>
-        {% for value, label in event_type_choices %}
-        <option value="{{ value }}" {% if value == selected_event_type %}selected{% endif %}>{{ label }}</option>
+{% comment %}
+  Read state is a view — all, unread, read — so it is the page's underline tabs;
+  the type is a list, so it is the Filter popover, several at once (HANDOFF §2.2).
+  One form, so the two always travel together.
+{% endcomment %}
+<div class="mb-4">
+<form id="notification-filters" x-ref="filters" class="list-toolbar"
+      x-data="{
+        readState: '{{ selected_read_state|escapejs }}',
+        filters: {{ filters|json_attr }},
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+      }"
+      hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
+      hx-trigger="filters-changed" @submit.prevent>
+    <input type="hidden" name="read_state" x-model="readState">
+    <div class="tabs tabs-inline" role="tablist" aria-label="Read state">
+        {% for value, label in read_states %}
+        <button type="button" role="tab" class="tab" aria-controls="notification-history"
+                :aria-selected="readState === '{{ value }}' ? 'true' : 'false'"
+                @click="readState = '{{ value }}'; reload()">{{ label }}</button>
         {% endfor %}
-    </select>
-    <select name="read_state" aria-label="Filter by read state" class="bb-filter-select"
-            hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
-            hx-include="[name='event_type']">
-        <option value="">Read and unread</option>
-        <option value="unread" {% if selected_read_state == "unread" %}selected{% endif %}>Unread only</option>
-        <option value="read" {% if selected_read_state == "read" %}selected{% endif %}>Read only</option>
-    </select>
+    </div>
+    {% filter_popover groups=filter_groups onchange="reload()" noun="notification" %}
+    {% filter_chips groups=filter_groups onchange="reload()" %}
+</form>
 </div>
 
 {% comment %}

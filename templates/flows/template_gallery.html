@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load common_extras %}
 {% comment %}
 Step zero of the import wizard: pick one of the templates this installation ships
 instead of uploading a file.
@@ -53,24 +54,30 @@ Sequences with it, vanish from the page they lead to.
 {% if cards %}
 <div x-data="{
         q: '',
-        category: '',
-        matches(haystack, category) {
-            if (this.category && category !== this.category) return false;
+        filters: { category: [], channel: [] },
+        matches(haystack, category, platforms) {
+            if (this.filters.category.length && !this.filters.category.includes(category)) return false;
+            if (this.filters.channel.length && !platforms.split(' ').some(p => this.filters.channel.includes(p))) return false;
             if (!this.q) return true;
             return haystack.toLowerCase().includes(this.q.toLowerCase());
         }
      }">
 
-    <div class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3">
-        <input type="search" x-model="q" placeholder="Search templates"
-               class="form-input-styled" style="width: 16rem;" aria-label="Search templates">
-        <button type="button" class="btn-outline btn-inline" @click="category = ''"
-                :aria-pressed="category === ''">All</button>
-        {% for name in categories %}
-        <button type="button" class="btn-outline btn-inline"
-                @click="category = '{{ name|escapejs }}'"
-                :aria-pressed="category === '{{ name|escapejs }}'">{{ name }}</button>
-        {% endfor %}
+    {% comment %}
+      The same search + Filter shape as every other list (HANDOFF §2.2), applied
+      in the browser: the popover's model is read by matches() on each card,
+      so there is no form and no reload — its hidden inputs are inert here.
+    {% endcomment %}
+    <div class="mb-5">
+    <div class="list-toolbar">
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input type="search" x-model="q" placeholder="Search {{ cards|length }} templates"
+                   class="search-input" aria-label="Search templates">
+        </label>
+        {% filter_popover groups=filter_groups noun="template" %}
+    </div>
+    {% filter_chips groups=filter_groups %}
     </div>
 
     <div class="grid gap-4 mt-2" style="grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));">

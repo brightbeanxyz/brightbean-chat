@@ -60,12 +60,12 @@ gets re-rendered, so the value is always the one just served.
 <div class="flex items-center justify-between px-4 py-3 border-t" style="border-color: var(--border);">
     {% if has_previous %}
     <button type="button" class="btn-outline btn-inline text-xs"
-            hx-get="{% url 'notifications:list' %}?page={{ page|add:'-1' }}&event_type={{ selected_event_type|urlencode }}&read_state={{ selected_read_state|urlencode }}"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'-1' }}&{{ filter_query }}"
             hx-target="#notification-history" hx-swap="innerHTML">Newer</button>
     {% else %}<span></span>{% endif %}
     {% if has_next %}
     <button type="button" class="btn-outline btn-inline text-xs"
-            hx-get="{% url 'notifications:list' %}?page={{ page|add:'1' }}&event_type={{ selected_event_type|urlencode }}&read_state={{ selected_read_state|urlencode }}"
+            hx-get="{% url 'notifications:list' %}?page={{ page|add:'1' }}&{{ filter_query }}"
             hx-target="#notification-history" hx-swap="innerHTML">Older</button>
     {% else %}<span></span>{% endif %}
 </div>
@@ -79,7 +79,7 @@ gets re-rendered, so the value is always the one just served.
     </div>
     <p class="text-sm font-medium" style="color: var(--text-primary);">Nothing here</p>
     <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-        {% if selected_event_type or selected_read_state %}No notifications match this filter.{% else %}Notifications about your flows, channels and broadcasts will appear here.{% endif %}
+        {% if selected_event_types or selected_read_state %}No notifications match this filter.{% else %}Notifications about your flows, channels and broadcasts will appear here.{% endif %}
     </p>
 </div>
 {% endif %}

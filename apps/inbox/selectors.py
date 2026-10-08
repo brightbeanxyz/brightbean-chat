@@ -110,13 +110,16 @@ def conversations_for(
     state: str = "",
     connection_id: Any = None,
     assignee: str = "",
-    label: str = "",
+    label: Any = "",
 ) -> QuerySet[Conversation]:
     """The conversation list, filtered and ordered by recency (SPEC §14).
 
     ``-last_message_at`` with ``state`` and ``workspace`` is exactly
     ``conv_ws_state_last_idx``, the index ``apps.messaging.models`` declares
     "SPEC §14's inbox list" for.
+
+    ``connection_id`` and ``label`` take one id or several — the Filter popover
+    lets a reader pick more than one channel or label, and any of them matches.
     """
     rows = (
         Conversation.objects.for_workspace(workspace)
@@ -131,9 +134,9 @@ def conversations_for(
     )
     if state in (ConversationState.OPEN, ConversationState.DONE):
         rows = rows.filter(state=state)
-    if connection_id:
-        parsed = _as_uuid(connection_id)
-        rows = rows.filter(channel_connection_id=parsed) if parsed else rows.none()
+    connection_ids = _as_uuids(connection_id)
+    if connection_ids is not None:
+        rows = rows.filter(channel_connection_id__in=connection_ids) if connection_ids else rows.none()
     if assignee == ASSIGNEE_ME:
         rows = rows.filter(assignee=viewer)
     elif assignee == ASSIGNEE_UNASSIGNED:
@@ -141,8 +144,8 @@ def conversations_for(
     elif assignee:
         parsed = _as_uuid(assignee)
         rows = rows.filter(assignee_id=parsed) if parsed else rows.none()
-    if label:
-        parsed = _as_uuid(label)
+    label_ids = _as_uuids(label)
+    if label_ids is not None:
         # ``Exists`` rather than a join: a join to the link table multiplies the
         # row out once per label and would need a ``distinct()`` that then has to
         # agree with the ``order_by`` above. The correlated probe is also what
@@ -151,14 +154,28 @@ def conversations_for(
             rows.filter(
                 Exists(
                     ConversationLabelLink.objects.for_workspace(workspace).filter(
-                        conversation=OuterRef("pk"), label_id=parsed
+                        conversation=OuterRef("pk"), label_id__in=label_ids
                     )
                 )
             )
-            if parsed
+            if label_ids
             else rows.none()
         )
     return with_unread(rows, workspace=workspace, viewer=viewer)
+
+
+def _as_uuids(value: Any) -> list[UUID] | None:
+    """An id filter that may hold one value or several, parsed.
+
+    ``None`` when the filter is not in use at all. Otherwise the ids that
+    parse — and an empty list when some were given and none parsed, which the
+    caller turns into ``none()``: a filter that was asked for and cannot match
+    shows nothing, as it did when this took a single id (see :func:`_as_uuid`).
+    """
+    values = [v for v in (value if isinstance(value, list | tuple | set) else [value]) if v]
+    if not values:
+        return None
+    return [parsed for parsed in map(_as_uuid, values) if parsed is not None]
 
 
 def _as_uuid(value: Any) -> UUID | None:

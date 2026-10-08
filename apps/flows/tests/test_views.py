@@ -425,7 +425,8 @@ class TestFolderFilter:
 
         response = client_for(tenancy.owner).get(list_url(tenancy), {"folder": "Onboarding"})
 
-        assert response.context["folder_options"] == [
+        folder_group = next(g for g in response.context["filter_groups"] if g["key"] == "folder")
+        assert folder_group["options"] == [
             (UNFILED_VALUE, "Unfiled"),
             ("Ecommerce", "Ecommerce"),
             ("Onboarding", "Onboarding"),
@@ -454,6 +455,45 @@ class TestFolderFilter:
 
         assert "Welcome" in body
         assert "Retired" not in body
+
+    def test_several_folders_and_unfiled_combine(self, tenancy, client_for):
+        """The popover lets a reader pick more than one value in a group, and
+        they arrive as a repeated parameter — all of them must count."""
+        create_flow(workspace=tenancy.workspace, name="Welcome", folder="Onboarding")
+        create_flow(workspace=tenancy.workspace, name="Cart", folder="Ecommerce")
+        create_flow(workspace=tenancy.workspace, name="Loose")
+        create_flow(workspace=tenancy.workspace, name="Survey", folder="Research")
+
+        body = (
+            client_for(tenancy.owner)
+            .get(list_url(tenancy), {"folder": ["Onboarding", "Ecommerce", UNFILED_VALUE]})
+            .content.decode()
+        )
+
+        assert "Welcome" in body
+        assert "Cart" in body
+        assert "Loose" in body
+        assert "Survey" not in body
+
+    def test_several_statuses_combine(self, tenancy, client_for):
+        from apps.flows.services import take_offline
+
+        live = create_flow(workspace=tenancy.workspace, name="Running")
+        save_draft(live, graph_for("send_message"), user=tenancy.owner)
+        publish(live, user=tenancy.owner)
+        paused = create_flow(workspace=tenancy.workspace, name="Paused")
+        save_draft(paused, graph_for("send_message"), user=tenancy.owner)
+        publish(paused, user=tenancy.owner)
+        take_offline(paused)
+        create_flow(workspace=tenancy.workspace, name="Unfinished")
+
+        response = client_for(tenancy.owner).get(list_url(tenancy), {"status": ["active", "offline", "bogus"]})
+        body = response.content.decode()
+
+        assert "Running" in body
+        assert "Paused" in body
+        assert "Unfinished" not in body
+        assert response.context["filters"]["status"] == ["active", "offline"]
 
     def test_a_folder_named_unfiled_is_still_reachable(self, tenancy, client_for):
         """The filter value is a sentinel, not the label, so a real folder of

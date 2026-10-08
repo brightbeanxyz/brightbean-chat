@@ -57,6 +57,7 @@ from apps.broadcasts import composer as composer_module
 from apps.broadcasts import services
 from apps.broadcasts.models import Broadcast, BroadcastRecipient, BroadcastStatus, RecipientStatus
 from apps.channels.models import ChannelConnection, WhatsAppTemplate
+from apps.common.filters import multi, parse_uuid
 from apps.common.htmx import toast_response
 from apps.common.polling import conditional, version_etag
 from apps.common.shortcuts import get_scoped_object_or_404
@@ -124,18 +125,44 @@ require_broadcasts = require_permission("send_broadcasts")
 def _visible(request: WorkspaceRequest) -> Any:
     """The workspace's broadcasts, filtered by the toolbar.
 
-    An unrecognised ``?status=`` falls back to no status filter rather than to
-    no filtering at all — the trap ``apps.flows.views._visible_flows`` documents,
-    where an ``if``/``elif`` let a bogus value skip the branch entirely.
+    Both filters repeat (``?status=sent&status=sending``) — the Filter popover
+    allows several values per group. An unrecognised value is dropped rather
+    than failing the page, and a group left with nothing filters nothing — the
+    trap ``apps.flows.views._visible_flows`` documents, where an ``if``/``elif``
+    let a bogus value skip the branch entirely. Channel ids are scoped by the
+    queryset itself: an id from another workspace matches no row here.
     """
     rows = Broadcast.objects.for_workspace(request.workspace).select_related("channel_connection")
     term = (request.GET.get("q") or "").strip()[:200]
     if term:
         rows = rows.filter(name__icontains=term)
-    status = (request.GET.get("status") or "").strip()
-    if status in BroadcastStatus.values:
-        rows = rows.filter(status=status)
+    statuses = multi(request.GET, "status", allowed=BroadcastStatus.values)
+    if statuses:
+        rows = rows.filter(status__in=statuses)
+    channels = multi(request.GET, "channel", parse=parse_uuid)
+    if channels:
+        rows = rows.filter(channel_connection_id__in=channels)
     return rows.order_by("-created_at")
+
+
+def _filter_groups(request: WorkspaceRequest) -> list[dict[str, Any]]:
+    """The Filter popover's sections: status, and every channel a broadcast
+    in this workspace has gone out on — not only the ones that can broadcast
+    today, or a channel switched off since would make its history unfindable."""
+    connections = (
+        ChannelConnection.objects.for_workspace(request.workspace)
+        .filter(broadcasts__isnull=False)
+        .distinct()
+        .order_by("platform", "display_name")
+    )
+    return [
+        {"key": "status", "label": "Status", "options": list(BroadcastStatus.choices)},
+        {
+            "key": "channel",
+            "label": "Channel",
+            "options": [{"value": c.pk, "label": c.display_name, "icon": c.platform} for c in connections],
+        },
+    ]
 
 
 def _rows_context(request: WorkspaceRequest) -> dict[str, Any]:
@@ -149,8 +176,10 @@ def _rows_context(request: WorkspaceRequest) -> dict[str, Any]:
         "truncated": len(page) > PAGE_SIZE,
         "page_size": PAGE_SIZE,
         "q": (request.GET.get("q") or "").strip()[:200],
-        "status": (request.GET.get("status") or "").strip(),
-        "status_options": list(BroadcastStatus.choices),
+        "filters": {
+            "status": multi(request.GET, "status", allowed=BroadcastStatus.values),
+            "channel": [str(pk) for pk in multi(request.GET, "channel", parse=parse_uuid)],
+        },
     }
 
 
@@ -162,6 +191,7 @@ def broadcast_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse
     context = {
         **_rows_context(request),
         "connections": composer_module.broadcastable_connections(request.workspace),
+        "filter_groups": _filter_groups(request),
     }
     return render(request, "broadcasts/list.html", context)
 

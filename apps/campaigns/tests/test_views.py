@@ -111,7 +111,20 @@ class TestTheList:
         response = client_for(tenancy.owner).get(url(tenancy, "?status=bogus"))
 
         assert [row.name for row in response.context["sequences"]] == ["Onboarding"]
-        assert response.context["status"] == ""
+        assert response.context["filters"]["status"] == []
+
+    def test_several_statuses_combine(self, tenancy, client_for):
+        """The Filter popover sends a repeated parameter; every value counts."""
+        drafted = sequence_with(tenancy.workspace, steps=1, name="Drafted")
+        Sequence.objects.for_workspace(tenancy.workspace).filter(pk=drafted.pk).update(status=SequenceStatus.DRAFT)
+        live = sequence_with(tenancy.workspace, steps=1, name="Running")
+        Sequence.objects.for_workspace(tenancy.workspace).filter(pk=live.pk).update(status=SequenceStatus.ACTIVE)
+        old = sequence_with(tenancy.workspace, steps=1, name="Retired")
+        Sequence.objects.for_workspace(tenancy.workspace).filter(pk=old.pk).update(status=SequenceStatus.ARCHIVED)
+
+        response = client_for(tenancy.owner).get(url(tenancy, "?status=active&status=archived"))
+
+        assert sorted(row.name for row in response.context["sequences"]) == ["Retired", "Running"]
 
     def test_a_hostile_name_is_escaped(self, tenancy, client_for):
         """Sequence names are user-authored text on the team-browser path

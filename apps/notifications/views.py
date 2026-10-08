@@ -29,8 +29,10 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.utils.http import urlencode
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.common.filters import multi
 from apps.common.htmx import toast_response
 from apps.members.requests import RBACRequest
 from apps.notifications import action_urls, selectors
@@ -97,10 +99,15 @@ def notification_list(request: RBACRequest) -> HttpResponse:
     """The full history, with type and read-state filters."""
     queryset = selectors.feed_for(request.user)
 
-    event_type = request.GET.get("event_type", "")
+    # Types repeat — the Filter popover allows several — and an unregistered one
+    # is dropped, so nothing the reader did not pick from the list can reach the
+    # query or the pager links below.
+    event_types = multi(request.GET, "event_type", allowed=REGISTRY)
     read_state = request.GET.get("read_state", "")
-    if event_type in REGISTRY:
-        queryset = queryset.filter(event_type=event_type)
+    if read_state not in ("unread", "read"):
+        read_state = ""
+    if event_types:
+        queryset = queryset.filter(event_type__in=event_types)
     if read_state == "unread":
         queryset = queryset.filter(is_read=False)
     elif read_state == "read":
@@ -121,9 +128,15 @@ def notification_list(request: RBACRequest) -> HttpResponse:
 
     context = {
         "notifications": window[:PAGE_SIZE],
-        "event_type_choices": registered_choices(),
-        "selected_event_type": event_type,
+        "selected_event_types": event_types,
         "selected_read_state": read_state,
+        # The pager's links carry the view forward; urlencode with doseq is
+        # what spells a repeated type, and what keeps any value from being
+        # read as a second parameter.
+        "filter_query": urlencode({"event_type": event_types, "read_state": read_state}, doseq=True),
+        "filters": {"event_type": event_types},
+        "filter_groups": [{"key": "event_type", "label": "Type", "options": registered_choices()}],
+        "read_states": [("", "All"), ("unread", "Unread"), ("read", "Read")],
         "page": page,
         "has_next": len(window) > PAGE_SIZE,
         "has_previous": page > 1,

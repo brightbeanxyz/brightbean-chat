@@ -16,6 +16,7 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
 <div id="contact-rows"
      hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}{% if page_querystring %}?{{ page_querystring }}{% endif %}"
      hx-trigger="contactsChanged from:body"
+     data-result-count="{{ page.paginator.count }}"
      hx-swap="outerHTML">
 
   {% if list_error %}
