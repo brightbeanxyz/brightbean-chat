@@ -85,4 +85,4 @@ django-ninja==1.6.3
 # tests/test_ssrf_call_sites.py cannot see — that scan is httpx-only — so
 # apps/billing/stripe_client.py is registered in its NON_HTTP_EGRESS map and in
 # docs/security-audit.md, the way email_backends.py's boto3 and SMTP are.
-stripe==15.6.1
+stripe==16.0.0
