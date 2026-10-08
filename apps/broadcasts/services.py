@@ -334,6 +334,20 @@ def set_tag(broadcast: Broadcast, tag: str) -> Broadcast:
     return broadcast
 
 
+def set_send_time(broadcast: Broadcast, when: datetime | None) -> Broadcast:
+    """Record when a draft should go out — ``None`` for "as soon as it is sent".
+
+    Stored, not acted on: the composer's Review step is what calls
+    :func:`schedule_broadcast`, which reads this field as its default. A draft is
+    never picked up by the worker whatever this holds (the fanout is queued by
+    ``schedule_broadcast`` alone), so writing it early is safe.
+    """
+    _require_draft(broadcast)
+    broadcast.scheduled_at = when
+    broadcast.save(update_fields=["scheduled_at", "updated_at"])
+    return broadcast
+
+
 def duplicate_broadcast(broadcast: Broadcast, *, user: Any = None) -> Broadcast:
     """Copy a broadcast back to draft, content and all.
 

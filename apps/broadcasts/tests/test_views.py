@@ -193,9 +193,10 @@ class TestWizard:
         broadcast.refresh_from_db()
         assert broadcast.target_filter_json == EVERYONE
 
-    def test_scheduling_now_puts_it_in_the_queue_and_opens_the_detail_page(
+    def test_choosing_a_time_queues_nothing_and_opens_the_review(
         self, tenancy, client_for, connection, make_contacts, make_broadcast
     ):
+        """The Schedule step records the answer; Review is where it is sent."""
         from apps.queueing.models import ActionType, ScheduledAction
 
         make_contacts(2, connection=connection)
@@ -206,11 +207,80 @@ class TestWizard:
         )
 
         broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.DRAFT
+        assert broadcast.scheduled_at is None
+        assert b"Send broadcast" in response.content
+        assert not (
+            ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).exists()
+        )
+
+    def test_sending_from_review_puts_it_in_the_queue_and_opens_the_detail_page(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        from apps.queueing.models import ActionType, ScheduledAction
+
+        make_contacts(2, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        response = client_for(tenancy.owner).post(_url("broadcasts:send", tenancy, broadcast_id=broadcast.pk))
+
+        broadcast.refresh_from_db()
         assert broadcast.status == BroadcastStatus.SCHEDULED
         assert response.headers["HX-Redirect"] == _url("broadcasts:detail", tenancy, broadcast_id=broadcast.pk)
         assert (
             ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ActionType.BROADCAST_FANOUT).exists()
         )
+
+    def test_a_later_time_makes_the_final_button_say_schedule(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        """HANDOFF §2.4: the final button states the consequence."""
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        response = client_for(tenancy.owner).post(
+            _url("broadcasts:save_schedule", tenancy, broadcast_id=broadcast.pk),
+            {"when": "later", "scheduled_at": "2099-06-01 09:00"},
+        )
+
+        assert b"Schedule broadcast" in response.content
+        assert b"Send broadcast" not in response.content
+
+    def test_a_scheduled_time_that_has_passed_by_review_is_refused(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+        services.set_send_time(broadcast, timezone.now() - timedelta(minutes=5))
+
+        response = client_for(tenancy.owner).post(_url("broadcasts:send", tenancy, broadcast_id=broadcast.pk))
+
+        broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.DRAFT
+        assert b"has passed" in response.content
+
+    def test_the_summary_panel_checks_what_has_been_decided(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        response = client_for(tenancy.owner).get(
+            _url("broadcasts:wizard", tenancy, broadcast_id=broadcast.pk) + "?step=schedule"
+        )
+
+        checks = {check["label"].split(" (")[0]: check["ok"] for check in response.context["checks"]}
+        assert checks == {
+            "Opted-out contacts excluded": True,
+            "Channel allows broadcasts": True,
+            "Audience selected": True,
+            "Message written": True,
+            "Send time chosen": False,
+        }
 
     def test_scheduling_later_reads_the_time_in_the_workspaces_timezone(
         self, tenancy, client_for, connection, make_contacts, make_broadcast

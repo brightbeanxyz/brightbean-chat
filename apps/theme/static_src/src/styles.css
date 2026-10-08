@@ -2803,7 +2803,9 @@ a.data-table-title:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   gap: 12px;
+  width: 100%;
   padding: 14px 16px;
+  font-family: inherit;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-tile);
   background: var(--surface-0);
@@ -2814,6 +2816,9 @@ a.data-table-title:hover { text-decoration: underline; }
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
 .option-card:hover { border-color: var(--border-hover); }
+/* A <summary> styled as a button (the trigger drawer's "Add a trigger") keeps
+   the browser's disclosure triangle unless told otherwise. */
+summary.btn-pill-secondary::-webkit-details-marker { display: none; }
 .option-card > input {
   position: absolute;
   width: 1px;
@@ -2972,6 +2977,90 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   font-weight: 600;
   color: var(--text-secondary);
   white-space: nowrap;
+}
+
+/* --- Editor bar ----------------------------------------------------------
+   The top of an editor or wizard page (HANDOFF §2.3): a way back, the thing's
+   own name and state, and the page's actions on the right. */
+.editor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.editor-bar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-decoration: none;
+}
+.editor-bar-back:hover { color: var(--text-primary); }
+.editor-bar-sep { color: var(--text-ghost); }
+.editor-bar-title { font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+
+/* --- Wizard ----------------------------------------------------------------
+   A step of a multi-step task: the step's content in a 640px column with its
+   one primary button bottom-right, and a 300px summary panel beside it that
+   drops below on narrower screens. */
+.wizard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 640px) 300px;
+  gap: 32px;
+  align-items: start;
+}
+@media (max-width: 1023px) {
+  .wizard-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.wizard-main { min-width: 0; }
+.wizard-title { font-family: var(--font-display); font-size: 1.375rem; font-weight: 700; color: var(--text-primary); }
+.wizard-lede { margin: 4px 0 18px; font-size: var(--fs-body-lg); line-height: 1.5; color: var(--text-tertiary); }
+.wizard-hint { font-size: var(--fs-body); color: var(--text-tertiary); }
+.wizard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+/* Back sits at the start of the row, the primary at its end. */
+.wizard-actions > .btn-pill-secondary:first-of-type { margin-right: auto; }
+
+/* --- Chat preview ----------------------------------------------------------
+   A message as it lands in the conversation: the broadcast composer's preview,
+   and the shape the inbox's own bubbles share. */
+.bc-preview-chat {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+}
+.chat-thread {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-page);
+}
+.chat-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.chat-bubble-out { background: var(--surface-0); border: 1px solid var(--border); color: var(--text-primary); border-bottom-left-radius: 4px; }
+.chat-button {
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 /* --- Panel ---------------------------------------------------------------

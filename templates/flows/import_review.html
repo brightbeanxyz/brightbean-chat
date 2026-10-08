@@ -17,16 +17,19 @@ from visiting a stranger's address.
 {% block title %}Import a flow · BrightBean Chat{% endblock %}
 
 {% block page_header %}
-<div class="mb-6">
+<div class="page-header max-w-4xl">
+  <div class="page-header-text">
     <h1 class="page-title">Review this import</h1>
-    <p class="text-sm" style="color: var(--text-secondary);">
+    <p class="page-lede">
         {% comment %}
           A shipped template is named the way its tile named it, not by its
           slug — see _source_label in apps/flows/views_portability.py.
         {% endcomment %}
         {{ source_label }} Check what will be added.
     </p>
+  </div>
 </div>
+{% include "flows/_import_steps.html" with current=2 %}
 {% endblock %}
 
 {% block content %}
@@ -165,10 +168,10 @@ from visiting a stranger's address.
                 Import {{ plan.document.flows|length }} flow{{ plan.document.flows|length|pluralize }}
             </button>
             <button type="submit" class="btn-pill-secondary">Save for later</button>
-            <button type="button" class="btn-pill-secondary btn-danger-soft"
+            <a href="{{ list_url }}" class="btn-link">Back to flows</a>
+            <button type="button" class="btn-danger-link ml-auto"
                     hx-post="{{ discard_url }}" hx-swap="none"
-                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">Discard</button>
-            <a href="{{ list_url }}" class="btn-pill-secondary">Back to flows</a>
+                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">Discard this import</button>
         </div>
         {% comment %}
           Names them, and links to them. A bare count is only useful to somebody

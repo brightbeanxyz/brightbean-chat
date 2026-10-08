@@ -22,27 +22,41 @@ operator agrees to is computed from the rules they are looking at.
 <div x-data="{ segment: '{{ filter_config.segmentId|escapejs }}' }">
 <div x-data="contactFilters({{ filter_config|json_attr }})">
 
-  <form class="bc-panel"
-        hx-get="{% url 'broadcasts:audience_preview' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+  <form hx-get="{% url 'broadcasts:audience_preview' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
         hx-target="#broadcast-audience-preview"
         hx-swap="innerHTML"
         hx-trigger="submit, change delay:400ms, input changed delay:600ms"
         @submit.prevent>
-    <div class="bc-panel-head">
-      <span class="bc-panel-title">Who receives this?</span>
-      <span class="bc-hint">The count updates as you edit. Nobody is messaged until the last step.</span>
-    </div>
+    <h2 class="wizard-title">Who receives this?</h2>
+    <p class="wizard-lede">Pick a saved segment or build the rules. The count updates as you go, and nobody is messaged until the last step.</p>
 
-    <div class="bc-row mb-3">
-      <label for="audience-segment" class="bc-hint">Saved segment</label>
-      <select id="audience-segment" name="segment" class="bb-filter-select" x-model="segment">
-        <option value="">Build the rules below</option>
-        {% for option in filter_config.segments %}
-        <option value="{{ option.value }}">{{ option.label }}</option>
-        {% endfor %}
-      </select>
-      <span class="bc-hint">A segment is copied, not linked. Editing it later will not change this broadcast.</span>
-    </div>
+    {% comment %}
+      Option cards rather than a select (HANDOFF §3): the choice between a
+      saved audience and your own rules is the whole of this step, so it is
+      laid out rather than folded away. Real radios bound to `segment`, so the
+      preview form above and the save form below read the same value.
+    {% endcomment %}
+    <fieldset class="option-cards mb-4">
+      <legend class="sr-only">Audience</legend>
+      {% for option in filter_config.segments %}
+      <label class="option-card">
+        <input type="radio" name="segment" value="{{ option.value }}" x-model="segment">
+        <span class="option-card-body">
+          <span class="option-card-title">{{ option.label }}</span>
+          <span class="option-card-text">Saved segment, copied as it is now</span>
+        </span>
+        <span class="option-card-radio" aria-hidden="true"></span>
+      </label>
+      {% endfor %}
+      <label class="option-card">
+        <input type="radio" name="segment" value="" x-model="segment">
+        <span class="option-card-body">
+          <span class="option-card-title">Build the rules</span>
+          <span class="option-card-text">Tags, fields, channels — anything the contact list can filter on</span>
+        </span>
+        <span class="option-card-radio" aria-hidden="true"></span>
+      </label>
+    </fieldset>
 
     <div x-show="!segment">
       {% include "contacts/_filter_bar.html" %}
@@ -56,14 +70,17 @@ operator agrees to is computed from the rules they are looking at.
     {% include "broadcasts/_audience_preview.html" %}
   </div>
 
-  <form class="bc-actions"
+  <p class="wizard-hint mt-3">Opted-out contacts, and anyone the channel will not let you message, are left out automatically.</p>
+
+  <form class="wizard-actions"
         hx-post="{% url 'broadcasts:save_audience' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
         hx-target="#broadcast-wizard"
         hx-swap="innerHTML">
     {% csrf_token %}
     <input type="hidden" name="filter" :value="serialised">
     <input type="hidden" name="segment" :value="segment">
-    <button type="submit" class="btn-brand btn-inline">Continue</button>
+    {% include "broadcasts/_step_back.html" %}
+    <button type="submit" class="btn-pill-primary">Continue</button>
   </form>
 </div>
 </div>

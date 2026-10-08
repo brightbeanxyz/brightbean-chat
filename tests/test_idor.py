@@ -90,6 +90,7 @@ class TestCrossTenantIsolation:
             "broadcasts:audience_preview",
             "broadcasts:save_content",
             "broadcasts:save_schedule",
+            "broadcasts:send",
             "broadcasts:cancel",
             "broadcasts:duplicate",
             "broadcasts:delete",
