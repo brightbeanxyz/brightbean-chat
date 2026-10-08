@@ -152,9 +152,18 @@ class TestTheSidebar:
         assert "document.documentElement.classList.remove('sidebar-is-collapsed')" in sidebar
 
     def test_the_collapse_is_persisted_rather_than_reset_on_every_page(self, tenant_client, shell_urls, shell_url):
+        """The write is a call into the nonced head script, not an inline `try`.
+
+        This used to assert the inline form, which was a SyntaxError to Alpine:
+        the string was in the page and the effect never ran. Whether a
+        directive compiles is tests/js/alpine-directives.test.ts's job; this
+        only pins the wiring between the two halves.
+        """
         body = tenant_client.get(shell_url).content.decode()
 
-        assert "localStorage.setItem('sidebarCollapsed', sidebarCollapsed)" in body
+        assert "localStorage.setItem('sidebarCollapsed'" in body
+        assert "window.__bbStoreSidebarCollapsed = function" in body
+        assert 'x-effect="window.__bbStoreSidebarCollapsed(sidebarCollapsed)"' in body
 
     def test_the_collapse_never_reaches_inside_a_popover(self):
         """A row rule scoped to the whole sidebar hits the switcher's panel.
