@@ -17,10 +17,10 @@ back. Open is the one action, and it is where the rest are.
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">Outbound webhooks</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 BrightBean Chat POSTs a signed JSON document to your endpoint when something happens
                 in this workspace. See the <a href="{% url 'api_docs' %}">API reference</a> for the
                 payload shape and a signature-verification snippet.

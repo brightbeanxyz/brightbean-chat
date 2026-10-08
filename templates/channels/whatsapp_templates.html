@@ -1,6 +1,6 @@
 {% extends "layouts/workspace_settings.html" %}
 {% block title %}WhatsApp templates · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>WhatsApp message templates</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">WhatsApp message templates</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
@@ -64,10 +64,11 @@
                   <button type="submit">Submit for review</button>
                 </form>
               {% endif %}
-              <form method="post"
+              <form method="post" x-data
+                    @submit="if (!window.confirm('Delete this template? This cannot be undone.')) $event.preventDefault()"
                     action="{% url 'channels:whatsapp_template_delete' workspace_id=request.workspace.id template_id=row.template.id %}">
                 {% csrf_token %}
-                <button type="submit">Delete</button>
+                <button type="submit" class="btn-danger-link">Delete</button>
               </form>
             </td>
           </tr>

@@ -14,18 +14,31 @@ running", and a page of zeroes answers neither.
 {% block title %}Insights · BrightBean Chat{% endblock %}
 
 {% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
+<div class="page-header max-w-[1060px]">
+    <div class="page-header-text">
         <h1 class="page-title">Insights</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
+        <p class="page-lede">
             How each flow did, step by step, and how each connected account is delivering.
         </p>
     </div>
-    {% include "analytics/_range.html" %}
+    <div class="page-header-actions">{% include "analytics/_range.html" %}</div>
 </div>
 {% endblock %}
 
 {% block content %}
+<div class="max-w-[1060px] w-full">
+{% comment %}
+  The range's totals first, as number-and-word cards (HANDOFF §4, Analytics):
+  the four answers a reader came for, before the tables that break them down.
+  Failures carry the red dot only when there are some.
+{% endcomment %}
+<div class="summary-cards mb-5">
+    <div class="summary-card"><span class="dot dot-neutral" aria-hidden="true"></span><span class="summary-card-value">{{ totals.sent }}</span><span class="summary-card-label">sent</span></div>
+    <div class="summary-card"><span class="dot dot-success" aria-hidden="true"></span><span class="summary-card-value">{{ totals.delivered }}</span><span class="summary-card-label">delivered</span></div>
+    <div class="summary-card"><span class="dot {% if totals.failed %}dot-error{% else %}dot-neutral{% endif %}" aria-hidden="true"></span><span class="summary-card-value">{{ totals.failed }}</span><span class="summary-card-label">failed</span></div>
+    <div class="summary-card"><span class="dot dot-info" aria-hidden="true"></span><span class="summary-card-value">{{ totals.clicked }}</span><span class="summary-card-label">clicked{% if click_rate is not None %} · {{ click_rate|floatformat:1 }}% of sends{% endif %}</span></div>
+</div>
+
 <div class="an-panel" style="margin-top: 0;">
     <div class="an-panel-head">
         <span class="an-panel-title">Flows</span>
@@ -48,7 +61,7 @@ running", and a page of zeroes answers neither.
                 <tr>
                     <td>
                         <a href="{% url 'analytics:flow_detail' workspace_id=request.workspace.id flow_id=row.flow.id %}?days={{ days }}">{{ row.flow.name }}</a>
-                        <span class="status-pill status-pill-{{ row.flow.status }}">{{ row.flow.get_status_display }}</span>
+                        <span class="status-pill status-pill-{{ row.flow.status }}"><span class="status-pill-dot" aria-hidden="true"></span>{% if row.flow.status == "active" %}Live{% else %}{{ row.flow.get_status_display }}{% endif %}</span>
                     </td>
                     <td class="an-num">{{ row.sent }}</td>
                     <td class="an-num">{{ row.delivered }}</td>
@@ -109,5 +122,6 @@ running", and a page of zeroes answers neither.
     {% else %}
     <p class="an-hint">Nothing has been sent from this workspace in this range.</p>
     {% endif %}
+</div>
 </div>
 {% endblock %}

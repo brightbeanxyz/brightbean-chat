@@ -1,7 +1,7 @@
 {% extends "layouts/workspace_settings.html" %}
 {% block title %}WhatsApp template · BrightBean Chat{% endblock %}
 {% block page_header %}
-  <h1>{% if template %}Edit template{% else %}New template{% endif %}</h1>
+  <h1 class="page-title mb-4">{% if template %}Edit template{% else %}New template{% endif %}</h1>
 {% endblock %}
 
 {% block content %}
@@ -42,7 +42,7 @@
     <h2>Preview</h2>
     <div id="template-preview" class="muted"><p>Start typing to see the message.</p></div>
 
-    {% if editable %}<button type="submit">Save draft</button>{% endif %}
+    {% if editable %}<button type="submit" class="btn-pill-primary btn-pill-sm">Save draft</button>{% endif %}
   </form>
 
   <p><a href="{{ list_url }}">Back to templates</a></p>

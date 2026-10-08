@@ -82,13 +82,19 @@ def _window(request: WorkspaceRequest) -> Any:
 def overview(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """Flows with activity, and how each connection is delivering."""
     window = _window(request)
+    flow_rows = selectors.workspace_flow_rows(request.workspace, window=window)
+    # The counter cards over the tables (HANDOFF §4, Analytics): the range's
+    # totals across every flow, summed from the rows already in hand.
+    totals = {key: sum(int(row[key]) for row in flow_rows) for key in ("sent", "delivered", "failed", "clicked")}
     return render(
         request,
         "analytics/overview.html",
         {
             "days": _days(request),
             "range_choices": selectors.RANGE_CHOICES,
-            "flow_rows": selectors.workspace_flow_rows(request.workspace, window=window),
+            "flow_rows": flow_rows,
+            "totals": totals,
+            "click_rate": _rate(totals["clicked"], totals["sent"]),
             "connections": selectors.connection_deliverability(request.workspace, window=window),
         },
     )

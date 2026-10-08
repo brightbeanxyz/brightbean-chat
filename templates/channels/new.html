@@ -1,6 +1,6 @@
 {% extends "layouts/workspace_settings.html" %}
 {% block title %}Add a channel · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Add a channel</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">Add a channel</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
@@ -29,7 +29,7 @@
       <span class="muted">{{ form.external_id.help_text }}</span>
       {{ form.external_id.errors }}
     </p>
-    <button type="submit">Create channel</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">Create channel</button>
   </form>
 
   <p><a href="{% url 'channels:list' workspace_id=request.workspace.id %}">Back to channels</a></p>

@@ -24,8 +24,13 @@ goes.
         <div>
             <h1 class="page-title">{{ greeting }}, {{ request.user.display_name }}</h1>
         </div>
+        {% comment %}
+          One orange control per screen (HANDOFF §2.1): while setup is
+          unfinished, its next step's button below is the thing to do, so this
+          one steps back to secondary until setup is done.
+        {% endcomment %}
         {% if can_edit_flows %}
-        <a class="btn-pill-primary flex-shrink-0" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
+        <a class="{% if setup_remaining %}btn-pill-secondary{% else %}btn-pill-primary{% endif %} flex-shrink-0" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
             {% include "partials/_nav_icon.html" with name="flows" icon_size=16 %} New flow
         </a>
         {% endif %}

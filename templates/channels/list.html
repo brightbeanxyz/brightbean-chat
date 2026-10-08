@@ -26,16 +26,18 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">Channels</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 Each channel is one bot, page, number or sending address. Messages arrive and go out through it.
             </p>
         </div>
-        <a class="btn-pill-primary flex-shrink-0" href="{% url 'channels:create' workspace_id=request.workspace.id %}">
-            {% include "partials/_nav_icon.html" with name="channels" icon_size=16 %} Connect a channel
-        </a>
+        <div class="page-header-actions">
+            <a class="btn-pill-primary" href="{% url 'channels:create' workspace_id=request.workspace.id %}">
+                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} Connect a channel
+            </a>
+        </div>
     </div>
 
     {% for row in broken %}
@@ -100,10 +102,18 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                     <button type="submit" class="btn-pill-secondary btn-pill-sm">Turn off</button>
                     {% endif %}
                 </form>
-                <form method="post"
+                {% comment %}
+                  Disconnecting cannot be undone — the connection, its webhook
+                  secret and its link to every conversation go — so it is a red
+                  text link, at the far end of the row from Turn off, and it
+                  asks first (HANDOFF §2.4). Alpine's @submit rather than an
+                  onsubmit attribute: the CSP blocks inline handlers.
+                {% endcomment %}
+                <form method="post" class="ml-auto" x-data
+                      @submit="if (!window.confirm('Disconnect {{ row.connection.display_name|escapejs }}? This cannot be undone. Turning it off keeps everything instead.')) $event.preventDefault()"
                       action="{% url 'channels:delete' workspace_id=request.workspace.id connection_id=row.connection.id %}">
                     {% csrf_token %}
-                    <button type="submit" class="btn-pill-secondary btn-pill-sm" style="color: var(--error-700);">Disconnect</button>
+                    <button type="submit" class="btn-danger-link">Disconnect</button>
                 </form>
             </div>
         </div>
@@ -113,7 +123,7 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
             <p class="empty-state-body">
                 Connect the first one and messages start arriving in your inbox.
             </p>
-            <a class="btn-pill-primary mt-4" href="{% url 'channels:create' workspace_id=request.workspace.id %}">Connect a channel</a>
+            <a class="btn-pill-secondary btn-pill-sm mt-4" href="{% url 'channels:create' workspace_id=request.workspace.id %}">Connect a channel</a>
         </div>
         {% endfor %}
 

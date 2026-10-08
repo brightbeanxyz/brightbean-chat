@@ -40,10 +40,10 @@ inert — a button that looks fine and does nothing.
 {% endblock %}
 
 {% block page_header %}
-  <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-    <div>
+  <div class="page-header">
+    <div class="page-header-text">
       <h1 class="page-title">Contacts</h1>
-      <p class="page-lede mt-1.5">
+      <p class="page-lede">
         {% if total_contacts %}{{ total_contacts }} {{ total_contacts|pluralize:"person has,people have" }}{% else %}Everyone who has{% endif %}
         messaged you or been imported.
       </p>

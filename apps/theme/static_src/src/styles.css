@@ -1226,32 +1226,6 @@ img.sidebar-logo-mark {
 }
 .btn-icon-round:hover { background: var(--surface-page); color: var(--text-primary); }
 
-/* Filter / saved-view chips. The selected one is ink, not brand: on a screen
-   whose single primary action is already orange, a second orange control
-   would read as a second call to action. */
-.chip-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: var(--radius-full);
-  background: var(--surface-0);
-  border: 1px solid var(--border);
-  font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-decoration: none;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.chip-filter:hover { border-color: var(--border-hover); color: var(--text-primary); }
-.chip-filter.active {
-  background: var(--neutral-900);
-  border-color: var(--neutral-900);
-  color: var(--text-inverse);
-}
-.chip-filter-add { border-style: dashed; color: var(--text-ghost); }
-
 /* Round initials avatar. Replaces the 4px platform squares in list rows. */
 .avatar {
   display: inline-flex;
@@ -1803,6 +1777,21 @@ img.sidebar-logo-mark {
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
 }
+/* Inside the app, an inline outline button is the secondary pill under an
+   older name: same height, same 1px rule, no lift. Twenty-odd templates still
+   write `btn-outline btn-inline`, and they should read as the same control as
+   `btn-pill-secondary btn-pill-sm` beside them rather than a heavier cousin. */
+.app-content .btn-outline.btn-inline {
+  height: 36px;
+  padding: 0 16px;
+  border-width: 1px;
+  font-size: var(--fs-body);
+  box-shadow: none;
+}
+.app-content .btn-outline.btn-inline:hover { transform: none; box-shadow: none; }
+/* A destructive one says so before the pointer reaches it (HANDOFF §2.4):
+   red text at rest, the red fill on hover as before. */
+.btn-outline.btn-danger-soft { color: var(--error-700); }
 
 /* Ghost/link button */
 .btn-link {
@@ -2405,7 +2394,8 @@ span.flatpickr-weekday {
   background: var(--surface-2);
   color: var(--text-secondary);
 }
-.status-pill .status-pill-dot { background: var(--neutral-400); }
+/* The dot's colour is the tone's --pill-dot, set by the tone table below. */
+.status-pill .status-pill-dot { background: var(--pill-dot, var(--neutral-400)); }
 
 /* Five tones, one table (HANDOFF §2.1). Every status in the product is one of
    them, so the same word always wears the same colour from page to page:
@@ -2428,41 +2418,23 @@ span.flatpickr-weekday {
 .status-pill-active,
 .status-pill-approved,
 .status-pill-sent,
-.status-pill-subscribed { background: var(--success-50); color: var(--success-700); }
-.status-pill-success .status-pill-dot,
-.status-pill-active .status-pill-dot,
-.status-pill-approved .status-pill-dot,
-.status-pill-sent .status-pill-dot,
-.status-pill-subscribed .status-pill-dot { background: var(--success-500); }
+.status-pill-subscribed { background: var(--success-50); color: var(--success-700); --pill-dot: var(--success-500); }
 
 .status-pill-warning,
 .status-pill-offline,
 .status-pill-paused,
 .status-pill-needs_reauth,
-.status-pill-pending { background: var(--warning-50); color: var(--warning-700); }
-.status-pill-warning .status-pill-dot,
-.status-pill-offline .status-pill-dot,
-.status-pill-paused .status-pill-dot,
-.status-pill-needs_reauth .status-pill-dot,
-.status-pill-pending .status-pill-dot { background: var(--warning-500); }
+.status-pill-pending { background: var(--warning-50); color: var(--warning-700); --pill-dot: var(--warning-500); }
 
 .status-pill-info,
 .status-pill-sending,
-.status-pill-scheduled { background: var(--info-50); color: var(--info-700); }
-.status-pill-info .status-pill-dot,
-.status-pill-sending .status-pill-dot,
-.status-pill-scheduled .status-pill-dot { background: var(--info-500); }
+.status-pill-scheduled { background: var(--info-50); color: var(--info-700); --pill-dot: var(--info-500); }
 
 .status-pill-error,
 .status-pill-failed,
 .status-pill-rejected,
 .status-pill-cancelled,
-.status-pill-opted_out { background: var(--error-50); color: var(--error-700); }
-.status-pill-error .status-pill-dot,
-.status-pill-failed .status-pill-dot,
-.status-pill-rejected .status-pill-dot,
-.status-pill-cancelled .status-pill-dot,
-.status-pill-opted_out .status-pill-dot { background: var(--error-500); }
+.status-pill-opted_out { background: var(--error-50); color: var(--error-700); --pill-dot: var(--error-500); }
 
 /* Neutral is the base already; these names are listed so a reader looking for
    "where is draft styled" finds the answer, and archived reads a step quieter
@@ -2471,6 +2443,22 @@ span.flatpickr-weekday {
 .status-pill-draft,
 .status-pill-disabled { background: var(--surface-2); color: var(--text-secondary); }
 .status-pill-archived { background: var(--surface-2); color: var(--text-tertiary); }
+
+/* State is shape and colour, never colour alone (HANDOFF §2, principle 2): a
+   status pill written before the dot existed — `status-pill-{{ status }}` with
+   only a word inside — gets its dot from here. Scoped to pills that carry a
+   status modifier; a bare .status-pill is a label (a member's role), not a
+   state, and stays dotless. A pill with its own dot child keeps that one. */
+.status-pill[class*="status-pill-"]:not(:has(> .status-pill-dot))::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: var(--radius-full);
+  background: var(--pill-dot, var(--neutral-400));
+  vertical-align: 1px;
+}
 
 /* Tint the glyph itself rather than the chip behind it. */
 .pi-ink-telegram  { color: var(--platform-telegram); }
@@ -2713,8 +2701,10 @@ a.summary-card { cursor: pointer; transition: border-color var(--dur-fast) ease;
 button.summary-card:hover,
 a.summary-card:hover { border-color: var(--border-hover); }
 .summary-card[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+/* The body face, not the display serif: Georgia has only old-style figures,
+   and a 0 in them reads as a lower-case o. Numbers a reader compares want
+   lining, tabular figures. */
 .summary-card-value {
-  font-family: var(--font-display);
   font-size: 1.375rem;
   font-weight: 700;
   line-height: 1;
@@ -4786,8 +4776,8 @@ kbd {
    tell at a glance which replies a person wrote. */
 .ib-bubble-auto { background: var(--surface-2); color: var(--text-primary); }
 /* Ink, not --primary: orange is the call-to-action colour, and a thread full
-   of it competed with the Send button for attention. Same ink as an active
-   .chip-filter, the other "this one is yours" state on the page. */
+   of it competed with the Send button for attention. Same ink as the active
+   view tab, the other "this one is yours" state on the page. */
 .ib-bubble-out { background: var(--neutral-900); color: var(--text-inverse); }
 .ib-bubble-out .ib-chip {
   border-color: rgba(255, 255, 255, 0.24);
@@ -5596,8 +5586,8 @@ kbd {
 
    Two to watch, for the reason the CRM section gives:
 
-     .bc-step sets `display: flex`, so `class="bc-step hidden"` renders
-       a visible step. Toggle a wrapper instead.
+     .stepper-step sets `display: flex`, so `class="stepper-step hidden"`
+       renders a visible step. Toggle a wrapper instead.
      .bc-tile sets padding and border-radius; vary them with a modifier
        here rather than a utility at the call site.
 
@@ -5608,62 +5598,7 @@ kbd {
 
 /* ── Composer step rail ─────────────────────────────────────── */
 
-/* A progress rail, not a row of pills.
-
-   The steps used to be four identical chips with only the current one tinted,
-   which said where you are but not how far along. Now the connector between
-   them fills in as they complete: a completed step is a tick, the current one
-   is its number in brand, and the rest are grey. Same four buttons, same
-   navigation — it just answers "how much is left" without being asked. */
-.bc-rail {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-}
-.bc-step {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: var(--fs-body-lg);
-  font-weight: 500;
-  line-height: 1.4;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.bc-step:disabled { opacity: 0.55; cursor: not-allowed; }
-.bc-step-current { color: var(--text-primary); font-weight: 700; }
-.bc-step-done { color: var(--text-primary); font-weight: 600; }
-.bc-step-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  flex-shrink: 0;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--text-tertiary);
-  font-size: var(--fs-body);
-  font-weight: 700;
-}
-.bc-step-current .bc-step-index { background: var(--ink); color: var(--text-inverse); }
-.bc-step-done .bc-step-index { background: var(--success-500); color: var(--text-inverse); }
-/* The connector. A flex-1 hairline that turns olive once the step behind it is
-   done, which is the whole "how far along am I" signal. */
-.bc-step-link {
-  flex: 1;
-  min-width: 1rem;
-  height: 2px;
-  border-radius: var(--radius-full);
-  background: var(--border);
-}
-.bc-step-link-done { background: var(--success-500); }
+/* The composer's progress rail is the shared .stepper now (REDESIGN COMPONENTS). */
 
 /* ── Panels shared by every step ────────────────────────────── */
 

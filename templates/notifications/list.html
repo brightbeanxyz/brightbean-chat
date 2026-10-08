@@ -26,7 +26,7 @@
             </label>
         </form>
         {% if unread_notification_count %}
-        <button type="button" class="btn-outline btn-inline text-xs"
+        <button type="button" class="btn-pill-secondary btn-pill-sm"
                 hx-post="{% url 'notifications:mark_all_read' %}"
                 hx-swap="none">Mark all read</button>
         {% endif %}
