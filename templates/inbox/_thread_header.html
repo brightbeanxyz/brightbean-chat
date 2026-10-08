@@ -70,7 +70,11 @@ it under the reader mid-choice.
 
   `chip.color` is the vetted value from apps.inbox.rendering; the stored column
   never reaches a style attribute. See LabelChip.
+
+  Not rendered at all when there is nothing to show: a workspace with no labels
+  otherwise got an empty, bordered strip — a second rule under the header.
 {% endcomment %}
+{% if thread_labels or can_reply and thread_label_options %}
 <div class="ib-thread-labels">
   {% for chip in thread_labels %}
     <span class="ib-label-chip" style="--chip-ink: {{ chip.color }};">
@@ -97,3 +101,4 @@ it under the reader mid-choice.
     </form>
   {% endif %}
 </div>
+{% endif %}
