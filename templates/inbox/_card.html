@@ -16,13 +16,17 @@ the message.
   {% if card.title %}<div class="font-semibold">{{ card.title }}</div>{% endif %}
   {% if card.subtitle %}<div>{{ card.subtitle }}</div>{% endif %}
   {% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Open</a>{% endif %}
-  {% for button in card.buttons %}
-    {% if button.url %}
-      <a class="ib-chip" href="{{ button.url }}" target="_blank" rel="noopener noreferrer">{{ button.label }}</a>
-    {% else %}
-      {% comment %}A postback: its target was the contact's app, so there is
-      nothing here for a team member to press.{% endcomment %}
-      <span class="ib-chip">{{ button.label }}</span>
-    {% endif %}
-  {% endfor %}
+  {% if card.buttons %}
+    <div class="ib-bubble-actions">
+      {% for button in card.buttons %}
+        {% if button.url %}
+          <a class="ib-chip" href="{{ button.url }}" target="_blank" rel="noopener noreferrer">{{ button.label }}</a>
+        {% else %}
+          {% comment %}A postback: its target was the contact's app, so there is
+          nothing here for a team member to press.{% endcomment %}
+          <span class="ib-chip">{{ button.label }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+  {% endif %}
 </div>

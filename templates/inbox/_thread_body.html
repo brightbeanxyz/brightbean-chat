@@ -119,14 +119,18 @@ are until they are sniffed at fetch time.
           {% endif %}
         {% endfor %}
 
-        {% for button in item.buttons %}
-          {% if button.url %}
-            <a class="ib-chip" href="{{ button.url }}" target="_blank" rel="noopener noreferrer">{{ button.label }}</a>
-          {% else %}
-            <span class="ib-chip">{{ button.label }}</span>
-          {% endif %}
-        {% endfor %}
-        {% for reply in item.quick_replies %}<span class="ib-chip">{{ reply.label }}</span>{% endfor %}
+        {% if item.buttons or item.quick_replies %}
+          <div class="ib-bubble-actions">
+            {% for button in item.buttons %}
+              {% if button.url %}
+                <a class="ib-chip" href="{{ button.url }}" target="_blank" rel="noopener noreferrer">{{ button.label }}</a>
+              {% else %}
+                <span class="ib-chip">{{ button.label }}</span>
+              {% endif %}
+            {% endfor %}
+            {% for reply in item.quick_replies %}<span class="ib-chip">{{ reply.label }}</span>{% endfor %}
+          </div>
+        {% endif %}
       </div>
 
       <div class="ib-bubble-meta flex items-center gap-2">

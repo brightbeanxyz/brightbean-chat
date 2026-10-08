@@ -3708,7 +3708,15 @@ span.flatpickr-weekday {
   overflow-wrap: anywhere;
 }
 .ib-bubble-in  { background: var(--surface-2); color: var(--text-primary); }
-.ib-bubble-out { background: var(--primary); color: var(--text-inverse); }
+/* Ink, not --primary: orange is the call-to-action colour, and a thread full
+   of it competed with the Send button for attention. Same ink as an active
+   .chip-filter, the other "this one is yours" state on the page. */
+.ib-bubble-out { background: var(--neutral-900); color: var(--text-inverse); }
+.ib-bubble-out .ib-chip {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-inverse);
+}
 .ib-bubble-note {
   background: var(--warning-50);
   color: var(--warning-700);
@@ -3722,6 +3730,16 @@ span.flatpickr-weekday {
   margin-top: 0.125rem;
 }
 .ib-bubble-error { font-size: 0.6875rem; color: var(--error-700); }
+
+/* A message's buttons and quick replies. A row of its own with a gap, because
+   the chips are inline-flex and the template loop emits no whitespace between
+   them — they rendered as one run of touching pills. */
+.ib-bubble-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
 
 .ib-media {
   max-width: 18rem;
@@ -3853,18 +3871,18 @@ span.flatpickr-weekday {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 0.625rem 0.75rem;
+  padding: 0.375rem 0.75rem;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
 .ib-remind-toggle:hover { color: var(--text-primary); background: var(--surface-2); }
 .ib-remind-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-.ib-remind-toggle svg { width: 1rem; height: 1rem; transition: transform var(--dur-fast) ease; }
+.ib-remind-toggle svg { width: 0.875rem; height: 0.875rem; transition: transform var(--dur-fast) ease; }
 .ib-remind-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .ib-remind-fields { padding: 0.25rem 0.75rem 0.75rem; }
 .ib-remind-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 0.75rem; }
@@ -3982,14 +4000,19 @@ span.flatpickr-weekday {
   padding: 0.75rem;
   background: var(--surface-0);
 }
-#inbox-composer { flex: 0 1 auto; max-height: min(48vh, 26rem); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* Never shrinks: the message history above is the part that scrolls, so a
+   short pane gives up history rather than clipping the Send row. With
+   `flex-shrink: 1` the composer took its share of the squeeze and lost its
+   buttons under the pane's edge. The cap still holds when "Send later" and the
+   reminder are both open on a short screen — then the composer scrolls. */
+#inbox-composer { flex: 0 0 auto; max-height: min(48vh, 26rem); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .ib-compose-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 0.75rem; margin-bottom: 0.5rem; }
 .ib-compose-label { font-size: 0.8125rem; font-weight: 700; color: var(--text-primary); }
 .ib-compose-hint { font-size: 0.6875rem; line-height: 1.35; color: var(--text-tertiary); }
 .ib-composer textarea {
   width: 100%;
   max-width: none;
-  min-height: 5.25rem;
+  min-height: 3.75rem;
   resize: vertical;
   font-size: 0.8125rem;
 }
