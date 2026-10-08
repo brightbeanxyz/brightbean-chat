@@ -1269,7 +1269,18 @@ img.sidebar-logo-mark {
 
 /* Status pills, redesigned: a dot plus a word, on a tint.
    Extends the existing .status-pill family rather than replacing it — those
-   names come from model status values and are asserted by tests. */
+   names come from model status values and are asserted by tests.
+
+   The pill lays itself out once it holds a dot. `.status-pill` is
+   inline-block and unlayered, so an `inline-flex items-center gap-1.5` at
+   the call site loses to it; the dot was then a plain inline span, which
+   ignores width and height, and rendered as nothing. Scoped with :has() so
+   the text-only pills keep their inline-block box. */
+.status-pill:has(> .status-pill-dot) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .status-pill-dot {
   width: 6px;
   height: 6px;
