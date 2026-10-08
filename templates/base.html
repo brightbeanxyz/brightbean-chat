@@ -26,6 +26,13 @@
       component below can read it without a second `try`: localStorage throws
       outright in some privacy modes, and a throw inside x-data leaves the
       whole shell component uninitialised.
+
+      The write half lives here for the same reason, and for one more: Alpine
+      compiles a directive value as the right-hand side of an assignment, so a
+      `try` statement written straight into x-effect is a SyntaxError and the
+      effect never runs. That is how the collapse once stopped persisting
+      without a single test noticing; tests/js/alpine-directives.test.ts now
+      compiles every directive the way Alpine does.
     {% endcomment %}
     {% if show_app_shell %}
     <script nonce="{{ request.csp_nonce }}">
@@ -36,6 +43,11 @@
         if (window.__bbSidebarCollapsed) {
             document.documentElement.classList.add('sidebar-is-collapsed');
         }
+        window.__bbStoreSidebarCollapsed = function (collapsed) {
+            try {
+                localStorage.setItem('sidebarCollapsed', collapsed ? 'true' : 'false');
+            } catch (e) { /* storage disabled: the choice lasts until the next page */ }
+        };
     </script>
     {% endif %}
     <style nonce="{{ request.csp_nonce }}">
@@ -108,10 +120,11 @@
 {% if show_app_shell %}
 {% comment %}
   Two pieces of shell state. `sidebarCollapsed` is desktop-only and persisted —
-  x-effect writes it back on every change, and the pre-paint script in the head
-  reads it before Alpine exists. `mobileMenuOpen` is the drawer and is
-  deliberately NOT persisted: a drawer that reopens itself on the next page is
-  a drawer covering the page you asked for.
+  x-effect writes it back on every change through the head script's guarded
+  helper, and the pre-paint script beside that helper reads it before Alpine
+  exists. `mobileMenuOpen` is the drawer and is deliberately NOT persisted: a
+  drawer that reopens itself on the next page is a drawer covering the page
+  you asked for.
 
   `wsOpen` used to be here because two controls opened one panel. There is one
   trigger now, so it lives on the switcher — see partials/_app_sidebar.html.
@@ -119,7 +132,7 @@
 <div class="flex h-screen overflow-hidden"
      style="background: var(--surface-page);"
      x-data="{ sidebarCollapsed: window.__bbSidebarCollapsed === true, mobileMenuOpen: false }"
-     x-effect="try { localStorage.setItem('sidebarCollapsed', sidebarCollapsed) } catch (e) {}"
+     x-effect="window.__bbStoreSidebarCollapsed(sidebarCollapsed)"
      @keydown.escape.window="mobileMenuOpen = false">
 
     {% comment %}
