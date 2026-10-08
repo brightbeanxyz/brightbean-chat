@@ -534,8 +534,8 @@ class TestTheNav:
         template includes it."""
         body = client_for(tenancy.owner).get(url(tenancy, "")).content.decode()
 
-        strip = body[body.index('<nav class="subnav"') : body.index("</nav>", body.index('<nav class="subnav"'))]
-        assert f'href="{url(tenancy, "")}" class="subnav-item active"' in strip
+        strip = body[body.index('<nav class="tabs"') : body.index("</nav>", body.index('<nav class="tabs"'))]
+        assert f'href="{url(tenancy, "")}" class="tab active"' in strip
         assert 'aria-current="page">Sequences</a>' in strip
         assert ">Flows</a>" in strip
 

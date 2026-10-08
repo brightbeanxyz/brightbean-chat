@@ -149,7 +149,7 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                 {% endif %}
             </span>
             {% if platform.connect_url %}
-            <a class="text-[13px] font-semibold flex-shrink-0" style="color: var(--brand-700);" href="{{ platform.connect_url }}">Set up</a>
+            <a class="text-[13px] font-semibold flex-shrink-0 underline underline-offset-2" style="color: var(--text-primary);" href="{{ platform.connect_url }}">Set up</a>
             {% else %}
             <span class="text-[13px] flex-shrink-0" style="color: var(--text-ghost);">Soon</span>
             {% endif %}
@@ -167,7 +167,7 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-4 text-[13px]">
         <span style="color: var(--text-ghost);">{{ platform.label }}:</span>
         {% for link in platform.extra_links %}
-        <a class="font-semibold" style="color: var(--brand-700);" href="{{ link.url }}">{{ link.label }}</a>
+        <a class="font-semibold underline underline-offset-2" style="color: var(--text-primary);" href="{{ link.url }}">{{ link.label }}</a>
         {% endfor %}
     </div>
     {% endif %}{% endfor %}

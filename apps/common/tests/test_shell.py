@@ -992,7 +992,9 @@ class TestStatusPillDot:
         for path in (Path(__file__).parents[3] / "templates").rglob("*.html"):
             src = path.read_text()
             found = src.count('class="status-pill-dot"')
-            seated = len(re.findall(r'<span class="status-pill\b[^"]*">\s*<span class="status-pill-dot">', src))
+            # The dot may carry attributes of its own (aria-hidden: the word
+            # beside it is the label, the dot is decoration).
+            seated = len(re.findall(r'<span class="status-pill\b[^"]*">\s*<span class="status-pill-dot"[^>]*>', src))
             dots += found
             if found != seated:
                 offenders.append(path.name)

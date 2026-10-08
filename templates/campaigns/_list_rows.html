@@ -23,14 +23,11 @@ disagree about what a row looks like.
                 <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
                    class="text-sm font-medium truncate btn-text-hover-primary" style="color: var(--text-primary);">{{ sequence.name }}</a>
                 {% if sequence.status == "active" %}
-                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                      style="background: var(--success-50); color: var(--success-700);">Active</span>
+                {% include "components/status_pill.html" with tone="success" label="Active" %}
                 {% elif sequence.status == "archived" %}
-                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                      style="background: var(--surface-2); color: var(--text-tertiary);">Archived</span>
+                <span class="status-pill status-pill-archived"><span class="status-pill-dot" aria-hidden="true"></span>Archived</span>
                 {% else %}
-                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
-                      style="background: var(--primary-soft); color: var(--primary);">Draft</span>
+                {% include "components/status_pill.html" with tone="neutral" label="Draft" %}
                 {% endif %}
             </div>
             <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">

@@ -46,8 +46,7 @@ from visiting a stranger's address.
                 · {{ flow.graph.nodes|length }} step{{ flow.graph.nodes|length|pluralize }},
                 {{ flow.triggers|length }} trigger{{ flow.triggers|length|pluralize }}
                 {% if flow.key == plan.document.entry %}
-                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ml-1"
-                      style="background: var(--primary-soft); color: var(--primary);">Main flow</span>
+                <span class="status-pill status-pill-info ml-1">Main flow</span>
                 {% endif %}
             </li>
             {% endfor %}

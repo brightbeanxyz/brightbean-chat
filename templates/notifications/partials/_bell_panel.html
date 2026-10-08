@@ -12,7 +12,7 @@ would need Alpine's `.camel` modifier to survive htmx's lowercase event names).
             hx-post="{% url 'notifications:mark_all_read' %}"
             hx-swap="none"
             class="text-[11px] font-semibold cursor-pointer btn-text-hover-primary"
-            style="color: var(--primary);">Mark all read</button>
+            style="color: var(--text-primary);">Mark all read</button>
     {% endif %}
 </div>
 
@@ -55,7 +55,7 @@ would need Alpine's `.camel` modifier to survive htmx's lowercase event names).
 {% if notifications %}
 <div class="px-4 py-2.5 border-t" style="border-color: var(--border);">
     <a href="{% url 'notifications:list' %}" class="block text-center text-[11px] font-semibold btn-text-hover-primary"
-       style="color: var(--primary);">View all notifications</a>
+       style="color: var(--text-primary);">View all notifications</a>
 </div>
 {% endif %}
 

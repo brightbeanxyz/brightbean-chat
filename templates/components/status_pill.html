@@ -1,0 +1,19 @@
+{% comment %}
+A status, as a dot and a word on a tint (HANDOFF §2.1).
+
+    {% include "components/status_pill.html" with tone="success" label="Live" %}
+
+Args:
+  tone   success | warning | info | error | neutral. Pick by what the state
+         means, not by what it is called: live, active, sent, subscribed are
+         success; offline, paused, needs reauth are warning; sending and
+         scheduled are info; failed, rejected, opted out are error; draft,
+         archived, disabled are neutral. Anything else falls back to neutral.
+  label  the word. Always present — the colour is never the only signal.
+
+The dot is the pill's first child: apps/common/tests/test_shell.py asserts
+that shape, because .status-pill:has(> .status-pill-dot) is what lays it out.
+A template that already holds a model status can keep writing
+`status-pill status-pill-{{ thing.status }}` — those names are members of the
+same five tones in styles.css.
+{% endcomment %}<span class="status-pill status-pill-{{ tone|default:'neutral' }}"><span class="status-pill-dot" aria-hidden="true"></span>{{ label }}</span>

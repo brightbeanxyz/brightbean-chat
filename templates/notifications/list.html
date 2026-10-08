@@ -16,9 +16,11 @@
           one-line {% include %}.
         {% endcomment %}
         <form hx-post="{% url 'notifications:email_preference' %}" hx-trigger="change" hx-swap="none">
-            <label class="bb-toggle text-xs" style="color: var(--text-secondary);">
-                <input type="checkbox" name="email_enabled" {% if email_enabled %}checked{% endif %}>
-                <span class="bb-toggle-track"></span>
+            <label class="switch-field">
+                <span class="switch">
+                    <input type="checkbox" role="switch" name="email_enabled" {% if email_enabled %}checked{% endif %}>
+                    <span class="switch-track"></span>
+                </span>
                 <span>Email me</span>
             </label>
         </form>
