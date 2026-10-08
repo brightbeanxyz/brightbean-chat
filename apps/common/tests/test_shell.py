@@ -994,7 +994,9 @@ class TestStatusPillDot:
             found = src.count('class="status-pill-dot"')
             # The dot may carry attributes of its own (aria-hidden: the word
             # beside it is the label, the dot is decoration).
-            seated = len(re.findall(r'<span class="status-pill\b[^"]*">\s*<span class="status-pill-dot"[^>]*>', src))
+            seated = len(
+                re.findall(r'<span class="status-pill\b[^"]*"[^>]*>\s*<span class="status-pill-dot"[^>]*>', src)
+            )
             dots += found
             if found != seated:
                 offenders.append(path.name)

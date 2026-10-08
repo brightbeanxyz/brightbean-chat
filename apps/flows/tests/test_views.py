@@ -38,14 +38,39 @@ class TestTheList:
 
         assert "Rival onboarding" not in body
 
-    def test_it_groups_by_folder(self, tenancy, client_for):
-        create_flow(workspace=tenancy.workspace, name="A", folder="Onboarding")
-        create_flow(workspace=tenancy.workspace, name="B")
+    def test_it_groups_by_status_and_names_the_folder_on_the_row(self, tenancy, client_for):
+        """Sections answer "what is running" (HANDOFF §3); the folder is a
+        filter and a word on the row rather than the grouping."""
+        live = create_flow(workspace=tenancy.workspace, name="Running one", folder="Onboarding")
+        save_draft(live, graph_for("send_message"), user=tenancy.owner)
+        publish(live, user=tenancy.owner)
+        create_flow(workspace=tenancy.workspace, name="Unfinished one")
 
-        body = client_for(tenancy.owner).get(list_url(tenancy)).content.decode()
+        response = client_for(tenancy.owner).get(list_url(tenancy))
+        groups = response.context["groups"]
 
-        assert "Onboarding" in body
-        assert "Unfiled" in body
+        assert [group["label"] for group in groups] == ["Live", "Draft"]
+        assert [[f.name for f in group["flows"]] for group in groups] == [["Running one"], ["Unfinished one"]]
+        assert "Onboarding ·" in response.content.decode()
+
+    def test_the_summary_counts_the_whole_workspace_not_the_filtered_view(self, tenancy, client_for):
+        create_flow(workspace=tenancy.workspace, name="One")
+        create_flow(workspace=tenancy.workspace, name="Two")
+
+        response = client_for(tenancy.owner).get(list_url(tenancy), {"q": "One"})
+
+        draft = next(card for card in response.context["summary"] if card["status"] == FlowStatus.DRAFT)
+        assert draft["count"] == 2
+
+    def test_an_htmx_refresh_carries_the_summary_out_of_band(self, tenancy, client_for):
+        """The cards sit above the toolbar, outside the swapped rows, so a
+        switch that moves a flow between sections must refresh them too."""
+        create_flow(workspace=tenancy.workspace, name="One")
+
+        body = client_for(tenancy.owner).get(list_url(tenancy), headers={"hx-request": "true"}).content.decode()
+
+        assert 'id="flow-summary"' in body
+        assert 'hx-swap-oob="true"' in body
 
     def test_search_filters_by_name(self, tenancy, client_for):
         create_flow(workspace=tenancy.workspace, name="Welcome series")
@@ -432,18 +457,6 @@ class TestFolderFilter:
             ("Onboarding", "Onboarding"),
         ]
 
-    def test_a_real_unfiled_folder_is_a_separate_group(self, tenancy, client_for):
-        """Both render under the label "Unfiled", so comparing labels to detect
-        a run merged two genuinely different groups into one."""
-        create_flow(workspace=tenancy.workspace, name="Loose")
-        create_flow(workspace=tenancy.workspace, name="Filed", folder="Unfiled")
-
-        groups = client_for(tenancy.owner).get(list_url(tenancy)).context["groups"]
-
-        assert [group["key"] for group in groups] == ["", "Unfiled"]
-        assert [group["label"] for group in groups] == ["Unfiled", "Unfiled"]
-        assert [[f.name for f in group["flows"]] for group in groups] == [["Loose"], ["Filed"]]
-
     def test_an_unknown_status_filter_falls_back_to_the_default_view(self, tenancy, client_for):
         """Not merely "ignored": an if/elif here let an unrecognised value skip
         the archived exclusion too, so `?status=bogus` listed archived flows
@@ -528,3 +541,87 @@ class TestRenameValidation:
         flow.refresh_from_db()
 
         assert len(flow.name) == 200
+
+
+def _live_flow(tenancy, name="Live one"):
+    flow = create_flow(workspace=tenancy.workspace, name=name)
+    save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+    publish(flow, user=tenancy.owner)
+    return flow
+
+
+class TestTheLiveSwitch:
+    """The flow list's switch (views.flow_set_live)."""
+
+    def test_off_takes_a_live_flow_offline(self, tenancy, client_for):
+        flow = _live_flow(tenancy)
+
+        response = client_for(tenancy.owner).post(action_url("flows:set_live", tenancy, flow), {"live": "0"})
+
+        flow.refresh_from_db()
+        assert flow.status == FlowStatus.OFFLINE
+        assert "flowsChanged" in response.headers["HX-Trigger"]
+
+    def test_on_sets_an_unchanged_offline_flow_live_again(self, tenancy, client_for):
+        from apps.flows.services import take_offline
+
+        flow = _live_flow(tenancy)
+        take_offline(flow)
+
+        client_for(tenancy.owner).post(action_url("flows:set_live", tenancy, flow), {"live": "1"})
+
+        flow.refresh_from_db()
+        assert flow.status == FlowStatus.ACTIVE
+
+    def test_on_refuses_a_flow_edited_since_it_went_offline(self, tenancy, client_for):
+        """publish() sets the newest version live, and a list switch is no
+        place to publish edits nobody has reviewed."""
+        from apps.flows.services import take_offline
+
+        flow = _live_flow(tenancy)
+        take_offline(flow)
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        client = client_for(tenancy.owner)
+
+        response = client.post(action_url("flows:set_live", tenancy, flow), {"live": "1"})
+        row = next(f for g in client.get(list_url(tenancy)).context["groups"] for f in g["flows"])
+
+        flow.refresh_from_db()
+        assert flow.status == FlowStatus.OFFLINE
+        assert "have not been live yet" in response.headers["HX-Trigger"]
+        assert row.can_switch is False
+
+    def test_on_refuses_a_draft(self, tenancy, client_for):
+        flow = create_flow(workspace=tenancy.workspace, name="Never ran")
+
+        client_for(tenancy.owner).post(action_url("flows:set_live", tenancy, flow), {"live": "1"})
+
+        flow.refresh_from_db()
+        assert flow.status == FlowStatus.DRAFT
+
+    def test_off_on_a_flow_that_is_not_live_says_so(self, tenancy, client_for):
+        flow = create_flow(workspace=tenancy.workspace, name="Never ran")
+
+        response = client_for(tenancy.owner).post(action_url("flows:set_live", tenancy, flow), {"live": "0"})
+
+        assert response.status_code == 204
+        assert "Not set offline" in response.headers["HX-Trigger"]
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_that_cannot_edit_cannot_flip_it(self, tenancy, client_for, role):
+        flow = _live_flow(tenancy)
+
+        response = client_for(tenancy.user_for(role)).post(action_url("flows:set_live", tenancy, flow), {"live": "0"})
+
+        flow.refresh_from_db()
+        assert response.status_code == 403
+        assert flow.status == FlowStatus.ACTIVE
+
+    def test_the_row_counts_runs_from_the_last_seven_days(self, tenancy, client_for):
+        flow = _live_flow(tenancy)
+
+        row = next(f for g in client_for(tenancy.owner).get(list_url(tenancy)).context["groups"] for f in g["flows"])
+
+        assert row.pk == flow.pk
+        assert row.runs_recent == 0
+        assert row.can_switch is True

@@ -21,6 +21,7 @@ urlpatterns = [
     path("flows/<uuid:flow_id>/duplicate/", views.flow_duplicate, name="duplicate"),
     path("flows/<uuid:flow_id>/archive/", views.flow_archive, name="archive"),
     path("flows/<uuid:flow_id>/restore/", views.flow_restore, name="restore"),
+    path("flows/<uuid:flow_id>/live/", views.flow_set_live, name="set_live"),
     # Portability (issue #27). Export is a download; import is a three-step
     # wizard whose only write before the confirm is its own FlowImport row.
     path("flows/<uuid:flow_id>/export/", views_portability.flow_export, name="export"),

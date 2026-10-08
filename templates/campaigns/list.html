@@ -19,6 +19,7 @@ clicked. The header has the Flows page's shape for the same reason: three tabs
 of one section should not move the title about as you switch between them.
 {% endcomment %}
 {% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full"
@@ -28,17 +29,19 @@ of one section should not move the title about as you switch between them.
         reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
         clearFilters() { this.q = ''; Object.keys(this.filters).forEach(k => this.filters[k] = []); this.reload(); }
      }">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">Sequences</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 A series of messages sent over days. Each step waits for the time you set, counting from the message before it, then runs a flow.
             </p>
         </div>
         {% if can_edit %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-sequence')">
-            {% include "partials/_nav_icon.html" with name="sequences" icon_size=16 %} New sequence
-        </button>
+        <div class="page-header-actions">
+            <button type="button" class="btn-pill-primary" @click="$modal('new-sequence')">
+                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} New sequence
+            </button>
+        </div>
         {% endif %}
     </div>
 

@@ -1,4 +1,4 @@
-{% load common_extras %}
+{% load common_extras humanize %}
 {% comment %}
 The broadcast table. One renderer for the toolbar's fetch and for every
 mutation's refresh event.
@@ -12,46 +12,75 @@ aggregate — a list of fifty broadcasts must not be fifty GROUP BYs. The detail
 page is where the live figures are computed, and it writes them back here.
 {% endcomment %}
 <div data-result-count="{{ broadcasts|length }}" hidden></div>
-<table class="w-full text-sm">
+{% if broadcasts %}
+{% comment %}
+  The delivery bar is the stored counters drawn as one stacked track (HANDOFF
+  §3, Broadcasts): green for sent, blue for still going out, red for failed,
+  each as a share of everyone queued. Skipped recipients — the compliance
+  filter's exclusions — are not in the bar; the detail page itemises them.
+{% endcomment %}
+<div class="card overflow-hidden">
+<div class="data-table-wrap">
+<table class="data-table">
     <thead>
-        <tr style="color: var(--text-tertiary);">
-            <th class="text-left font-medium pb-2">Name</th>
-            <th class="text-left font-medium pb-2">Channel</th>
-            <th class="text-left font-medium pb-2">Status</th>
-            <th class="text-right font-medium pb-2">Sent</th>
-            <th class="text-right font-medium pb-2">Skipped</th>
-            <th class="text-left font-medium pb-2 pl-4">When</th>
+        <tr>
+            <th scope="col">Broadcast</th>
+            <th scope="col">Status</th>
+            <th scope="col">Delivery</th>
+            <th scope="col" class="is-num">Audience</th>
+            <th scope="col">When</th>
         </tr>
     </thead>
     <tbody>
         {% for broadcast in broadcasts %}
-        <tr style="border-top: 1px solid var(--border);">
-            <td class="py-2">
-                <a class="btn-link"
+        {% with stats=broadcast.stats %}
+        <tr>
+            <td>
+                <a class="data-table-title"
                    href="{% if broadcast.status == 'draft' %}{% url 'broadcasts:compose' workspace_id=request.workspace.id broadcast_id=broadcast.id %}{% else %}{% url 'broadcasts:detail' workspace_id=request.workspace.id broadcast_id=broadcast.id %}{% endif %}">{{ broadcast.name }}</a>
+                <p class="data-table-meta flex items-center gap-1.5">
+                    <span class="pi-chip {{ broadcast.channel_connection.platform|platform_class }} w-4 h-4">{% include "partials/_platform_icon.html" with platform=broadcast.channel_connection.platform size="sm" %}</span>
+                    {{ broadcast.channel_connection.display_name }}
+                </p>
             </td>
-            <td class="py-2">
-                <span class="pi-chip {{ broadcast.channel_connection.platform|platform_class }}"></span>
-                <span style="color: var(--text-secondary);">{{ broadcast.channel_connection.display_name }}</span>
+            <td>
+                <span class="status-pill status-pill-{{ broadcast.status }}"><span class="status-pill-dot" aria-hidden="true"></span>{{ broadcast.get_status_display }}</span>
             </td>
-            <td class="py-2">
-                <span class="status-pill status-pill-{{ broadcast.status }}">{{ broadcast.get_status_display }}</span>
+            <td style="min-width: 10rem;">
+                {% if stats.queued %}
+                {% widthratio stats.sent stats.queued 100 as sent_pct %}
+                {% widthratio stats.pending stats.queued 100 as pending_pct %}
+                {% widthratio stats.failed stats.queued 100 as failed_pct %}
+                <div class="meter" role="img" aria-label="{{ stats.sent|default:0|intcomma }} sent, {{ stats.pending|default:0|intcomma }} still going out, {{ stats.failed|default:0|intcomma }} failed, of {{ stats.queued|intcomma }}">
+                    <div class="meter-fill meter-success" style="width: {{ sent_pct }}%;"></div>
+                    <div class="meter-fill meter-info" style="width: {{ pending_pct }}%;"></div>
+                    <div class="meter-fill meter-error" style="width: {{ failed_pct }}%;"></div>
+                </div>
+                <p class="meter-label">{{ stats.sent|default:0|intcomma }} of {{ stats.queued|intcomma }}{% if stats.skipped %} · {{ stats.skipped|intcomma }} skipped{% endif %}</p>
+                {% else %}
+                <div class="meter" aria-hidden="true"></div>
+                <p class="meter-label">—</p>
+                {% endif %}
             </td>
-            <td class="py-2 text-right" style="font-variant-numeric: tabular-nums;">{{ broadcast.stats.sent|default:0 }}</td>
-            <td class="py-2 text-right" style="font-variant-numeric: tabular-nums;">{{ broadcast.stats.skipped|default:0 }}</td>
-            <td class="py-2 pl-4" style="color: var(--text-secondary);">
-                {% if broadcast.finished_at %}Finished {{ broadcast.finished_at }}
-                {% elif broadcast.scheduled_at %}{{ broadcast.scheduled_at }}
-                {% else %}Created {{ broadcast.created_at }}{% endif %}
+            <td class="is-num font-semibold">{% if stats.queued %}{{ stats.queued|intcomma }}{% else %}—{% endif %}</td>
+            <td class="whitespace-nowrap" style="color: var(--text-secondary);">
+                {% if broadcast.status == "sending" %}Now
+                {% elif broadcast.finished_at %}{{ broadcast.finished_at|naturalday:"j M" }}
+                {% elif broadcast.scheduled_at %}{{ broadcast.scheduled_at|naturalday:"j M"|capfirst }} {{ broadcast.scheduled_at|time:"H:i" }}
+                {% else %}Not sent{% endif %}
             </td>
         </tr>
-        {% empty %}
-        <tr><td colspan="6" class="py-6 text-center" style="color: var(--text-tertiary);">
-            No broadcasts yet.
-        </td></tr>
+        {% endwith %}
         {% endfor %}
     </tbody>
 </table>
+</div>
+</div>
+{% elif q or filters.status or filters.channel %}
+{% include "components/empty_state.html" with icon="search" title="No broadcasts match" body="Try a different word, or clear the filters." action_label="Clear filters" action_click="clearFilters()" %}
+{% else %}
+{% include "components/empty_state.html" with icon="broadcasts" title="No broadcasts yet" body="One message to many contacts. Start one with New broadcast." %}
+{% endif %}
 
 {% if truncated %}
 {% comment %}

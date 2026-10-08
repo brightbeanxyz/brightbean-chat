@@ -11,13 +11,51 @@ disagree about what a row looks like.
 {% include "components/empty_state.html" with icon="sequences" title="No sequences here yet" body="Create one above, add a step, then subscribe contacts from a flow, a rule or the contact list." %}
 {% endif %}
 {% else %}
-<div class="rounded-xl border divide-y" style="border-color: var(--border); background: var(--surface-1);">
+{% comment %}
+  A table, because a sequence's numbers are columns you compare down the page
+  (HANDOFF §3): its shape in step dots, who is on it now, how many reach the end,
+  and its status. Each sequence is its own <tbody> so the row and its inline
+  rename share one Alpine scope.
+{% endcomment %}
+<div class="card overflow-hidden">
+<div class="data-table-wrap">
+<table class="data-table">
+    <thead>
+        <tr>
+            <th scope="col">Sequence</th>
+            <th scope="col">Steps</th>
+            <th scope="col" class="is-num">Active</th>
+            <th scope="col">Completion</th>
+            <th scope="col">Status</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+    </thead>
     {% for sequence in sequences %}
-    <div class="p-3 sm:p-4 flex flex-wrap items-center gap-3" x-data="{ renaming: false }">
-        <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
+    <tbody x-data="{ ...bbRowMenu(), renaming: false }">
+        <tr>
+            <td>
                 <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
-                   class="text-sm font-medium truncate btn-text-hover-primary" style="color: var(--text-primary);">{{ sequence.name }}</a>
+                   class="data-table-title">{{ sequence.name }}</a>
+                <p class="data-table-meta">Updated {{ sequence.updated_at|naturaltime }}</p>
+            </td>
+            <td class="whitespace-nowrap">
+                {% if sequence.step_count %}
+                <span class="step-dots mr-1.5" aria-hidden="true">{% for _ in sequence.step_dots %}<span></span>{% endfor %}</span>
+                {% endif %}
+                <span style="color: var(--text-secondary);">{{ sequence.step_count }} step{{ sequence.step_count|pluralize }}</span>
+            </td>
+            <td class="is-num font-semibold">{{ sequence.subscriber_count }}</td>
+            <td style="min-width: 9rem;">
+                {% if sequence.enrolled_count %}
+                {% widthratio sequence.completed_count sequence.enrolled_count 100 as percent %}
+                <div class="meter" role="img" aria-label="{{ percent }}% complete"><div class="meter-fill meter-success" style="width: {{ percent }}%;"></div></div>
+                <p class="meter-label">{{ percent }}% complete</p>
+                {% else %}
+                <div class="meter" aria-hidden="true"></div>
+                <p class="meter-label">Nobody yet</p>
+                {% endif %}
+            </td>
+            <td>
                 {% if sequence.status == "active" %}
                 {% include "components/status_pill.html" with tone="success" label="Active" %}
                 {% elif sequence.status == "archived" %}
@@ -25,44 +63,48 @@ disagree about what a row looks like.
                 {% else %}
                 {% include "components/status_pill.html" with tone="neutral" label="Draft" %}
                 {% endif %}
-            </div>
-            <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
-                {{ sequence.step_count }} step{{ sequence.step_count|pluralize }} ·
-                {{ sequence.subscriber_count }} subscriber{{ sequence.subscriber_count|pluralize }} ·
-                updated {{ sequence.updated_at|naturaltime }}
-            </p>
-        </div>
-
-        <div class="flex items-center gap-2">
-            <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
-               class="btn-outline btn-inline">{% if can_edit %}Edit{% else %}View{% endif %}</a>
-            {% if can_edit %}
-            <button type="button" class="btn-outline btn-inline" @click="renaming = !renaming">Rename</button>
-            <button type="button" class="btn-outline btn-inline btn-danger-soft"
-                    hx-post="{% url 'campaigns:delete' workspace_id=request.workspace.id sequence_id=sequence.id %}"
-                    hx-swap="none"
-                    hx-confirm="Delete “{{ sequence.name }}”? Everyone's progress through it goes with it.">Delete</button>
-            {% endif %}
-        </div>
-
-        {% comment %}
-          A sibling of the two columns rather than a child of the first: the row
-          is flex-wrap, so a full-width form drops onto its own line instead of
-          colliding with the action buttons.
-        {% endcomment %}
+            </td>
+            <td class="whitespace-nowrap text-right">
+                <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+                   class="btn-pill-secondary btn-pill-sm">{% if can_edit %}Open{% else %}View{% endif %}</a>
+                {% if can_edit %}
+                <button type="button" class="btn-icon-round ml-1 align-middle" @click="openMenu($event)"
+                        aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ sequence.name }}">
+                    <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+                </button>
+                <div x-show="menuOpen" x-cloak @click.away="menuOpen = false"
+                     :style="`top:${menuTop}px; left:${menuLeft}px;`"
+                     class="row-menu-panel fixed z-50 w-[200px] text-left" role="menu">
+                    <button type="button" class="row-menu-item" role="menuitem"
+                            @click="renaming = true; menuOpen = false">Rename</button>
+                    <div class="row-menu-sep"></div>
+                    <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem"
+                            hx-post="{% url 'campaigns:delete' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+                            hx-swap="none" @click="menuOpen = false"
+                            hx-confirm="Delete “{{ sequence.name }}”? Everyone's progress through it goes with it.">Delete</button>
+                </div>
+                {% endif %}
+            </td>
+        </tr>
         {% if can_edit %}
-        <form x-show="renaming" x-cloak class="w-full flex flex-wrap items-center gap-2"
-              hx-post="{% url 'campaigns:rename' workspace_id=request.workspace.id sequence_id=sequence.id %}"
-              hx-swap="none"
-              @htmx:after-request="renaming = false">
-            {% csrf_token %}
-            <input type="text" name="name" value="{{ sequence.name }}" maxlength="200" required
-                   class="form-input-styled" style="width: 14rem;" aria-label="Sequence name">
-            <button type="submit" class="btn-brand btn-inline">Save</button>
-            <button type="button" class="btn-outline btn-inline" @click="renaming = false">Cancel</button>
-        </form>
+        <tr x-show="renaming" x-cloak>
+            <td colspan="6">
+                <form class="flex flex-wrap items-center gap-2"
+                      hx-post="{% url 'campaigns:rename' workspace_id=request.workspace.id sequence_id=sequence.id %}"
+                      hx-swap="none"
+                      @htmx:after-request="renaming = false">
+                    {% csrf_token %}
+                    <input type="text" name="name" value="{{ sequence.name }}" maxlength="200" required
+                           class="form-input-styled" style="width: 16rem;" aria-label="Sequence name">
+                    <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
+                    <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
+                </form>
+            </td>
+        </tr>
         {% endif %}
-    </div>
+    </tbody>
     {% endfor %}
+</table>
+</div>
 </div>
 {% endif %}

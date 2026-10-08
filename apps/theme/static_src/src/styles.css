@@ -1116,7 +1116,9 @@ img.sidebar-logo-mark {
   gap: 16px 24px;
   margin-bottom: 24px;
 }
-.page-header-text { min-width: 0; max-width: 40rem; }
+/* Shrinks before it wraps: a long lede gives up width to the actions, and
+   only below ~18rem does the row break and the actions drop underneath. */
+.page-header-text { flex: 1 1 18rem; min-width: 0; max-width: 40rem; }
 .page-header .page-lede { margin-top: 6px; }
 .page-header-actions {
   display: flex;
@@ -2726,9 +2728,12 @@ a.summary-card:hover { border-color: var(--border-hover); }
    broadcasts, contacts). The header row is sticky; under 780px the table
    scrolls sideways inside its card rather than clipping a column. */
 .data-table-wrap { overflow-x: auto; }
+/* margin: 0 undoes @layer base's .app-content table margin; a table in a card
+   has the card's edge below it, not a gap. */
 .data-table {
   width: 100%;
   min-width: 720px;
+  margin: 0;
   border-collapse: separate;
   border-spacing: 0;
   font-size: var(--fs-body);
@@ -2935,6 +2940,38 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
    the numbers alone; the current step keeps its word so you know where you are. */
 @media (max-width: 767px) {
   .stepper:not(.stepper-vertical) .stepper-step:not(.is-current) .stepper-label { display: none; }
+}
+
+/* --- Template card -------------------------------------------------------
+   One ready-made flow in the gallery (and the flows empty state): where it
+   runs and how it starts on top, its name and one line, what it still needs,
+   and one secondary "Use template". Three across on a desktop. */
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.tpl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.tpl-card:hover { border-color: var(--border-hover); box-shadow: var(--shadow-sm); }
+.tpl-tag {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 /* --- Panel ---------------------------------------------------------------
@@ -4838,8 +4875,6 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   margin-bottom: 0.75rem;
 }
 .crm-toolbar form { margin-bottom: 0; }
-.app-content .crm-contact-table { margin-bottom: 0; min-width: 44rem; }
-.app-content .crm-contact-table th { padding-top: 0.875rem; padding-bottom: 0.875rem; vertical-align: middle; }
 
 /* ── Filter builder ─────────────────────────────────────────── */
 

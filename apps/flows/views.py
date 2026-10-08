@@ -11,14 +11,16 @@ and a ``flowsChanged`` event, and the list re-fetches its own rows. That keeps
 one renderer for the table instead of one for the page and one for each action.
 """
 
+from datetime import timedelta
 from typing import Any
 
 from django.apps import apps as django_apps
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Q
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
@@ -26,7 +28,7 @@ from apps.common.filters import multi
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
-from apps.flows.models import Flow, FlowStatus
+from apps.flows.models import Flow, FlowExecution, FlowStatus, FlowVersion
 from apps.flows.portability.cards import card_contexts
 from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.portability.library import template_cards as shipped_templates
@@ -101,7 +103,22 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
         named = Q(folder__in=[folder for folder in folders if folder != UNFILED_VALUE])
         flows = flows.filter(named | Q(folder="") if UNFILED_VALUE in folders else named)
 
-    return flows.order_by("folder", "name")
+    return flows.order_by("name")
+
+
+#: The list's sections, in the order a reader scans them (HANDOFF §3, Flows):
+#: what is running, what was running and was switched off, what was never
+#: finished. Archived only appears when the status filter asks for it. The tone
+#: is the status-pill tone the section's dot and rows wear.
+SECTIONS: tuple[tuple[str, str, str], ...] = (
+    (FlowStatus.ACTIVE, "Live", "success"),
+    (FlowStatus.OFFLINE, "Offline", "warning"),
+    (FlowStatus.DRAFT, "Draft", "neutral"),
+    (FlowStatus.ARCHIVED, "Archived", "neutral"),
+)
+
+#: The window the row's run count covers.
+RUNS_WINDOW = timedelta(days=7)
 
 
 def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
@@ -109,7 +126,19 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     # every flow's triggers, and re-fetching the same rows by pk to prefetch
     # them cost an extra query plus a dict that existed only to join the answer
     # back onto objects already in hand.
-    flows = list(_visible_flows(request).prefetch_related("triggers"))
+    # `latest_published_at` answers "has the newest version ever been live?",
+    # which is what decides whether an offline flow's switch may turn it back
+    # on (see flow_set_live): a newer, never-live version means edits nobody
+    # has reviewed. One correlated subquery for the page, not one per row.
+    latest_version = (
+        FlowVersion.objects.for_workspace(request.workspace)
+        .filter(flow=OuterRef("pk"))
+        .order_by("-version")
+        .values("published_at")[:1]
+    )
+    flows = list(
+        _visible_flows(request).annotate(latest_published_at=Subquery(latest_version)).prefetch_related("triggers")
+    )
 
     # The redesign's filter chips carry counts, so a reader can see there are
     # two drafts without selecting the filter to find out. One grouped query
@@ -127,20 +156,35 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         **{str(status): by_status.get(status, 0) for status in FlowStatus.values},
     }
 
+    # How many conversations each flow started in the last week: the row's one
+    # figure. Builder previews are not runs anybody had. One grouped query.
+    runs = dict(
+        FlowExecution.objects.for_workspace(request.workspace)
+        .filter(flow__in=[flow.pk for flow in flows], preview=False, created_at__gte=timezone.now() - RUNS_WINDOW)
+        .values_list("flow_id")
+        .annotate(total=Count("id"))
+        .values_list("flow_id", "total")
+    )
+
     # One sentence per flow saying when it runs, in the reader's words rather
     # than SPEC §10's. Reads the prefetch above, so this is no queries at all.
     for flow in flows:
         flow.trigger_summary = describe_triggers(list(flow.triggers.all()))
+        flow.runs_recent = runs.get(flow.pk, 0)
+        # The switch can always turn a live flow off; it can turn an offline one
+        # back on only when nothing has changed since it last ran.
+        flow.can_switch = flow.status == FlowStatus.ACTIVE or (
+            flow.status == FlowStatus.OFFLINE and flow.latest_published_at is not None
+        )
 
-    # Runs are detected on the folder value, not on the label it renders under:
-    # a workspace holding both unfiled flows and a folder literally named
-    # "Unfiled" produces two identical labels, and comparing those merged two
-    # genuinely different groups into one.
-    groups: list[dict[str, Any]] = []
-    for flow in flows:
-        if not groups or groups[-1]["key"] != flow.folder:
-            groups.append({"key": flow.folder, "label": flow.folder or UNFILED_LABEL, "flows": []})
-        groups[-1]["flows"].append(flow)
+    # Sections by status (HANDOFF §3). Folders are a filter and a word on the
+    # row rather than the grouping: the question a reader brings to this page is
+    # "what is running", and a folder heading answered "where did I file it".
+    groups: list[dict[str, Any]] = [
+        {"key": status, "label": label, "tone": tone, "flows": [f for f in flows if f.status == status]}
+        for status, label, tone in SECTIONS
+    ]
+    groups = [group for group in groups if group["flows"]]
 
     # The folder filter offers every folder in the workspace, not just the ones
     # surviving the current filter — otherwise picking one erases the rest of
@@ -186,6 +230,12 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     return {
         "groups": groups,
         "flow_count": len(flows),
+        # The three cards over the list. Live / Offline / Draft only: archived
+        # is the state nobody needs to act on, and it has its filter.
+        "summary": [
+            {"status": status, "label": label, "tone": tone, "count": status_counts.get(str(status), 0)}
+            for status, label, tone in SECTIONS[:3]
+        ],
         "template_cards": template_cards,
         "template_total": template_total,
         "query": request.GET.get("q", ""),
@@ -244,8 +294,11 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
 def flow_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The flow list. Answers the rows partial to HTMX and the page otherwise."""
     context = _list_context(request)
-    template = "flows/_list_rows.html" if request.headers.get("HX-Request") else "flows/list.html"
-    return render(request, template, context)
+    if request.headers.get("HX-Request"):
+        # The summary cards sit above the toolbar, outside the swapped region;
+        # the rows response refreshes them out of band (flows/_summary.html).
+        return render(request, "flows/_list_rows.html", {**context, "summary_oob": True})
+    return render(request, "flows/list.html", context)
 
 
 @login_required
@@ -366,6 +419,58 @@ def flow_archive(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
         body="Find it again with the Archived status filter.",
         events={"flowsChanged": True},
     )
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def flow_set_live(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
+    """The flow list's switch: ``live=0`` sets a live flow offline, ``live=1``
+    sets an offline one live again.
+
+    The target state is explicit rather than a toggle, so a page that has gone
+    stale — another tab already flipped it — cannot flip it back by accident;
+    it gets a refusal and the row re-reads itself.
+
+    **Back on only re-runs what already ran.** :func:`services.publish` publishes
+    the *newest* version, and a flow edited since it went offline has a newer
+    one nobody has set live yet. A switch on a list row is no place to publish
+    unreviewed edits, so that case is refused here with a pointer to the
+    builder, where the changes are in front of the person setting them live.
+    The list draws that switch disabled for the same reason; this is the check
+    that holds when the page is stale.
+    """
+    flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
+    if request.POST.get("live") == "0":
+        try:
+            stopped = services.take_offline(flow)
+        except services.FlowNotLiveError as exc:
+            return toast_response(tone="error", title="Not set offline", body=str(exc), events={"flowsChanged": True})
+        body = "It stopped replying straight away."
+        if stopped:
+            body = f"It stopped replying straight away, including to {stopped} {'person' if stopped == 1 else 'people'} partway through it."
+        return toast_response(tone="success", title="Flow is offline", body=body, events={"flowsChanged": True})
+
+    latest = services.latest_version(flow)
+    if flow.status != FlowStatus.OFFLINE or latest is None or latest.published_at is None:
+        return toast_response(
+            tone="error",
+            title="Not set live",
+            body="It has changes that have not been live yet. Open it to review them, then set it live there.",
+            events={"flowsChanged": True},
+        )
+    try:
+        services.publish(flow, user=request.user)
+    except services.FlowValidationError:
+        return toast_response(
+            tone="error",
+            title="Not set live",
+            body="It has problems to fix first. Open it to see them.",
+            events={"flowsChanged": True},
+        )
+    except services.FlowPlanLimitError as exc:
+        return toast_response(tone="error", title="Not set live", body=str(exc), events={"flowsChanged": True})
+    return toast_response(tone="success", title="Flow is live", events={"flowsChanged": True})
 
 
 @login_required

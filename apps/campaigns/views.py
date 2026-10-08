@@ -102,8 +102,13 @@ def sequence_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     # empty state, with no visible filter to clear. Repeatable, because the
     # Filter popover allows several statuses at once.
     statuses = multi(request.GET, "status", allowed=SequenceStatus.values)
+    sequences = list(selectors.sequences_for(request.workspace, query=query, statuses=statuses))
+    for sequence in sequences:
+        # One dot per step, the shape of the sequence at a glance; past eight
+        # the dots stop and the count beside them carries the rest.
+        sequence.step_dots = range(min(sequence.step_count, 8))
     context = {
-        "sequences": list(selectors.sequences_for(request.workspace, query=query, statuses=statuses)),
+        "sequences": sequences,
         "query": query,
         "filters": {"status": statuses},
         "filter_groups": [{"key": "status", "label": "Status", "options": list(SequenceStatus.choices)}],

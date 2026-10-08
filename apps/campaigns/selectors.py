@@ -62,6 +62,11 @@ def sequences_for(workspace: Any, *, query: str = "", statuses: Collection[str] 
             distinct=True,
         ),
         step_count=Count("steps", distinct=True),
+        # The list's completion bar: of everyone ever enrolled, how many reached
+        # the end. Unsubscribed people count in the denominator — they started
+        # and did not finish, which is what the bar is for.
+        enrolled_count=Count("enrollments", distinct=True),
+        completed_count=Count("enrollments", filter=Q(enrollments__status=EnrollmentStatus.COMPLETED), distinct=True),
     ).order_by("name")
 
 
