@@ -176,16 +176,20 @@ def start_flow(
         # send — the connection goes to `send_outbound` verbatim.
         raise WorkspaceMismatchError("That channel connection belongs to a different workspace than the flow.")
 
-    version = _resolve_version(flow, flow_version)
-    graph = Graph(version.graph_json)
-    entry = graph.entry_node_id()
-    if entry is None:
-        raise FlowNotRunnableError(
-            f"Flow {flow.pk} version {version.version} has no single entry node, so there is nowhere "
-            f"to start (SPEC §9.1). Publishing validates this; a draft preview does not."
-        )
-
     with transaction.atomic(), contact_lock(contact):
+        # Inside the transaction, not before it: resolving takes a share lock
+        # on the flow row that has to last until the execution is committed, so
+        # a flow taken offline in between either waits for this start (and
+        # then expires it) or is seen as offline here. See _resolve_version.
+        version = _resolve_version(flow, flow_version)
+        graph = Graph(version.graph_json)
+        entry = graph.entry_node_id()
+        if entry is None:
+            raise FlowNotRunnableError(
+                f"Flow {flow.pk} version {version.version} has no single entry node, so there is nowhere "
+                f"to start (SPEC §9.1). Publishing validates this; a draft preview does not."
+            )
+
         superseded = _supersede(contact)
         execution = FlowExecution(
             workspace=flow.workspace,
@@ -236,6 +240,44 @@ def stop_automation(contact: Any) -> int:
     with transaction.atomic(), contact_lock(contact):
         stopped = _supersede(contact)
     logger.info("Automation stopped for contact %s: %s execution(s) expired.", contact.pk, stopped)
+    return stopped
+
+
+def expire_flow_executions(flow: Flow) -> int:
+    """Expire every live execution of ``flow``, whoever it belongs to.
+
+    The engine-side half of taking a flow offline
+    (:func:`apps.flows.services.take_offline`): somebody who got the menu a
+    minute ago and taps a reply afterwards must get nothing, not the rest of a
+    flow the workspace has switched off. :func:`stop_automation` is the
+    per-contact version of the same act, and both expire through
+    :func:`_expire`.
+
+    **Returns how many contacts were stopped.** Preview runs ("Test this flow")
+    are expired as well but not counted: the number is what the person is told
+    about their contacts, and their own test is not one.
+
+    One ``UPDATE`` rather than a locking read and an id list. It takes each row
+    lock as it goes, so it waits for a step in flight to commit and then
+    re-checks the row: a run that finished meanwhile is skipped, one that went
+    back to waiting is expired. The timers go by contact, the way
+    :func:`_supersede` cancels them — SPEC §22 gives a contact one live
+    execution, so a contact's resume timers are that execution's — and the
+    contacts come from a subquery over the rows this call stamped, so neither
+    statement grows with the size of the flow's audience. The caller may hold
+    the flow row ``FOR SHARE`` but nothing stronger (see ``take_offline``).
+    """
+    now = timezone.now()
+    executions = FlowExecution.objects.for_workspace(flow.workspace_id).filter(flow=flow)
+    # The rows this call expires, told apart from earlier ones by the stamp it
+    # writes. Evaluated lazily, after the UPDATE below.
+    expired_here = executions.filter(status=ExecutionStatus.EXPIRED, updated_at=now)
+    with transaction.atomic():
+        live = executions.filter(status__in=sorted(LIVE_STATUSES))
+        if not _expire(live, flow.workspace_id, now, contact_id__in=expired_here.values("contact_id")):
+            return 0
+        stopped = expired_here.filter(preview=False).count()
+    logger.info("Flow %s taken offline: %s conversation(s) stopped.", flow.pk, stopped)
     return stopped
 
 
@@ -553,8 +595,29 @@ def _notify_failure(execution: FlowExecution, *, loop_cap: bool) -> None:
 
 
 def _resolve_version(flow: Flow, flow_version: FlowVersion | None) -> FlowVersion:
-    """Which version to run, with the reasons a flow may not be runnable."""
+    """Which version to run, with the reasons a flow may not be runnable.
+
+    Called inside :func:`start_flow`'s transaction, and the flow is re-read
+    there under ``FOR KEY SHARE`` before anything else. The caller's instance
+    can be minutes old — a trigger matched it, a queue row named it — and
+    reading "the published version" without the lock let a start that resolved
+    just before the flow went offline commit an execution that
+    ``expire_flow_executions`` had already looked past. The lock lasts until
+    the execution is committed, and ``take_offline``'s ``FOR UPDATE`` waits
+    for it; a start that comes after sees the flow as it is now.
+
+    ``FOR KEY SHARE`` because it is the weakest row lock: concurrent starts of
+    one flow do not wait on each other, and it does not conflict with the
+    ``FOR NO KEY UPDATE`` that ``publish`` and ``save_draft`` take, so a busy
+    flow's starts never hold up an autosave (see ``locked_status``).
+    """
     from apps.flows.models import FlowStatus
+    from apps.flows.services import locked_status
+
+    status = locked_status(flow, lock="key share")
+    if status is None:
+        raise FlowNotRunnableError(f"Flow {flow.pk} no longer exists.")
+    flow.status = status
 
     if flow.status == FlowStatus.ARCHIVED:
         raise FlowNotRunnableError(f"Flow {flow.pk} is archived.")
@@ -586,18 +649,27 @@ def _supersede(contact: Any) -> int:
     live = FlowExecution.objects.for_workspace(contact.workspace_id).filter(
         contact=contact, status__in=sorted(LIVE_STATUSES)
     )
-    expired = live.update(status=ExecutionStatus.EXPIRED, wait_config={}, updated_at=timezone.now())
-    if not expired:
-        return 0
+    return _expire(live, contact.workspace_id, timezone.now(), contact_id=contact.pk)
 
-    # Only the two types that resume an execution. A pending `start_flow` row is
-    # a future run somebody scheduled on purpose and is none of this function's
-    # business.
-    cancel_pending(
-        contact.workspace_id,
-        contact_id=contact.pk,
-        type__in=(ActionType.RESUME_EXECUTION, ActionType.FOLLOWUP_TIMER),
-    )
+
+#: The queue rows that resume an execution. A pending `start_flow` row is a
+#: future run somebody scheduled on purpose and is never disarmed with them.
+_RESUMING_ACTIONS = (ActionType.RESUME_EXECUTION, ActionType.FOLLOWUP_TIMER)
+
+
+def _expire(live: Any, workspace_id: Any, now: datetime, **timers: Any) -> int:
+    """Expire the executions in ``live`` and cancel the resume timers ``timers`` selects.
+
+    What expiring means, in one place: the status, the wait config cleared, and
+    the queue rows that would have woken the run cancelled — a stale timer would
+    be caught by :func:`resume_execution`'s status check, but a cancelled row
+    never wakes a worker at all. :func:`_supersede` and
+    :func:`expire_flow_executions` differ only in which executions and whose
+    timers. Expired, not failed: nothing went wrong, somebody ended the run.
+    """
+    expired = live.update(status=ExecutionStatus.EXPIRED, wait_config={}, updated_at=now)
+    if expired:
+        cancel_pending(workspace_id, type__in=_RESUMING_ACTIONS, **timers)
     return expired
 
 

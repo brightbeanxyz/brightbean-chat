@@ -173,7 +173,7 @@ All PKs are UUIDv7. All tenant tables have `workspace_id` FK with index. Timesta
 - `segment`: workspace_id, name, filter_json (same condition schema as the Condition node, section 11.4).
 
 ### flows
-- `flow`: workspace_id, name, status (draft, active, archived), folder (nullable text).
+- `flow`: workspace_id, name, status (draft, active, offline, archived), folder (nullable text). `offline` is a flow that was live and was taken offline: it has no published version, so nothing starts it, and conversations already in it were stopped.
 - `flow_version`: flow_id, version (int, monotonic), graph_json, published (bool), created_by. A flow has at most one published version. Editing always writes a new draft version; publishing flips flags atomically.
 - `trigger`: workspace_id, flow_id, channel_connection_id (nullable = all connections of matching platform), type (enum, section 10), config_json, enabled, priority (int). Index (workspace_id, type, enabled).
 - `flow_execution`: flow_version_id, contact_id, workspace_id, status (running, waiting_reply, waiting_delay, completed, failed, expired), current_node_id, variables json, blocks_since_pause (int), wait_config json (what resumes it: quick-reply set, data-collection field, timer id), started_by (trigger id / broadcast id / sequence id / api), updated_at. Partial unique index: one row per (contact_id, flow_id) where status in (running, waiting_reply, waiting_delay). Index (status, updated_at).

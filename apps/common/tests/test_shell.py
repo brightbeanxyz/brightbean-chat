@@ -968,6 +968,39 @@ class TestLogoSizing:
         assert "sidebar-logo-mark-sm" not in html
 
 
+class TestStatusPillDot:
+    def test_a_pill_holding_a_dot_lays_out_as_a_flex_row(self):
+        """`.status-pill` is inline-block, and the dot is a 6px span that only
+        has a size once its parent is a flex container. The call sites asked
+        for that with `inline-flex items-center gap-1.5`, which the unlayered
+        `.status-pill` beat, so every "Live" pill shipped without its dot.
+        Read from the compiled bundle, because the bundle is what ships."""
+        from django.contrib.staticfiles import finders
+
+        bundle = Path(finders.find("css/dist/styles.css")).read_text()
+        rule = re.search(r"\.status-pill:has\(>\.status-pill-dot\)\{([^}]*)\}", bundle)
+
+        assert rule, "no rule lays out a pill that holds a dot"
+        assert "display:inline-flex" in rule.group(1)
+
+    def test_every_dot_is_a_direct_child_of_its_pill(self):
+        """The rule above matches `> .status-pill-dot`, so a dot wrapped in
+        anything else — or set in a pill-less span — is back to rendering as
+        nothing."""
+        dots = 0
+        offenders = []
+        for path in (Path(__file__).parents[3] / "templates").rglob("*.html"):
+            src = path.read_text()
+            found = src.count('class="status-pill-dot"')
+            seated = len(re.findall(r'<span class="status-pill\b[^"]*">\s*<span class="status-pill-dot">', src))
+            dots += found
+            if found != seated:
+                offenders.append(path.name)
+
+        assert dots, "no template uses the dot any more"
+        assert not offenders, f"a dot outside a .status-pill renders as nothing: {offenders}"
+
+
 @pytest.mark.django_db
 class TestSettingsLayouts:
     def test_the_settings_rows_are_the_sidebar_rather_than_a_second_column(self, tenant_client, shell_urls):

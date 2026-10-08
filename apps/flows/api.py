@@ -42,7 +42,7 @@ from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
 from apps.members.roles import WorkspaceRole
 
-__all__ = ["flow_detail", "flow_publish", "flow_schema", "flow_stats"]
+__all__ = ["flow_detail", "flow_publish", "flow_schema", "flow_stats", "flow_take_offline"]
 
 # Viewer is the lowest workspace role, so this reads as "any member of this
 # workspace". Spelled with the role rather than a bare membership check so the
@@ -205,6 +205,11 @@ def flow_publish(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
         published = services.publish(flow, user=request.user)
     except services.FlowValidationError as exc:
         return JsonResponse({"validation": exc.result.as_dict()}, status=422)
+    except services.FlowPlanLimitError as exc:
+        # Caught here, not left to the default handler: that answers in HTML,
+        # and the builder reads a non-JSON response as an expired session. The
+        # message already says what to do ("switch one off to free up a slot").
+        return _error("plan_limit", str(exc), 409)
     # publish() hands back the findings it validated against, from inside the
     # transaction that approved them. Re-running validation here would repeat
     # the whole walk and could answer differently, since a channel could change
@@ -215,6 +220,38 @@ def flow_publish(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             "version": published.version.as_dict(),
             "triggers": trigger_services.summaries(flow),
             "validation": published.validation.as_dict(),
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /w/<workspace_id>/api/flows/<flow_id>/offline/
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def flow_take_offline(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
+    """Take a live flow offline and stop the conversations in it.
+
+    Answers with the same pieces the publish response carries, so the builder
+    applies either one the same way: the flow's new status, the latest version
+    (no longer flagged published) and the triggers, plus how many contacts'
+    conversations were stopped so the confirmation can say so.
+    """
+    flow = _get_flow(request, flow_id)
+    try:
+        stopped = services.take_offline(flow)
+    except services.FlowNotLiveError as exc:
+        return _error("not_live", str(exc), 409)
+    latest = services.latest_version(flow)
+    return JsonResponse(
+        {
+            "flow": _flow_payload(flow),
+            "version": latest.as_dict() if latest else None,
+            "triggers": trigger_services.summaries(flow),
+            "stopped": stopped,
         }
     )
 

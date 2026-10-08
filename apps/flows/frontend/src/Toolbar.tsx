@@ -8,20 +8,40 @@
  * errors: what the builder knows is only as of the last save, so disabling it
  * would be a claim it cannot support.
  *
- * An unchanged published version needs no repeat publish unless all its
- * configured triggers are off. In that case the action turns them on, and the
- * status says plainly why the published flow cannot start yet.
+ * An unchanged published version needs no repeat publish, so the same button
+ * becomes "Set offline" — unless all its configured triggers are off, in which
+ * case the action turns them on, and the status says plainly why the published
+ * flow cannot start yet.
  */
 import { useState } from "react";
 
 import { ApiError } from "./api/client";
 import { TestOnChannel } from "./TestOnChannel";
 import type { ValidationPayload } from "./schema/types";
-import { publishFlow } from "./api/flows";
-import { publishView } from "./publishState";
+import { loadFlow, publishFlow, takeFlowOffline } from "./api/flows";
+import { OFFLINE_HINT, publishView, type PublishAction } from "./publishState";
+import { refreshApplies } from "./refreshState";
 import { showToast } from "./toast";
 import type { Autosave } from "./persistence/autosave";
 import { useBuilder, useBuilderStore } from "./store/context";
+
+const OFFLINE_CONFIRM =
+  "Set this flow offline? It stops replying straight away, including to people partway through it.";
+
+const BUSY_LABEL: Record<PublishAction, string> = {
+  publish: "Setting live…",
+  enable: "Turning on…",
+  offline: "Setting offline…",
+};
+
+function stoppedCopy(stopped: number): string {
+  if (stopped === 0) {
+    return "Nothing new will start it.";
+  }
+  return stopped === 1
+    ? "1 conversation in progress was stopped."
+    : `${stopped} conversations in progress were stopped.`;
+}
 
 export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const store = useBuilderStore();
@@ -36,11 +56,14 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const flowStatus = useBuilder((state) => state.flow?.status);
   const triggers = useBuilder((state) => state.triggers);
   const view = publishView(save, flowStatus, triggers.length, triggers.filter((trigger) => trigger.enabled).length);
-  const [publishing, setPublishing] = useState(false);
+  // Which action is in flight, not just whether one is: two buttons can start
+  // one, and the busy label belongs on the one that was clicked — not on
+  // whichever button the response has since relabelled.
+  const [busy, setBusy] = useState<PublishAction | null>(null);
 
   const publish = async () => {
-    const enablingOnly = view.publishLabel === "Turn on triggers";
-    setPublishing(true);
+    const enablingOnly = view.action === "enable";
+    setBusy(view.action);
     try {
       // Flush first, and stop if it did not land. Publishing a draft the server
       // has not seen publishes the *previous* version — and then reports
@@ -84,7 +107,56 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         store.getState().setSave({ message: error.message });
       }
     } finally {
-      setPublishing(false);
+      setBusy(null);
+    }
+  };
+
+  const takeOffline = async () => {
+    // Asked first because it cannot be taken back: the conversations it stops
+    // stay stopped when the flow is set live again.
+    if (!window.confirm(OFFLINE_CONFIRM)) {
+      return;
+    }
+    setBusy("offline");
+    // Captured before the request, compared after it: the button is offered
+    // beside a pending draft too, and a version from the server must not
+    // overwrite the save slice of an edit it has not seen (refreshState.ts).
+    const revision = store.getState().revision;
+    try {
+      // No flush. Going offline does not depend on the draft, and a draft that
+      // fails validation must not stand between a live flow and switching it off.
+      const result = await takeFlowOffline(store.getState().env);
+      store.getState().setFlow(result.flow);
+      store.getState().setTriggers(result.triggers);
+      const state = store.getState();
+      store.getState().setSave(
+        refreshApplies(state.save.state, revision, state.revision)
+          ? { version: result.version, publishedVersion: null, message: null }
+          : { publishedVersion: null, message: null },
+      );
+      showToast({ tone: "success", title: "Flow is offline", body: stoppedCopy(result.stopped) });
+    } catch (error) {
+      if (error instanceof ApiError) {
+        store.getState().setSave({ message: error.message });
+      }
+      if (error instanceof ApiError && error.status === 409) {
+        // The flow is not what this page thinks: another tab or member took it
+        // offline or archived it. Re-read it, or the toolbar goes on offering
+        // the same refused action. Status and triggers are not the graph, so
+        // they always apply; versions only when no edit raced the request.
+        void loadFlow(store.getState().env)
+          .then((detail) => {
+            store.getState().setFlow(detail.flow);
+            store.getState().setTriggers(detail.triggers);
+            const now = store.getState();
+            if (refreshApplies(now.save.state, revision, now.revision)) {
+              now.setSave({ version: detail.version, publishedVersion: detail.published_version });
+            }
+          })
+          .catch(() => {});
+      }
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -136,12 +208,25 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         {canEdit ? (
           <button
             type="button"
-            className="btn-pill-primary btn-pill-sm"
-            disabled={publishing || view.publishDisabled}
+            // Secondary when it switches the flow off: the same spot as the
+            // call to action, but not dressed as one.
+            className={view.action === "offline" ? "btn-pill-secondary btn-pill-sm" : "btn-pill-primary btn-pill-sm"}
+            disabled={busy !== null}
             title={view.publishHint ?? undefined}
-            onClick={() => void publish()}
+            onClick={() => void (view.action === "offline" ? takeOffline() : publish())}
           >
-            {publishing ? (view.publishLabel === "Turn on triggers" ? "Turning on…" : "Setting live…") : view.publishLabel}
+            {busy && busy === view.action ? BUSY_LABEL[busy] : view.publishLabel}
+          </button>
+        ) : null}
+        {canEdit && view.secondary === "offline" ? (
+          <button
+            type="button"
+            className="btn-pill-secondary btn-pill-sm"
+            disabled={busy !== null}
+            title={OFFLINE_HINT}
+            onClick={() => void takeOffline()}
+          >
+            {busy === "offline" ? BUSY_LABEL.offline : "Set offline"}
           </button>
         ) : null}
       </span>

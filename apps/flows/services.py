@@ -11,6 +11,13 @@ The same lock makes publishing atomic: clearing the old published flag, setting
 the new one and stamping ``flow.status`` happen in one transaction, so no reader
 can see a flow with two published versions or none.
 
+**Which lock.** Saves and publishes take ``FOR NO KEY UPDATE``: it serialises
+them against each other exactly as ``FOR UPDATE`` would, but not against the
+``FOR KEY SHARE`` every :func:`apps.flows.engine.start_flow` holds on the flow
+until its execution is committed, so a busy flow's conversations never hold up
+an autosave. :func:`take_offline` alone takes the full ``FOR UPDATE``, because
+waiting for the starts in flight is the point there.
+
 Nothing here reaches across tenants. Every query goes through
 ``for_workspace(flow.workspace_id)``, so there is no ``.unscoped()`` in this app
 at all — the caller has already resolved the flow through
@@ -21,7 +28,7 @@ clause that was going to filter on the primary key anyway.
 from dataclasses import dataclass, replace
 from typing import Any
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.flows.capabilities import connected_platforms
@@ -30,18 +37,21 @@ from apps.flows.schema import ValidationResult, empty_graph, validate_graph
 from apps.flows.schema.sanitize import sanitize_graph
 
 __all__ = [
+    "FlowNotLiveError",
     "FlowValidationError",
     "PublishResult",
     "archive_flow",
     "create_flow",
     "duplicate_flow",
     "latest_version",
+    "locked_status",
     "publish",
     "published_version",
     "rename_flow",
     "restore_flow",
     "save_draft",
     "set_folder",
+    "take_offline",
     "validate_for_workspace",
 ]
 
@@ -53,6 +63,10 @@ class FlowPlanLimitError(ValueError):
     written to catch — not a ``FlowValidationError``, which carries a
     ``ValidationResult`` and would make a billing limit look like a broken graph.
     """
+
+
+class FlowNotLiveError(ValueError):
+    """This flow cannot be taken offline: it is not live, or it is a broadcast's own."""
 
 
 class FlowValidationError(Exception):
@@ -182,6 +196,90 @@ def archive_flow(flow: Flow) -> Flow:
     return flow
 
 
+#: The two share-mode row locks Django's ``select_for_update`` cannot spell.
+#: Literal statements rather than one formatted string, so the SQL is never
+#: assembled at run time.
+_STATUS_UNDER_LOCK = {
+    "key share": "SELECT status FROM flows_flow WHERE id = %s FOR KEY SHARE",
+    "share": "SELECT status FROM flows_flow WHERE id = %s FOR SHARE",
+}
+
+
+def locked_status(flow: Flow, *, lock: str) -> str | None:
+    """Re-read ``flow``'s status under a share-mode row lock; ``None`` if it is gone.
+
+    Must run inside a transaction: the lock is held until it ends, which is the
+    whole point. ``"key share"`` is what :func:`apps.flows.engine.start_flow`
+    holds while it creates an execution — the weakest lock, compatible with
+    every other start and with the ``FOR NO KEY UPDATE`` that saves and
+    publishes take. ``"share"`` is :func:`take_offline`'s second step: it lets
+    starts through but makes a publish wait, so the flow cannot be set live
+    again while its conversations are being stopped. Only ``FOR UPDATE`` —
+    ``take_offline``'s first step — waits for the starts.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(_STATUS_UNDER_LOCK[lock], [flow.pk])
+        row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def take_offline(flow: Flow) -> int:
+    """Take a live flow offline. Returns how many conversations in it were stopped.
+
+    The builder's "Set offline", in two steps.
+
+    **First, under** ``FOR UPDATE`` **on the flow row**: the published flag
+    goes and the status becomes ``offline``. That one write is what stops the flow
+    everywhere — trigger matching and rule triggers want an ``active`` flow, and
+    every other way in (the public API, a sequence step, another flow's
+    ``start_flow``, a start from a contact's page, a queued start) goes through
+    :func:`apps.flows.engine.start_flow`, which re-reads the flow under a share
+    lock before resolving its published version. A start already past that
+    point holds the lock, so this waits for it to commit, and step two then
+    sees the execution it made. Setting it live again is an ordinary
+    :func:`publish`, plan check included, since offline flows do not count
+    towards the plan's automation limit. The version that was live keeps its
+    ``published_at`` and so stays frozen (see :func:`save_draft`).
+
+    **Then, under** ``FOR SHARE``, conversations already in the flow stop,
+    through :func:`apps.flows.engine.expire_flow_executions`. Not inside the
+    first transaction: that waits on execution rows a running step holds, and a
+    step whose ``start_flow`` node restarts this same flow is waiting on the
+    flow row while holding its execution — ``FOR UPDATE`` held across both
+    would deadlock. ``FOR SHARE`` does not block that step's share lock, but it
+    does block a publish, so nobody can set the flow live again mid-way. If
+    somebody already did, in the moment between the two steps, nothing is
+    stopped: the conversations running now belong to a flow that is live again.
+
+    Triggers are left as they are: pausing them would lose which ones somebody
+    had paused on purpose, and an offline flow is not matched whatever they say.
+    A broadcast's private flow is refused: its sends name their version
+    explicitly, so it would keep starting conversations, and the broadcast has
+    its own cancel.
+    """
+    # Late: the engine imports this module for `published_version`.
+    from apps.flows.engine import expire_flow_executions
+
+    with transaction.atomic():
+        locked = Flow.objects.for_workspace(flow.workspace_id).select_for_update().get(pk=flow.pk)
+        if locked.status != FlowStatus.ACTIVE:
+            raise FlowNotLiveError("Only a live flow can be set offline.")
+        if Flow.objects.for_workspace(flow.workspace_id).filter(pk=locked.pk, broadcasts__isnull=False).exists():
+            raise FlowNotLiveError("This flow belongs to a broadcast. Cancel the broadcast to stop it.")
+
+        _versions(locked).filter(published=True).update(published=False)
+        locked.status = FlowStatus.OFFLINE
+        locked.save(update_fields=["status", "updated_at"])
+
+    # The caller holds the unlocked instance, as in publish().
+    flow.status = locked.status
+
+    with transaction.atomic():
+        if locked_status(locked, lock="share") == FlowStatus.ACTIVE:
+            return 0
+        return expire_flow_executions(locked)
+
+
 def restore_flow(flow: Flow) -> Flow:
     """Un-archive. Back to active if something is published, draft otherwise.
 
@@ -243,10 +341,14 @@ def save_draft(flow: Flow, graph_json: Any, *, user: Any = None) -> FlowVersion:
     would leave the API's ``PUT`` open, and ``edit_flows`` is enough to call it.
     """
     graph_json = sanitize_graph(graph_json)
-    locked = Flow.objects.for_workspace(flow.workspace_id).select_for_update().get(pk=flow.pk)
+    locked = Flow.objects.for_workspace(flow.workspace_id).select_for_update(no_key=True).get(pk=flow.pk)
     latest = _versions(locked).order_by("-version").first()
 
-    if latest is not None and not latest.published:
+    # `published_at` as well as `published`: a version taken offline is no
+    # longer published, but conversations ran on it, so it is history rather
+    # than a draft and an edit opens the next version like any edit of a live
+    # flow.
+    if latest is not None and not latest.published and latest.published_at is None:
         # `created_by` is not touched. It records who opened this revision, and
         # SPEC §5 gives the column no other meaning; rewriting it on every
         # autosave would make it name whoever last had the flow open, which
@@ -274,7 +376,7 @@ def publish(flow: Flow, *, user: Any = None) -> PublishResult:
     findings are non-blocking, and a flow that mentions a channel the workspace
     has not connected yet is a normal state on the way to connecting it.
     """
-    locked = Flow.objects.for_workspace(flow.workspace_id).select_for_update().get(pk=flow.pk)
+    locked = Flow.objects.for_workspace(flow.workspace_id).select_for_update(no_key=True).get(pk=flow.pk)
     target = _versions(locked).order_by("-version").first()
     if target is None:  # pragma: no cover - create_flow always makes version 1
         raise FlowValidationError(validate_graph(empty_graph()))
@@ -294,7 +396,10 @@ def publish(flow: Flow, *, user: Any = None) -> PublishResult:
     if not target.published:
         _versions(locked).filter(published=True).update(published=False)
         target.published = True
-        target.save(update_fields=["published", "updated_at"])
+        # The first time only: a version set live again after going offline
+        # keeps the moment it first ran.
+        target.published_at = target.published_at or timezone.now()
+        target.save(update_fields=["published", "published_at", "updated_at"])
 
     if locked.status != FlowStatus.ACTIVE:
         locked.status = FlowStatus.ACTIVE
