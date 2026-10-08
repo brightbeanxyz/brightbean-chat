@@ -1,11 +1,19 @@
 /**
- * The four endpoints apps/flows/api.py serves, plus the media picker.
+ * The five endpoints apps/flows/api.py serves, plus the media picker.
  *
  * Every URL is a data attribute on the mount div, so nothing here is
  * constructed — see src/env.ts.
  */
 import type { BuilderEnv } from "../env";
-import type { FlowDetail, FlowGraph, PickerPayload, PublishResult, SaveResult, StatsPayload } from "../schema/types";
+import type {
+  FlowDetail,
+  FlowGraph,
+  OfflineResult,
+  PickerPayload,
+  PublishResult,
+  SaveResult,
+  StatsPayload,
+} from "../schema/types";
 import { request } from "./client";
 
 export function loadFlow(env: BuilderEnv): Promise<FlowDetail> {
@@ -24,6 +32,11 @@ export function saveGraph(env: BuilderEnv, graph: FlowGraph): Promise<SaveResult
 
 export function publishFlow(env: BuilderEnv): Promise<PublishResult> {
   return request<PublishResult>(env.publishUrl, { method: "POST" });
+}
+
+/** A 409 when the flow is not live; the envelope's message says so. */
+export function takeFlowOffline(env: BuilderEnv): Promise<OfflineResult> {
+  return request<OfflineResult>(env.offlineUrl, { method: "POST" });
 }
 
 export function fetchStats(env: BuilderEnv): Promise<StatsPayload> {

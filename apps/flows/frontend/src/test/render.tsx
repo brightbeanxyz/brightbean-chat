@@ -14,6 +14,7 @@ export const TEST_ENV: BuilderEnv = {
   canEdit: true,
   detailUrl: "/w/ws/api/flows/flow-1/",
   publishUrl: "/w/ws/api/flows/flow-1/publish/",
+  offlineUrl: "/w/ws/api/flows/flow-1/offline/",
   statsUrl: "/w/ws/api/flows/flow-1/stats/",
   schemaUrl: "/w/ws/api/flows/schema/",
   mediaPickerUrl: "/w/ws/media/picker/",

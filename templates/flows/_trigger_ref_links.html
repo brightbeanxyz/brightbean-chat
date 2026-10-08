@@ -28,7 +28,7 @@ which accounts this deployment runs.
             <div class="min-w-0 flex-1">
                 <code class="block text-xs break-all" style="color: var(--text-secondary);">{{ link.url }}</code>
                 <div class="flex flex-wrap items-center gap-2 mt-1.5">
-                    <button type="button" class="btn-outline btn-inline"
+                    <button type="button" class="btn-pill-secondary btn-pill-sm"
                             @click="navigator.clipboard.writeText($el.closest('div').parentElement.querySelector('code').textContent).then(() => { copied = true; setTimeout(() => copied = false, 1500) })">
                         <span x-text="copied ? 'Copied' : 'Copy link'">Copy link</span>
                     </button>

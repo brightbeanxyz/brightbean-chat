@@ -30,6 +30,10 @@ def publish_url(tenancy, flow):
     return reverse("flows:api_publish", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
 
 
+def offline_url(tenancy, flow):
+    return reverse("flows:api_offline", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
+
+
 def stats_url(tenancy, flow):
     return reverse("flows:api_stats", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
 
@@ -229,6 +233,83 @@ class TestPublishEndpoint:
     def test_a_get_is_not_a_publish(self, tenancy, client_for, flow):
         assert client_for(tenancy.owner).get(publish_url(tenancy, flow)).status_code == 405
 
+    def test_a_plan_limit_is_a_json_refusal_not_a_500(self, tenancy, client_for, flow, monkeypatch):
+        """The default handler answers in HTML, which the builder reads as an
+        expired session — so going offline and back over the limit said
+        "your session expired" instead of what to do about it."""
+        from apps.flows import services
+
+        def refuse(flow):
+            raise services.FlowPlanLimitError("Your plan allows 1 active automation; switch one off to free up a slot.")
+
+        monkeypatch.setattr(services, "_check_plan_allows_activation", refuse)
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+
+        response = client_for(tenancy.owner).post(publish_url(tenancy, flow))
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "plan_limit"
+        assert "switch one off" in response.json()["error"]["message"]
+        flow.refresh_from_db()
+        assert flow.status == "draft"
+
+
+class TestOfflineEndpoint:
+    def test_it_takes_a_live_flow_offline(self, tenancy, client_for, flow):
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+
+        response = client_for(tenancy.owner).post(offline_url(tenancy, flow))
+        payload = response.json()
+
+        assert response.status_code == 200
+        assert payload["flow"]["status"] == "offline"
+        assert payload["version"]["version"] == 1
+        assert payload["version"]["published"] is False
+        assert payload["version"]["published_at"] is not None
+        assert payload["triggers"] == []
+        assert payload["stopped"] == 0
+        assert FlowVersion.objects.for_workspace(tenancy.workspace).filter(flow=flow, published=True).count() == 0
+
+    def test_the_detail_read_agrees_afterwards(self, tenancy, client_for, flow):
+        """What the builder re-reads on focus, so another tab catches up."""
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        client = client_for(tenancy.owner)
+        client.post(offline_url(tenancy, flow))
+
+        payload = client.get(detail_url(tenancy, flow)).json()
+
+        assert payload["flow"]["status"] == "offline"
+        assert payload["published_version"] is None
+
+    def test_a_flow_that_is_not_live_is_a_409(self, tenancy, client_for, flow):
+        response = client_for(tenancy.owner).post(offline_url(tenancy, flow))
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "not_live"
+
+    def test_a_broadcasts_own_flow_is_a_409(self, tenancy, client_for, flow):
+        from apps.broadcasts.models import Broadcast
+        from apps.flows.tests.support import connection_for
+
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        Broadcast.objects.create(
+            workspace=tenancy.workspace,
+            name="Spring sale",
+            channel_connection=connection_for(tenancy.workspace),
+            flow=flow,
+        )
+
+        response = client_for(tenancy.owner).post(offline_url(tenancy, flow))
+
+        assert response.status_code == 409
+        assert "broadcast" in response.json()["error"]["message"]
+
+    def test_a_get_is_not_a_take_offline(self, tenancy, client_for, flow):
+        assert client_for(tenancy.owner).get(offline_url(tenancy, flow)).status_code == 405
+
 
 class TestStats:
     """The shape L3-C's overlay was written against, now with L7-A behind it.
@@ -316,6 +397,7 @@ class TestPermissions:
 
         assert put(client, detail_url(tenancy, flow), graph_for("send_message")).status_code == 200
         assert client.post(publish_url(tenancy, flow)).status_code == 200
+        assert client.post(offline_url(tenancy, flow)).status_code == 200
 
     @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
     def test_agents_and_viewers_are_read_only(self, tenancy, client_for, flow, role):
@@ -325,6 +407,11 @@ class TestPermissions:
         assert client.get(stats_url(tenancy, flow)).status_code == 200
         assert put(client, detail_url(tenancy, flow), graph_for("send_message")).status_code == 403
         assert client.post(publish_url(tenancy, flow)).status_code == 403
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        assert client.post(offline_url(tenancy, flow)).status_code == 403
+        flow.refresh_from_db()
+        assert flow.status == "active"
 
     def test_a_read_by_a_viewer_does_not_change_the_draft(self, tenancy, client_for, flow):
         client_for(tenancy.user_for(WorkspaceRole.VIEWER)).get(detail_url(tenancy, flow))
@@ -379,12 +466,13 @@ class TestTenantIsolation:
         assert client.get(url).status_code == 404
         assert put(client, url, graph_for("send_message")).status_code == 404
 
-    def test_the_same_holds_for_publish_and_stats(self, tenancy, other_tenancy, client_for):
+    def test_the_same_holds_for_publish_offline_and_stats(self, tenancy, other_tenancy, client_for):
         victim_flow = create_flow(workspace=tenancy.workspace, name="Victim")
         keys = {"workspace_id": other_tenancy.workspace.pk, "flow_id": victim_flow.pk}
         client = client_for(other_tenancy.owner)
 
         assert client.post(reverse("flows:api_publish", kwargs=keys)).status_code == 404
+        assert client.post(reverse("flows:api_offline", kwargs=keys)).status_code == 404
         assert client.get(reverse("flows:api_stats", kwargs=keys)).status_code == 404
 
     def test_a_flow_that_does_not_exist_answers_the_same_404(self, tenancy, client_for):

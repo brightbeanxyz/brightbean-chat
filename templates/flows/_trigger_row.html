@@ -43,7 +43,18 @@ summary and (for ref triggers) its per-connection links.
     </div>
 
     {% if can_edit %}
-    <div class="flex items-center gap-1">
+    {% comment %}
+      Compact on purpose: the drawer is w-96, which leaves a row about 326px
+      once its paddings are gone. Full-size .btn-outline buttons came to about
+      350px and pushed Delete past the card. Same pieces as the inbox rule rows
+      (inbox/_rule_rows.html): round icon buttons to reorder, small pills for
+      the words.
+
+      Always on a line of its own (w-full). Once the controls fitted beside the
+      text, the text column — min-w-0 so long summaries can truncate — gave up
+      its width to them and wrapped one word per line.
+    {% endcomment %}
+    <div class="flex w-full flex-wrap items-center gap-1.5">
         <label class="bb-toggle" title="{% if row.trigger.enabled %}Pause{% else %}Enable{% endif %} this trigger">
             <input type="checkbox" {% if row.trigger.enabled %}checked{% endif %}
                    aria-label="Trigger enabled"
@@ -51,16 +62,16 @@ summary and (for ref triggers) its per-connection links.
                    hx-swap="none">
             <span class="bb-toggle-track"></span>
         </label>
-        <button type="button" class="btn-outline btn-inline" title="Run this trigger earlier"
+        <button type="button" class="btn-icon-round" title="Run this trigger earlier"
                 hx-post="{% url 'flows:trigger_move' workspace_id=request.workspace.id flow_id=flow.id trigger_id=row.trigger.id %}"
                 hx-vals='{"direction": "up"}' hx-swap="none" aria-label="Move up">↑</button>
-        <button type="button" class="btn-outline btn-inline" title="Run this trigger later"
+        <button type="button" class="btn-icon-round" title="Run this trigger later"
                 hx-post="{% url 'flows:trigger_move' workspace_id=request.workspace.id flow_id=flow.id trigger_id=row.trigger.id %}"
                 hx-vals='{"direction": "down"}' hx-swap="none" aria-label="Move down">↓</button>
-        <button type="button" class="btn-outline btn-inline"
+        <button type="button" class="btn-pill-secondary btn-pill-sm"
                 hx-get="{% url 'flows:trigger_form' workspace_id=request.workspace.id flow_id=flow.id %}?trigger={{ row.trigger.id }}"
                 hx-target="#trigger-form" hx-swap="innerHTML">Edit</button>
-        <button type="button" class="btn-outline btn-inline btn-danger-soft"
+        <button type="button" class="btn-pill-secondary btn-pill-sm btn-danger-soft"
                 hx-post="{% url 'flows:trigger_delete' workspace_id=request.workspace.id flow_id=flow.id trigger_id=row.trigger.id %}"
                 hx-confirm="Delete this trigger?" hx-swap="none">Delete</button>
     </div>

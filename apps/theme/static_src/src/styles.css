@@ -4845,8 +4845,12 @@ a.an-card:hover { border-color: var(--border-hover); }
 
 /* SPEC §5's flow statuses. The other three families of status pill are already
    defined above for connections, WhatsApp templates and broadcasts; `active`
-   and `draft` are shared with them, and only `archived` was missing. */
+   and `draft` are shared with them, and only `archived` and `offline` were
+   missing. Offline carries a dot like Live and a warning tint rather than
+   Draft's grey: it was running and somebody switched it off, which is worth
+   noticing in a list where a draft is not. */
 .status-pill-archived { background: var(--neutral-100); color: var(--text-tertiary); }
+.status-pill-offline  { background: var(--warning-50);  color: var(--warning-700); }
 
 /* ═══════════════════════════════════════════════════════════════
    CHANNEL PAGES

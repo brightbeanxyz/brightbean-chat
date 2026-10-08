@@ -31,9 +31,9 @@ Two things are driven by that registry rather than by markup:
 <textarea name="post_ids" rows="2" class="form-input-styled mb-2" x-ref="postIds"
           placeholder="One post id per line">{{ config.post_ids|lines }}</textarea>
 {% if post_pickers %}
-<div class="flex items-center gap-2 mb-1">
+<div class="flex flex-wrap items-center gap-2 mb-1">
     {% for picker in post_pickers %}
-    <button type="button" class="btn-outline btn-inline text-xs"
+    <button type="button" class="btn-pill-secondary btn-pill-sm"
             hx-get="{{ picker.url }}"
             hx-target="#trigger-post-picker"
             hx-swap="innerHTML">Choose from {{ picker.label }}</button>

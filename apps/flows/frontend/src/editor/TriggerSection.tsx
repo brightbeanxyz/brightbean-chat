@@ -26,7 +26,8 @@ export function TriggerSection() {
   const triggers = useBuilder((state) => state.triggers);
   const canEdit = useBuilder((state) => state.env.canEdit);
   const selected = useBuilder((state) => state.triggerSelected);
-  const published = useBuilder((state) => state.flow?.status === "active");
+  const status = useBuilder((state) => state.flow?.status);
+  const published = status === "active";
   const enabled = triggers.filter((trigger) => trigger.enabled);
 
   return (
@@ -55,7 +56,13 @@ export function TriggerSection() {
               </li>
             ))}
           </ul>
-          {enabled.length === 0 ? (
+          {status === "offline" ? (
+            // The list above still reads as "this is what starts it", and for
+            // an offline flow none of it does — the toolbar pill is easy to miss.
+            <p className="fb-trigger-empty mt-2">
+              This flow is offline, so none of these start it. They will again once it is set live.
+            </p>
+          ) : enabled.length === 0 ? (
             <p className="fb-trigger-empty mt-2">
               {published
                 ? "This flow is published, but every trigger is off. It will not start until one is turned on."

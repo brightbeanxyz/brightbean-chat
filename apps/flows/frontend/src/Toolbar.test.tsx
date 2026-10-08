@@ -181,7 +181,7 @@ describe("Publish and a flush that did not land", () => {
     expect(screen.queryByText(/Draft v2/)).toBeNull();
   });
 
-  it("stops offering Publish for a version that is already live", () => {
+  it("offers Set offline instead of a repeat publish for a version that is already live", () => {
     const detail = makeDetail(makeSampleGraph(), {
       flow: { id: "flow-1", name: "Welcome", status: "active", folder: "", updated_at: "" },
       version: { id: "v2", version: 2, published: true, updated_at: "" },
@@ -190,7 +190,11 @@ describe("Publish and a flush that did not land", () => {
 
     renderWith(makeStore(detail), <Toolbar autosave={null} />);
 
-    expect(screen.getByRole("button", { name: "Set live" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Set live" })).toBeNull();
+    const button = screen.getByRole("button", { name: "Set offline" });
+    expect(button.hasAttribute("disabled")).toBe(false);
+    // Not dressed as the call to action.
+    expect(button.className).toContain("btn-pill-secondary");
   });
 
   it("offers to turn on an entirely paused published flow and updates its status", async () => {
@@ -209,7 +213,7 @@ describe("Publish and a flush that did not land", () => {
 
     await waitFor(() => expect(screen.getByText("Published")).toBeTruthy(), SETTLE);
     expect(store.getState().triggers.every((trigger) => trigger.enabled)).toBe(true);
-    expect(screen.getByRole("button", { name: "Set live" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Set offline" })).toBeTruthy();
   });
 
   it("offers it again the moment an edit is pending", async () => {
@@ -226,6 +230,8 @@ describe("Publish and a flush that did not land", () => {
     store.getState().setSave({ state: "dirty" });
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Set live" }).hasAttribute("disabled")).toBe(false));
+    // Still offered, beside it: the flow is live until the edit is published.
+    expect(screen.getByRole("button", { name: "Set offline" }).className).toContain("btn-pill-secondary");
   });
 
   it("fires a success toast the page's global host can render", async () => {
@@ -261,5 +267,137 @@ describe("Publish and a flush that did not land", () => {
     renderWith(makeStore(detail), <Toolbar autosave={null} />);
 
     expect(screen.getByRole("button", { name: "Set live" }).hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("Set offline", () => {
+  const liveDetail = () =>
+    makeDetail(makeSampleGraph(), {
+      flow: { id: "flow-1", name: "Welcome", status: "active", folder: "", updated_at: "" },
+      version: { id: "v2", version: 2, published: true, updated_at: "" },
+      published_version: { id: "v2", version: 2, published: true, updated_at: "" },
+      triggers: makeTriggers(1),
+    });
+
+  const offline = {
+    flow: { id: "flow-1", name: "Welcome", status: "offline", folder: "", updated_at: "" },
+    version: { id: "v2", version: 2, published: false, published_at: "2026-10-01", updated_at: "" },
+    triggers: makeTriggers(1),
+    stopped: 3,
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("asks first, posts to the offline URL, and then offers Set live", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    http.route("/offline/", { body: offline });
+    const store = makeStore(liveDetail());
+
+    renderWith(store, <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set offline" }));
+
+    await waitFor(() => expect(screen.getByText("Offline")).toBeTruthy(), SETTLE);
+    expect(confirm).toHaveBeenCalledOnce();
+    const posted = http.requests.filter((request) => request.url.includes("/offline/"));
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.method).toBe("POST");
+    expect(posted[0]?.headers["x-csrftoken"]).toBeTruthy();
+    expect(store.getState().flow?.status).toBe("offline");
+    expect(store.getState().save.publishedVersion).toBeNull();
+    expect(screen.getByRole("button", { name: "Set live" }).className).toContain("btn-pill-primary");
+  });
+
+  it("does nothing when the confirmation is declined", () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const store = makeStore(liveDetail());
+
+    renderWith(store, <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set offline" }));
+
+    expect(http.requests.filter((request) => request.url.includes("/offline/"))).toHaveLength(0);
+    expect(store.getState().flow?.status).toBe("active");
+  });
+
+  it("says how many conversations it stopped", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    http.route("/offline/", { body: offline });
+    const seen: CustomEvent[] = [];
+    const listen = (event: Event) => seen.push(event as CustomEvent);
+    document.body.addEventListener("showToast", listen);
+
+    try {
+      renderWith(makeStore(liveDetail()), <Toolbar autosave={null} />);
+      fireEvent.click(screen.getByRole("button", { name: "Set offline" }));
+
+      await waitFor(() => expect(seen).toHaveLength(1), SETTLE);
+      expect(seen[0]?.detail).toEqual({
+        tone: "success",
+        title: "Flow is offline",
+        body: "3 conversations in progress were stopped.",
+      });
+    } finally {
+      document.body.removeEventListener("showToast", listen);
+    }
+  });
+
+  it("shows the server's refusal and re-reads a flow another tab already took offline", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    http.route("/offline/", {
+      status: 409,
+      body: { error: { code: "not_live", message: "Only a live flow can be set offline." } },
+    });
+    const detail = liveDetail();
+    http.route(/\/api\/flows\/flow-1\/$/, {
+      body: {
+        ...detail,
+        flow: { ...detail.flow, status: "offline" },
+        version: offline.version,
+        published_version: null,
+      },
+    });
+    const store = makeStore(detail);
+
+    renderWith(store, <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: "Set offline" }));
+
+    await waitFor(() => expect(screen.getByText("Offline")).toBeTruthy(), SETTLE);
+    expect(store.getState().save.message).toBe("Only a live flow can be set offline.");
+    expect(screen.queryByRole("button", { name: "Set offline" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Set live" })).toBeTruthy();
+  });
+
+  it("works with a draft pending, without saving it first or overwriting its version", async () => {
+    // A draft that fails validation must not stand between a live flow and
+    // switching it off, so this neither flushes nor waits for the save.
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    http.route("/offline/", { body: offline });
+    const autosave = { flush: vi.fn(async () => true), stop: vi.fn() };
+    const store = makeStore(liveDetail());
+    renderWith(store, <Toolbar autosave={autosave} />);
+    store.getState().setSave({ state: "dirty" });
+    const pendingVersion = store.getState().save.version;
+    // Wait for the relabel: until it lands, the first button still says "Set offline".
+    await screen.findByRole("button", { name: "Set live" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Set offline" }));
+
+    await waitFor(() => expect(store.getState().flow?.status).toBe("offline"), SETTLE);
+    expect(autosave.flush).not.toHaveBeenCalled();
+    expect(store.getState().save.version).toBe(pendingVersion);
+    expect(store.getState().save.publishedVersion).toBeNull();
+  });
+
+  it("is still offered beside Turn on triggers, since a flow with every trigger off still runs", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    http.route("/offline/", { body: { ...offline, triggers: makeTriggers(1, { enabled: false }) } });
+    const store = makeStore({ ...liveDetail(), triggers: makeTriggers(1, { enabled: false }) });
+
+    renderWith(store, <Toolbar autosave={null} />);
+    expect(screen.getByRole("button", { name: "Turn on triggers" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Set offline" }));
+
+    await waitFor(() => expect(store.getState().flow?.status).toBe("offline"), SETTLE);
+    expect(http.requests.some((request) => request.url.includes("/publish/"))).toBe(false);
+    expect(screen.queryByRole("button", { name: "Turn on triggers" })).toBeNull();
   });
 });
