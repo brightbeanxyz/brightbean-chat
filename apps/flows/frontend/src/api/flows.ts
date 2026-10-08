@@ -4,10 +4,12 @@
  * Every URL is a data attribute on the mount div, so nothing here is
  * constructed — see src/env.ts.
  */
-import type { BuilderEnv } from "../env";
+import { triggerEnabledUrl, type BuilderEnv } from "../env";
 import type {
   FlowDetail,
   FlowGraph,
+  FlowMeta,
+  TriggerSummary,
   OfflineResult,
   PickerPayload,
   PublishResult,
@@ -37,6 +39,27 @@ export function publishFlow(env: BuilderEnv): Promise<PublishResult> {
 /** A 409 when the flow is not live; the envelope's message says so. */
 export function takeFlowOffline(env: BuilderEnv): Promise<OfflineResult> {
   return request<OfflineResult>(env.offlineUrl, { method: "POST" });
+}
+
+/** The top bar's rename. A 400 for a blank name; the envelope says so. */
+export function renameFlow(env: BuilderEnv, name: string): Promise<{ flow: FlowMeta }> {
+  return request<{ flow: FlowMeta }>(env.renameUrl, { method: "POST", body: { name } });
+}
+
+/**
+ * One trigger on or off, from the outline's switch. The state to end in, not a
+ * toggle, so a stale page cannot flip a trigger the wrong way. Answers with
+ * every trigger's summary, the same list the detail read carries.
+ */
+export function setTriggerEnabled(
+  env: BuilderEnv,
+  triggerId: string,
+  enabled: boolean,
+): Promise<{ triggers: TriggerSummary[] }> {
+  return request<{ triggers: TriggerSummary[] }>(triggerEnabledUrl(env, triggerId), {
+    method: "POST",
+    body: { enabled },
+  });
 }
 
 export function fetchStats(env: BuilderEnv): Promise<StatsPayload> {

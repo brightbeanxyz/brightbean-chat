@@ -216,6 +216,8 @@ class TestCrossTenantIsolation:
             "flows:api_detail",
             "flows:api_publish",
             "flows:api_offline",
+            "flows:api_rename",
+            "flows:api_trigger_enabled",
             "flows:api_stats",
             "flows:api_schema",
         } <= names

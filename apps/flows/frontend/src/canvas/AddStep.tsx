@@ -80,53 +80,9 @@ export function AddStep() {
     }
   };
 
-  const known = new Set(GROUPS.map((group) => group.key));
-  const drawers = GROUPS.map((group) => ({
-    ...group,
-    // The reader's word for this group, falling back to the registry's own
-    // label so a group added in Python is never a blank heading.
-    phrase: GROUP_PHRASE[group.key] ?? group.label,
-    types: NODE_TYPES.filter((spec) => {
-      const key = groupOf(spec);
-      return key === group.key || (group.key === FALLBACK_GROUP && !known.has(key));
-    }),
-  })).filter((drawer) => drawer.types.length > 0);
-
   return (
     <div className="fb-addstep" ref={wrapper}>
-      {open ? (
-        <div className="fb-addstep-menu" role="menu" aria-label="Kinds of step">
-          {drawers.map((drawer) => (
-            <div key={drawer.key}>
-              <p className="fb-addstep-group">{drawer.phrase}</p>
-              {drawer.types.map((spec) => (
-                <button
-                  key={spec.type}
-                  type="button"
-                  role="menuitem"
-                  className={`fb-addstep-item fb-node-${drawer.key}`}
-                  draggable
-                  data-node-type={spec.type}
-                  onClick={() => add(spec.type)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData("application/x-brightbean-node", spec.type);
-                    event.dataTransfer.effectAllowed = "copy";
-                    setOpen(false);
-                  }}
-                >
-                  <span className="fb-addstep-swatch" aria-hidden="true" />
-                  <span className="min-w-0">
-                    <span className="block truncate">{spec.label}</span>
-                    {spec.description ? (
-                      <span className="fb-addstep-hint block truncate">{spec.description}</span>
-                    ) : null}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {open ? <StepMenu onPick={add} onDragStart={() => setOpen(false)} /> : null}
 
       <button
         type="button"
@@ -137,6 +93,71 @@ export function AddStep() {
       >
         <span aria-hidden="true">+</span> Add a step
       </button>
+    </div>
+  );
+}
+
+/**
+ * The kinds of step, grouped by what they do in plain words. Shared by "Add a
+ * step" and the "+" on an edge, so both offer the same list in the same words.
+ * `filter` narrows it — the edge's "+" can only insert a step that can carry the
+ * flow on to the next one.
+ */
+export function StepMenu({
+  onPick,
+  onDragStart,
+  filter,
+  className = "fb-addstep-menu",
+}: {
+  onPick: (type: string) => void;
+  onDragStart?: () => void;
+  filter?: (type: string) => boolean;
+  className?: string;
+}) {
+  const known = new Set(GROUPS.map((group) => group.key));
+  const drawers = GROUPS.map((group) => ({
+    ...group,
+    // The reader's word for this group, falling back to the registry's own
+    // label so a group added in Python is never a blank heading.
+    phrase: GROUP_PHRASE[group.key] ?? group.label,
+    types: NODE_TYPES.filter((spec) => {
+      const key = groupOf(spec);
+      return (key === group.key || (group.key === FALLBACK_GROUP && !known.has(key))) && (!filter || filter(spec.type));
+    }),
+  })).filter((drawer) => drawer.types.length > 0);
+
+  return (
+    <div className={className} role="menu" aria-label="Kinds of step">
+      {drawers.map((drawer) => (
+        <div key={drawer.key}>
+          <p className="fb-addstep-group">{drawer.phrase}</p>
+          {drawer.types.map((spec) => (
+            <button
+              key={spec.type}
+              type="button"
+              role="menuitem"
+              className={`fb-addstep-item fb-node-${drawer.key}`}
+              draggable={Boolean(onDragStart)}
+              data-node-type={spec.type}
+              onClick={() => onPick(spec.type)}
+              onDragStart={(event) => {
+                if (!onDragStart) {
+                  return;
+                }
+                event.dataTransfer.setData("application/x-brightbean-node", spec.type);
+                event.dataTransfer.effectAllowed = "copy";
+                onDragStart();
+              }}
+            >
+              <span className="fb-addstep-swatch" aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate">{spec.label}</span>
+                {spec.description ? <span className="fb-addstep-hint block truncate">{spec.description}</span> : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

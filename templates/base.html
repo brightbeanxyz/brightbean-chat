@@ -194,9 +194,8 @@
           --surface-page and lets each screen supply its own .card sections.
 
           {% block main_pad %} is the seam for a screen that wants to go
-          full-bleed to the viewport edges. Nothing overrides it today — the
-          inbox's three panes and the flow builder were both meant to and
-          neither does — so treat it as an offer, not a description.
+          full-bleed to the viewport edges. The flow builder takes it: its
+          canvas is the whole page.
         {% endcomment %}
         <main class="app-shell-main flex-1 overflow-y-auto flex flex-col {% block main_pad %}p-4 lg:p-6{% endblock %}">
             {% block page_header %}{% endblock %}

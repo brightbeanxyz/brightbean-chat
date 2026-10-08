@@ -19,6 +19,12 @@ export const TEST_ENV: BuilderEnv = {
   schemaUrl: "/w/ws/api/flows/schema/",
   mediaPickerUrl: "/w/ws/media/picker/",
   previewUrl: "/w/ws/settings/channels/telegram/preview/flow-1/",
+  flowName: "Welcome",
+  listUrl: "/w/ws/flows/",
+  renameUrl: "/w/ws/api/flows/flow-1/rename/",
+  triggerEnabledUrl: "/w/ws/api/flows/flow-1/triggers/00000000-0000-0000-0000-000000000000/enabled/",
+  exportUrl: "/w/ws/flows/flow-1/export/",
+  exportBundleUrl: "/w/ws/flows/flow-1/export/bundle/",
 };
 
 export function makeStore(detail: FlowDetail | null = makeDetail(), env: Partial<BuilderEnv> = {}): BuilderStore {

@@ -75,8 +75,12 @@ export function publishView(
     // cannot start yet, and turning them on is the more likely next step — and
     // so is a pending draft; both keep "Set offline" as the second button.
     const action: PublishAction = !currentVersionPublished ? "publish" : allOff ? "enable" : "offline";
+    // "Live", the word the flow list's pill and switch use for the same state
+    // (HANDOFF §3: "status pill (Draft / Live vN)"), with the version that is
+    // running so an edit-in-progress is visibly not it.
+    const live = save.publishedVersion ? `Live v${save.publishedVersion.version}` : "Live";
     return {
-      statusLabel: allOff ? "Published · Triggers off" : triggerCount === 0 ? "Published · No triggers" : "Published",
+      statusLabel: allOff ? `${live} · Triggers off` : triggerCount === 0 ? `${live} · No triggers` : live,
       statusTone: allOff || triggerCount === 0 ? "warning" : "success",
       saveLabel,
       publishLabel: action === "enable" ? "Turn on triggers" : action === "offline" ? "Set offline" : "Set live",

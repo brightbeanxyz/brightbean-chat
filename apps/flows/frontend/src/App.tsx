@@ -15,13 +15,11 @@ import { Canvas } from "./canvas/Canvas";
 import { StepEditor } from "./editor/StepEditor";
 import { TriggerSidebar } from "./editor/TriggerSidebar";
 import type { BuilderEnv } from "./env";
-import { Preview } from "./preview/Preview";
 import { installAutosave, type Autosave } from "./persistence/autosave";
 import { refreshApplies } from "./refreshState";
 import { useStats } from "./stats/useStats";
 import { BuilderStoreProvider, useBuilder, useBuilderStore } from "./store/context";
 import { createBuilderStore } from "./store/store";
-import { ProblemsRail } from "./validation/ProblemsRail";
 import { Toolbar } from "./Toolbar";
 
 export function App({ env }: { env: BuilderEnv }) {
@@ -168,17 +166,17 @@ function Shell() {
   return (
     <>
       <Toolbar autosave={autosave} />
-      {/* Triggers stay visible to the left of the canvas; the step list and
-          settings sit below the preview on the right. */}
+      {/* Outline on the left (what starts it, its steps in order), the canvas
+          in the middle, the selected step on the right. The problems list is a
+          popover from the top bar rather than a rail taking room from the
+          canvas. */}
       <div className="fb-shell">
         <TriggerSidebar />
         <Canvas />
-        <aside className="fb-right-sidebar" aria-label="Preview and steps">
-          <Preview />
+        <aside className="fb-right-sidebar" aria-label="Selected step">
           <StepEditor />
         </aside>
       </div>
-      <ProblemsRail />
     </>
   );
 }

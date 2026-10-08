@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import { AddStep } from "../canvas/AddStep";
 import { nodeSpec } from "../schema/artifact";
 import { Preview } from "../preview/Preview";
-import { makeDetail, makeSampleGraph } from "../test/fixtures";
+import { makeDetail, makeSampleGraph, makeTriggers } from "../test/fixtures";
 import { makeStore, renderWith } from "../test/render";
 import type { TriggerSummary } from "../schema/types";
 import { StepEditor } from "./StepEditor";
@@ -96,8 +96,10 @@ describe("what starts the flow", () => {
 
 describe("the step list", () => {
   it("reaches a step without finding its card on the canvas", () => {
+    // The list is in the outline on the left now (HANDOFF §3), not stacked
+    // above the inspector.
     const store = makeStore(oneStep([trigger()]));
-    renderWith(store, <StepEditor />);
+    renderWith(store, <TriggerSidebar />);
 
     fireEvent.click(screen.getByRole("button", { name: /Thanks for commenting/i }));
 
@@ -242,5 +244,27 @@ describe("the preview", () => {
     renderWith(store, <Preview />);
 
     expect(screen.getByText(/does not send anything/i)).toBeInTheDocument();
+  });
+});
+
+
+describe("the outline's trigger switches", () => {
+  it("posts the state to end in and applies the answer", async () => {
+    const { installCsrfToken, stubHttp } = await import("../test/http");
+    const { waitFor } = await import("@testing-library/react");
+    const http = stubHttp();
+    installCsrfToken();
+    const [first] = makeTriggers(1);
+    http.route("/enabled/", { body: { triggers: [{ ...first, enabled: false }] } });
+    const store = makeStore(makeDetail(makeSampleGraph(), { triggers: [first as TriggerSummary] }));
+
+    renderWith(store, <TriggerSidebar />);
+    fireEvent.click(screen.getByRole("switch", { name: /is on/ }));
+
+    await waitFor(() => expect(store.getState().triggers[0]?.enabled).toBe(false), { timeout: 5000 });
+    const sent = http.requests.find((request) => request.url.includes("/enabled/"));
+    expect(sent?.url).toContain("/triggers/t1/enabled/");
+    expect(sent?.body).toEqual({ enabled: false });
+    http.restore();
   });
 });

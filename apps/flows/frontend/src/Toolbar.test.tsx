@@ -133,13 +133,13 @@ describe("Publish and a flush that did not land", () => {
     await waitFor(() => expect(store.getState().save.publishedVersion?.version).toBe(2), SETTLE);
   });
 
-  it("says Published without a reload as soon as the publish lands", async () => {
+  it("says Live without a reload as soon as the publish lands", async () => {
     http.route("/publish/", { body: published });
 
     renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={null} />);
     fireEvent.click(screen.getByRole("button", { name: "Set live" }));
 
-    await waitFor(() => expect(screen.getByText("Published")).toBeTruthy(), SETTLE);
+    await waitFor(() => expect(screen.getByText(/^Live v\d+$/)).toBeTruthy(), SETTLE);
   });
 
   it("stops saying Archived once the publish that un-archived it lands", async () => {
@@ -158,11 +158,11 @@ describe("Publish and a flush that did not land", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set live" }));
 
     await waitFor(() => expect(screen.queryByText("Archived")).toBeNull(), SETTLE);
-    expect(screen.getByText("Published")).toBeTruthy();
+    expect(screen.getByText(/^Live v\d+$/)).toBeTruthy();
     expect(store.getState().flow?.status).toBe("active");
   });
 
-  it("says Published on load when the latest version is already published", () => {
+  it("says Live on load when the latest version is already published", () => {
     /**
      * The reload case, and the one that made this worth fixing: it reaches the
      * toolbar through load(), never through the publish handler, so a test that
@@ -177,7 +177,7 @@ describe("Publish and a flush that did not land", () => {
 
     renderWith(makeStore(detail), <Toolbar autosave={null} />);
 
-    expect(screen.getByText("Published · No triggers")).toBeTruthy();
+    expect(screen.getByText(/^Live v\d+ · No triggers$/)).toBeTruthy();
     expect(screen.queryByText(/Draft v2/)).toBeNull();
   });
 
@@ -208,10 +208,10 @@ describe("Publish and a flush that did not land", () => {
     http.route("/publish/", { body: { ...published, triggers: makeTriggers(2) } });
 
     renderWith(store, <Toolbar autosave={null} />);
-    expect(screen.getByText("Published · Triggers off")).toBeTruthy();
+    expect(screen.getByText(/^Live v\d+ · Triggers off$/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Turn on triggers" }));
 
-    await waitFor(() => expect(screen.getByText("Published")).toBeTruthy(), SETTLE);
+    await waitFor(() => expect(screen.getByText(/^Live v\d+$/)).toBeTruthy(), SETTLE);
     expect(store.getState().triggers.every((trigger) => trigger.enabled)).toBe(true);
     expect(screen.getByRole("button", { name: "Set offline" })).toBeTruthy();
   });
@@ -399,5 +399,71 @@ describe("Set offline", () => {
     await waitFor(() => expect(store.getState().flow?.status).toBe("offline"), SETTLE);
     expect(http.requests.some((request) => request.url.includes("/publish/"))).toBe(false);
     expect(screen.queryByRole("button", { name: "Turn on triggers" })).toBeNull();
+  });
+});
+
+
+describe("the top bar", () => {
+  it("renames the flow in place and keeps the server's answer", async () => {
+    http.route("/rename/", (request) => ({
+      body: { flow: { id: "flow-1", name: (request.body as { name: string }).name, status: "draft", folder: "", updated_at: "" } },
+    }));
+    const store = makeStore(makeDetail(makeSampleGraph()));
+
+    renderWith(store, <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: /rename|Welcome/i }));
+    const input = screen.getByRole("textbox", { name: "Flow name" });
+    fireEvent.change(input, { target: { value: "Price question" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(store.getState().flow?.name).toBe("Price question"), SETTLE);
+    expect(http.requests.find((request) => request.url.includes("/rename/"))?.body).toEqual({ name: "Price question" });
+  });
+
+  it("puts the old name back when the rename is refused", async () => {
+    http.route("/rename/", { status: 400, body: { error: { code: "missing_name", message: "A flow needs a name." } } });
+    const store = makeStore(makeDetail(makeSampleGraph()));
+    const before = store.getState().flow?.name;
+
+    renderWith(store, <Toolbar autosave={null} />);
+    fireEvent.click(screen.getByRole("button", { name: /rename|Welcome/i }));
+    const input = screen.getByRole("textbox", { name: "Flow name" });
+    fireEvent.change(input, { target: { value: "Something" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(http.requests.some((request) => request.url.includes("/rename/"))).toBe(true), SETTLE);
+    await waitFor(() => expect(store.getState().flow?.name).toBe(before), SETTLE);
+  });
+
+  it("opens the problems list by itself when Set live is refused", async () => {
+    http.route("/publish/", {
+      status: 422,
+      body: {
+        error: { code: "invalid", message: "No." },
+        validation: { errors: [{ code: "send_message_no_blocks", message: "This message is empty.", node_id: "n1" }], warnings: [] },
+      },
+    });
+
+    renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={null} />);
+    expect(screen.queryByRole("dialog", { name: "Problems" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Set live" }));
+
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Problems" })).toBeTruthy(), SETTLE);
+    expect(screen.getByText("This message is empty.")).toBeTruthy();
+  });
+
+  it("says Ready when nothing needs fixing", () => {
+    renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={null} />);
+
+    expect(screen.getByRole("button", { name: /Ready|to fix|to check/ })).toBeTruthy();
+  });
+
+  it("keeps the downloads behind the overflow menu", () => {
+    renderWith(makeStore(makeDetail(makeSampleGraph())), <Toolbar autosave={null} />);
+
+    expect(screen.queryByRole("menuitem", { name: "Download a copy" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getByRole("menuitem", { name: "Download a copy" }).getAttribute("href")).toBe("/w/ws/flows/flow-1/export/");
   });
 });

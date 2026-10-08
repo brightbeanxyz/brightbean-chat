@@ -18,6 +18,26 @@ export interface BuilderEnv {
   mediaPickerUrl: string;
   /** SPEC §16's preview-link endpoint. */
   previewUrl: string;
+  /**
+   * The top bar's (HANDOFF §3, Flow builder). Optional, unlike the API URLs
+   * above: a page that omits one loses that control — the back link, the
+   * rename, a download, a trigger switch — not the canvas.
+   */
+  flowName: string;
+  listUrl: string;
+  renameUrl: string;
+  /** Holds TRIGGER_ID_PLACEHOLDER where the trigger's id goes; see triggerEnabledUrl(). */
+  triggerEnabledUrl: string;
+  exportUrl: string;
+  exportBundleUrl: string;
+}
+
+/** apps/flows/views.py's TRIGGER_ID_PLACEHOLDER: the nil UUID, which no row has. */
+export const TRIGGER_ID_PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
+
+/** The switch endpoint for one trigger, or "" when the page did not provide it. */
+export function triggerEnabledUrl(env: BuilderEnv, triggerId: string): string {
+  return env.triggerEnabledUrl ? env.triggerEnabledUrl.replace(TRIGGER_ID_PLACEHOLDER, triggerId) : "";
 }
 
 export class MissingEnvError extends Error {}
@@ -45,5 +65,11 @@ export function readEnv(mount: HTMLElement): BuilderEnv {
     schemaUrl: required(mount, "schemaUrl"),
     mediaPickerUrl: required(mount, "mediaPickerUrl"),
     previewUrl: required(mount, "previewUrl"),
+    flowName: mount.dataset["flowName"] ?? "",
+    listUrl: mount.dataset["listUrl"] ?? "",
+    renameUrl: mount.dataset["renameUrl"] ?? "",
+    triggerEnabledUrl: mount.dataset["triggerEnabledUrl"] ?? "",
+    exportUrl: mount.dataset["exportUrl"] ?? "",
+    exportBundleUrl: mount.dataset["exportBundleUrl"] ?? "",
   };
 }

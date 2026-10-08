@@ -11,7 +11,11 @@
 import { useBuilder, useBuilderStore } from "../store/context";
 import { railIssues } from "./normalize";
 
-export function ProblemsRail() {
+/**
+ * `onPick` runs after an item has moved the selection — the popover in the top
+ * bar closes on it, so the step that was picked is not hidden behind the list.
+ */
+export function ProblemsRail({ onPick }: { onPick?: () => void } = {}) {
   const store = useBuilderStore();
   const index = useBuilder((state) => state.validation);
   const stale = useBuilder((state) => state.revision > state.validation.revision);
@@ -42,6 +46,7 @@ export function ProblemsRail() {
             } else if (issue.edge_id) {
               store.getState().setSelection({ nodes: [], edges: [issue.edge_id] });
             }
+            onPick?.();
           }}
         >
           {issue.message}

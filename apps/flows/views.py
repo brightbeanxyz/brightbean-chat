@@ -63,6 +63,10 @@ UNFILED_VALUE = "__unfiled__"
 
 _MAX_NAME = Flow._meta.get_field("name").max_length or 200
 
+#: Stands in for a trigger id in the builder's trigger-switch URL template; the
+#: island swaps in the real one (src/env.ts). The nil UUID, which no row has.
+TRIGGER_ID_PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
+
 #: How many template cards the flows empty state shows before deferring to the
 #: full gallery. Enough to suggest the range, few enough that the Create field
 #: above them is still the obvious alternative.
@@ -345,6 +349,13 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             # reason the picker is: the island assembles no URLs of its own.
             "preview_url": reverse("channels:flow_preview", kwargs=keys),
             "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
+            "api_rename_url": reverse("flows:api_rename", kwargs=keys),
+            # A template, not a URL: the island substitutes a trigger's id for
+            # the zero UUID. Reversed here so it still assembles no path of its
+            # own (FORCE_SCRIPT_NAME), and the zero UUID can never be a real id.
+            "api_trigger_enabled_url": reverse(
+                "flows:api_trigger_enabled", kwargs={**keys, "trigger_id": TRIGGER_ID_PLACEHOLDER}
+            ),
         },
     )
 

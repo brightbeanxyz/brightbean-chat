@@ -15,10 +15,11 @@
  */
 import {
   Background,
-  Controls,
+  BackgroundVariant,
   MiniMap,
   ReactFlow,
   useReactFlow,
+  useViewport,
   type Connection,
   type EdgeChange,
   type IsValidConnection,
@@ -301,19 +302,51 @@ export function Canvas() {
         fitViewOptions={{ maxZoom: 1, padding: 0.2 }}
         proOptions={{ hideAttribution: false }}
       >
-        <Background />
-        <Controls showInteractive={false} position="bottom-right" />
+        {/* A dotted grid (HANDOFF §3): enough texture to read as a surface you
+            can pan, quiet enough that the cards are what you see. */}
+        <Background variant={BackgroundVariant.Dots} gap={18} size={1.4} />
         <MiniMap<CardNode>
           pannable
           zoomable
           nodeColor={minimapColor}
-          position="top-right"
+          position="bottom-right"
           style={{ ...MINIMAP, borderRadius: "var(--radius-md)", border: "1px solid var(--border)" }}
         />
       </ReactFlow>
+      <ZoomControl />
       {/* Outside <ReactFlow> so it is not pan/zoom transformed, and after it so
           it stacks above the pane without a z-index fight. */}
       <AddStep />
+    </div>
+  );
+}
+
+/**
+ * Zoom in, zoom out, and how far you are, at the top left (HANDOFF §3). React
+ * Flow's own Controls drew three unlabelled icons in a corner they shared with
+ * the minimap; the percentage is the one number that tells you whether the
+ * whole flow is in view. Clicking it fits the flow to the pane.
+ */
+function ZoomControl() {
+  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const { zoom } = useViewport();
+  return (
+    <div className="fb-zoom" role="group" aria-label="Zoom">
+      <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => void zoomIn({ duration: 160 })}>
+        +
+      </button>
+      <button
+        type="button"
+        className="fb-zoom-level"
+        title="Fit the whole flow"
+        aria-label={`Zoom ${Math.round(zoom * 100)}%. Fit the whole flow`}
+        onClick={() => void fitView({ duration: 220, padding: 0.2, maxZoom: 1 })}
+      >
+        {Math.round(zoom * 100)}%
+      </button>
+      <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => void zoomOut({ duration: 160 })}>
+        −
+      </button>
     </div>
   );
 }

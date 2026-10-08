@@ -124,6 +124,13 @@ export interface BuilderState extends GraphState {
   deleteNodes: (ids: string[]) => void;
   deleteEdges: (ids: string[]) => void;
   connect: (source: string, sourceHandle: string, target: string) => void;
+  /**
+   * Put a new step on an edge: source → new step → target, in one undo step.
+   * The new step leaves by its first handle; a type with none (an ending)
+   * takes the edge in and the old target is simply no longer reached by it.
+   * Returns the new id, or null when the edge is gone or a limit is reached.
+   */
+  insertBetween: (edgeId: string, type: string) => string | null;
   paste: (payload: ClipboardPayload, at?: Position) => void;
 
   // ── view ──────────────────────────────────────────────────────────────────
@@ -439,6 +446,52 @@ export function createBuilderStore(env: BuilderEnv) {
               edge: { ...omit(before.edge, superseded), [id]: { id, source, sourceHandle, target } },
             };
           });
+        },
+
+        insertBetween: (edgeId, type) => {
+          const state = get();
+          const edge = state.edge[edgeId];
+          if (edge === undefined || state.nodeOrder.length >= state.limits.max_nodes) {
+            return null;
+          }
+          const config = newNodeConfig(type);
+          const out = sourceHandlesFor(type, config)[0];
+          if (state.edgeOrder.length + (out ? 1 : 0) > state.limits.max_edges) {
+            return null;
+          }
+          const from = state.position[edge.source] ?? { x: 0, y: 0 };
+          const to = state.position[edge.target] ?? { x: from.x + 640, y: from.y };
+          // Halfway along the edge, cascaded clear of anything already there:
+          // the reader can tidy the layout, but a step dropped exactly on top
+          // of another reads as nothing having happened.
+          const at = freePositionNear(
+            { x: Math.round((from.x + to.x) / 2), y: Math.round((from.y + to.y) / 2) },
+            Object.values(state.position),
+          );
+          const id = newNodeId();
+          const inId = newEdgeId();
+          const outId = newEdgeId();
+          withHistory(`insert:${id}`, (before) => {
+            const edges = {
+              ...omit(before.edge, new Set([edgeId])),
+              [inId]: { id: inId, source: edge.source, sourceHandle: edge.sourceHandle, target: id },
+            };
+            const order = [...before.edgeOrder.filter((other) => other !== edgeId), inId];
+            if (out) {
+              edges[outId] = { id: outId, source: id, sourceHandle: out, target: edge.target };
+              order.push(outId);
+            }
+            return {
+              nodeOrder: [...before.nodeOrder, id],
+              nodeType: { ...before.nodeType, [id]: type },
+              config: { ...before.config, [id]: config },
+              position: { ...before.position, [id]: sanitizePosition(at) },
+              edgeOrder: order,
+              edge: edges,
+              selection: { nodes: [id], edges: [] },
+            };
+          });
+          return id;
         },
 
         paste: (payload, at) => {

@@ -3498,7 +3498,7 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   --xy-background-color: var(--surface-page);
   --xy-background-pattern-color: var(--neutral-300);
   --xy-edge-stroke: var(--border-hover);
-  --xy-edge-stroke-selected: var(--accent-sky);
+  --xy-edge-stroke-selected: var(--ink);
   --xy-edge-stroke-width: 1.5;
   --xy-edge-label-background-color: var(--surface-0);
   --xy-edge-label-color: var(--text-secondary);
@@ -3510,7 +3510,7 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   --xy-node-border: 1px solid var(--border);
   --xy-node-border-radius: var(--radius-lg);
   --xy-node-boxshadow-hover: var(--shadow-md);
-  --xy-node-boxshadow-selected: 0 0 0 2px var(--accent-sky), var(--shadow-md);
+  --xy-node-boxshadow-selected: 0 0 0 2px var(--ink), var(--shadow-md);
   --xy-controls-button-background-color: var(--surface-0);
   --xy-controls-button-background-color-hover: var(--surface-2);
   --xy-controls-button-border-color: var(--border);
@@ -3538,16 +3538,114 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .fb-shell { display: flex; flex: 1 1 auto; min-height: 0; }
 
+/* The top bar (HANDOFF §3): one 56px row in place of the page header and the
+   toolbar that sat under it. Identity on the left, actions on the right; on a
+   narrow screen the actions wrap under rather than crushing the name. */
 .fb-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.625rem;
-  padding: 0.625rem 1rem;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  min-height: 56px;
+  padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface-0);
   font-size: var(--fs-body);
 }
+.fb-toolbar-identity { display: flex; align-items: center; gap: 0.625rem; min-width: 0; flex: 1 1 18rem; }
+.fb-toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.375rem; }
+.fb-toolbar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-decoration: none;
+}
+.fb-toolbar-back svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.fb-toolbar-back:hover { color: var(--text-primary); }
+.fb-toolbar-sep { color: var(--text-ghost); }
+.fb-flow-name {
+  min-width: 0;
+  padding: 0.25rem 0.375rem;
+  margin: 0 -0.375rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  text-align: left;
+  cursor: text;
+}
+.fb-flow-name:hover { border-color: var(--border-strong); }
+.fb-flow-name:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 1px; }
+.fb-flow-name-text {
+  overflow: hidden;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-flow-name-input {
+  width: min(22rem, 40vw);
+  height: 32px;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  outline: none;
+}
+.fb-flow-name-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+.fb-save-state { flex-shrink: 0; font-size: var(--fs-sm); color: var(--text-tertiary); white-space: nowrap; }
+
+/* The problems count, always in view, and the list behind it. */
+.fb-problems-menu, .fb-overflow { position: relative; }
+.fb-problems-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fb-problems-button:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.fb-problems-dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--success-500); }
+.fb-problems-button-error { color: var(--error-700); border-color: var(--error-500); }
+.fb-problems-button-error .fb-problems-dot { background: var(--error-500); }
+.fb-problems-button-warning .fb-problems-dot { background: var(--warning-500); }
+.fb-problems-popover, .fb-overflow-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  box-shadow: var(--shadow-lg);
+}
+.fb-problems-popover { width: min(24rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto; padding: 0.75rem; }
+.fb-problems-popover .fb-problems { max-height: none; padding: 0; border-top: 0; }
+.fb-overflow-menu { width: 16rem; padding: 0.25rem; }
+.fb-overflow-menu a {
+  display: block;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.fb-overflow-menu a:hover { background: var(--surface-2); }
 
 .fb-flow-status {
   display: inline-flex;
@@ -3663,9 +3761,26 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   background: var(--surface-0);
 }
 .fb-editor-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem; }
-.fb-trigger-sidebar { width: 18rem; flex: 0 0 auto; overflow-y: auto; padding: 1rem; border-right: 1px solid var(--border); background: var(--surface-0); }
-.fb-right-sidebar { width: 22rem; flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--surface-0); }
-.fb-steplist { max-height: min(22rem, 42vh); overflow-y: auto; }
+/* The outline on the left and the inspector on the right: 224px and 312px
+   (HANDOFF §3). The outline scrolls as one column, triggers then steps. */
+.fb-trigger-sidebar { width: 14rem; flex: 0 0 auto; overflow-y: auto; padding: 1rem 0.875rem; border-right: 1px solid var(--border); background: var(--surface-0); }
+.fb-right-sidebar { width: 19.5rem; flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--surface-0); }
+.fb-outline-steps { margin-top: 1.125rem; padding-top: 1rem; border-top: 1px solid var(--divider); }
+.fb-inspector-tabs { padding: 0 1rem; height: 44px; flex-shrink: 0; border-bottom: 1px solid var(--divider); }
+.fb-inspector-tabs .tab { font-size: var(--fs-body); }
+.fb-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.fb-link-button:hover { color: var(--text-primary); }
 
 .fb-editor-section { margin-top: 1.25rem; }
 .fb-editor-section:first-child { margin-top: 0; }
@@ -3701,7 +3816,7 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
 .fb-trigger-heading { margin-bottom: 0.5rem; font-size: var(--fs-body); font-weight: 700; color: var(--text-primary); }
 .fb-trigger-empty { margin-top: 0.25rem; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-tertiary); }
 .fb-trigger-list { margin-top: 0.5rem; }
-.fb-trigger-row { margin-bottom: 0.5rem; }
+.fb-trigger-row { display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.625rem; }
 .fb-trigger-row:last-child { margin-bottom: 0; }
 .fb-trigger-row.is-off { opacity: 0.65; }
 .fb-trigger-name { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
@@ -3967,16 +4082,66 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .fb-canvas { position: relative; }
 
+/* "Add a step" at the bottom left of the canvas, the zoom control at the top
+   left, the minimap at the bottom right (HANDOFF §3) — three corners, so none
+   of the three covers another. */
 .fb-addstep {
   position: absolute;
-  left: 50%;
-  bottom: 1.25rem;
-  transform: translateX(-50%);
+  left: 1rem;
+  bottom: 1rem;
   z-index: 5;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
 }
+.fb-zoom {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-sm);
+}
+.fb-zoom button {
+  width: 2.25rem;
+  height: 1.875rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.fb-zoom button + button { border-top: 1px solid var(--divider); }
+.fb-zoom button:hover { background: var(--surface-2); color: var(--text-primary); }
+.fb-zoom .fb-zoom-level { font-size: var(--fs-2xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* The "+" on an edge. Interactive inside the edge label layer, which React Flow
+   leaves pointer-events: none by default. */
+.fb-edge-insert { position: absolute; z-index: 6; pointer-events: all; }
+.fb-edge-insert-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.fb-edge-insert-button:hover, .fb-edge-insert-button[aria-expanded="true"] { border-color: var(--ink); color: var(--ink); opacity: 1; }
+.fb-edge-insert-menu { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); }
 
 .fb-addstep-button {
   display: inline-flex;
@@ -4125,7 +4290,9 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 /* A ring, not a heavier border: the card's own outline stays put so selecting
    one does not shift its neighbours by a pixel. */
-.fb-node.is-selected { border-color: var(--accent-sky); box-shadow: 0 0 0 1.5px var(--accent-sky); }
+/* Selected is ink, like every selection in the product (the colour roles in
+   :root): a 2px outline drawn as border plus ring. */
+.fb-node.is-selected { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink), var(--shadow-md); }
 .fb-node.is-invalid { border-color: var(--error-500); }
 
 /* Group accents. Sibling modifiers rather than utilities, because
@@ -4173,6 +4340,20 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   background: var(--flow-accent);
   flex-shrink: 0;
 }
+/* The group's glyph on a tile in its accent — the only place the card carries
+   the group colour (HANDOFF §3). */
+.fb-node-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--flow-accent-soft);
+  color: var(--flow-accent);
+}
+.fb-node-icon svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .fb-node-title {
   font-size: var(--fs-body);
   font-weight: 600;

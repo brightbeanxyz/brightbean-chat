@@ -110,7 +110,7 @@ export function installAutosave(store: BuilderStore): Autosave {
       }
       store.getState().setSave({
         state: "rejected",
-        message: "This change cannot be saved. Fix the problems below and it will save automatically.",
+        message: "This change cannot be saved. Fix the problems listed here and it will save automatically.",
         issues: payload?.validation?.errors ?? [],
       });
       attempt = 0;

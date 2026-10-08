@@ -79,5 +79,11 @@ urlpatterns = [
     path("api/flows/<uuid:flow_id>/", api.flow_detail, name="api_detail"),
     path("api/flows/<uuid:flow_id>/publish/", api.flow_publish, name="api_publish"),
     path("api/flows/<uuid:flow_id>/offline/", api.flow_take_offline, name="api_offline"),
+    path("api/flows/<uuid:flow_id>/rename/", api.flow_rename, name="api_rename"),
+    path(
+        "api/flows/<uuid:flow_id>/triggers/<uuid:trigger_id>/enabled/",
+        api.flow_trigger_enabled,
+        name="api_trigger_enabled",
+    ),
     path("api/flows/<uuid:flow_id>/stats/", api.flow_stats, name="api_stats"),
 ]

@@ -1,15 +1,20 @@
 /**
- * The step list and selected step's settings, beneath the preview on the right.
- * The persistent trigger summary is a separate left pane.
+ * The inspector: the selected step, and nothing else (HANDOFF §3, Flow builder).
+ *
+ * Two tabs over one step — Settings, the form, and Preview, the step as the
+ * person on the other end sees it. The preview used to sit above the form in a
+ * stack with the step list, so the field being edited was pushed half a screen
+ * down by two things that were not it. The step list moved to the outline on
+ * the left; the preview is a tab away, on the same step.
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { configSchema } from "../schema/artifact";
 import { FieldProvider, type FieldContextValue } from "../inspector/FieldContext";
 import { SchemaField } from "../inspector/SchemaField";
 import type { ConfigPath } from "../store/paths";
+import { Preview } from "../preview/Preview";
 import { useBuilder, useBuilderStore } from "../store/context";
-import { StepList } from "./StepList";
 import { titleOf } from "./title";
 
 export function StepEditor() {
@@ -28,6 +33,7 @@ export function StepEditor() {
   const picklists = useBuilder((state) => state.picklists);
   const env = useBuilder((state) => state.env);
   const index = useBuilder((state) => (nodeId ? state.nodeOrder.indexOf(nodeId) : -1));
+  const [tab, setTab] = useState<"settings" | "preview">("settings");
 
   const context = useMemo<FieldContextValue | null>(() => {
     if (!nodeId || !nodeType) {
@@ -77,15 +83,20 @@ export function StepEditor() {
 
   return (
     <section className="fb-editor" aria-label="Step settings">
+      {nodeId && nodeType && context ? (
+        <div className="tabs tabs-inline fb-inspector-tabs" role="tablist" aria-label="Step">
+          <button type="button" role="tab" className="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>
+            Settings
+          </button>
+          <button type="button" role="tab" className="tab" aria-selected={tab === "preview"} onClick={() => setTab("preview")}>
+            Preview
+          </button>
+        </div>
+      ) : null}
       <div className="fb-editor-body" ref={bodyRef}>
-        {stepCount > 0 ? (
-          <section className="fb-editor-section">
-            <p className="fb-section-label">Steps</p>
-            <StepList />
-          </section>
-        ) : null}
-
-        {nodeId && nodeType && context ? (
+        {nodeId && nodeType && context && tab === "preview" ? (
+          <Preview />
+        ) : nodeId && nodeType && context ? (
           <section className="fb-editor-section">
             {/* Captioned, ruled off, and pinned.
                 
@@ -143,8 +154,10 @@ export function StepEditor() {
           // in the left sidebar so the selection has a clear next step.
           <p className="fb-empty mt-3">What starts this flow is in “When it runs” on the left.</p>
         ) : stepCount > 0 ? (
-          <p className="fb-empty mt-3">Pick a step above, or on the canvas, to change what it says.</p>
-        ) : null}
+          <p className="fb-empty mt-3">Pick a step in the outline, or on the canvas, to change what it says.</p>
+        ) : (
+          <p className="fb-empty mt-3">Add a step on the canvas, then its settings appear here.</p>
+        )}
       </div>
     </section>
   );
