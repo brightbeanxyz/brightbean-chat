@@ -70,6 +70,15 @@ describe("what starts the flow", () => {
     expect(screen.getByText(/Every trigger is off, so nothing reaches this flow/i)).toBeInTheDocument();
   });
 
+  it("says that none of them start an offline flow", () => {
+    // The list still reads as "this is what starts it", and the toolbar pill
+    // alone is easy to miss.
+    const detail = oneStep([trigger()]);
+    renderWith(makeStore({ ...detail, flow: { ...detail.flow, status: "offline" } }), <TriggerSidebar />);
+
+    expect(screen.getByText(/This flow is offline, so none of these start it/i)).toBeInTheDocument();
+  });
+
   it("edits through the Django drawer rather than a second editor of its own", () => {
     // The button dispatches the event templates/flows/edit.html listens for.
     // A React trigger editor would be a second place for the platform gate and

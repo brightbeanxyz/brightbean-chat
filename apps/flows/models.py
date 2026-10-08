@@ -54,10 +54,19 @@ __all__ = [
 
 
 class FlowStatus(models.TextChoices):
-    """SPEC §5. ``active`` is set by publishing, never by hand."""
+    """SPEC §5. ``active`` is set by publishing, never by hand.
+
+    ``offline`` is a flow that was live and was taken off
+    (:func:`apps.flows.services.take_offline`). It has no published version,
+    like a draft, so every path that runs "the published version" refuses it
+    without checking this status. The value exists so the list and the builder
+    can say "Offline" rather than pass a flow people have been talking to off
+    as a draft somebody never finished.
+    """
 
     DRAFT = "draft", "Draft"
     ACTIVE = "active", "Active"
+    OFFLINE = "offline", "Offline"
     ARCHIVED = "archived", "Archived"
 
 
@@ -94,6 +103,12 @@ class FlowVersion(WorkspaceScopedModel):
     version = models.PositiveIntegerField()
     graph_json = models.JSONField(default=empty_graph)
     published = models.BooleanField(default=False)
+    #: When this version first went live. Unlike ``published`` it is never
+    #: cleared, and that is its job: taking a flow offline clears the flag, and
+    #: without this the version people's conversations ran on would turn back
+    #: into an editable draft and the next autosave would rewrite it in place.
+    #: :func:`apps.flows.services.save_draft` opens a new version instead.
+    published_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -133,6 +148,7 @@ class FlowVersion(WorkspaceScopedModel):
             "id": str(self.pk),
             "version": self.version,
             "published": self.published,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
             "updated_at": self.updated_at.isoformat(),
         }
 

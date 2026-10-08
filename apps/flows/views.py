@@ -197,6 +197,7 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
             for value, label in (
                 ("", "All"),
                 (FlowStatus.ACTIVE, "Live"),
+                (FlowStatus.OFFLINE, "Offline"),
                 (FlowStatus.DRAFT, "Draft"),
                 (FlowStatus.ARCHIVED, "Archived"),
             )
@@ -258,6 +259,7 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             "can_edit": request.workspace_membership.effective_permissions.get("edit_flows", False),
             "api_detail_url": reverse("flows:api_detail", kwargs=keys),
             "api_publish_url": reverse("flows:api_publish", kwargs=keys),
+            "api_offline_url": reverse("flows:api_offline", kwargs=keys),
             "api_stats_url": reverse("flows:api_stats", kwargs=keys),
             "api_schema_url": reverse("flows:api_schema", kwargs={"workspace_id": workspace_id}),
             # #27's export, offered from the builder as well as from the list.
@@ -356,5 +358,10 @@ def flow_archive(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
 @require_POST
 def flow_restore(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
-    services.restore_flow(flow)
+    try:
+        services.restore_flow(flow)
+    except services.FlowPlanLimitError as exc:
+        # Restoring a flow with a published version puts it back live, which
+        # takes the same plan check as publishing — and uncaught it was a 500.
+        return toast_response(tone="error", title="Not restored", body=str(exc))
     return toast_response(tone="success", title="Flow restored", events={"flowsChanged": True})

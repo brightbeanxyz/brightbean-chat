@@ -47,6 +47,10 @@ is what scrolls and a scroll event never bubbles out of it.
                 <span class="status-pill status-pill-active inline-flex items-center gap-1.5">
                     <span class="status-pill-dot"></span>Live
                 </span>
+                {% elif flow.status == "offline" %}
+                <span class="status-pill status-pill-offline inline-flex items-center gap-1.5">
+                    <span class="status-pill-dot"></span>Offline
+                </span>
                 {% elif flow.status == "archived" %}
                 <span class="status-pill status-pill-archived">Archived</span>
                 {% else %}

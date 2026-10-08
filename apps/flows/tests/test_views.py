@@ -64,6 +64,26 @@ class TestTheList:
         assert "Retired" not in client.get(list_url(tenancy)).content.decode()
         assert "Retired" in client.get(list_url(tenancy), {"status": "archived"}).content.decode()
 
+    def test_an_offline_flow_says_so_and_has_its_own_filter(self, tenancy, client_for):
+        """Listed by default — unlike an archived flow it is still being worked
+        on — and labelled Offline rather than passed off as a draft."""
+        from apps.flows.services import take_offline
+
+        flow = create_flow(workspace=tenancy.workspace, name="Paused welcome")
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        take_offline(flow)
+        create_flow(workspace=tenancy.workspace, name="Unfinished draft")
+        client = client_for(tenancy.owner)
+
+        everything = client.get(list_url(tenancy)).content.decode()
+        offline_only = client.get(list_url(tenancy), {"status": "offline"}).content.decode()
+
+        assert "Paused welcome" in everything
+        assert "status-pill-offline" in everything
+        assert "Paused welcome" in offline_only
+        assert "Unfinished draft" not in offline_only
+
     def test_an_htmx_request_gets_the_rows_partial(self, tenancy, client_for):
         create_flow(workspace=tenancy.workspace, name="Welcome series")
 
@@ -241,6 +261,32 @@ class TestMutations:
         flow.refresh_from_db()
         assert flow.status == FlowStatus.DRAFT
 
+    def test_restoring_past_the_plan_limit_is_a_toast_not_a_500(self, tenancy, client_for, monkeypatch):
+        """Restoring a flow with a published version puts it back live, so it
+        takes the plan check — and its refusal used to escape as a 500."""
+        import json
+
+        from apps.flows import services
+
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        archive_flow(flow)
+
+        def refuse(flow):
+            raise services.FlowPlanLimitError("Your plan allows 1 active automation; switch one off to free up a slot.")
+
+        monkeypatch.setattr(services, "_check_plan_allows_activation", refuse)
+
+        response = client_for(tenancy.owner).post(action_url("flows:restore", tenancy, flow))
+
+        toast = json.loads(response.headers["HX-Trigger"])["showToast"]
+        assert response.status_code == 204
+        assert toast["title"] == "Not restored"
+        assert "switch one off" in toast["body"]
+        flow.refresh_from_db()
+        assert flow.status == FlowStatus.ARCHIVED
+
 
 class TestPermissions:
     @pytest.mark.parametrize("role", list(WorkspaceRole))
@@ -279,6 +325,8 @@ class TestTheBuilderPage:
         assert f'data-flow-id="{flow.pk}"' in body
         assert reverse("flows:api_detail", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk}) in body
         assert reverse("flows:api_schema", kwargs={"workspace_id": tenancy.workspace.pk}) in body
+        offline = reverse("flows:api_offline", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
+        assert f'data-offline-url="{offline}"' in body
 
     def test_it_sets_the_csrf_cookie_so_the_first_autosave_has_a_token(self, tenancy, client_for):
         flow = create_flow(workspace=tenancy.workspace, name="Welcome")

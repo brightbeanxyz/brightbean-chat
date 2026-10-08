@@ -77,5 +77,6 @@ urlpatterns = [
     path("api/flows/schema/", api.flow_schema, name="api_schema"),
     path("api/flows/<uuid:flow_id>/", api.flow_detail, name="api_detail"),
     path("api/flows/<uuid:flow_id>/publish/", api.flow_publish, name="api_publish"),
+    path("api/flows/<uuid:flow_id>/offline/", api.flow_take_offline, name="api_offline"),
     path("api/flows/<uuid:flow_id>/stats/", api.flow_stats, name="api_stats"),
 ]

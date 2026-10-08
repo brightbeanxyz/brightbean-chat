@@ -11,6 +11,8 @@ export interface BuilderEnv {
   canEdit: boolean;
   detailUrl: string;
   publishUrl: string;
+  /** Takes a live flow offline (apps/flows/api.py's flow_take_offline). */
+  offlineUrl: string;
   statsUrl: string;
   schemaUrl: string;
   mediaPickerUrl: string;
@@ -38,6 +40,7 @@ export function readEnv(mount: HTMLElement): BuilderEnv {
     canEdit: mount.dataset["canEdit"] === "true",
     detailUrl: required(mount, "detailUrl"),
     publishUrl: required(mount, "publishUrl"),
+    offlineUrl: required(mount, "offlineUrl"),
     statsUrl: required(mount, "statsUrl"),
     schemaUrl: required(mount, "schemaUrl"),
     mediaPickerUrl: required(mount, "mediaPickerUrl"),

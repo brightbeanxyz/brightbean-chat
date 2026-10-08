@@ -124,6 +124,12 @@ export interface VersionMeta {
   id: string;
   version: number;
   published: boolean;
+  /**
+   * When this version first went live; never cleared. A flow taken offline
+   * has no published version, and this is how its last live one is still
+   * told apart from a draft. Optional only so older fixtures need not spell it.
+   */
+  published_at?: string | null;
   updated_at: string;
 }
 
@@ -199,6 +205,18 @@ export interface SaveResult {
 /** Publishing can enable an entirely paused trigger set. */
 export interface PublishResult extends SaveResult {
   triggers: TriggerSummary[];
+}
+
+/**
+ * Taking a flow offline. The same pieces as PublishResult so both apply the
+ * same way, minus validation (nothing was checked) and plus how many contacts'
+ * conversations in the flow were stopped.
+ */
+export interface OfflineResult {
+  flow: FlowMeta;
+  version: VersionMeta | null;
+  triggers: TriggerSummary[];
+  stopped: number;
 }
 
 export interface NodeStats {
