@@ -20,7 +20,6 @@ import { titleOf } from "./title";
 export function StepEditor() {
   const store = useBuilderStore();
   const bodyRef = useRef<HTMLDivElement>(null);
-  const editHeadRef = useRef<HTMLElement>(null);
   const selected = useBuilder((state) => state.selection.nodes);
   const stepCount = useBuilder((state) => state.nodeOrder.length);
   const canEdit = useBuilder((state) => state.env.canEdit);
@@ -54,13 +53,17 @@ export function StepEditor() {
     };
   }, [nodeId, nodeType, canEdit, env, picklists, issues, store]);
 
+  // Back to the top on a new step *and* on a tab switch. The two tabs share
+  // one scrolling body, so a long preview scrolled down and then swapped for
+  // Settings kept that offset — and with the header no longer pinned, it
+  // opened the form with "Editing step N" scrolled out of sight. The header
+  // is the first thing in Settings, so the top is where it is.
   useEffect(() => {
     const body = bodyRef.current;
-    const head = editHeadRef.current;
-    if (nodeId && body && head) {
-      body.scrollTop += head.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    if (nodeId && body) {
+      body.scrollTop = 0;
     }
-  }, [nodeId]);
+  }, [nodeId, tab]);
 
   if (selected.length > 1) {
     return (
@@ -98,8 +101,8 @@ export function StepEditor() {
           <Preview />
         ) : nodeId && nodeType && context ? (
           <section className="fb-editor-section">
-            {/* Captioned, ruled off, and pinned.
-                
+            {/* Captioned, and the first thing in the Settings tab.
+
                 This header used to repeat the selected row's own number,
                 eyebrow and title, in the same components, eight pixels beneath
                 it — so the editor read as a seventh row that started counting
@@ -109,11 +112,12 @@ export function StepEditor() {
                 caption now carries the identity and the row above still carries
                 the kind.
 
-                Sticky because the list answers "what am I editing?" only while
-                the list is on screen, and a send_message form scrolls well past
-                it. The title wraps rather than truncating: it is the thing
-                being worked on, and it was being cut twice at two widths. */}
-            <header className="fb-edit-head" ref={editHeadRef}>
+                Not sticky: it was pinned while the step list sat above it, and
+                with the list moved to the outline a pinned header only floated
+                over the form (see .fb-edit-head). The title wraps rather than
+                truncating: it is the thing being worked on, and it was being
+                cut twice at two widths. */}
+            <header className="fb-edit-head">
               <span className="fb-edit-caption">
                 {index >= 0 ? `Editing step ${index + 1}` : "Editing this step"}
               </span>

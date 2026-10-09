@@ -26,14 +26,17 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.filters import multi
 from apps.common.htmx import toast_response
+from apps.common.platforms import Platform
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
+from apps.flows.capabilities import connected_platforms
 from apps.flows.models import Flow, FlowExecution, FlowStatus, FlowVersion
 from apps.flows.portability.cards import card_contexts
 from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.portability.library import template_cards as shipped_templates
 from apps.flows.starter import starter_graph
 from apps.flows.triggers.phrasing import describe_triggers
+from apps.flows.triggers.platforms import shown_platforms
 from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
 from apps.members.roles import WorkspaceRole
@@ -141,7 +144,9 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         .values("published_at")[:1]
     )
     flows = list(
-        _visible_flows(request).annotate(latest_published_at=Subquery(latest_version)).prefetch_related("triggers")
+        _visible_flows(request)
+        .annotate(latest_published_at=Subquery(latest_version))
+        .prefetch_related("triggers__channel_connection")
     )
 
     # The redesign's filter chips carry counts, so a reader can see there are
@@ -172,8 +177,15 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
 
     # One sentence per flow saying when it runs, in the reader's words rather
     # than SPEC §10's. Reads the prefetch above, so this is no queries at all.
+    # The channel glyphs on each row read the same prefetch; the connected set
+    # is one query for the page, for the unbound triggers.
+    connected = set(connected_platforms(request.workspace))
     for flow in flows:
         flow.trigger_summary = describe_triggers(list(flow.triggers.all()))
+        flow.platforms = [
+            {"key": key, "label": Platform(key).label}
+            for key in shown_platforms(flow.triggers.all(), connected=connected)
+        ]
         flow.runs_recent = runs.get(flow.pk, 0)
         # The switch can always turn a live flow off; it can turn an offline one
         # back on only when nothing has changed since it last ran.
