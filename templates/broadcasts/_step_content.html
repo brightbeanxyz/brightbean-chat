@@ -29,7 +29,7 @@ script tag out of its own comment for its extractor.
 {% endcomment %}
 <div x-data="broadcastComposer({{ composer|json_attr }}, {{ config|json_attr }}, '{{ broadcast.message_tag|escapejs }}', '{{ broadcast.whatsapp_template_id|default:''|escapejs }}', {{ broadcast.template_variables|json_attr }})">
 
-  <form hx-post="{% url 'broadcasts:save_content' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+  <form data-wizard-save hx-post="{% url 'broadcasts:save_content' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
         hx-target="#broadcast-wizard"
         hx-swap="innerHTML">
     {% csrf_token %}

@@ -14,6 +14,7 @@ answers the preview and the gate, and a client-side check would be a second
 opinion that could disagree.
 {% endcomment %}
 <form x-data="{ when: '{% if broadcast.scheduled_at %}later{% else %}now{% endif %}' }"
+      data-wizard-save
       hx-post="{% url 'broadcasts:save_schedule' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
       hx-target="#broadcast-wizard"
       hx-swap="innerHTML">

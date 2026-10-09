@@ -149,4 +149,46 @@ honestly live (SECURITY-BASELINE §7).
       },
     };
   }
+
+  // "Save and exit" in the editor bar. Each step only saves when it is
+  // continued past, so a plain link would drop whatever was changed on the
+  // step on screen. Instead: if the step's form (the one marked
+  // data-wizard-save) differs from what it loaded with, submit it with exit=1
+  // and let the server save it and send us to the list — or, if it refuses,
+  // re-render the step with the reason, so nobody leaves thinking an edit was
+  // kept when it was not. Unchanged, it is just the link.
+  function broadcastWizardExit() {
+    function saveForm() {
+      return document.querySelector('#broadcast-wizard form[data-wizard-save]');
+    }
+    function stateOf(form) {
+      return new URLSearchParams(new FormData(form)).toString();
+    }
+    function snapshot() {
+      // A frame later, so Alpine has bound the step's :value inputs first.
+      window.requestAnimationFrame(function () {
+        var form = saveForm();
+        if (form) form.dataset.loadedState = stateOf(form);
+      });
+    }
+    return {
+      init() {
+        snapshot();
+        document.body.addEventListener('htmx:afterSettle', function (event) {
+          if (event.detail.target && event.detail.target.id === 'broadcast-wizard') snapshot();
+        });
+      },
+      leave(event) {
+        var form = saveForm();
+        if (!form || form.dataset.loadedState === undefined || stateOf(form) === form.dataset.loadedState) return;
+        event.preventDefault();
+        var flag = document.createElement('input');
+        flag.type = 'hidden';
+        flag.name = 'exit';
+        flag.value = '1';
+        form.appendChild(flag);
+        form.requestSubmit();
+      },
+    };
+  }
 </script>

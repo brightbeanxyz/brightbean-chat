@@ -20,8 +20,9 @@ flatpickr since L1-B in anticipation.
 
 {% comment %}
   The editor bar (HANDOFF §2.3): a way back, the broadcast's own name and state,
-  and "Save and exit". Every step saves as it advances, so leaving is always
-  safe and the button only needs to say so. Deleting the draft is the red link
+  and "Save and exit". A step saves as it is continued past, so the button
+  saves the step on screen first if it has changed (broadcastWizardExit in
+  _compose_script.html) and only then leaves. Deleting the draft is the red link
   at the foot of the summary panel, away from anything you would press on the
   way through.
 {% endcomment %}
@@ -34,7 +35,8 @@ flatpickr since L1-B in anticipation.
     <span class="editor-bar-sep" aria-hidden="true">/</span>
     <h1 class="editor-bar-title">{{ broadcast.name }}</h1>
     <span class="status-pill status-pill-{{ broadcast.status }}"><span class="status-pill-dot" aria-hidden="true"></span>{{ broadcast.get_status_display }}</span>
-    <a class="btn-pill-secondary btn-pill-sm ml-auto" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">Save and exit</a>
+    <a class="btn-pill-secondary btn-pill-sm ml-auto" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}"
+       x-data="broadcastWizardExit()" @click="leave($event)">Save and exit</a>
 </div>
 {% endblock %}
 

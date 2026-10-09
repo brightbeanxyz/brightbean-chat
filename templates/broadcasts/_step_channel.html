@@ -6,7 +6,7 @@ Step 1 — the channel (SPEC §13.1).
 filters on PlatformPolicy.broadcast_allowed. Instagram is absent from this list
 as *data*; there is no platform name in this template and there must not be one.
 {% endcomment %}
-<form hx-post="{% url 'broadcasts:save_channel' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+<form data-wizard-save hx-post="{% url 'broadcasts:save_channel' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
       hx-target="#broadcast-wizard"
       hx-swap="innerHTML">
     {% csrf_token %}

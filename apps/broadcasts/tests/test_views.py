@@ -221,6 +221,7 @@ class TestWizard:
 
         make_contacts(2, connection=connection)
         broadcast = make_broadcast(connection=connection)
+        services.set_send_time(broadcast, None)
 
         response = client_for(tenancy.owner).post(_url("broadcasts:send", tenancy, broadcast_id=broadcast.pk))
 
@@ -245,6 +246,98 @@ class TestWizard:
 
         assert b"Schedule broadcast" in response.content
         assert b"Send broadcast" not in response.content
+
+    def test_sending_before_the_schedule_step_is_answered_is_refused(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        """An unanswered Schedule step is a null, which would otherwise read as "now"."""
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        response = client_for(tenancy.owner).post(_url("broadcasts:send", tenancy, broadcast_id=broadcast.pk))
+
+        broadcast.refresh_from_db()
+        assert broadcast.status == BroadcastStatus.DRAFT
+        assert b"Finish the steps" in response.content
+
+    @pytest.mark.parametrize("answer", [{"when": "now"}, {"when": "later", "scheduled_at": "2099-06-01 09:00"}])
+    def test_a_draft_reopened_after_choosing_a_time_opens_on_review(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast, answer
+    ):
+        """ "Send now" is stored as a null, the same as never answering, so the
+        answer itself has to be recorded for the draft to reopen where it was left."""
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+        client = client_for(tenancy.owner)
+        client.post(_url("broadcasts:save_schedule", tenancy, broadcast_id=broadcast.pk), answer)
+
+        response = client.get(_url("broadcasts:wizard", tenancy, broadcast_id=broadcast.pk))
+
+        assert response.context["step"] == "review"
+        assert response.context["ready"] is True
+        rows = {row["name"]: row["done"] for row in response.context["step_rows"]}
+        assert rows["schedule"] is True
+        checks = {check["label"].split(" (")[0]: check["ok"] for check in response.context["checks"]}
+        assert checks["Send time chosen"] is True
+
+    def test_an_unanswered_schedule_step_is_where_a_draft_reopens(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        response = client_for(tenancy.owner).get(_url("broadcasts:wizard", tenancy, broadcast_id=broadcast.pk))
+
+        assert response.context["step"] == "schedule"
+        assert response.context["ready"] is False
+
+    def test_a_duplicate_has_to_be_asked_when_again(self, tenancy, connection, make_contacts, make_broadcast):
+        make_contacts(1, connection=connection)
+        original = make_broadcast(connection=connection)
+        services.set_send_time(original, None)
+
+        copy = services.duplicate_broadcast(original, user=tenancy.owner)
+
+        assert copy.send_time_chosen is False
+
+    def test_save_and_exit_keeps_the_edit_and_returns_to_the_list(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        """The editor bar's "Save and exit" submits the step on screen with exit=1."""
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        response = client_for(tenancy.owner).post(
+            _url("broadcasts:save_schedule", tenancy, broadcast_id=broadcast.pk),
+            {"when": "later", "scheduled_at": "2099-06-01 09:00", "exit": "1"},
+        )
+
+        broadcast.refresh_from_db()
+        assert broadcast.scheduled_at is not None
+        assert broadcast.status == BroadcastStatus.DRAFT
+        assert response.headers["HX-Redirect"] == _url("broadcasts:list", tenancy)
+
+    def test_save_and_exit_with_a_refused_edit_stays_and_says_why(
+        self, tenancy, client_for, connection, make_contacts, make_broadcast
+    ):
+        make_contacts(1, connection=connection)
+        broadcast = make_broadcast(connection=connection)
+
+        response = client_for(tenancy.owner).post(
+            _url("broadcasts:save_schedule", tenancy, broadcast_id=broadcast.pk),
+            {"when": "later", "scheduled_at": "2001-01-01 09:00", "exit": "1"},
+        )
+
+        assert "HX-Redirect" not in response.headers
+        assert b"already passed" in response.content
+
+    def test_every_saving_step_is_marked_for_save_and_exit(self, tenancy, client_for, connection, make_broadcast):
+        broadcast = make_broadcast(connection=connection)
+        client = client_for(tenancy.owner)
+
+        for step in ("channel", "audience", "content", "schedule"):
+            response = client.get(_url("broadcasts:wizard", tenancy, broadcast_id=broadcast.pk) + f"?step={step}")
+            assert response.content.count(b"data-wizard-save") == 1, step
 
     def test_a_scheduled_time_that_has_passed_by_review_is_refused(
         self, tenancy, client_for, connection, make_contacts, make_broadcast

@@ -72,7 +72,7 @@ operator agrees to is computed from the rules they are looking at.
 
   <p class="wizard-hint mt-3">Opted-out contacts, and anyone the channel will not let you message, are left out automatically.</p>
 
-  <form class="wizard-actions"
+  <form class="wizard-actions" data-wizard-save
         hx-post="{% url 'broadcasts:save_audience' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
         hx-target="#broadcast-wizard"
         hx-swap="innerHTML">

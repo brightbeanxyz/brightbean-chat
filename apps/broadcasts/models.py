@@ -160,6 +160,11 @@ class Broadcast(WorkspaceScopedModel):
     message_tag = models.CharField(max_length=64, blank=True, default="")
 
     scheduled_at = models.DateTimeField(null=True, blank=True, help_text="Null means send as soon as it is started.")
+    #: Whether the composer's Schedule step has been answered. ``scheduled_at``
+    #: cannot say so on its own: "send now" is stored as a null, the same value
+    #: a draft holds before anyone has been asked, so without this a draft
+    #: reopened after Review would land back on Schedule.
+    send_time_chosen = models.BooleanField(default=False)
     status = models.CharField(max_length=16, choices=BroadcastStatus.choices, default=BroadcastStatus.DRAFT)
 
     #: SPEC §5's counters: queued, sent, delivered, failed, skipped_window and

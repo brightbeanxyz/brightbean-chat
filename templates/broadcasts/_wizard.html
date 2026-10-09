@@ -67,7 +67,7 @@ parameter. The four includes are spelled out for the same reason.
             <dt>Audience</dt>
             <dd>{% if summary_preview %}{% if broadcast.segment %}{{ broadcast.segment.name }} · {% endif %}{{ summary_preview.eligible }} will receive it{% else %}—{% endif %}</dd>
             <dt>Send</dt>
-            <dd>{% if broadcast.scheduled_at %}{{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:"j M, H:i" }}{% elif step == "review" %}Now{% else %}—{% endif %}</dd>
+            <dd>{% if broadcast.scheduled_at %}{{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:"j M, H:i" }}{% elif broadcast.send_time_chosen %}Now{% else %}—{% endif %}</dd>
         </dl>
     </div>
     <div class="side-panel">

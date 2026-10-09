@@ -239,7 +239,9 @@ def _step_for(broadcast: Broadcast) -> str:
         return "audience"
     if broadcast.flow_id is None and broadcast.whatsapp_template_id is None:
         return "content"
-    return "schedule"
+    if not broadcast.send_time_chosen:
+        return "schedule"
+    return "review"
 
 
 def _requested_step(request: WorkspaceRequest, broadcast: Broadcast) -> str:
@@ -278,11 +280,7 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
                 "name": name,
                 "label": STEP_LABELS.get(name, name.title()),
                 "index": index + 1,
-                # The schedule step leaves nothing on the row that says it was
-                # answered — "send now" is a null — so standing on Review is what
-                # marks it done, and only once everything before it is.
-                "done": index < reached_index
-                or (name == "schedule" and step == "review" and reached_index >= STEPS.index("schedule")),
+                "done": index < reached_index,
                 "current": name == step,
             }
             for index, name in enumerate(STEPS)
@@ -296,9 +294,7 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
         # Whether Review may offer its button at all. schedule_broadcast refuses
         # the same things with a reason; this keeps the button from inviting a
         # click that can only be refused.
-        "ready": connection is not None
-        and bool(broadcast.target_filter_json)
-        and (broadcast.flow_id is not None or broadcast.whatsapp_template_id is not None),
+        "ready": reached == "review",
         "checks": [
             {
                 "ok": preview is not None,
@@ -315,7 +311,7 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
                 "ok": broadcast.flow_id is not None or broadcast.whatsapp_template_id is not None,
                 "label": "Message written",
             },
-            {"ok": step == "review" or broadcast.scheduled_at is not None, "label": "Send time chosen"},
+            {"ok": broadcast.send_time_chosen, "label": "Send time chosen"},
         ],
     }
     if step == "audience":
@@ -383,6 +379,19 @@ def _advance(request: WorkspaceRequest, broadcast: Broadcast, step: str, **extra
     return render(request, "broadcasts/_wizard.html", _wizard_context(request, broadcast, step, **extra))
 
 
+def _saved(request: WorkspaceRequest, broadcast: Broadcast, step: str) -> HttpResponse:
+    """After a step saved: the next step, or back to the list for "Save and exit".
+
+    "Save and exit" submits the step on screen with ``exit=1`` rather than
+    simply navigating away, so what was typed and not yet continued past is
+    kept. A refusal never reaches here — it re-renders the step with its reason,
+    so nobody leaves believing an edit was saved when it was not.
+    """
+    if request.POST.get("exit") == "1":
+        return _redirect(reverse("broadcasts:list", kwargs={"workspace_id": request.workspace.id}))
+    return _advance(request, broadcast, step)
+
+
 @login_required
 @require_broadcasts
 @require_POST
@@ -393,7 +402,7 @@ def save_channel(request: WorkspaceRequest, workspace_id: str, broadcast_id: str
         services.set_channel(broadcast, connection)
     except services.BroadcastError as exc:
         return _refused(request, broadcast, "channel", exc)
-    return _advance(request, broadcast, "audience")
+    return _saved(request, broadcast, "audience")
 
 
 @login_required
@@ -406,7 +415,7 @@ def save_audience(request: WorkspaceRequest, workspace_id: str, broadcast_id: st
         services.set_audience(broadcast, filter_json=document, segment=segment)
     except (ConditionError, services.BroadcastError) as exc:
         return _refused(request, broadcast, "audience", exc)
-    return _advance(request, broadcast, "content")
+    return _saved(request, broadcast, "content")
 
 
 @login_required
@@ -434,7 +443,7 @@ def save_content(request: WorkspaceRequest, workspace_id: str, broadcast_id: str
         return _refused(request, broadcast, "content", exc)
     except ValueError as exc:
         return _refused(request, broadcast, "content", exc)
-    return _advance(request, broadcast, "schedule")
+    return _saved(request, broadcast, "schedule")
 
 
 @login_required
@@ -457,7 +466,7 @@ def save_schedule(request: WorkspaceRequest, workspace_id: str, broadcast_id: st
         services.set_send_time(broadcast, when)
     except services.BroadcastError as exc:
         return _refused(request, broadcast, "schedule", exc)
-    return _advance(request, broadcast, "review")
+    return _saved(request, broadcast, "review")
 
 
 @login_required
@@ -468,6 +477,11 @@ def send(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) -> Htt
     the Schedule step recorded. Every compliance gate is enforced here, by
     ``schedule_broadcast``, against the audience as it is at this moment."""
     broadcast = _broadcast(request, broadcast_id)
+    if _step_for(broadcast) != "review":
+        # The button is disabled until every step is answered; this is the same
+        # rule for a POST that did not come from it. An unanswered Schedule step
+        # in particular would otherwise read its null as "send now".
+        return _refused(request, broadcast, "review", ValueError("Finish the steps marked in the summary first."))
     if broadcast.scheduled_at is not None and broadcast.scheduled_at < timezone.now():
         return _refused(
             request, broadcast, "review", ValueError("The time you picked has passed. Choose a new one under Schedule.")

@@ -344,7 +344,8 @@ def set_send_time(broadcast: Broadcast, when: datetime | None) -> Broadcast:
     """
     _require_draft(broadcast)
     broadcast.scheduled_at = when
-    broadcast.save(update_fields=["scheduled_at", "updated_at"])
+    broadcast.send_time_chosen = True
+    broadcast.save(update_fields=["scheduled_at", "send_time_chosen", "updated_at"])
     return broadcast
 
 
