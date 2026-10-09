@@ -102,6 +102,7 @@ attacker-authored HTML.
                 Its JavaScript bundle has not been built. Run <code>make frontend</code> and reload,
                 or rebuild the container image.
             </p>
+            {% if not can_edit %}<p class="mt-2">Read-only: you can look at this flow but not change it.</p>{% endif %}
         </div>
     </div>
     {% endif %}

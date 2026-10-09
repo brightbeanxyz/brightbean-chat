@@ -162,7 +162,7 @@ class TestConnect:
                 },
             )
 
-        assert "not both, and not neither" in response.content.decode()
+        assert "but not both" in response.content.decode()
         assert not ChannelConnection.objects.for_workspace(tenancy.workspace).exists()
 
     def test_neither_is_refused_too(self, client: Client, tenancy: Tenancy) -> None:
@@ -172,7 +172,7 @@ class TestConnect:
                 {"account_sid": ACCOUNT_SID, "auth_token": AUTH_TOKEN},
             )
 
-        assert "not both, and not neither" in response.content.decode()
+        assert "but not both" in response.content.decode()
 
     def test_a_number_already_connected_says_so_without_naming_the_workspace(
         self, client: Client, tenancy: Tenancy, other_tenancy: Tenancy

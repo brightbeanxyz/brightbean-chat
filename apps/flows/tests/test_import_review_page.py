@@ -54,7 +54,7 @@ class TestAnUnansweredQuestionIsFindable:
         """
         body = _review(client_for, tenancy)
 
-        assert "No Instagram account is connected yet" in body, "the empty-picker note is gone"
+        assert "No Instagram account is connected" in body, "the empty-picker note is gone"
         assert "Pick the Instagram account this trigger should watch" in body, (
             "the blocking question renders no reason at all, which is what shipped"
         )
@@ -62,7 +62,7 @@ class TestAnUnansweredQuestionIsFindable:
     def test_the_footer_names_what_is_missing_rather_than_counting_it(self, client_for, tenancy) -> None:
         body = _review(client_for, tenancy)
 
-        assert "Still to answer:" in body
+        assert "Still needed:" in body
         assert "Channels: Instagram" in body
 
     def test_the_footer_links_to_the_control_that_answers_it(self, client_for, tenancy) -> None:

@@ -1,5 +1,7 @@
 """The flow list and the builder's host page."""
 
+from unittest import mock
+
 import pytest
 from django.test import Client
 from django.urls import reverse
@@ -360,14 +362,21 @@ class TestTheBuilderPage:
 
         assert "csrftoken" in response.cookies
 
-    def test_a_viewer_is_told_the_canvas_is_read_only(self, tenancy, client_for):
+    @pytest.mark.parametrize("built", [True, False], ids=["bundle built", "bundle missing"])
+    def test_a_viewer_is_told_the_canvas_is_read_only(self, tenancy, client_for, built):
+        """Said in both of the page's states, because CI runs without the
+        builder bundle and a developer usually has one."""
         flow = create_flow(workspace=tenancy.workspace, name="Welcome")
 
-        body = (
-            client_for(tenancy.user_for(WorkspaceRole.VIEWER))
-            .get(action_url("flows:edit", tenancy, flow))
-            .content.decode()
-        )
+        with mock.patch(
+            "apps.flows.templatetags.flow_builder.finders.find",
+            side_effect=(lambda path: f"/somewhere/{path}") if built else (lambda path: None),
+        ):
+            body = (
+                client_for(tenancy.user_for(WorkspaceRole.VIEWER))
+                .get(action_url("flows:edit", tenancy, flow))
+                .content.decode()
+            )
 
         assert 'data-can-edit="false"' in body
         assert "Read-only" in body

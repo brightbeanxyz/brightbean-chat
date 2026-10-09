@@ -460,7 +460,7 @@ class TestSubscribers:
         body = client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/")).content.decode()
 
         assert "Nobody here yet" not in body
-        assert "on this sequence in all" in body
+        assert "enrolled in all" in body
 
     def test_a_sequence_with_nobody_on_it_still_says_so_plainly(self, tenancy, client_for):
         sequence = sequence_with(tenancy.workspace, steps=1)
