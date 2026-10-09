@@ -33,7 +33,6 @@ from uuid import UUID
 
 from django.db.models import Count, DateTimeField, Exists, F, Max, OuterRef, Q, QuerySet, Subquery, Value
 from django.db.models.functions import Coalesce
-from django.utils.timesince import timesince
 
 from apps.contacts.models import Contact
 from apps.inbox.models import (
@@ -64,6 +63,7 @@ __all__ = [
     "label_usage",
     "labels_by_conversation",
     "labels_for",
+    "last_execution_for",
     "last_messages_by_conversation",
     "list_version",
     "pending_reminders_for",
@@ -336,12 +336,12 @@ def list_version(rendered: list[dict[str, Any]]) -> tuple[Any, ...]:
             # The assignee's *name*, because that is what the chip prints — an
             # id would hold still through a rename.
             row["conversation"].assignee.display_name if row["conversation"].assignee else "",
-            # The relative string, not the timestamp behind it. "5 minutes ago"
-            # goes wrong on its own while the row it describes never moves, and
-            # a token built from last_message_at would answer 304 to that. This
-            # way the list refreshes when the text would actually change —
-            # about once a minute on a quiet workspace, not every three seconds.
-            timesince(row["conversation"].last_message_at) if row["conversation"].last_message_at else "",
+            # The relative string, not the timestamp behind it. "5m" goes wrong
+            # on its own while the row it describes never moves, and a token
+            # built from last_message_at would answer 304 to that. This way the
+            # list refreshes when the text would actually change — about once a
+            # minute on a quiet workspace, not every three seconds.
+            row["age"],
             row["preview"],
             row["last_internal"],
             row["unread"],
@@ -389,6 +389,43 @@ def live_execution_for(workspace: Any, contact: Contact) -> Any:
         .select_related("flow")
         .first()
     )
+
+
+def last_execution_for(workspace: Any, contact: Contact, conversation: Conversation) -> dict[str, Any] | None:
+    """The automation that last ran for this contact, for the contact panel
+    (HANDOFF §3, Inbox: "last automation that ran").
+
+    ``{"execution", "is_live", "sent"}`` or None. ``sent`` counts this
+    conversation's messages the run produced, read off the ``exec:<id>:``
+    idempotency keys :func:`flow_names_for` already relies on. Preview runs are
+    a builder's test, not something that happened to this person.
+    """
+    from apps.flows.models import LIVE_STATUSES, FlowExecution
+
+    # A run still holding the contact wins over a newer finished one: it is the
+    # one "Stop automation" acts on.
+    execution = live_execution_for(workspace, contact) or (
+        FlowExecution.objects.for_workspace(workspace)
+        .filter(contact=contact, preview=False)
+        .select_related("flow")
+        .order_by("-updated_at")
+        .first()
+    )
+    if execution is None:
+        return None
+    # Bounded to the messages since the run began, which message_conv_created_idx
+    # reaches directly — a long conversation's history is not rescanned on every
+    # panel refresh to count one run's handful.
+    sent = (
+        Message.objects.for_workspace(workspace)
+        .filter(
+            conversation=conversation,
+            created_at__gte=execution.created_at,
+            idempotency_key__startswith=f"exec:{execution.pk}:",
+        )
+        .count()
+    )
+    return {"execution": execution, "is_live": execution.status in LIVE_STATUSES, "sent": sent}
 
 
 # ---------------------------------------------------------------------------
