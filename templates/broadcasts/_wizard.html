@@ -1,5 +1,6 @@
-{% comment %}
-One step of the composer, plus the rail that navigates between them.
+{% load tz %}{% comment %}
+One step of the composer, the stepper that navigates between them, and the
+summary panel beside them (HANDOFF §3, Broadcasts).
 
 The step to render is chosen in Python (apps/broadcasts/views.py::_requested_step)
 against a fixed tuple, so nothing here builds a template name out of a request
@@ -14,26 +15,30 @@ parameter. The four includes are spelled out for the same reason.
   `step_labels` rather than the raw names: the fourth step is stored as
   "content" and read as "Message".
 {% endcomment %}
-<div class="bc-rail" role="navigation" aria-label="Composer steps">
+<ol class="stepper mb-6" aria-label="Composer steps">
     {% for row in step_rows %}
-    {% if not forloop.first %}<span class="bc-step-link{% if row.done %} bc-step-link-done{% endif %}"></span>{% endif %}
+    {% if not forloop.first %}<li class="stepper-link{% if row.done %} is-done{% endif %}" aria-hidden="true"></li>{% endif %}
+    <li>
     <button type="button"
-            class="bc-step{% if row.current %} bc-step-current{% elif row.done %} bc-step-done{% endif %}"
+            class="stepper-step{% if row.current %} is-current{% elif row.done %} is-done{% endif %}"
             hx-get="{% url 'broadcasts:wizard' workspace_id=request.workspace.id broadcast_id=broadcast.id %}?step={{ row.name }}"
             hx-target="#broadcast-wizard"
             hx-swap="innerHTML"
             {% if row.current %}aria-current="step"{% endif %}>
-        <span class="bc-step-index">
-            {% if row.done %}
-            <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+        <span class="stepper-index">
+            {% if row.done and not row.current %}
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
             <span class="sr-only">Done:</span>
             {% else %}{{ row.index }}{% endif %}
         </span>
-        <span>{{ row.label }}</span>
+        <span class="stepper-label">{{ row.label }}</span>
     </button>
+    </li>
     {% endfor %}
-</div>
+</ol>
 
+<div class="wizard-grid">
+<div class="wizard-main">
 {% if error %}
 <div class="alert-error mb-3" role="alert">{{ error }}</div>
 {% endif %}
@@ -41,5 +46,49 @@ parameter. The four includes are spelled out for the same reason.
 {% if step == "channel" %}{% include "broadcasts/_step_channel.html" %}
 {% elif step == "audience" %}{% include "broadcasts/_step_audience.html" %}
 {% elif step == "content" %}{% include "broadcasts/_step_content.html" %}
-{% else %}{% include "broadcasts/_step_schedule.html" %}
+{% elif step == "schedule" %}{% include "broadcasts/_step_schedule.html" %}
+{% else %}{% include "broadcasts/_step_review.html" %}
 {% endif %}
+</div>
+
+{% comment %}
+  The summary panel (HANDOFF §3, Broadcasts): what has been decided so far, and
+  the checks that have to hold before anything is sent. Re-rendered with every
+  step, so it always matches the row. The checks are a reading aid — every one
+  is enforced again, server-side, by schedule_broadcast at the moment of
+  sending — and each has a word beside its mark, never colour alone.
+{% endcomment %}
+<aside class="wizard-aside" aria-label="Summary">
+    <div class="side-panel">
+        <p class="side-panel-title">Summary</p>
+        <dl class="summary-list">
+            <dt>Channel</dt>
+            <dd>{{ broadcast.channel_connection.display_name|default:"—" }}</dd>
+            <dt>Audience</dt>
+            <dd>{% if summary_preview %}{% if broadcast.segment %}{{ broadcast.segment.name }} · {% endif %}{{ summary_preview.eligible }} will receive it{% else %}—{% endif %}</dd>
+            <dt>Send</dt>
+            <dd>{% if broadcast.scheduled_at %}{{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:"j M, H:i" }}{% elif broadcast.send_time_chosen %}Now{% else %}—{% endif %}</dd>
+        </dl>
+    </div>
+    <div class="side-panel">
+        <p class="side-panel-title">Compliance checks</p>
+        <ul class="check-list">
+            {% for check in checks %}
+            <li class="check-item {% if check.ok %}is-ok{% else %}is-todo{% endif %}">
+                <span class="check-mark" aria-hidden="true">{% if check.ok %}✓{% else %}!{% endif %}</span>
+                <span><span class="sr-only">{% if check.ok %}Done:{% else %}Not yet:{% endif %}</span> {{ check.label }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    <form class="mt-4 pt-4" style="border-top: 1px solid var(--divider);"
+          hx-post="{% url 'broadcasts:delete' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+          hx-swap="none"
+          hx-confirm="Delete this draft? Nothing has been sent, and this cannot be undone."
+          @htmx:after-request="if (event.detail.successful) window.location = '{% url 'broadcasts:list' workspace_id=request.workspace.id %}'"
+          x-data>
+        {% csrf_token %}
+        <button type="submit" class="btn-danger-link">Delete draft</button>
+    </form>
+</aside>
+</div>

@@ -23,6 +23,127 @@ nothing but a form posting to a toast_response view.
 <div class="space-y-10 max-w-3xl">
 
     <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Colour roles</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            Orange is the primary action and the focus ring, nothing else. Selected and current are ink;
+            state is one of five tones, always a dot and a word. <code>test_colour_roles.py</code> holds the line.
+        </p>
+        <div class="flex flex-wrap items-center gap-2">
+            <button type="button" class="btn-pill-primary">Primary action</button>
+            <button type="button" class="btn-pill-secondary">Secondary</button>
+            <button type="button" class="btn-pill-secondary btn-pill-sm">Small</button>
+            <button type="button" class="btn-danger-link">Delete this flow</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 mt-4">
+            {% include "components/status_pill.html" with tone="success" label="Live" %}
+            {% include "components/status_pill.html" with tone="warning" label="Offline" %}
+            {% include "components/status_pill.html" with tone="info" label="Sending" %}
+            {% include "components/status_pill.html" with tone="error" label="Failed" %}
+            {% include "components/status_pill.html" with tone="neutral" label="Draft" %}
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Tabs</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            <code>.tabs</code> at the top of a page (links, <code>aria-current</code>), <code>.tabs-inline</code>
+            inside a pane (a <code>tablist</code>, <code>aria-selected</code>). Active is ink.
+        </p>
+        <div class="card overflow-hidden">
+            <nav class="tabs" aria-label="Example">
+                <a class="tab" href="#" aria-current="page">Flows</a>
+                <a class="tab" href="#">Sequences</a>
+                <a class="tab" href="#">Templates</a>
+            </nav>
+            <div class="px-5 py-3" x-data="{ view: 'all' }">
+                <div class="tabs tabs-inline" role="tablist" aria-label="Views">
+                    <button type="button" role="tab" class="tab" :aria-selected="view === 'all'" @click="view = 'all'">All <span class="tab-count">6</span></button>
+                    <button type="button" role="tab" class="tab" :aria-selected="view === 'mine'" @click="view = 'mine'">Mine <span class="tab-count">2</span></button>
+                    <button type="button" role="tab" class="tab" :aria-selected="view === 'done'" @click="view = 'done'">Done <span class="tab-count">1</span></button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Summary cards</h2>
+        <div class="summary-cards mt-3">
+            <div class="summary-card"><span class="dot dot-success" aria-hidden="true"></span><span class="summary-card-value">3</span><span class="summary-card-label">Live</span></div>
+            <div class="summary-card"><span class="dot dot-warning" aria-hidden="true"></span><span class="summary-card-value">1</span><span class="summary-card-label">Offline</span></div>
+            <div class="summary-card"><span class="dot dot-neutral" aria-hidden="true"></span><span class="summary-card-value">2</span><span class="summary-card-label">Draft</span></div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Table, meter and step dots</h2>
+        <div class="card overflow-hidden mt-3">
+            <div class="data-table-wrap">
+                <table class="data-table">
+                    <thead><tr><th>Sequence</th><th>Steps</th><th class="is-num">Active</th><th>Completion</th><th>Status</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="data-table-title">New subscriber welcome</span><p class="data-table-meta">Instagram · over 7 days</p></td>
+                            <td><span class="step-dots" aria-hidden="true"><span></span><span></span><span></span><span></span></span> 4 steps</td>
+                            <td class="is-num">182</td>
+                            <td><div class="meter"><div class="meter-fill meter-success" style="width: 64%;"></div></div><p class="meter-label">64% complete</p></td>
+                            <td>{% include "components/status_pill.html" with tone="success" label="Active" %}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="data-table-title">October product update</span><p class="data-table-meta">Telegram</p></td>
+                            <td>—</td>
+                            <td class="is-num">2,140</td>
+                            <td><div class="meter"><div class="meter-fill meter-success" style="width: 55%;"></div><div class="meter-fill meter-info" style="width: 20%;"></div><div class="meter-fill meter-error" style="width: 5%;"></div></div><p class="meter-label">1,490 of 2,140</p></td>
+                            <td>{% include "components/status_pill.html" with tone="info" label="Sending" %}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Option cards</h2>
+        <p class="text-xs mb-3" style="color: var(--text-tertiary);">
+            Real radios, visually hidden: arrow keys move between cards. Selected is a 2px ink border.
+        </p>
+        <fieldset class="option-cards">
+            <legend class="sr-only">Who receives it</legend>
+            <label class="option-card">
+                <input type="radio" name="demo-audience" value="all">
+                <span class="option-card-body"><span class="option-card-title">All subscribers</span><span class="option-card-text">Everyone who opted in</span></span>
+                <span class="option-card-meta">3,120</span><span class="option-card-radio" aria-hidden="true"></span>
+            </label>
+            <label class="option-card">
+                <input type="radio" name="demo-audience" value="leads" checked>
+                <span class="option-card-body"><span class="option-card-title">Leads, last 30 days</span><span class="option-card-text">Tag "lead" and active this month</span></span>
+                <span class="option-card-meta">812</span><span class="option-card-radio" aria-hidden="true"></span>
+            </label>
+        </fieldset>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Stepper</h2>
+        <ol class="stepper mt-3" aria-label="Broadcast steps">
+            <li><span class="stepper-step is-done"><span class="stepper-index">{% include "partials/_nav_icon.html" with name="check" icon_size=13 %}</span><span class="stepper-label">Channel</span></span></li>
+            <li class="stepper-link is-done" aria-hidden="true"></li>
+            <li><span class="stepper-step is-current" aria-current="step"><span class="stepper-index">2</span><span class="stepper-label">Audience</span></span></li>
+            <li class="stepper-link" aria-hidden="true"></li>
+            <li><span class="stepper-step"><span class="stepper-index">3</span><span class="stepper-label">Message</span></span></li>
+        </ol>
+        <ol class="stepper stepper-vertical mt-5 max-w-[220px]" aria-label="Setup steps">
+            <li><span class="stepper-step is-current" aria-current="step"><span class="stepper-index">1</span><span class="stepper-label">Trigger<span class="stepper-sub">When it starts</span></span></span></li>
+            <li><span class="stepper-step"><span class="stepper-index">2</span><span class="stepper-label">Reply<span class="stepper-sub">What it sends</span></span></span></li>
+        </ol>
+    </section>
+
+    <section>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Empty state</h2>
+        <div class="mt-3" x-data>
+            {% include "components/empty_state.html" with icon="flows" title="No flows match" body="Try a different word, or clear the filters." action_label="Clear filters" action_click="0" %}
+        </div>
+    </section>
+
+    <section>
         <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Toasts</h2>
         <p class="text-xs mb-3" style="color: var(--text-tertiary);">
             Fired by <code>toast_response(...)</code> over <code>HX-Trigger</code>. The host lives in
@@ -109,7 +230,7 @@ nothing but a form posting to a toast_response view.
                 <input type="checkbox" class="bb-checkbox" checked> Checkbox, bean green
             </label>
             <label class="flex items-center gap-2 text-sm" style="color: var(--text-secondary);">
-                <span class="bb-toggle"><input type="checkbox" checked><span class="bb-toggle-track"></span></span>
+                <span class="switch"><input type="checkbox" role="switch" aria-label="Example switch" checked><span class="switch-track"></span></span>
                 Toggle switch
             </label>
         </div>
@@ -252,12 +373,6 @@ nothing but a form posting to a toast_response view.
                     <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
                 </button>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
-                <span class="chip-filter active">All <span style="opacity:.65;">9</span></span>
-                <span class="chip-filter">Live <span style="opacity:.65;">7</span></span>
-                <span class="chip-filter">Draft</span>
-                <span class="chip-filter chip-filter-add">+ Filter</span>
-            </div>
         </div>
     </section>
 
@@ -337,21 +452,6 @@ nothing but a form posting to a toast_response view.
                 <span class="btn-icon-round">
                     <svg width="17" height="17" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
                 </span>
-            </div>
-        </div>
-    </section>
-
-    <section>
-        <h2 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Progress</h2>
-        <div class="card p-5">
-            <div class="bc-rail" style="margin-bottom: 0;">
-                <span class="bc-step bc-step-done"><span class="bc-step-index"><svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span><span>Channel</span></span>
-                <span class="bc-step-link bc-step-link-done"></span>
-                <span class="bc-step bc-step-done"><span class="bc-step-index"><svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></span><span>Audience</span></span>
-                <span class="bc-step-link"></span>
-                <span class="bc-step bc-step-current"><span class="bc-step-index">3</span><span>Message</span></span>
-                <span class="bc-step-link"></span>
-                <span class="bc-step"><span class="bc-step-index">4</span><span>Schedule</span></span>
             </div>
         </div>
     </section>

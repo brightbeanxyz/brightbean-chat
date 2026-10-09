@@ -17,7 +17,7 @@ whichever one it saw last — importing data from a column nobody chose.
 {% block page_header %}
   <div class="flex items-start justify-between gap-4 mb-4">
     <div class="min-w-0">
-      <h1 class="truncate">{{ run.original_filename|default:"Import" }}</h1>
+      <h1 class="page-title truncate">{{ run.original_filename|default:"Import" }}</h1>
       <p class="muted text-xs">Uploaded {{ run.created_at }}</p>
     </div>
     <a class="media-pill flex-shrink-0" href="{% url 'contacts:import_list' workspace_id=request.workspace.id %}">All imports</a>
@@ -86,7 +86,7 @@ whichever one it saw last — importing data from a column nobody chose.
         stored value. Emptying a field is an edit you make on the contact.
       </p>
 
-      <button type="submit" class="btn-brand btn-inline mt-3">Check the file</button>
+      <button type="submit" class="btn-pill-primary btn-pill-sm mt-3">Check the file</button>
       <span class="muted text-xs">Nothing is written until you confirm.</span>
     </form>
   </section>

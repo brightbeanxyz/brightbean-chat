@@ -13,9 +13,10 @@ comes from `flow_tab_groups` in the context processor — same nav data, same
 single active-state convention.
 
 **One primary action.** The header used to offer Import, a name field and
-Create at equal weight. Creating a flow is the thing people come here to do;
-importing a file is not, and it lives in the overflow beside "Start from a
-template", which is how most people should start anyway.
+Create at equal weight. Creating a flow is the thing people come here to do,
+so "New flow" is the header's only button; the modal it opens asks where to
+start from — blank, a template, or a file — which is where Import lives now
+(HANDOFF §3, "Create flow").
 
 No Tailwind utility here sets a property a design-system class already owns —
 see ground rule 9 in docs/agent-prompts/layer-2.md. Colours come from the theme
@@ -32,80 +33,123 @@ swap in styles.css meaningful.
 <div class="max-w-[1060px] w-full"
      x-data="{
         q: '{{ query|escapejs }}',
-        status: '{{ status|escapejs }}',
-        folder: '{{ folder|escapejs }}',
+        filters: {{ filters|json_attr }},
         {% comment %}
-          $nextTick is load bearing. ui_select assigns to `folder` and calls
-          reload() in the same click handler, but Alpine flushes the binding on
-          the hidden inputs below on the next tick — dispatching immediately
-          makes htmx serialise the form one keystroke behind, so the first pick
-          of a filter appears to do nothing.
+          $nextTick is load bearing. The filter popover assigns to `filters`
+          and calls reload() in the same click handler, but Alpine renders the
+          hidden inputs it binds on the next tick — dispatching immediately
+          makes htmx serialise the form one click behind, so the first pick of
+          a filter appears to do nothing.
         {% endcomment %}
-        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        clearFilters() { this.q = ''; Object.keys(this.filters).forEach(k => this.filters[k] = []); this.reload(); }
      }">
 
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">Flows</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 A flow replies for you when something happens: a comment, a keyword, a reply to your story.
             </p>
         </div>
         {% if can_edit %}
-        <div class="flex items-center gap-2 flex-shrink-0">
-            <a href="{% url 'flows:import_start' workspace_id=request.workspace.id %}"
-               class="bb-icon-action" aria-label="Import a flow" title="Import a flow">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V8m0 0 4 4m-4-4-4 4M4 4v3h16V4"/></svg>
-            </a>
+        <div class="page-header-actions">
             <button type="button" class="btn-pill-primary" @click="$modal('new-flow')">
-                {% include "partials/_nav_icon.html" with name="flows" icon_size=16 %} New flow
+                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} New flow
             </button>
         </div>
         {% endif %}
     </div>
 
     {% if can_edit %}
+    {% comment %}
+      A name and one choice (HANDOFF §2, principle 4). Only "Blank" needs the
+      name — a template and a file each bring their own — so the field and the
+      button follow the choice, and the button says what it is about to do.
+    {% endcomment %}
     {% modal "new-flow" title="New flow" close_on="flowsChanged" %}
-    <form hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}" hx-swap="none">
+    {% comment %}
+      The modal resets its forms as it opens (partials/_modal_behaviours.html),
+      which puts the radios back to their `checked` default but not the Alpine
+      state x-model reads — hence the default on Blank and the @reset beside it.
+    {% endcomment %}
+    <form hx-post="{% url 'flows:create' workspace_id=request.workspace.id %}" hx-swap="none"
+          x-data="{ start: 'blank' }" @reset="start = 'blank'">
         <div class="bb-modal-body">
-            <div class="field">
+            <fieldset class="field">
+                <legend class="field-label">Start from</legend>
+                <div class="option-cards">
+                    <label class="option-card">
+                        <input type="radio" name="start" value="blank" x-model="start" checked>
+                        <span class="option-card-icon">{% include "partials/_nav_icon.html" with name="plus" icon_size=18 %}</span>
+                        <span class="option-card-body">
+                            <span class="option-card-title">Blank</span>
+                            <span class="option-card-text">A first message to build on</span>
+                        </span>
+                        <span class="option-card-radio" aria-hidden="true"></span>
+                    </label>
+                    <label class="option-card">
+                        <input type="radio" name="start" value="template" x-model="start">
+                        <span class="option-card-icon">{% include "partials/_nav_icon.html" with name="grid" icon_size=18 %}</span>
+                        <span class="option-card-body">
+                            <span class="option-card-title">A template</span>
+                            <span class="option-card-text">Ready-made, with the words to change</span>
+                        </span>
+                        <span class="option-card-radio" aria-hidden="true"></span>
+                    </label>
+                    <label class="option-card">
+                        <input type="radio" name="start" value="import" x-model="start">
+                        <span class="option-card-icon">{% include "partials/_nav_icon.html" with name="upload" icon_size=18 %}</span>
+                        <span class="option-card-body">
+                            <span class="option-card-title">A file</span>
+                            <span class="option-card-text">A flow downloaded from BrightBean</span>
+                        </span>
+                        <span class="option-card-radio" aria-hidden="true"></span>
+                    </label>
+                </div>
+            </fieldset>
+            <div class="field" x-show="start === 'blank'">
                 <label class="field-label" for="new-flow-name">What is this flow called?</label>
-                <input class="form-input-styled" id="new-flow-name" type="text" name="name" maxlength="200" required autofocus placeholder="Comment to DM">
+                <input class="form-input-styled" id="new-flow-name" type="text" name="name" maxlength="200"
+                       :required="start === 'blank'" autofocus placeholder="Comment to DM">
             </div>
         </div>
         <div class="bb-modal-actions">
             <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-            <button type="submit" class="btn-pill-primary">Create flow</button>
+            <button type="submit" class="btn-pill-primary" x-show="start === 'blank'">Create flow</button>
+            <a class="btn-pill-primary" x-show="start === 'template'" x-cloak
+               href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">Choose a template</a>
+            <a class="btn-pill-primary" x-show="start === 'import'" x-cloak
+               href="{% url 'flows:import_start' workspace_id=request.workspace.id %}">Upload a file</a>
         </div>
     </form>
     {% endmodal %}
     {% endif %}
 
+    {% include "flows/_summary.html" %}
+
+    <div class="mb-5">
     <form id="flow-filters" x-ref="filters"
-          class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-1 mb-5"
+          class="list-toolbar"
           hx-get="{% url 'flows:list' workspace_id=request.workspace.id %}"
           hx-target="#flow-rows"
           hx-swap="innerHTML"
-          hx-trigger="input changed delay:300ms, filters-changed"
+          hx-trigger="input changed delay:300ms from:#flow-search, filters-changed"
           @submit.prevent>
-        <input type="search" name="q" x-model="q" placeholder="Search flows"
-               class="form-input-styled" style="width: 15rem;" aria-label="Search flows">
-        <input type="hidden" name="status" x-model="status">
-        <input type="hidden" name="folder" x-model="folder">
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input type="search" id="flow-search" name="q" x-model="q" placeholder="Search flows"
+                   class="search-input" aria-label="Search flows">
+        </label>
         {% comment %}
-          Chips rather than a select, and each one carries its count: a reader
-          can see there are two drafts without selecting the filter to find out.
-          Buttons rather than links so the list swaps in place — the whole
-          toolbar is one htmx form.
+          One Filter button for status and folder (HANDOFF §2.2), replacing the
+          status chips and the folder dropdown. Several values in a group are
+          allowed, and arrive as a repeated parameter.
         {% endcomment %}
-        {% for chip in status_chips %}
-        <button type="button" class="chip-filter" :class="status === '{{ chip.value|escapejs }}' && 'active'"
-                @click="status = '{{ chip.value|escapejs }}'; reload()">
-            {{ chip.label }}{% if chip.count %}<span style="opacity: .65;">{{ chip.count }}</span>{% endif %}
-        </button>
-        {% endfor %}
-        {% ui_select model="folder" options=folder_options placeholder="All folders" icon="tag" onchange="reload()" %}
+        {% filter_popover groups=filter_groups onchange="reload()" target="#flow-rows" count=flow_count noun="flow" %}
     </form>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
+    </div>
 
     {% if template_cards and can_edit %}
     <section class="card p-[22px] mb-7">
@@ -119,7 +163,7 @@ swap in styles.css meaningful.
             <a class="btn-pill-secondary btn-pill-sm flex-shrink-0"
                href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">Browse all {{ template_total }}</a>
         </div>
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="tpl-grid">
             {% comment %}
               The loop variable is `entry`, and there is no `searchable`:
               flows/_template_card.html reads entry.card.* and leaves off the

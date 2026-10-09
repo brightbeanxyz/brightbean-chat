@@ -150,7 +150,7 @@ class TestOnThePaidPlan:
         text = body(client_for(tenancy.owner).get(URL))
 
         assert "Your plan ends on" in text
-        assert "Nothing is deleted" in text
+        assert "Your work stays here" in text
 
 
 @pytest.mark.usefixtures("stripe_on")
@@ -168,7 +168,7 @@ class TestComingBackFromCheckout:
             checkout_pending_since=timezone.now(),
         )
 
-        assert "being activated" in body(client_for(tenancy.owner).get(URL + "?checkout=success"))
+        assert "Activating your subscription" in body(client_for(tenancy.owner).get(URL + "?checkout=success"))
 
     def test_returning_with_a_success_flag_alone_grants_nothing(self, client_for: Any, tenancy: Any) -> None:
         """The URL is not evidence. A reader can type it; only the webhook, or
@@ -187,7 +187,7 @@ class TestComingBackFromCheckout:
             checkout_pending_since=timezone.now() - timedelta(hours=3),
         )
 
-        assert "being activated" not in body(client_for(tenancy.owner).get(URL))
+        assert "Activating your subscription" not in body(client_for(tenancy.owner).get(URL))
 
 
 @pytest.mark.usefixtures("stripe_on")

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load common_extras %}
 {% comment %}
 Step zero of the import wizard: pick one of the templates this installation ships
 instead of uploading a file.
@@ -13,7 +14,7 @@ keystroke buys nothing; it also sidesteps the $nextTick trap documented in
 list.html, which exists only because htmx has to serialise a form first.
 {% endcomment %}
 
-{% block title %}Start from a template · BrightBean Chat{% endblock %}
+{% block title %}Templates · BrightBean Chat{% endblock %}
 
 {% comment %}
 The Templates tab lands here, so the strip it was clicked in has to survive the
@@ -22,25 +23,33 @@ Sequences with it, vanish from the page they lead to.
 {% endcomment %}
 {% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
 
+{% comment %}
+The same header shape as Flows and Sequences — three tabs of one section should
+not move the title about as you switch between them. "Cancel" is gone: the tab
+strip above is the way back, and a page you arrived at by a tab has nothing to
+cancel.
+{% endcomment %}
 {% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
-        <h1 class="text-lg font-semibold" style="color: var(--text-primary);">Start from a template</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
-            Pick one and you will see exactly what it needs before anything is created.
+<div class="page-header max-w-[1060px]">
+    <div class="page-header-text">
+        <h1 class="page-title">Templates</h1>
+        <p class="page-lede">
+            Ready-made flows. Pick one and change the words to suit you — you will see exactly what it needs before anything is created.
         </p>
     </div>
-    <div class="flex flex-wrap items-center gap-2">
-        <a href="{{ upload_url }}" class="btn-outline btn-inline">Upload a file instead</a>
-        <a href="{{ list_url }}" class="btn-outline btn-inline">Cancel</a>
+    <div class="page-header-actions">
+        <a href="{{ upload_url }}" class="btn-pill-secondary">
+            {% include "partials/_nav_icon.html" with name="upload" icon_size=16 %} Upload a file
+        </a>
     </div>
 </div>
 {% endblock %}
 
 {% block content %}
+<div class="max-w-[1060px] w-full">
 {% if errors %}
-<div class="rounded-xl border p-4 mb-4"
-     style="border-color: var(--danger-500); background: rgba(var(--danger-500-rgb), 0.08);">
+<div class="rounded-xl border p-4 mb-4" role="alert"
+     style="border-color: var(--error-500); background: var(--error-50);">
     <p class="text-sm font-medium" style="color: var(--text-primary);">That template could not be read</p>
     <ul class="mt-2 space-y-1">
         {% for error in errors %}
@@ -53,27 +62,33 @@ Sequences with it, vanish from the page they lead to.
 {% if cards %}
 <div x-data="{
         q: '',
-        category: '',
-        matches(haystack, category) {
-            if (this.category && category !== this.category) return false;
+        filters: { category: [], channel: [] },
+        matches(haystack, category, platforms) {
+            if (this.filters.category.length && !this.filters.category.includes(category)) return false;
+            if (this.filters.channel.length && !platforms.split(' ').some(p => this.filters.channel.includes(p))) return false;
             if (!this.q) return true;
             return haystack.toLowerCase().includes(this.q.toLowerCase());
         }
      }">
 
-    <div class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3">
-        <input type="search" x-model="q" placeholder="Search templates"
-               class="form-input-styled" style="width: 16rem;" aria-label="Search templates">
-        <button type="button" class="btn-outline btn-inline" @click="category = ''"
-                :aria-pressed="category === ''">All</button>
-        {% for name in categories %}
-        <button type="button" class="btn-outline btn-inline"
-                @click="category = '{{ name|escapejs }}'"
-                :aria-pressed="category === '{{ name|escapejs }}'">{{ name }}</button>
-        {% endfor %}
+    {% comment %}
+      The same search + Filter shape as every other list (HANDOFF §2.2), applied
+      in the browser: the popover's model is read by matches() on each card,
+      so there is no form and no reload — its hidden inputs are inert here.
+    {% endcomment %}
+    <div class="mb-5">
+    <div class="list-toolbar">
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input type="search" x-model="q" placeholder="Search {{ cards|length }} templates"
+                   class="search-input" aria-label="Search templates">
+        </label>
+        {% filter_popover groups=filter_groups noun="template" %}
+    </div>
+    {% filter_chips groups=filter_groups %}
     </div>
 
-    <div class="grid gap-4 mt-2" style="grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr));">
+    <div class="tpl-grid">
         {% for entry in cards %}
         {% include "flows/_template_card.html" with searchable=True %}
         {% endfor %}
@@ -95,4 +110,5 @@ Sequences with it, vanish from the page they lead to.
     </p>
 </div>
 {% endif %}
+</div>
 {% endblock %}

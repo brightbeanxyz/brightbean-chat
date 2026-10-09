@@ -24,10 +24,10 @@ some other rule from its row menu would wipe the editor somebody is typing in.
 {% endcomment %}
 {% block content %}
 <div class="max-w-[1060px] w-full" x-data="{ editorOpen: false }" @htmx:after-swap.window="if ($event.detail.target.id === 'inbox-rule-editor') editorOpen = true" @htmx:after-request="if (bbChanged($event, 'inboxRulesChanged') && $refs.editor.contains($event.detail.elt)) { $refs.editor.innerHTML = ''; editorOpen = false }">
-  <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-    <div>
+  <div class="page-header">
+    <div class="page-header-text">
       <h1 class="page-title">Inbox rules</h1>
-      <p class="page-lede mt-1.5">
+      <p class="page-lede">
         A rule reads every message that arrives and files, assigns or closes the conversation it
         belongs to. It runs before any flow replies, and it keeps running even where somebody has
         paused automation on a thread.

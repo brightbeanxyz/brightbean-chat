@@ -303,3 +303,80 @@ class TestTheThread:
 
         assert response.status_code == 200
         assert "newest" in response.content.decode()
+
+
+class TestTheRedesignedPane:
+    """HANDOFF §3, Inbox: search, the empty pane, the status bar, three voices."""
+
+    def test_search_matches_the_contact(self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Any) -> None:
+        _other_conversation(tenancy, "Zara")
+
+        body = agent_client.get(url_for("rows"), {"q": "lovel"}).content.decode()
+
+        assert "Ada Lovelace" in body
+        assert "Zara" not in body
+
+    def test_the_search_term_is_part_of_the_poll_token(
+        self, agent_client: Any, url_for: Any, conversation: Any
+    ) -> None:
+        """Otherwise a poll after typing would 304 against the unfiltered list."""
+        plain = agent_client.get(url_for("rows")).headers["ETag"]
+        searched = agent_client.get(url_for("rows"), {"q": "ada"}).headers["ETag"]
+
+        assert plain != searched
+
+    def test_the_empty_pane_counts_what_needs_a_reply(self, agent_client: Any, url_for: Any, inbound: Any) -> None:
+        inbound("hello")
+
+        body = agent_client.get(url_for("list")).content.decode()
+
+        assert "Select a conversation" in body
+        assert "1 conversation needs a reply." in body
+        assert "Open first unread" in body
+
+    def test_an_open_window_says_so_and_offers_to_take_over(
+        self, agent_client: Any, url_for: Any, conversation: Any, identity: Any
+    ) -> None:
+        body = agent_client.get(url_for("messages", conversation_id=conversation.pk)).content.decode()
+
+        assert "ib-banner-open" in body
+        assert "Pause automation (take over)" in body
+
+    def test_a_flows_message_is_labelled_with_the_flow(
+        self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Any, contact: Any, connection: Any
+    ) -> None:
+        from apps.flows.fixtures import graph_for
+        from apps.flows.models import FlowExecution, StartedBy
+        from apps.flows.services import latest_version
+        from apps.flows.tests.support import published_flow
+        from apps.messaging.models import MessageSource
+
+        flow = published_flow(tenancy.workspace, graph_for("send_message"), name="Price question")
+        execution = FlowExecution(
+            flow=flow,
+            flow_version=latest_version(flow),
+            contact=contact,
+            channel_connection=connection,
+            current_node_id="subject",
+            started_by=StartedBy.stamp(StartedBy.MANUAL),
+        )
+        execution.save()
+        Message.objects.create(
+            conversation=conversation,
+            direction=MessageDirection.OUT,
+            source=MessageSource.AUTOMATION,
+            status=MessageStatus.SENT,
+            body={"blocks": [{"type": "text", "text": "Prices start at 24"}]},
+            idempotency_key=f"exec:{execution.pk}:node:subject:1",
+        )
+
+        body = agent_client.get(url_for("messages", conversation_id=conversation.pk)).content.decode()
+
+        assert "Flow “Price question”" in body
+        assert "ib-bubble-auto" in body
+
+    def test_the_composer_offers_reply_and_note_tabs(self, agent_client: Any, url_for: Any, conversation: Any) -> None:
+        body = agent_client.get(url_for("thread", conversation_id=conversation.pk)).content.decode()
+
+        assert ">Reply</button>" in body
+        assert ">Internal note</button>" in body

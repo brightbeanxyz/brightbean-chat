@@ -57,6 +57,7 @@ from apps.broadcasts import composer as composer_module
 from apps.broadcasts import services
 from apps.broadcasts.models import Broadcast, BroadcastRecipient, BroadcastStatus, RecipientStatus
 from apps.channels.models import ChannelConnection, WhatsAppTemplate
+from apps.common.filters import multi, parse_uuid
 from apps.common.htmx import toast_response
 from apps.common.polling import conditional, version_etag
 from apps.common.shortcuts import get_scoped_object_or_404
@@ -85,13 +86,14 @@ __all__ = [
     "save_channel",
     "save_content",
     "save_schedule",
+    "send",
     "wizard",
 ]
 
 #: The composer's steps, in order (SPEC §13.1). A key into this tuple is the
 #: only thing a request may say about which step it wants — a template name
 #: built from a request parameter is a template-injection hole.
-STEPS: tuple[str, ...] = ("channel", "audience", "content", "schedule")
+STEPS: tuple[str, ...] = ("channel", "audience", "content", "schedule", "review")
 
 #: What each step is called on screen. The names above are the wire format and
 #: pick a template; these are the reader's words, and "content" is the one that
@@ -101,6 +103,7 @@ STEP_LABELS: dict[str, str] = {
     "audience": "Audience",
     "content": "Message",
     "schedule": "Schedule",
+    "review": "Review",
 }
 
 #: How many broadcasts the list shows at once. The search and status filters
@@ -124,18 +127,44 @@ require_broadcasts = require_permission("send_broadcasts")
 def _visible(request: WorkspaceRequest) -> Any:
     """The workspace's broadcasts, filtered by the toolbar.
 
-    An unrecognised ``?status=`` falls back to no status filter rather than to
-    no filtering at all — the trap ``apps.flows.views._visible_flows`` documents,
-    where an ``if``/``elif`` let a bogus value skip the branch entirely.
+    Both filters repeat (``?status=sent&status=sending``) — the Filter popover
+    allows several values per group. An unrecognised value is dropped rather
+    than failing the page, and a group left with nothing filters nothing — the
+    trap ``apps.flows.views._visible_flows`` documents, where an ``if``/``elif``
+    let a bogus value skip the branch entirely. Channel ids are scoped by the
+    queryset itself: an id from another workspace matches no row here.
     """
     rows = Broadcast.objects.for_workspace(request.workspace).select_related("channel_connection")
     term = (request.GET.get("q") or "").strip()[:200]
     if term:
         rows = rows.filter(name__icontains=term)
-    status = (request.GET.get("status") or "").strip()
-    if status in BroadcastStatus.values:
-        rows = rows.filter(status=status)
+    statuses = multi(request.GET, "status", allowed=BroadcastStatus.values)
+    if statuses:
+        rows = rows.filter(status__in=statuses)
+    channels = multi(request.GET, "channel", parse=parse_uuid)
+    if channels:
+        rows = rows.filter(channel_connection_id__in=channels)
     return rows.order_by("-created_at")
+
+
+def _filter_groups(request: WorkspaceRequest) -> list[dict[str, Any]]:
+    """The Filter popover's sections: status, and every channel a broadcast
+    in this workspace has gone out on — not only the ones that can broadcast
+    today, or a channel switched off since would make its history unfindable."""
+    connections = (
+        ChannelConnection.objects.for_workspace(request.workspace)
+        .filter(broadcasts__isnull=False)
+        .distinct()
+        .order_by("platform", "display_name")
+    )
+    return [
+        {"key": "status", "label": "Status", "options": list(BroadcastStatus.choices)},
+        {
+            "key": "channel",
+            "label": "Channel",
+            "options": [{"value": c.pk, "label": c.display_name, "icon": c.platform} for c in connections],
+        },
+    ]
 
 
 def _rows_context(request: WorkspaceRequest) -> dict[str, Any]:
@@ -149,8 +178,10 @@ def _rows_context(request: WorkspaceRequest) -> dict[str, Any]:
         "truncated": len(page) > PAGE_SIZE,
         "page_size": PAGE_SIZE,
         "q": (request.GET.get("q") or "").strip()[:200],
-        "status": (request.GET.get("status") or "").strip(),
-        "status_options": list(BroadcastStatus.choices),
+        "filters": {
+            "status": multi(request.GET, "status", allowed=BroadcastStatus.values),
+            "channel": [str(pk) for pk in multi(request.GET, "channel", parse=parse_uuid)],
+        },
     }
 
 
@@ -162,6 +193,7 @@ def broadcast_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse
     context = {
         **_rows_context(request),
         "connections": composer_module.broadcastable_connections(request.workspace),
+        "filter_groups": _filter_groups(request),
     }
     return render(request, "broadcasts/list.html", context)
 
@@ -207,7 +239,9 @@ def _step_for(broadcast: Broadcast) -> str:
         return "audience"
     if broadcast.flow_id is None and broadcast.whatsapp_template_id is None:
         return "content"
-    return "schedule"
+    if not broadcast.send_time_chosen:
+        return "schedule"
+    return "review"
 
 
 def _requested_step(request: WorkspaceRequest, broadcast: Broadcast) -> str:
@@ -231,6 +265,12 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
     # STEP_LABELS rather than the stored names: the third step is `content` on
     # the wire and "Message" to a reader.
     reached_index = STEPS.index(reached) if reached in STEPS else 0
+    connections = composer_module.broadcastable_connections(request.workspace)
+    # The right-hand summary and its checks (HANDOFF §3, Broadcasts), on every
+    # step. The audience count is the same three aggregates the preview runs,
+    # skipped for a draft with no audience yet.
+    preview = audience_module.preview(broadcast) if broadcast.target_filter_json else None
+    opted_out = preview.needs("opted_out") if preview is not None else 0
     context: dict[str, Any] = {
         "broadcast": broadcast,
         "step": step,
@@ -246,8 +286,33 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
             for index, name in enumerate(STEPS)
         ],
         "reached": reached,
+        # The Back button's target: the step before this one, if any.
+        "prev_step": STEPS[STEPS.index(step) - 1] if step in STEPS and STEPS.index(step) > 0 else "",
         "composer": composer_module.composer_config(request.workspace, connection),
-        "connections": composer_module.broadcastable_connections(request.workspace),
+        "connections": connections,
+        "summary_preview": preview,
+        # Whether Review may offer its button at all. schedule_broadcast refuses
+        # the same things with a reason; this keeps the button from inviting a
+        # click that can only be refused.
+        "ready": reached == "review",
+        "checks": [
+            {
+                "ok": preview is not None,
+                "label": f"Opted-out contacts excluded ({opted_out})"
+                if preview is not None
+                else "Opted-out contacts excluded",
+            },
+            {
+                "ok": connection is not None and any(c.pk == connection.pk for c in connections),
+                "label": "Channel allows broadcasts",
+            },
+            {"ok": bool(broadcast.target_filter_json), "label": "Audience selected"},
+            {
+                "ok": broadcast.flow_id is not None or broadcast.whatsapp_template_id is not None,
+                "label": "Message written",
+            },
+            {"ok": broadcast.send_time_chosen, "label": "Send time chosen"},
+        ],
     }
     if step == "audience":
         # L6-C extracted this payload into apps/contacts/builder.py when the
@@ -314,6 +379,19 @@ def _advance(request: WorkspaceRequest, broadcast: Broadcast, step: str, **extra
     return render(request, "broadcasts/_wizard.html", _wizard_context(request, broadcast, step, **extra))
 
 
+def _saved(request: WorkspaceRequest, broadcast: Broadcast, step: str) -> HttpResponse:
+    """After a step saved: the next step, or back to the list for "Save and exit".
+
+    "Save and exit" submits the step on screen with ``exit=1`` rather than
+    simply navigating away, so what was typed and not yet continued past is
+    kept. A refusal never reaches here — it re-renders the step with its reason,
+    so nobody leaves believing an edit was saved when it was not.
+    """
+    if request.POST.get("exit") == "1":
+        return _redirect(reverse("broadcasts:list", kwargs={"workspace_id": request.workspace.id}))
+    return _advance(request, broadcast, step)
+
+
 @login_required
 @require_broadcasts
 @require_POST
@@ -324,7 +402,7 @@ def save_channel(request: WorkspaceRequest, workspace_id: str, broadcast_id: str
         services.set_channel(broadcast, connection)
     except services.BroadcastError as exc:
         return _refused(request, broadcast, "channel", exc)
-    return _advance(request, broadcast, "audience")
+    return _saved(request, broadcast, "audience")
 
 
 @login_required
@@ -337,7 +415,7 @@ def save_audience(request: WorkspaceRequest, workspace_id: str, broadcast_id: st
         services.set_audience(broadcast, filter_json=document, segment=segment)
     except (ConditionError, services.BroadcastError) as exc:
         return _refused(request, broadcast, "audience", exc)
-    return _advance(request, broadcast, "content")
+    return _saved(request, broadcast, "content")
 
 
 @login_required
@@ -365,23 +443,53 @@ def save_content(request: WorkspaceRequest, workspace_id: str, broadcast_id: str
         return _refused(request, broadcast, "content", exc)
     except ValueError as exc:
         return _refused(request, broadcast, "content", exc)
-    return _advance(request, broadcast, "schedule")
+    return _saved(request, broadcast, "schedule")
 
 
 @login_required
 @require_broadcasts
 @require_POST
 def save_schedule(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) -> HttpResponse:
-    """Send now or later. This is the button that puts the fanout in the queue."""
+    """Now or later — recorded on the draft, not acted on. Review sends it.
+
+    ``scheduled_at`` on a draft is already the model's "when it should go out"
+    (null meaning as soon as it is started), and ``schedule_broadcast`` reads it,
+    so storing the answer here and queueing from Review is the existing contract
+    with one more step in front of the button.
+    """
     broadcast = _broadcast(request, broadcast_id)
     try:
-        when = _when(request)
+        when = None if (request.POST.get("when") or "now") == "now" else _when(request)
     except ValueError as exc:
         return _refused(request, broadcast, "schedule", exc)
     try:
-        services.schedule_broadcast(broadcast, when=when)
+        services.set_send_time(broadcast, when)
     except services.BroadcastError as exc:
         return _refused(request, broadcast, "schedule", exc)
+    return _saved(request, broadcast, "review")
+
+
+@login_required
+@require_broadcasts
+@require_POST
+def send(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) -> HttpResponse:
+    """The Review step's button: put the fanout in the queue, now or at the time
+    the Schedule step recorded. Every compliance gate is enforced here, by
+    ``schedule_broadcast``, against the audience as it is at this moment."""
+    broadcast = _broadcast(request, broadcast_id)
+    if _step_for(broadcast) != "review":
+        # The button is disabled until every step is answered; this is the same
+        # rule for a POST that did not come from it. An unanswered Schedule step
+        # in particular would otherwise read its null as "send now".
+        return _refused(request, broadcast, "review", ValueError("Finish the steps marked in the summary first."))
+    if broadcast.scheduled_at is not None and broadcast.scheduled_at < timezone.now():
+        return _refused(
+            request, broadcast, "review", ValueError("The time you picked has passed. Choose a new one under Schedule.")
+        )
+    try:
+        services.schedule_broadcast(broadcast, when=broadcast.scheduled_at)
+    except services.BroadcastError as exc:
+        return _refused(request, broadcast, "review", exc)
     return _redirect(reverse("broadcasts:detail", kwargs={"workspace_id": workspace_id, "broadcast_id": broadcast.pk}))
 
 

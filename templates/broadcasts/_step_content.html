@@ -29,7 +29,7 @@ script tag out of its own comment for its extractor.
 {% endcomment %}
 <div x-data="broadcastComposer({{ composer|json_attr }}, {{ config|json_attr }}, '{{ broadcast.message_tag|escapejs }}', '{{ broadcast.whatsapp_template_id|default:''|escapejs }}', {{ broadcast.template_variables|json_attr }})">
 
-  <form hx-post="{% url 'broadcasts:save_content' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+  <form data-wizard-save hx-post="{% url 'broadcasts:save_content' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
         hx-target="#broadcast-wizard"
         hx-swap="innerHTML">
     {% csrf_token %}
@@ -38,6 +38,9 @@ script tag out of its own comment for its extractor.
     <input type="hidden" name="variables" :value="serialisedVariables">
     <input type="hidden" name="template_id" :value="templateId">
     <input type="hidden" name="message_tag" :value="tag">
+
+    <h2 class="wizard-title">Write the message</h2>
+    <p class="wizard-lede">What everyone in the audience receives. The preview shows it as it lands in the chat.</p>
 
     {% if composer.templates %}
     <div class="bc-panel">
@@ -225,8 +228,43 @@ script tag out of its own comment for its extractor.
     </div>
     {% endif %}
 
-    <div class="bc-actions">
-      <button type="submit" class="btn-brand btn-inline">Continue</button>
+    {# ── Live preview ─────────────────────────────────────────── #}
+    {% comment %}
+      The message as it lands in the chat (HANDOFF §3: "message editor with live
+      preview"), drawn from the same Alpine state the form serialises — so it
+      cannot show something other than what will be saved. Text only for media:
+      the picture is a library id or a link here, and fetching it to draw a
+      thumbnail is the detail page's job, not a keystroke's.
+    {% endcomment %}
+    <div class="bc-preview-chat" aria-label="Preview" role="group">
+      <p class="side-panel-title">Preview</p>
+      <div class="chat-thread">
+        <template x-if="mode === 'message'">
+          <div class="flex flex-col gap-1.5 items-start">
+            <template x-for="(block, index) in blocks" :key="index">
+              <div class="chat-bubble chat-bubble-out">
+                <template x-if="block.type === 'text'"><span class="whitespace-pre-wrap" x-text="block.text || 'Your message…'"></span></template>
+                <template x-if="block.type === 'card'"><span><strong x-text="block.title || 'Card title'"></strong><br><span x-text="block.subtitle"></span></span></template>
+                <template x-if="block.type !== 'text' && block.type !== 'card'"><span x-text="'[' + block.type + '] ' + (block.caption || '')"></span></template>
+              </div>
+            </template>
+            <template x-if="!blocks.length"><div class="chat-bubble chat-bubble-out" style="opacity: .6;">Your message…</div></template>
+            <div class="flex flex-wrap gap-1.5" x-show="buttons.length">
+              <template x-for="(button, index) in buttons" :key="index">
+                <span class="chat-button" x-text="button.label || 'Button'"></span>
+              </template>
+            </div>
+          </div>
+        </template>
+        <template x-if="mode === 'template'">
+          <div class="chat-bubble chat-bubble-out whitespace-pre-wrap" x-text="selectedTemplate ? selectedTemplate.body : 'Choose a template…'"></div>
+        </template>
+      </div>
+    </div>
+
+    <div class="wizard-actions">
+      {% include "broadcasts/_step_back.html" %}
+      <button type="submit" class="btn-pill-primary">Continue</button>
     </div>
   </form>
 </div>

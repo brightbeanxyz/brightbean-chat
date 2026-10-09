@@ -1,6 +1,6 @@
 {% extends "layouts/workspace_settings.html" %}
 {% block title %}WhatsApp cost estimates · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>WhatsApp cost estimates</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">WhatsApp cost estimates</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
@@ -18,7 +18,7 @@
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
-    <button type="submit">Save</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
   </form>
 
   <p><a href="{{ list_url }}">Back to templates</a></p>

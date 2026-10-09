@@ -16,10 +16,10 @@ destructive action is the one thing that must not be the row's obvious button.
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">API keys</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 A key authenticates calls to the <a href="{% url 'api_docs' %}">public API</a> as one
                 workspace. Keys are organization-level because they span every workspace in the
                 organization, but each key acts inside exactly one.
@@ -107,7 +107,12 @@ destructive action is the one thing that must not be the row's obvious button.
                 <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
             </button>
             <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
-                <form method="post" action="{% url 'api_keys_revoke' api_key_id=row.key.id %}">
+                {% comment %}
+                  Asked first: every integration using this key stops working the
+                  moment it is revoked, and a revoked key cannot be restored.
+                {% endcomment %}
+                <form method="post" action="{% url 'api_keys_revoke' api_key_id=row.key.id %}"
+                      @submit="if (!window.confirm('Revoke {{ row.key.name|escapejs }}? Anything using it stops working straight away, and it cannot be turned back on.')) $event.preventDefault()">
                     {% csrf_token %}
                     <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">Revoke this key</button>
                 </form>

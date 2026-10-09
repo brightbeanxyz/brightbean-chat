@@ -14,6 +14,6 @@
 {% else %}
   <form method="post">
     {% csrf_token %}
-    <button type="submit">Join {{ invitation.organization.name }}</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">Join {{ invitation.organization.name }}</button>
   </form>
 {% endif %}

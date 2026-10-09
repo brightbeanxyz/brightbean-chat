@@ -17,10 +17,10 @@ can demote the person reading it, is not a thing to leave lying in a list.
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">Team members</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 Everybody in this organization, what they can do across it, and which workspaces they
                 can reach.
             </p>
@@ -94,7 +94,13 @@ can demote the person reading it, is not a thing to leave lying in a list.
             <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
                 <button type="button" class="row-menu-item" role="menuitem" @click="changing = true; menuOpen = false">Change role…</button>
                 <div class="row-menu-sep"></div>
-                <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}">
+                {% comment %}
+                  Asked first (HANDOFF §2.4): they lose access at once, and only
+                  a new invitation brings them back. Alpine's @submit, because
+                  the CSP blocks an inline onsubmit.
+                {% endcomment %}
+                <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}"
+                      @submit="if (!window.confirm('Remove {{ row.membership.user.display_name|escapejs }} from the organization? They lose access straight away.')) $event.preventDefault()">
                     {% csrf_token %}
                     <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">Remove from organization</button>
                 </form>
@@ -140,7 +146,7 @@ can demote the person reading it, is not a thing to leave lying in a list.
             </form>
             <form method="post" action="{% url 'members:revoke_invite' invitation_id=invite.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn-pill-secondary btn-pill-sm" style="color: var(--error-700);">Revoke</button>
+                <button type="submit" class="btn-danger-link ml-1">Revoke</button>
             </form>
             {% endif %}
         </div>

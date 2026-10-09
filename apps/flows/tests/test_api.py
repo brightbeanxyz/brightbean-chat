@@ -546,3 +546,103 @@ class TestHostileBodies:
         )
 
         assert response.status_code == 400
+
+
+def rename_url(tenancy, flow):
+    return reverse("flows:api_rename", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
+
+
+def enabled_url(tenancy, flow, trigger):
+    return reverse(
+        "flows:api_trigger_enabled",
+        kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk, "trigger_id": trigger.pk},
+    )
+
+
+def _api_trigger(flow, *, enabled=True):
+    return Trigger.objects.create(
+        workspace=flow.workspace, flow=flow, type=TriggerType.API, config_json={}, enabled=enabled
+    )
+
+
+class TestRenameEndpoint:
+    """The builder's top bar edits the name in place."""
+
+    def test_it_renames_and_answers_with_the_flow(self, tenancy, client_for, flow):
+        response = client_for(tenancy.owner).post(
+            rename_url(tenancy, flow), data=json.dumps({"name": "  Price question  "}), content_type="application/json"
+        )
+
+        flow.refresh_from_db()
+        assert response.status_code == 200
+        assert flow.name == "Price question"
+        assert response.json()["flow"]["name"] == "Price question"
+
+    @pytest.mark.parametrize("body", [{}, {"name": ""}, {"name": "   "}, {"name": 4}])
+    def test_a_blank_or_missing_name_is_refused(self, tenancy, client_for, flow, body):
+        response = client_for(tenancy.owner).post(
+            rename_url(tenancy, flow), data=json.dumps(body), content_type="application/json"
+        )
+
+        flow.refresh_from_db()
+        assert response.status_code == 400
+        assert flow.name == "Welcome"
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_without_edit_flows_cannot(self, tenancy, client_for, flow, role):
+        response = client_for(tenancy.user_for(role)).post(
+            rename_url(tenancy, flow), data=json.dumps({"name": "Hijacked"}), content_type="application/json"
+        )
+
+        assert response.status_code == 403
+
+
+class TestTriggerEnabledEndpoint:
+    """The outline's switch: an explicit state, never a flip."""
+
+    def test_it_sets_the_state_asked_for(self, tenancy, client_for, flow):
+        trigger = _api_trigger(flow, enabled=True)
+        client = client_for(tenancy.owner)
+
+        first = client.post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+        again = client.post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+
+        trigger.refresh_from_db()
+        assert first.status_code == again.status_code == 200
+        assert trigger.enabled is False, "a second identical request must not flip it back"
+        assert again.json()["triggers"][0]["enabled"] is False
+
+    def test_a_non_boolean_is_refused(self, tenancy, client_for, flow):
+        trigger = _api_trigger(flow)
+
+        response = client_for(tenancy.owner).post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": "no"}), content_type="application/json"
+        )
+
+        trigger.refresh_from_db()
+        assert response.status_code == 400
+        assert trigger.enabled is True
+
+    def test_a_trigger_of_another_flow_is_not_found(self, tenancy, client_for, flow):
+        other = create_flow(workspace=tenancy.workspace, name="Other", user=tenancy.owner)
+        trigger = _api_trigger(other)
+
+        response = client_for(tenancy.owner).post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+
+        assert response.status_code == 404
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_without_edit_flows_cannot(self, tenancy, client_for, flow, role):
+        trigger = _api_trigger(flow)
+
+        response = client_for(tenancy.user_for(role)).post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+
+        assert response.status_code == 403

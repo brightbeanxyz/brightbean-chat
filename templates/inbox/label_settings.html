@@ -14,10 +14,10 @@ says why this is not that.
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">Labels</h1>
-            <p class="page-lede mt-1.5">Keep conversations organized. Rules can add labels automatically.</p>
+            <p class="page-lede">Keep conversations organized. Rules can add labels automatically.</p>
         </div>
         <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-label')">{% include "partials/_nav_icon.html" with name="tag" icon_size=16 %} New label</button>
     </div>

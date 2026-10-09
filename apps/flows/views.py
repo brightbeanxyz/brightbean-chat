@@ -11,21 +11,24 @@ and a ``flowsChanged`` event, and the list re-fetches its own rows. That keeps
 one renderer for the table instead of one for the page and one for each action.
 """
 
+from datetime import timedelta
 from typing import Any
 
 from django.apps import apps as django_apps
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Q, Subquery
 from django.http import HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
+from apps.common.filters import multi
 from apps.common.htmx import toast_response
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import services
-from apps.flows.models import Flow, FlowStatus
+from apps.flows.models import Flow, FlowExecution, FlowStatus, FlowVersion
 from apps.flows.portability.cards import card_contexts
 from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.portability.library import template_cards as shipped_templates
@@ -60,6 +63,10 @@ UNFILED_VALUE = "__unfiled__"
 
 _MAX_NAME = Flow._meta.get_field("name").max_length or 200
 
+#: Stands in for a trigger id in the builder's trigger-switch URL template; the
+#: island swaps in the real one (src/env.ts). The nil UUID, which no row has.
+TRIGGER_ID_PLACEHOLDER = "00000000-0000-0000-0000-000000000000"
+
 #: How many template cards the flows empty state shows before deferring to the
 #: full gallery. Enough to suggest the range, few enough that the Create field
 #: above them is still the obvious alternative.
@@ -84,22 +91,38 @@ def _visible_flows(request: WorkspaceRequest) -> Any:
     if query:
         flows = flows.filter(name__icontains=query)
 
-    # Anything unrecognised falls back to the default view rather than to no
-    # filtering at all: an if/elif here let `?status=bogus` match neither branch
-    # and so skip the exclusion, quietly listing archived flows among the live
-    # ones. Archived flows are out of the way by default but still findable —
-    # "Archived" in the status filter is the only way to see them, which is what
-    # archiving is for.
-    status = (request.GET.get("status") or "").strip()
-    flows = flows.filter(status=status) if status in FlowStatus.values else flows.exclude(status=FlowStatus.ARCHIVED)
+    # Both filters repeat (`?status=active&status=offline`): the Filter popover
+    # lets a reader pick several values in a group. multi() drops anything
+    # unrecognised, so `?status=bogus` reads as no status filter — and no status
+    # filter means the default view rather than no filtering at all: an
+    # unrecognised value once skipped the exclusion and quietly listed archived
+    # flows among the live ones. Archived flows are out of the way by default
+    # but still findable — "Archived" in the status filter is the only way to
+    # see them, which is what archiving is for.
+    statuses = multi(request.GET, "status", allowed=FlowStatus.values)
+    flows = flows.filter(status__in=statuses) if statuses else flows.exclude(status=FlowStatus.ARCHIVED)
 
-    folder = (request.GET.get("folder") or "").strip()
-    if folder == UNFILED_VALUE:
-        flows = flows.filter(folder="")
-    elif folder:
-        flows = flows.filter(folder=folder)
+    folders = multi(request.GET, "folder")
+    if folders:
+        named = Q(folder__in=[folder for folder in folders if folder != UNFILED_VALUE])
+        flows = flows.filter(named | Q(folder="") if UNFILED_VALUE in folders else named)
 
-    return flows.order_by("folder", "name")
+    return flows.order_by("name")
+
+
+#: The list's sections, in the order a reader scans them (HANDOFF §3, Flows):
+#: what is running, what was running and was switched off, what was never
+#: finished. Archived only appears when the status filter asks for it. The tone
+#: is the status-pill tone the section's dot and rows wear.
+SECTIONS: tuple[tuple[str, str, str], ...] = (
+    (FlowStatus.ACTIVE, "Live", "success"),
+    (FlowStatus.OFFLINE, "Offline", "warning"),
+    (FlowStatus.DRAFT, "Draft", "neutral"),
+    (FlowStatus.ARCHIVED, "Archived", "neutral"),
+)
+
+#: The window the row's run count covers.
+RUNS_WINDOW = timedelta(days=7)
 
 
 def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
@@ -107,7 +130,19 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     # every flow's triggers, and re-fetching the same rows by pk to prefetch
     # them cost an extra query plus a dict that existed only to join the answer
     # back onto objects already in hand.
-    flows = list(_visible_flows(request).prefetch_related("triggers"))
+    # `latest_published_at` answers "has the newest version ever been live?",
+    # which is what decides whether an offline flow's switch may turn it back
+    # on (see flow_set_live): a newer, never-live version means edits nobody
+    # has reviewed. One correlated subquery for the page, not one per row.
+    latest_version = (
+        FlowVersion.objects.for_workspace(request.workspace)
+        .filter(flow=OuterRef("pk"))
+        .order_by("-version")
+        .values("published_at")[:1]
+    )
+    flows = list(
+        _visible_flows(request).annotate(latest_published_at=Subquery(latest_version)).prefetch_related("triggers")
+    )
 
     # The redesign's filter chips carry counts, so a reader can see there are
     # two drafts without selecting the filter to find out. One grouped query
@@ -125,20 +160,35 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
         **{str(status): by_status.get(status, 0) for status in FlowStatus.values},
     }
 
+    # How many conversations each flow started in the last week: the row's one
+    # figure. Builder previews are not runs anybody had. One grouped query.
+    runs = dict(
+        FlowExecution.objects.for_workspace(request.workspace)
+        .filter(flow__in=[flow.pk for flow in flows], preview=False, created_at__gte=timezone.now() - RUNS_WINDOW)
+        .values_list("flow_id")
+        .annotate(total=Count("id"))
+        .values_list("flow_id", "total")
+    )
+
     # One sentence per flow saying when it runs, in the reader's words rather
     # than SPEC §10's. Reads the prefetch above, so this is no queries at all.
     for flow in flows:
         flow.trigger_summary = describe_triggers(list(flow.triggers.all()))
+        flow.runs_recent = runs.get(flow.pk, 0)
+        # The switch can always turn a live flow off; it can turn an offline one
+        # back on only when nothing has changed since it last ran.
+        flow.can_switch = flow.status == FlowStatus.ACTIVE or (
+            flow.status == FlowStatus.OFFLINE and flow.latest_published_at is not None
+        )
 
-    # Runs are detected on the folder value, not on the label it renders under:
-    # a workspace holding both unfiled flows and a folder literally named
-    # "Unfiled" produces two identical labels, and comparing those merged two
-    # genuinely different groups into one.
-    groups: list[dict[str, Any]] = []
-    for flow in flows:
-        if not groups or groups[-1]["key"] != flow.folder:
-            groups.append({"key": flow.folder, "label": flow.folder or UNFILED_LABEL, "flows": []})
-        groups[-1]["flows"].append(flow)
+    # Sections by status (HANDOFF §3). Folders are a filter and a word on the
+    # row rather than the grouping: the question a reader brings to this page is
+    # "what is running", and a folder heading answered "where did I file it".
+    groups: list[dict[str, Any]] = [
+        {"key": status, "label": label, "tone": tone, "flows": [f for f in flows if f.status == status]}
+        for status, label, tone in SECTIONS
+    ]
+    groups = [group for group in groups if group["flows"]]
 
     # The folder filter offers every folder in the workspace, not just the ones
     # surviving the current filter — otherwise picking one erases the rest of
@@ -153,7 +203,9 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
 
     folder_names = list(folders)
     can_edit = request.workspace_membership.effective_permissions.get("edit_flows", False)
-    filtered = bool(request.GET.get("q") or request.GET.get("status") or request.GET.get("folder"))
+    statuses = multi(request.GET, "status", allowed=FlowStatus.values)
+    folder_values = multi(request.GET, "folder")
+    filtered = bool((request.GET.get("q") or "").strip() or statuses or folder_values)
 
     # Templates in the empty state, and only there: this is the exact moment
     # somebody has nothing and no idea what to build, and the page offered them
@@ -182,29 +234,46 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
     return {
         "groups": groups,
         "flow_count": len(flows),
+        # The three cards over the list. Live / Offline / Draft only: archived
+        # is the state nobody needs to act on, and it has its filter.
+        "summary": [
+            {"status": status, "label": label, "tone": tone, "count": status_counts.get(str(status), 0)}
+            for status, label, tone in SECTIONS[:3]
+        ],
         "template_cards": template_cards,
         "template_total": template_total,
-        # (value, label) pairs, which is what ui_select wants — and what keeps
-        # the "Unfiled" row's value distinct from a folder of the same name.
-        "folder_options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
-        "status_options": list(FlowStatus.choices),
-        # The chips, in the order a reader scans them, each carrying its own
-        # count so nobody has to select a filter to find out it is empty.
-        # Labels rather than the enum's: "Live" says what an active flow is
-        # doing, "Active" says what a column holds.
-        "status_chips": [
-            {"value": value, "label": label, "count": status_counts.get(str(value), 0)}
-            for value, label in (
-                ("", "All"),
-                (FlowStatus.ACTIVE, "Live"),
-                (FlowStatus.OFFLINE, "Offline"),
-                (FlowStatus.DRAFT, "Draft"),
-                (FlowStatus.ARCHIVED, "Archived"),
-            )
-        ],
         "query": request.GET.get("q", ""),
-        "status": request.GET.get("status", ""),
-        "folder": request.GET.get("folder", ""),
+        # The Filter popover's state and its sections. `filters` seeds the
+        # page's Alpine model, so a reload or a shared link opens with the same
+        # selection it was made with.
+        "filters": {"status": statuses, "folder": folder_values},
+        "filter_groups": [
+            # Each status carries its count, so nobody has to pick a filter to
+            # find out it is empty. Labels rather than the enum's: "Live" says
+            # what an active flow is doing, "Active" says what a column holds.
+            {
+                "key": "status",
+                "label": "Status",
+                "options": [
+                    {"value": value, "label": label, "count": status_counts.get(str(value), 0)}
+                    for value, label in (
+                        (FlowStatus.ACTIVE, "Live"),
+                        (FlowStatus.OFFLINE, "Offline"),
+                        (FlowStatus.DRAFT, "Draft"),
+                        (FlowStatus.ARCHIVED, "Archived"),
+                    )
+                ],
+            },
+            # (value, label) pairs, which keep the "Unfiled" option's value
+            # distinct from a folder of the same name. Every folder in the
+            # workspace, not just the ones surviving the current filter —
+            # otherwise picking one erases the rest and there is no way back.
+            {
+                "key": "folder",
+                "label": "Folder",
+                "options": [(UNFILED_VALUE, UNFILED_LABEL), *((name, name) for name in folder_names)],
+            },
+        ],
         "can_edit": can_edit,
         # Issue #26's per-flow stats page. Gated on its own key rather than on
         # edit_flows: reading numbers and changing a graph are different rights,
@@ -229,8 +298,11 @@ def _list_context(request: WorkspaceRequest) -> dict[str, Any]:
 def flow_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """The flow list. Answers the rows partial to HTMX and the page otherwise."""
     context = _list_context(request)
-    template = "flows/_list_rows.html" if request.headers.get("HX-Request") else "flows/list.html"
-    return render(request, template, context)
+    if request.headers.get("HX-Request"):
+        # The summary cards sit above the toolbar, outside the swapped region;
+        # the rows response refreshes them out of band (flows/_summary.html).
+        return render(request, "flows/_list_rows.html", {**context, "summary_oob": True})
+    return render(request, "flows/list.html", context)
 
 
 @login_required
@@ -277,6 +349,13 @@ def flow_edit(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> Htt
             # reason the picker is: the island assembles no URLs of its own.
             "preview_url": reverse("channels:flow_preview", kwargs=keys),
             "list_url": reverse("flows:list", kwargs={"workspace_id": workspace_id}),
+            "api_rename_url": reverse("flows:api_rename", kwargs=keys),
+            # A template, not a URL: the island substitutes a trigger's id for
+            # the zero UUID. Reversed here so it still assembles no path of its
+            # own (FORCE_SCRIPT_NAME), and the zero UUID can never be a real id.
+            "api_trigger_enabled_url": reverse(
+                "flows:api_trigger_enabled", kwargs={**keys, "trigger_id": TRIGGER_ID_PLACEHOLDER}
+            ),
         },
     )
 
@@ -351,6 +430,58 @@ def flow_archive(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
         body="Find it again with the Archived status filter.",
         events={"flowsChanged": True},
     )
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def flow_set_live(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
+    """The flow list's switch: ``live=0`` sets a live flow offline, ``live=1``
+    sets an offline one live again.
+
+    The target state is explicit rather than a toggle, so a page that has gone
+    stale — another tab already flipped it — cannot flip it back by accident;
+    it gets a refusal and the row re-reads itself.
+
+    **Back on only re-runs what already ran.** :func:`services.publish` publishes
+    the *newest* version, and a flow edited since it went offline has a newer
+    one nobody has set live yet. A switch on a list row is no place to publish
+    unreviewed edits, so that case is refused here with a pointer to the
+    builder, where the changes are in front of the person setting them live.
+    The list draws that switch disabled for the same reason; this is the check
+    that holds when the page is stale.
+    """
+    flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
+    if request.POST.get("live") == "0":
+        try:
+            stopped = services.take_offline(flow)
+        except services.FlowNotLiveError as exc:
+            return toast_response(tone="error", title="Not set offline", body=str(exc), events={"flowsChanged": True})
+        body = "It stopped replying straight away."
+        if stopped:
+            body = f"It stopped replying straight away, including to {stopped} {'person' if stopped == 1 else 'people'} partway through it."
+        return toast_response(tone="success", title="Flow is offline", body=body, events={"flowsChanged": True})
+
+    latest = services.latest_version(flow)
+    if flow.status != FlowStatus.OFFLINE or latest is None or latest.published_at is None:
+        return toast_response(
+            tone="error",
+            title="Not set live",
+            body="It has changes that have not been live yet. Open it to review them, then set it live there.",
+            events={"flowsChanged": True},
+        )
+    try:
+        services.publish(flow, user=request.user)
+    except services.FlowValidationError:
+        return toast_response(
+            tone="error",
+            title="Not set live",
+            body="It has problems to fix first. Open it to see them.",
+            events={"flowsChanged": True},
+        )
+    except services.FlowPlanLimitError as exc:
+        return toast_response(tone="error", title="Not set live", body=str(exc), events={"flowsChanged": True})
+    return toast_response(tone="success", title="Flow is live", events={"flowsChanged": True})
 
 
 @login_required

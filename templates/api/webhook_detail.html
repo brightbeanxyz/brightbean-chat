@@ -1,6 +1,6 @@
 {% extends "layouts/workspace_settings.html" %}
 {% block title %}Webhook · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>Webhook endpoint</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">Webhook endpoint</h1>{% endblock %}
 
 {% block content %}
   <p><code>{{ webhook.url }}</code></p>
@@ -40,7 +40,7 @@
       <input type="checkbox" name="enabled" {% if webhook.enabled %}checked{% endif %} /> Enabled
     </label>
 
-    <button type="submit">Save</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
   </form>
 
   <h2>Signing secret</h2>
@@ -49,10 +49,11 @@
     invalidates signatures immediately. Update your receiver first, or
     deliveries will start failing verification the moment you rotate.
   </p>
-  <form method="post"
+  <form method="post" x-data
+        @submit="if (!window.confirm('Rotate the signing secret? Signatures made with the old one stop verifying straight away.')) $event.preventDefault()"
         action="{% url 'api_webhooks:rotate_secret' workspace_id=request.workspace.id webhook_id=webhook.id %}">
     {% csrf_token %}
-    <button type="submit">Rotate secret</button>
+    <button type="submit" class="btn-pill-secondary btn-pill-sm">Rotate secret</button>
   </form>
 
   <h2>Test</h2>
@@ -62,7 +63,7 @@
   </p>
   <form method="post" action="{% url 'api_webhooks:test' workspace_id=request.workspace.id webhook_id=webhook.id %}">
     {% csrf_token %}
-    <button type="submit">Send test event</button>
+    <button type="submit" class="btn-pill-secondary btn-pill-sm">Send test event</button>
   </form>
 
   <h2>Recent deliveries</h2>
@@ -89,10 +90,15 @@
     <p class="muted">Nothing delivered yet.</p>
   {% endif %}
 
-  <h2>Delete</h2>
-  <form method="post" action="{% url 'api_webhooks:delete' workspace_id=request.workspace.id webhook_id=webhook.id %}">
+  {% comment %}
+    Destructive, so a red link below a rule, and it asks first (HANDOFF §2.4).
+  {% endcomment %}
+  <hr>
+  <form method="post" x-data
+        @submit="if (!window.confirm('Delete this endpoint? It stops receiving events and its delivery history goes with it.')) $event.preventDefault()"
+        action="{% url 'api_webhooks:delete' workspace_id=request.workspace.id webhook_id=webhook.id %}">
     {% csrf_token %}
-    <button type="submit">Delete endpoint</button>
+    <button type="submit" class="btn-danger-link">Delete endpoint</button>
   </form>
 
   <p><a href="{% url 'api_webhooks:list' workspace_id=request.workspace.id %}">Back to webhooks</a></p>

@@ -34,7 +34,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.flows import analytics, services
-from apps.flows.models import Flow
+from apps.flows.models import Flow, Trigger
 from apps.flows.picklists import picklists
 from apps.flows.schema import MAX_GRAPH_BYTES, empty_graph, json_schema, limits
 from apps.flows.triggers import services as trigger_services
@@ -42,7 +42,18 @@ from apps.members.decorators import require_permission, require_workspace_role
 from apps.members.requests import WorkspaceRequest
 from apps.members.roles import WorkspaceRole
 
-__all__ = ["flow_detail", "flow_publish", "flow_schema", "flow_stats", "flow_take_offline"]
+__all__ = [
+    "flow_detail",
+    "flow_publish",
+    "flow_rename",
+    "flow_schema",
+    "flow_stats",
+    "flow_take_offline",
+    "flow_trigger_enabled",
+]
+
+#: The longest name a flow may have — the model's own column width.
+MAX_NAME = Flow._meta.get_field("name").max_length or 200
 
 # Viewer is the lowest workspace role, so this reads as "any member of this
 # workspace". Spelled with the role rather than a bare membership check so the
@@ -222,6 +233,64 @@ def flow_publish(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
             "validation": published.validation.as_dict(),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /w/<workspace_id>/api/flows/<flow_id>/rename/
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def flow_rename(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> HttpResponse:
+    """Rename the flow from the builder's top bar, where its name is edited in
+    place (HANDOFF §3, Flow builder). The same service the list's Rename uses.
+
+    ``{"name": "..."}``. A blank name is refused rather than saved: the list and
+    every picker that offers this flow would otherwise show nothing at all.
+    """
+    payload = _read_json_object(request)
+    if isinstance(payload, JsonResponse):
+        return payload
+    name = payload.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return _error("missing_name", "A flow needs a name.", 400)
+    flow = _get_flow(request, flow_id)
+    services.rename_flow(flow, name.strip()[:MAX_NAME])
+    return JsonResponse({"flow": _flow_payload(flow)})
+
+
+# ---------------------------------------------------------------------------
+# POST /w/<workspace_id>/api/flows/<flow_id>/triggers/<trigger_id>/enabled/
+# ---------------------------------------------------------------------------
+
+
+@login_required
+@require_permission("edit_flows")
+@require_POST
+def flow_trigger_enabled(request: WorkspaceRequest, workspace_id: str, flow_id: str, trigger_id: str) -> HttpResponse:
+    """Switch one trigger on or off from the builder's outline.
+
+    ``{"enabled": true}`` — the state to end in, not a toggle. The drawer's
+    ``flows:trigger_toggle`` flips whatever is stored, which is right for a
+    control that re-renders from the server on every change; the outline's
+    switch shows what the page last loaded, and a flip from a stale page would
+    turn off the trigger somebody in another tab had just turned on.
+
+    Answers with the trigger summaries, the same list the detail read carries,
+    so the builder applies it the way it applies any other refresh.
+    """
+    payload = _read_json_object(request)
+    if isinstance(payload, JsonResponse):
+        return payload
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        return _error("missing_enabled", 'The body must be {"enabled": true} or {"enabled": false}.', 400)
+    flow = _get_flow(request, flow_id)
+    trigger = get_scoped_object_or_404(Trigger, request.workspace, pk=trigger_id, flow=flow)
+    trigger_services.set_enabled(trigger, enabled)
+    return JsonResponse({"triggers": trigger_services.summaries(flow)})
 
 
 # ---------------------------------------------------------------------------

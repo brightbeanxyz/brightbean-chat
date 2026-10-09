@@ -120,6 +120,23 @@
      after a rebrand. Defined here, it tracks the brand ramp like everything else. */
   --primary-rgb:   var(--brand-500-rgb);
 
+  /* The colour roles (docs/design/HANDOFF.md §2.1). Orange is the signal for
+     ONE thing, the screen's primary action, and the only other place it may
+     appear is the focus ring. Everything that used to borrow it to say
+     "selected", "current" or "unread" says so in ink now: a second orange
+     control on a screen reads as a second call to action.
+
+     The CTA fills one step darker than --primary. White on --brand-500 is
+     2.8:1, white on --brand-600 is 3.6:1 — enough for the 14px semibold label
+     every primary button carries, and still unmistakably the brand.
+     apps/common/tests/test_colour_roles.py fails on any --primary or
+     --brand-* read outside the allowlisted rules, so a new orange control has
+     to be argued for there rather than slipping in. */
+  --cta:          var(--brand-600);
+  --cta-hover:    var(--brand-700);
+  --ink:          var(--neutral-900);
+  --selected-fill: var(--neutral-150);
+
   /* Neutrals - warm stone */
   --neutral-950: #171412;
   --neutral-900: #1C1917;
@@ -583,8 +600,8 @@ body {
   color: var(--text-primary);
 }
 .sidebar-nav-item.active {
-  background: var(--primary-tint);
-  color: var(--brand-700);
+  background: var(--selected-fill);
+  color: var(--ink);
   font-weight: 600;
 }
 .sidebar-nav-label {
@@ -711,7 +728,7 @@ body {
   box-shadow: 0 0 0 1.5px var(--surface-0);
   color: var(--text-inverse);
 }
-.sidebar-connect-plus { background: var(--primary); }
+.sidebar-connect-plus { background: var(--ink); }
 .sidebar-channel-flag {
   background: var(--warning-500);
   font-size: 8px;
@@ -787,7 +804,7 @@ body {
   padding: 1px 6px;
   box-sizing: border-box;
   border-radius: var(--radius-full);
-  background: var(--brand-500);
+  background: var(--ink);
   color: var(--text-inverse);
   font-size: var(--fs-2xs);
   font-weight: 700;
@@ -935,34 +952,71 @@ body {
   .mobile-topbar { display: none; }
 }
 
-/* --- Sub-nav (the tab strip at the top of a page that has one) ----------- */
-/* It used to sit under the app header. With the header gone it is the first
-   thing on the page on a desktop, and sits directly under .mobile-topbar on a
-   phone — which is why it keeps its own bottom border and white ground: it is
-   reading as the page's own top bar now, not as a second strip below one. */
-.subnav {
+/* --- Underline tabs ------------------------------------------------------
+   One component for every "views of the same thing" strip: the
+   Flows / Sequences / Templates bar at the top of a page, the inbox's
+   All / Unassigned / Mine / Done, the inspector's Settings / Preview. The
+   active tab is ink with a 2px ink underline — never orange, because the
+   strip sits right above the page's one primary action.
+
+   .tabs is the page-top bar: white ground and its own bottom rule, since it is
+   the first thing on the page on a desktop and sits directly under
+   .mobile-topbar on a phone. .tabs-inline is the same strip inside a pane,
+   with no ground and no padding of its own.
+
+   Navigation tabs are links carrying aria-current="page"; in-page tabs are
+   buttons in a role="tablist" carrying aria-selected. Both states style the
+   same, so the markup can say what it actually is. */
+.tabs {
   display: flex;
   align-items: stretch;
-  gap: 20px;
+  gap: 24px;
   height: 44px;
   flex-shrink: 0;
-  padding: 0 16px;
+  padding: 0 24px;
   background: var(--surface-0);
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-.subnav-item {
-  display: flex;
+.tabs::-webkit-scrollbar { display: none; }
+.tabs-inline {
+  padding: 0;
+  background: transparent;
+}
+.tab {
+  display: inline-flex;
   align-items: center;
-  font-size: var(--fs-body);
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--text-tertiary);
   text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: inset 0 -2px 0 transparent;
+  transition: color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
 }
-.subnav-item:hover { color: var(--text-primary); }
-.subnav-item.active {
+.tab:hover { color: var(--text-primary); }
+.tab.active,
+.tab[aria-current="page"],
+.tab[aria-selected="true"] {
   font-weight: 700;
-  color: var(--text-primary);
-  box-shadow: inset 0 -2px 0 var(--brand-500);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+.tab:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
+/* The count beside a tab label. Quiet on purpose: it is information about the
+   view, not a badge asking to be cleared. */
+.tab-count {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-ghost);
+  font-variant-numeric: tabular-nums;
 }
 
 .sidebar-logo-mark {
@@ -1027,14 +1081,19 @@ img.sidebar-logo-mark {
   border-radius: var(--radius-tile);
 }
 /* A modifier, never a tile on its own: the radius lives on .tile, so a bare
-   .tile-selected draws square corners. Always `tile tile-selected`. */
+   .tile-selected draws square corners. Always `tile tile-selected`. Selected
+   is ink, like every other selection (see the colour roles in :root). */
 .tile-selected {
-  background: var(--primary-tint);
-  border: 1.5px solid var(--brand-500);
+  background: var(--surface-0);
+  border: 1.5px solid var(--ink);
 }
 
 /* Page furniture */
+/* The display face is the brand's serif. It was declared as --font-display and
+   never read; the redesign puts every page title in it, which is most of what
+   makes a page read as BrightBean rather than as a generic admin screen. */
 .page-title {
+  font-family: var(--font-display);
   font-size: var(--fs-display);
   font-weight: 700;
   line-height: 1.15;
@@ -1045,6 +1104,27 @@ img.sidebar-logo-mark {
   font-size: var(--fs-body-lg);
   line-height: 1.5;
   color: var(--text-tertiary);
+}
+/* The page header: title and lede on the left, the page's actions on the
+   right — at most one of them orange. It wraps rather than squeezing, so on a
+   narrow screen the actions drop under the lede instead of crushing it. */
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
+  margin-bottom: 24px;
+}
+/* Shrinks before it wraps: a long lede gives up width to the actions, and
+   only below ~18rem does the row break and the actions drop underneath. */
+.page-header-text { flex: 1 1 18rem; min-width: 0; max-width: 40rem; }
+.page-header .page-lede { margin-top: 6px; }
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .section-title {
   font-size: var(--fs-title);
@@ -1089,12 +1169,13 @@ img.sidebar-logo-mark {
   transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
 }
 .btn-pill-primary {
-  background: var(--primary);
+  background: var(--cta);
   color: var(--text-inverse);
   border: none;
   box-shadow: var(--shadow-primary);
 }
-.btn-pill-primary:hover { background: var(--primary-hover); }
+.btn-pill-primary:hover { background: var(--cta-hover); }
+.btn-pill-primary:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
 .btn-pill-primary:disabled,
 .btn-pill-primary[aria-disabled="true"] {
   background: var(--primary-tint);
@@ -1103,6 +1184,25 @@ img.sidebar-logo-mark {
   box-shadow: none;
   cursor: default;
 }
+.btn-pill-secondary:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+/* The destructive action: a red text link, never a filled button. It sits
+   below a rule at the end of whatever it deletes, so it is findable without
+   competing with the primary action (HANDOFF §2.4). */
+.btn-danger-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--error-700);
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn-danger-link:hover { text-decoration: underline; }
 .btn-pill-secondary {
   background: var(--surface-0);
   color: var(--text-primary);
@@ -1125,32 +1225,6 @@ img.sidebar-logo-mark {
   cursor: pointer;
 }
 .btn-icon-round:hover { background: var(--surface-page); color: var(--text-primary); }
-
-/* Filter / saved-view chips. The selected one is ink, not brand: on a screen
-   whose single primary action is already orange, a second orange control
-   would read as a second call to action. */
-.chip-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: var(--radius-full);
-  background: var(--surface-0);
-  border: 1px solid var(--border);
-  font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-decoration: none;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.chip-filter:hover { border-color: var(--border-hover); color: var(--text-primary); }
-.chip-filter.active {
-  background: var(--neutral-900);
-  border-color: var(--neutral-900);
-  color: var(--text-inverse);
-}
-.chip-filter-add { border-style: dashed; color: var(--text-ghost); }
 
 /* Round initials avatar. Replaces the 4px platform squares in list rows. */
 .avatar {
@@ -1195,6 +1269,30 @@ img.sidebar-logo-mark {
   margin-top: 0.25rem;
   max-width: 30rem;
 }
+/* The redesign's shape (HANDOFF §2.2): an icon tile, one line of title, one
+   line of explanation, one secondary action. The tile and the action row are
+   optional, so the empty states written before them still render as they did. */
+.empty-state-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  color: var(--text-tertiary);
+}
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+/* Inside a card that already draws the frame, the state needs no second one. */
+.empty-state-bare { background: transparent; border: 0; }
 
 /* The list row, and its one overflow menu.
 
@@ -1227,7 +1325,8 @@ img.sidebar-logo-mark {
   background: var(--surface-page);
   color: var(--text-tertiary);
 }
-.list-row-icon-live { background: var(--primary-tint); color: var(--brand-700); }
+/* Live is green: the bean colour is the product's "this is running" signal. */
+.list-row-icon-live { background: var(--success-50); color: var(--success-700); }
 .list-row-title { font-size: var(--fs-body-lg); font-weight: 600; color: var(--text-primary); }
 .list-row-meta { font-size: var(--fs-body); color: var(--text-tertiary); margin-top: 3px; }
 .list-row-figure {
@@ -1289,6 +1388,22 @@ img.sidebar-logo-mark {
   flex-shrink: 0;
 }
 
+/* A bare status dot, for the places a pill would be too much: summary cards,
+   section headings, the step list. Same five tones as the pill. */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--neutral-400);
+}
+.dot-success { background: var(--success-500); }
+.dot-warning { background: var(--warning-500); }
+.dot-info    { background: var(--info-500); }
+.dot-error   { background: var(--error-500); }
+.dot-neutral { background: var(--neutral-400); }
+
 /* Health: a state in plain words, with a dot carrying the colour.
    The dot is the fill and the text is the readable weight — the green is
    ~2.8:1 on white and can never be the label itself. */
@@ -1344,21 +1459,7 @@ img.sidebar-logo-mark {
   background: var(--error-50) !important;
 }
 
-.btn-primary-hover {
-  transition: background var(--dur-fast) ease;
-}
-.btn-primary-hover:hover {
-  background: var(--primary-hover) !important;
-}
 
-.btn-primary-lift {
-  transition: background var(--dur-fast) ease, transform var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
-}
-.btn-primary-lift:hover {
-  background: var(--primary-hover) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(var(--primary-rgb), 0.35);
-}
 
 .card-hover-lift {
   transition: box-shadow var(--dur-fast) ease, border-color var(--dur-fast) ease, transform var(--dur-fast) ease;
@@ -1423,12 +1524,6 @@ img.sidebar-logo-mark {
   background: rgba(var(--error-rgb), 0.08) !important;
 }
 
-.btn-primary-tint {
-  transition: background var(--dur-fast) ease;
-}
-.btn-primary-tint:hover {
-  background: rgba(var(--primary-rgb), 0.2) !important;
-}
 
 .input-focus {
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
@@ -1580,7 +1675,7 @@ img.sidebar-logo-mark {
 .field-check-body { min-width: 0; }
 .field-check .field-label { margin-bottom: 0; cursor: pointer; }
 .field-check input[type="checkbox"],
-.field-check .bb-toggle { margin-top: 2px; flex-shrink: 0; }
+.field-check .switch { margin-top: 2px; flex-shrink: 0; }
 
 /* A colour, as a swatch bound to a hex box. Nothing here styles a native
    input[type=color] otherwise: it is a 50x27 box with a heavy border and
@@ -1633,13 +1728,13 @@ img.sidebar-logo-mark {
   cursor: pointer;
   transition: all var(--dur-base) var(--ease-out);
   letter-spacing: 0.005em;
-  background: var(--primary);
+  background: var(--cta);
   color: var(--text-inverse);
   box-shadow: var(--shadow-primary);
   width: 100%;
 }
 .btn-brand:hover {
-  background: var(--primary-hover);
+  background: var(--cta-hover);
   transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(var(--primary-rgb), 0.35);
 }
@@ -1682,6 +1777,21 @@ img.sidebar-logo-mark {
   transform: translateY(-1px);
   box-shadow: var(--shadow-sm);
 }
+/* Inside the app, an inline outline button is the secondary pill under an
+   older name: same height, same 1px rule, no lift. Twenty-odd templates still
+   write `btn-outline btn-inline`, and they should read as the same control as
+   `btn-pill-secondary btn-pill-sm` beside them rather than a heavier cousin. */
+.app-content .btn-outline.btn-inline {
+  height: 36px;
+  padding: 0 16px;
+  border-width: 1px;
+  font-size: var(--fs-body);
+  box-shadow: none;
+}
+.app-content .btn-outline.btn-inline:hover { transform: none; box-shadow: none; }
+/* A destructive one says so before the pointer reaches it (HANDOFF §2.4):
+   red text at rest, the red fill on hover as before. */
+.btn-outline.btn-danger-soft { color: var(--error-700); }
 
 /* Ghost/link button */
 .btn-link {
@@ -1697,10 +1807,14 @@ img.sidebar-logo-mark {
   cursor: pointer;
   transition: all var(--dur-fast) ease;
   background: transparent;
-  color: var(--primary);
+  color: var(--text-primary);
+  text-decoration: none;
 }
+/* Ink with an underline on hover, not orange: a link is not the page's
+   primary action, and orange is reserved for that (see the colour roles). */
 .btn-link:hover {
-  background: var(--primary-soft);
+  background: var(--surface-2);
+  text-decoration: underline;
 }
 
 /* Social login button */
@@ -1801,13 +1915,13 @@ img.sidebar-logo-mark {
   border: none;
   border-radius: var(--radius-full);
   cursor: pointer;
-  background: var(--primary);
+  background: var(--cta);
   color: var(--text-inverse);
   box-shadow: var(--shadow-primary);
   transition: all var(--dur-base) var(--ease-out);
 }
 .auth-card button[type="submit"]:not([class]):hover {
-  background: var(--primary-hover);
+  background: var(--cta-hover);
   transform: translateY(-1px);
 }
 
@@ -1820,7 +1934,7 @@ img.sidebar-logo-mark {
   margin-bottom: 0.5rem;
 }
 .auth-prose p { margin-bottom: 1rem; }
-.auth-prose a { color: var(--primary); }
+.auth-prose a { color: var(--text-primary); text-decoration: underline; text-underline-offset: 2px; }
 .auth-prose ul { margin: 0 0 1rem 1.125rem; list-style: disc; }
 .auth-prose label { display: block; font-weight: 500; color: var(--text-primary); margin-bottom: 0.375rem; }
 .auth-prose .errorlist {
@@ -1993,17 +2107,18 @@ span.flatpickr-weekday {
   border-color: transparent;
 }
 .flatpickr-day.today:not(.selected) {
-  border-color: var(--primary-muted);
+  border-color: var(--border-hover);
   background: transparent;
 }
 .flatpickr-day.today:not(.selected):hover {
-  background: var(--primary-soft);
-  border-color: var(--primary-muted);
+  background: var(--surface-2);
+  border-color: var(--border-hover);
 }
+/* A picked day is a selection, so it is ink like every other one. */
 .flatpickr-day.selected,
 .flatpickr-day.selected:hover {
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--ink);
+  border-color: var(--ink);
   color: var(--text-inverse);
 }
 .flatpickr-day.prevMonthDay,
@@ -2070,54 +2185,75 @@ span.flatpickr-weekday {
   padding-right: 2.5rem;
 }
 
-/* Toggle switch:
-   <label class="bb-toggle"><input type="checkbox" …><span class="bb-toggle-track"></span></label> */
-.bb-toggle {
+/* The switch (HANDOFF §2.2): 40x22, green when on, grey when off.
+   <label class="switch"><input type="checkbox" role="switch" …><span class="switch-track"></span></label>
+
+   For something that is running or not — a live flow, a trigger, a
+   preference — and that takes effect the moment it is flipped. Every switch in
+   the product posts on change; a setting saved by a button underneath is a
+   checkbox (.bb-checkbox), because a switch above a Save button would lie
+   about when it applies.
+
+   The input is a real checkbox with role="switch", laid over the track at
+   full size and made transparent: it keeps the keyboard, the focus and the
+   accessible name, and the click lands on it wherever the pointer is. A label
+   beside it goes in .switch-field so the words are part of the hit area too. */
+.switch {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
-  width: 36px;
-  height: 20px;
+  width: 40px;
+  height: 22px;
   cursor: pointer;
 }
-.bb-toggle input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-.bb-toggle-track {
+.switch input {
   position: absolute;
   inset: 0;
-  border-radius: 9999px;
-  background: var(--neutral-300);
-  transition: background 0.15s ease;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
 }
-.bb-toggle-track::after {
+.switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  background: var(--neutral-300);
+  transition: background var(--dur-fast) ease;
+}
+.switch-track::after {
   content: "";
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 9999px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
   background: var(--surface-0);
   box-shadow: 0 1px 2px rgba(var(--scrim-rgb), 0.2);
-  transition: transform 0.15s ease;
+  transition: transform var(--dur-fast) ease;
 }
-.bb-toggle input:checked + .bb-toggle-track {
-  background: var(--brand-green-500);
+.switch input:checked + .switch-track { background: var(--success-500); }
+.switch input:checked + .switch-track::after { transform: translateX(18px); }
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--primary-ring);
+  outline-offset: 2px;
 }
-.bb-toggle input:checked + .bb-toggle-track::after {
-  transform: translateX(16px);
+.switch:has(input:disabled) { cursor: not-allowed; }
+.switch input:disabled + .switch-track { opacity: 0.4; }
+.switch-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
+  cursor: pointer;
 }
-.bb-toggle input:focus-visible + .bb-toggle-track {
-  outline: 2px solid var(--brand-green-200);
-  outline-offset: 1px;
-}
-.bb-toggle input:disabled + .bb-toggle-track {
-  opacity: 0.5;
-  cursor: not-allowed;
+@media (prefers-reduced-motion: reduce) {
+  .switch-track,
+  .switch-track::after { transition: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -2159,8 +2295,8 @@ span.flatpickr-weekday {
   box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.15);
 }
 .bb-filter-select.is-active {
-  border-color: var(--brand-300);
-  color: var(--brand-700);
+  border-color: var(--ink);
+  color: var(--ink);
 }
 .bb-filter-icon {
   position: absolute;
@@ -2188,10 +2324,11 @@ span.flatpickr-weekday {
    rather than inline styles because Alpine toggles them through :class, and
    an inline event handler or style is not an option under the CSP. */
 .bb-option-selected {
-  background: var(--primary-soft);
-  color: var(--brand-700) !important;
+  background: var(--selected-fill);
+  color: var(--ink) !important;
+  font-weight: 600;
 }
-.bb-option-reset-active { color: var(--primary) !important; }
+.bb-option-reset-active { color: var(--ink) !important; }
 .bb-option-reset-idle   { color: var(--text-tertiary) !important; }
 
 /* Hide the scrollbar on horizontally scrolling filter rows. */
@@ -2252,21 +2389,76 @@ span.flatpickr-weekday {
   padding: 0.125rem 0.5rem;
   border-radius: 9999px;
   font-size: 0.75rem;
-  font-weight: 500;
-  background: var(--neutral-100);
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--surface-2);
   color: var(--text-secondary);
 }
-.status-pill-active       { background: var(--success-50); color: var(--success-700); }
-.status-pill-needs_reauth { background: var(--warning-50); color: var(--warning-700); }
-.status-pill-disabled     { background: var(--neutral-100); color: var(--text-secondary); }
+/* The dot's colour is the tone's --pill-dot, set by the tone table below. */
+.status-pill .status-pill-dot { background: var(--pill-dot, var(--neutral-400)); }
 
-/* WhatsApp template review states (issue #19). Same vocabulary, same fallback:
-   a value with no rule here renders as the neutral base rather than unstyled.
-   `draft` deliberately has no rule of its own — the neutral base is exactly
-   what "not submitted yet" should look like. */
-.status-pill-pending      { background: var(--warning-50); color: var(--warning-700); }
-.status-pill-approved     { background: var(--success-50); color: var(--success-700); }
-.status-pill-rejected     { background: var(--error-50); color: var(--error-700); }
+/* Five tones, one table (HANDOFF §2.1). Every status in the product is one of
+   them, so the same word always wears the same colour from page to page:
+
+     success  live, active, sent, approved, subscribed   green
+     warning  offline, paused, needs reauth, pending      amber
+     info     sending, scheduled                          blue
+     error    failed, rejected, cancelled, opted out      red
+     neutral  draft, archived, disabled                   grey
+
+   The tone classes are for new call sites ({% status_pill %} picks one). The
+   per-value names beside them stay, because templates write
+   `status-pill-{{ thing.status }}` straight from a model field and tests assert
+   on them; they are simply members of a tone now rather than each carrying a
+   colour of its own. A value with no rule falls back to the neutral base.
+
+   The label is the 700 weight and the dot the 500 fill: the 500s are ~2.8:1 on
+   white and can never be text (see the --brand-green-* note). */
+.status-pill-success,
+.status-pill-active,
+.status-pill-approved,
+.status-pill-sent,
+.status-pill-subscribed { background: var(--success-50); color: var(--success-700); --pill-dot: var(--success-500); }
+
+.status-pill-warning,
+.status-pill-offline,
+.status-pill-paused,
+.status-pill-needs_reauth,
+.status-pill-pending { background: var(--warning-50); color: var(--warning-700); --pill-dot: var(--warning-500); }
+
+.status-pill-info,
+.status-pill-sending,
+.status-pill-scheduled { background: var(--info-50); color: var(--info-700); --pill-dot: var(--info-500); }
+
+.status-pill-error,
+.status-pill-failed,
+.status-pill-rejected,
+.status-pill-cancelled,
+.status-pill-opted_out { background: var(--error-50); color: var(--error-700); --pill-dot: var(--error-500); }
+
+/* Neutral is the base already; these names are listed so a reader looking for
+   "where is draft styled" finds the answer, and archived reads a step quieter
+   than a draft — it is the one state nobody needs to act on. */
+.status-pill-neutral,
+.status-pill-draft,
+.status-pill-disabled { background: var(--surface-2); color: var(--text-secondary); }
+.status-pill-archived { background: var(--surface-2); color: var(--text-tertiary); }
+
+/* State is shape and colour, never colour alone (HANDOFF §2, principle 2): a
+   status pill written before the dot existed — `status-pill-{{ status }}` with
+   only a word inside — gets its dot from here. Scoped to pills that carry a
+   status modifier; a bare .status-pill is a label (a member's role), not a
+   state, and stays dotless. A pill with its own dot child keeps that one. */
+.status-pill[class*="status-pill-"]:not(:has(> .status-pill-dot))::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: var(--radius-full);
+  background: var(--pill-dot, var(--neutral-400));
+  vertical-align: 1px;
+}
 
 /* Tint the glyph itself rather than the chip behind it. */
 .pi-ink-telegram  { color: var(--platform-telegram); }
@@ -2275,6 +2467,633 @@ span.flatpickr-weekday {
 .pi-ink-whatsapp  { color: var(--platform-whatsapp); }
 .pi-ink-sms       { color: var(--platform-sms); }
 .pi-ink-email     { color: var(--platform-email); }
+
+/* ═══════════════════════════════════════════════════════════════
+   REDESIGN COMPONENTS (docs/design/HANDOFF.md §2.2)
+   The shared pieces every redesigned screen is built from: the search
+   field and Filter popover of a list toolbar, the summary cards above a
+   list, the table a list becomes, the option card a choice becomes, and the
+   stepper a wizard walks along. /ui/ shows each one.
+
+   Ground rule 9 applies to all of them: these classes are unlayered, so any
+   property they set is one a utility at the call site cannot override. They
+   set what makes them themselves and leave margins and widths to the page.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* --- Search field --------------------------------------------------------
+   <label class="search-field"><svg …/><input type="search" class="search-input" …></label>
+   The search box of a list toolbar. It stays outside the Filter popover: it
+   is the one control people reach for first. */
+.search-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.search-field > svg {
+  position: absolute;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--text-ghost);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px 0 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-0);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.search-input::placeholder { color: var(--text-ghost); }
+.search-input:hover { border-color: var(--border-hover); }
+.search-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+
+/* A list toolbar: search on the left, Filter beside it, anything else after.
+   Wraps rather than scrolling, so nothing in it is ever out of reach. */
+.list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- Filter popover --------------------------------------------------------
+   One button, one panel of grouped toggle pills, a row of removable chips
+   under the toolbar. Replaces the chip rows and the stacks of {% ui_select %}
+   every list grew (components/filter_popover.html has the markup and the
+   behaviour).
+
+   The panel is position:fixed and anchored on open, the way .bb-select-panel
+   is and for the same reason: a toolbar sits inside scrolling containers that
+   would clip an absolutely positioned panel. */
+.filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-0);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.filter-trigger > svg { width: 15px; height: 15px; flex-shrink: 0; }
+.filter-trigger:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.filter-trigger:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+.filter-trigger.is-active { border-color: var(--ink); color: var(--ink); }
+.filter-trigger-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--ink);
+  color: var(--text-inverse);
+  font-size: var(--fs-2xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.filter-popover {
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  box-shadow: var(--shadow-lg);
+}
+.filter-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.filter-popover-title { font-size: 0.875rem; font-weight: 700; color: var(--text-primary); }
+.filter-section + .filter-section { margin-top: 14px; }
+.filter-section-title {
+  margin-bottom: 8px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.filter-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.filter-pill:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.filter-pill:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+.filter-pill[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--text-inverse);
+}
+.filter-pill-count { font-weight: 500; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.filter-popover-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+.filter-popover-foot > :last-child { flex: 1; }
+/* The active filters, as chips under the toolbar: every filter in force is
+   visible without opening anything, and each comes off with one click. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 6px 0 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.filter-chip:hover { background: var(--surface-3); }
+.filter-chip:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 1px; }
+.filter-chip-key { font-weight: 500; color: var(--text-tertiary); }
+.filter-chip > svg { width: 12px; height: 12px; color: var(--text-tertiary); }
+.filter-clear {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.filter-clear:hover { color: var(--text-primary); }
+
+/* --- Summary cards -------------------------------------------------------
+   The counts above a list (Live / Offline / Draft on the flow list): a dot, a
+   number and a word on one row. A link when it filters the list below. */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.summary-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+  color: inherit;
+  text-decoration: none;
+  font-family: inherit;
+  text-align: left;
+}
+button.summary-card,
+a.summary-card { cursor: pointer; transition: border-color var(--dur-fast) ease; }
+button.summary-card:hover,
+a.summary-card:hover { border-color: var(--border-hover); }
+.summary-card[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+/* The body face, not the display serif: Georgia has only old-style figures,
+   and a 0 in them reads as a lower-case o. Numbers a reader compares want
+   lining, tabular figures. */
+.summary-card-value {
+  font-size: 1.375rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.summary-card-label { font-size: var(--fs-body); color: var(--text-secondary); }
+
+/* --- Data table ----------------------------------------------------------
+   The table a list becomes when its rows have columns (sequences,
+   broadcasts, contacts). The header row is sticky; under 780px the table
+   scrolls sideways inside its card rather than clipping a column. */
+.data-table-wrap { overflow-x: auto; }
+/* margin: 0 undoes @layer base's .app-content table margin; a table in a card
+   has the card's edge below it, not a gap. */
+.data-table {
+  width: 100%;
+  min-width: 720px;
+  margin: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--fs-body);
+}
+.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 12px 16px;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.data-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--divider);
+  vertical-align: middle;
+  color: var(--text-primary);
+}
+.data-table tbody tr:last-child td { border-bottom: 0; }
+.data-table tbody tr:hover td { background: var(--surface-sunken); }
+.data-table .is-num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table-title { font-weight: 600; color: var(--text-primary); text-decoration: none; }
+a.data-table-title:hover { text-decoration: underline; }
+.data-table-meta { margin-top: 2px; font-size: var(--fs-sm); color: var(--text-tertiary); }
+
+/* --- Meter ---------------------------------------------------------------
+   A thin bar for a proportion: a sequence's completion, a broadcast's
+   delivery. Segments are stacked in one track, so "sent / sending / failed"
+   is one bar rather than three. */
+.meter {
+  display: flex;
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+}
+.meter-fill { height: 100%; background: var(--neutral-400); }
+.meter-success { background: var(--success-500); }
+.meter-info    { background: var(--info-500); }
+.meter-error   { background: var(--error-500); }
+.meter-label { margin-top: 4px; font-size: var(--fs-xs); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+/* A row of dots, one per step: the shape of a sequence at a glance. */
+.step-dots { display: inline-flex; align-items: center; gap: 3px; }
+.step-dots > span { width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--neutral-700); }
+
+/* --- Option card ---------------------------------------------------------
+   <label class="option-card"><input type="radio" …><span class="option-card-body">…</span><span class="option-card-radio"></span></label>
+   A choice between a few things, as cards rather than bare radios: the
+   wizards' channel / audience / schedule steps, the new-flow modal's "Start
+   from". The input stays a real radio (visually hidden, still focusable), so
+   arrow keys move between cards and a screen reader hears a radio group.
+   Selected is a 2px ink border — drawn as a 1px border plus a 1px inset
+   shadow so the card does not shift when it is picked. */
+.option-cards { display: grid; gap: 10px; }
+.option-cards-2 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.option-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  font-family: inherit;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.option-card:hover { border-color: var(--border-hover); }
+/* A <summary> styled as a button (the trigger drawer's "Add a trigger") keeps
+   the browser's disclosure triangle unless told otherwise. */
+summary.btn-pill-secondary::-webkit-details-marker { display: none; }
+.option-card > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.option-card:has(> input:checked),
+.option-card.is-selected { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.option-card:has(> input:focus-visible),
+.option-card:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+.option-card:has(> input:disabled) { opacity: 0.5; cursor: not-allowed; }
+.option-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+}
+.option-card-body { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.option-card-title { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
+.option-card-text { margin-top: 2px; font-size: var(--fs-body); color: var(--text-tertiary); }
+.option-card-meta { flex-shrink: 0; font-size: var(--fs-body); font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.option-card-radio {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border-hover);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  transition: border var(--dur-fast) ease;
+}
+.option-card:has(> input:checked) .option-card-radio,
+.option-card.is-selected .option-card-radio { border: 5px solid var(--ink); }
+
+/* --- Stepper -------------------------------------------------------------
+   Where a multi-step task is and how much is left. Horizontal across the top
+   of a wizard (the broadcast composer), vertical down the side of an editor.
+   A done step is a green tick, the current one its number in ink, the rest
+   grey; the 2px connector turns green behind a finished step. Steps are links
+   or buttons when the task lets you jump back, plain spans when it does not.
+   The current step carries aria-current="step". */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+.stepper-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-tertiary);
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+}
+button.stepper-step,
+a.stepper-step { cursor: pointer; }
+button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
+.stepper-step:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.stepper-step.is-current { font-weight: 700; color: var(--text-primary); }
+.stepper-step.is-done { font-weight: 600; color: var(--text-primary); }
+.stepper-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-tertiary);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.stepper-index > svg { width: 13px; height: 13px; }
+.stepper-step.is-current .stepper-index { background: var(--ink); color: var(--text-inverse); }
+.stepper-step.is-done .stepper-index { background: var(--success-500); color: var(--text-inverse); }
+.stepper-label { display: flex; flex-direction: column; }
+.stepper-sub { font-size: var(--fs-sm); font-weight: 400; color: var(--text-tertiary); }
+.stepper-link {
+  flex: 1;
+  min-width: 16px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--border);
+}
+.stepper-link.is-done { background: var(--success-500); }
+.stepper-vertical {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.stepper-vertical .stepper-step {
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  white-space: normal;
+}
+.stepper-vertical .stepper-step.is-current {
+  background: var(--surface-0);
+  border-color: var(--border);
+  box-shadow: var(--shadow-xs);
+}
+.stepper-vertical .stepper-link { display: none; }
+/* A horizontal stepper keeps its labels until there is no room, then shows
+   the numbers alone; the current step keeps its word so you know where you are. */
+@media (max-width: 767px) {
+  .stepper:not(.stepper-vertical) .stepper-step:not(.is-current) .stepper-label { display: none; }
+}
+
+/* --- Template card -------------------------------------------------------
+   One ready-made flow in the gallery (and the flows empty state): where it
+   runs and how it starts on top, its name and one line, what it still needs,
+   and one secondary "Use template". Three across on a desktop. */
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.tpl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.tpl-card:hover { border-color: var(--border-hover); box-shadow: var(--shadow-sm); }
+.tpl-tag {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* --- Editor bar ----------------------------------------------------------
+   The top of an editor or wizard page (HANDOFF §2.3): a way back, the thing's
+   own name and state, and the page's actions on the right. */
+.editor-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.editor-bar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-decoration: none;
+}
+.editor-bar-back:hover { color: var(--text-primary); }
+.editor-bar-sep { color: var(--text-ghost); }
+.editor-bar-title { font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+
+/* --- Wizard ----------------------------------------------------------------
+   A step of a multi-step task: the step's content in a 640px column with its
+   one primary button bottom-right, and a 300px summary panel beside it that
+   drops below on narrower screens. */
+.wizard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 640px) 300px;
+  gap: 32px;
+  align-items: start;
+}
+@media (max-width: 1023px) {
+  .wizard-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.wizard-main { min-width: 0; }
+.wizard-title { font-family: var(--font-display); font-size: 1.375rem; font-weight: 700; color: var(--text-primary); }
+.wizard-lede { margin: 4px 0 18px; font-size: var(--fs-body-lg); line-height: 1.5; color: var(--text-tertiary); }
+.wizard-hint { font-size: var(--fs-body); color: var(--text-tertiary); }
+.wizard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+/* Back sits at the start of the row, the primary at its end. */
+.wizard-actions > .btn-pill-secondary:first-of-type { margin-right: auto; }
+
+/* --- Chat preview ----------------------------------------------------------
+   A message as it lands in the conversation: the broadcast composer's preview,
+   and the shape the inbox's own bubbles share. */
+.bc-preview-chat {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+}
+.chat-thread {
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-page);
+}
+.chat-bubble {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.chat-bubble-out { background: var(--surface-0); border: 1px solid var(--border); color: var(--text-primary); border-bottom-left-radius: 4px; }
+.chat-button {
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* --- Panel ---------------------------------------------------------------
+   The 300px right-hand column of an editor or wizard: a summary, a checklist,
+   settings. A card with a heading, nothing more. */
+.side-panel {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+}
+.side-panel + .side-panel { margin-top: 12px; }
+.side-panel-title {
+  margin-bottom: 10px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.summary-list { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: var(--fs-body); }
+.summary-list dt { color: var(--text-tertiary); }
+.summary-list dd { margin: 0; font-weight: 600; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
+/* A checklist of things that must hold before a send: a green tick when met,
+   an amber mark when not. Words always beside the mark. */
+.check-list { display: flex; flex-direction: column; gap: 8px; padding: 0; list-style: none; font-size: var(--fs-body); }
+.check-item { display: flex; align-items: flex-start; gap: 8px; color: var(--text-secondary); }
+.check-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 700;
+}
+.check-item.is-ok .check-mark { background: var(--success-500); color: var(--text-inverse); }
+.check-item.is-ok { color: var(--text-primary); }
+.check-item.is-todo .check-mark { background: var(--warning-50); color: var(--warning-700); border: 1px solid var(--warning-200); }
+.check-item.is-bad .check-mark { background: var(--error-50); color: var(--error-700); border: 1px solid var(--error-500); }
 
 /* ═══════════════════════════════════════════════════════════════
    TOAST HOST — the single global surface (see templates/base.html)
@@ -2340,8 +3159,11 @@ span.flatpickr-weekday {
   transition: color var(--dur-fast) ease;
 }
 .bb-toast-dismiss:hover { color: var(--text-inverse); }
-.bb-toast-success .bb-toast-icon { color: var(--success-700); }
-.bb-toast-info    .bb-toast-icon { color: var(--brand-400); }
+/* The toast is dark, so its icons take the 500 fills — the 700 text weights
+   used on white all but disappear on --neutral-900. Success is the bean green
+   and info is blue; neither is orange (see the colour roles). */
+.bb-toast-success .bb-toast-icon { color: var(--success-500); }
+.bb-toast-info    .bb-toast-icon { color: var(--info-500); }
 .bb-toast-warn    .bb-toast-icon { color: var(--warning-500); }
 .bb-toast-error   { background: var(--error-700); }
 .bb-toast-error   .bb-toast-icon { color: var(--error-50); }
@@ -2454,7 +3276,7 @@ span.flatpickr-weekday {
 }
 
 .notif-item.is-unread {
-  background: var(--primary-soft);
+  background: var(--surface-sunken);
 }
 
 /* The per-event glyph tile. Tone comes from the event registry. */
@@ -2515,8 +3337,8 @@ span.flatpickr-weekday {
   transition: border-color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
 }
 .media-dropzone.is-dragging {
-  border-color: var(--primary);
-  background: var(--primary-soft);
+  border-color: var(--ink);
+  background: var(--surface-2);
 }
 
 .media-card {
@@ -2533,7 +3355,7 @@ span.flatpickr-weekday {
   box-shadow: var(--shadow-lg);
   border-color: var(--border-hover);
 }
-.media-card[aria-current="true"] { border-color: var(--primary); }
+.media-card[aria-current="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 
 /* A fixed-ratio well so a grid of mixed portrait/landscape uploads does not
    turn into a ragged staircase. */
@@ -2575,9 +3397,9 @@ span.flatpickr-weekday {
 }
 .media-pill:hover { border-color: var(--border-hover); }
 .media-pill.is-active {
-  background: var(--primary-soft);
-  border-color: var(--primary);
-  color: var(--brand-700);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--text-inverse);
 }
 
 .media-folder {
@@ -2589,8 +3411,8 @@ span.flatpickr-weekday {
 }
 .media-folder:hover { background: var(--surface-1); }
 .media-folder.is-active {
-  background: var(--primary-soft);
-  color: var(--brand-700);
+  background: var(--selected-fill);
+  color: var(--ink);
   font-weight: 600;
 }
 
@@ -2634,7 +3456,7 @@ span.flatpickr-weekday {
   background: var(--surface-2);
   overflow: hidden;
 }
-.media-quota-fill { height: 100%; background: var(--primary); }
+.media-quota-fill { height: 100%; background: var(--ink); }
 
 /* ═══════════════════════════════════════════════════════════════
    LAYER 3 — FLOW BUILDER (issue #10)
@@ -2666,7 +3488,7 @@ span.flatpickr-weekday {
   --xy-background-color: var(--surface-page);
   --xy-background-pattern-color: var(--neutral-300);
   --xy-edge-stroke: var(--border-hover);
-  --xy-edge-stroke-selected: var(--accent-sky);
+  --xy-edge-stroke-selected: var(--ink);
   --xy-edge-stroke-width: 1.5;
   --xy-edge-label-background-color: var(--surface-0);
   --xy-edge-label-color: var(--text-secondary);
@@ -2678,7 +3500,7 @@ span.flatpickr-weekday {
   --xy-node-border: 1px solid var(--border);
   --xy-node-border-radius: var(--radius-lg);
   --xy-node-boxshadow-hover: var(--shadow-md);
-  --xy-node-boxshadow-selected: 0 0 0 2px var(--accent-sky), var(--shadow-md);
+  --xy-node-boxshadow-selected: 0 0 0 2px var(--ink), var(--shadow-md);
   --xy-controls-button-background-color: var(--surface-0);
   --xy-controls-button-background-color-hover: var(--surface-2);
   --xy-controls-button-border-color: var(--border);
@@ -2706,16 +3528,114 @@ span.flatpickr-weekday {
 
 .fb-shell { display: flex; flex: 1 1 auto; min-height: 0; }
 
+/* The top bar (HANDOFF §3): one 56px row in place of the page header and the
+   toolbar that sat under it. Identity on the left, actions on the right; on a
+   narrow screen the actions wrap under rather than crushing the name. */
 .fb-toolbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.625rem;
-  padding: 0.625rem 1rem;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  min-height: 56px;
+  padding: 0.5rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface-0);
   font-size: var(--fs-body);
 }
+.fb-toolbar-identity { display: flex; align-items: center; gap: 0.625rem; min-width: 0; flex: 1 1 18rem; }
+.fb-toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.375rem; }
+.fb-toolbar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-decoration: none;
+}
+.fb-toolbar-back svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.fb-toolbar-back:hover { color: var(--text-primary); }
+.fb-toolbar-sep { color: var(--text-ghost); }
+.fb-flow-name {
+  min-width: 0;
+  padding: 0.25rem 0.375rem;
+  margin: 0 -0.375rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  text-align: left;
+  cursor: text;
+}
+.fb-flow-name:hover { border-color: var(--border-strong); }
+.fb-flow-name:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 1px; }
+.fb-flow-name-text {
+  overflow: hidden;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-flow-name-input {
+  width: min(22rem, 40vw);
+  height: 32px;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  outline: none;
+}
+.fb-flow-name-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+.fb-save-state { flex-shrink: 0; font-size: var(--fs-sm); color: var(--text-tertiary); white-space: nowrap; }
+
+/* The problems count, always in view, and the list behind it. */
+.fb-problems-menu, .fb-overflow { position: relative; }
+.fb-problems-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fb-problems-button:hover { border-color: var(--border-hover); color: var(--text-primary); }
+.fb-problems-dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--success-500); }
+.fb-problems-button-error { color: var(--error-700); border-color: var(--error-500); }
+.fb-problems-button-error .fb-problems-dot { background: var(--error-500); }
+.fb-problems-button-warning .fb-problems-dot { background: var(--warning-500); }
+.fb-problems-popover, .fb-overflow-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tile);
+  box-shadow: var(--shadow-lg);
+}
+.fb-problems-popover { width: min(24rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto; padding: 0.75rem; }
+.fb-problems-popover .fb-problems { max-height: none; padding: 0; border-top: 0; }
+.fb-overflow-menu { width: 16rem; padding: 0.25rem; }
+.fb-overflow-menu a {
+  display: block;
+  padding: 0.5rem 0.625rem;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.fb-overflow-menu a:hover { background: var(--surface-2); }
 
 .fb-flow-status {
   display: inline-flex;
@@ -2831,9 +3751,26 @@ span.flatpickr-weekday {
   background: var(--surface-0);
 }
 .fb-editor-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 1rem; }
-.fb-trigger-sidebar { width: 18rem; flex: 0 0 auto; overflow-y: auto; padding: 1rem; border-right: 1px solid var(--border); background: var(--surface-0); }
-.fb-right-sidebar { width: 22rem; flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--surface-0); }
-.fb-steplist { max-height: min(22rem, 42vh); overflow-y: auto; }
+/* The outline on the left and the inspector on the right: 224px and 312px
+   (HANDOFF §3). The outline scrolls as one column, triggers then steps. */
+.fb-trigger-sidebar { width: 14rem; flex: 0 0 auto; overflow-y: auto; padding: 1rem 0.875rem; border-right: 1px solid var(--border); background: var(--surface-0); }
+.fb-right-sidebar { width: 19.5rem; flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--surface-0); }
+.fb-outline-steps { margin-top: 1.125rem; padding-top: 1rem; border-top: 1px solid var(--divider); }
+.fb-inspector-tabs { padding: 0 1rem; height: 44px; flex-shrink: 0; border-bottom: 1px solid var(--divider); }
+.fb-inspector-tabs .tab { font-size: var(--fs-body); }
+.fb-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.fb-link-button:hover { color: var(--text-primary); }
 
 .fb-editor-section { margin-top: 1.25rem; }
 .fb-editor-section:first-child { margin-top: 0; }
@@ -2869,7 +3806,7 @@ span.flatpickr-weekday {
 .fb-trigger-heading { margin-bottom: 0.5rem; font-size: var(--fs-body); font-weight: 700; color: var(--text-primary); }
 .fb-trigger-empty { margin-top: 0.25rem; font-size: var(--fs-sm); line-height: 1.5; color: var(--text-tertiary); }
 .fb-trigger-list { margin-top: 0.5rem; }
-.fb-trigger-row { margin-bottom: 0.5rem; }
+.fb-trigger-row { display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.625rem; }
 .fb-trigger-row:last-child { margin-bottom: 0; }
 .fb-trigger-row.is-off { opacity: 0.65; }
 .fb-trigger-name { font-size: var(--fs-body); font-weight: 600; color: var(--text-primary); }
@@ -3135,16 +4072,66 @@ span.flatpickr-weekday {
 
 .fb-canvas { position: relative; }
 
+/* "Add a step" at the bottom left of the canvas, the zoom control at the top
+   left, the minimap at the bottom right (HANDOFF §3) — three corners, so none
+   of the three covers another. */
 .fb-addstep {
   position: absolute;
-  left: 50%;
-  bottom: 1.25rem;
-  transform: translateX(-50%);
+  left: 1rem;
+  bottom: 1rem;
   z-index: 5;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
 }
+.fb-zoom {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-sm);
+}
+.fb-zoom button {
+  width: 2.25rem;
+  height: 1.875rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.fb-zoom button + button { border-top: 1px solid var(--divider); }
+.fb-zoom button:hover { background: var(--surface-2); color: var(--text-primary); }
+.fb-zoom .fb-zoom-level { font-size: var(--fs-2xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* The "+" on an edge. Interactive inside the edge label layer, which React Flow
+   leaves pointer-events: none by default. */
+.fb-edge-insert { position: absolute; z-index: 6; pointer-events: all; }
+.fb-edge-insert-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.fb-edge-insert-button:hover, .fb-edge-insert-button[aria-expanded="true"] { border-color: var(--ink); color: var(--ink); opacity: 1; }
+.fb-edge-insert-menu { position: absolute; top: 26px; left: 50%; transform: translateX(-50%); }
 
 .fb-addstep-button {
   display: inline-flex;
@@ -3154,14 +4141,15 @@ span.flatpickr-weekday {
   padding: 0 1.25rem;
   border: 0;
   border-radius: var(--radius-full);
-  background: var(--primary);
-  color: #fff;
+  background: var(--ink);
+  color: var(--text-inverse);
   font-size: var(--fs-body);
   font-weight: 600;
-  box-shadow: var(--shadow-primary);
+  box-shadow: var(--shadow-md);
   cursor: pointer;
 }
-.fb-addstep-button:hover { background: var(--primary-hover); }
+/* Ink, not orange: the builder's one primary action is Publish. */
+.fb-addstep-button:hover { background: var(--neutral-800); }
 .fb-addstep-button:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
 
 .fb-addstep-menu {
@@ -3292,7 +4280,9 @@ span.flatpickr-weekday {
 }
 /* A ring, not a heavier border: the card's own outline stays put so selecting
    one does not shift its neighbours by a pixel. */
-.fb-node.is-selected { border-color: var(--accent-sky); box-shadow: 0 0 0 1.5px var(--accent-sky); }
+/* Selected is ink, like every selection in the product (the colour roles in
+   :root): a 2px outline drawn as border plus ring. */
+.fb-node.is-selected { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink), var(--shadow-md); }
 .fb-node.is-invalid { border-color: var(--error-500); }
 
 /* Group accents. Sibling modifiers rather than utilities, because
@@ -3340,6 +4330,20 @@ span.flatpickr-weekday {
   background: var(--flow-accent);
   flex-shrink: 0;
 }
+/* The group's glyph on a tile in its accent — the only place the card carries
+   the group colour (HANDOFF §3). */
+.fb-node-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--flow-accent-soft);
+  color: var(--flow-accent);
+}
+.fb-node-icon svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .fb-node-title {
   font-size: var(--fs-body);
   font-weight: 600;
@@ -3554,13 +4558,50 @@ span.flatpickr-weekday {
    correct for layout, spacing and flex, which nothing here touches.
    ═══════════════════════════════════════════════════════════════ */
 
+/* The list's controls, at the top of the rail they control: the view tabs,
+   then search and Filter, then any active filter chips. */
 .ib-filters {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  flex-direction: column;
   min-width: 0;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+.ib-tabs { gap: 16px; padding: 0 12px; height: 42px; border-bottom: 1px solid var(--divider); }
+.ib-tabs .tab { font-size: var(--fs-body); }
+.ib-toolbar { display: flex; align-items: center; gap: 6px; padding: 10px 12px 0; }
+.ib-toolbar .search-input { height: 34px; }
+.ib-toolbar .filter-trigger { height: 34px; padding: 0 10px; }
+
+/* The keyboard shortcuts beside the page title. */
+.ib-shortcuts { align-items: center; gap: 14px; font-size: var(--fs-sm); color: var(--text-tertiary); }
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* The thread pane with nothing open: centred, with the unread count and a
+   way into the first one. */
+.ib-empty-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
 }
 
 .ib-shell {
@@ -3617,7 +4658,7 @@ span.flatpickr-weekday {
 .ib-row > * { grid-column: 2; }
 .ib-row > .ib-row-avatar { grid-column: 1; grid-row: 1 / -1; }
 .ib-row:hover { background: var(--surface-page); }
-.ib-row.is-current { background: var(--primary-tint); }
+.ib-row.is-current { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-hover); }
 /* The avatar, with the channel pinned to its corner — the person is what the
    row is about and the channel is a qualifier on them. */
 .ib-row-avatar { position: relative; display: flex; align-self: start; }
@@ -3631,7 +4672,7 @@ span.flatpickr-weekday {
   border: 2px solid var(--surface-0);
   box-sizing: content-box;
 }
-.ib-row.is-current .ib-row-channel { border-color: var(--primary-tint); }
+.ib-row.is-current .ib-row-channel { border-color: var(--surface-2); }
 .ib-row.is-unread .ib-row-name { font-weight: 700; color: var(--text-primary); }
 
 .ib-row-name {
@@ -3652,7 +4693,7 @@ span.flatpickr-weekday {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 9999px;
-  background: var(--primary);
+  background: var(--ink);
   flex-shrink: 0;
 }
 
@@ -3690,8 +4731,19 @@ span.flatpickr-weekday {
   min-width: 0;
 }
 .ib-thread-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-left: auto; }
-.ib-thread-actions .btn-outline { padding: 0.5rem 0.875rem; border-radius: var(--radius-sm); }
-.ib-thread-actions .bb-select { min-height: 2.375rem; }
+.ib-thread-actions .bb-select { min-height: 36px; }
+/* The assignee picker reads as a quiet button: it is a property of the thread,
+   not a form to fill in. */
+.ib-assignee {
+  height: 36px;
+  padding-left: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--surface-0);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
 
 /* Bubbles. */
 .ib-bubble {
@@ -3718,10 +4770,14 @@ span.flatpickr-weekday {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.ib-bubble-in  { background: var(--surface-2); color: var(--text-primary); }
+/* The contact: white on the left, the way a chat app draws the other person. */
+.ib-bubble-in  { background: var(--surface-0); border-color: var(--border); color: var(--text-primary); }
+/* Automation — a flow, a broadcast: grey, so a reader scanning a thread can
+   tell at a glance which replies a person wrote. */
+.ib-bubble-auto { background: var(--surface-2); color: var(--text-primary); }
 /* Ink, not --primary: orange is the call-to-action colour, and a thread full
-   of it competed with the Send button for attention. Same ink as an active
-   .chip-filter, the other "this one is yours" state on the page. */
+   of it competed with the Send button for attention. Same ink as the active
+   view tab, the other "this one is yours" state on the page. */
 .ib-bubble-out { background: var(--neutral-900); color: var(--text-inverse); }
 .ib-bubble-out .ib-chip {
   border-color: rgba(255, 255, 255, 0.24);
@@ -3892,7 +4948,7 @@ span.flatpickr-weekday {
   cursor: pointer;
 }
 .ib-remind-toggle:hover { color: var(--text-primary); background: var(--surface-2); }
-.ib-remind-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.ib-remind-toggle:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: -2px; }
 .ib-remind-toggle svg { width: 0.875rem; height: 0.875rem; transition: transform var(--dur-fast) ease; }
 .ib-remind-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .ib-remind-fields { padding: 0.25rem 0.75rem 0.75rem; }
@@ -4002,7 +5058,28 @@ span.flatpickr-weekday {
   font-size: 0.75rem;
   margin-bottom: 0.75rem;
 }
+/* Everything open: the green state, quiet — it is the normal one. */
+.ib-banner-open { background: var(--success-50); color: var(--success-700); }
 .ib-banner-paused { background: var(--warning-50); color: var(--warning-700); }
+.ib-banner { flex-wrap: wrap; }
+/* The bar's one action, as underlined text in the bar's own colour: it is the
+   state's next step, not a call to action competing with Send. */
+.ib-banner-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+/* A note is visibly not a reply: amber ground, the same tint the note bubble
+   wears in the thread. */
+.ib-compose-note { background: var(--warning-50); }
+.ib-compose-tabs { gap: 18px; }
+.ib-compose-tabs .tab { height: 32px; font-size: var(--fs-body); }
 .ib-banner-blocked { background: var(--error-50); color: var(--error-700); }
 .ib-banner-info { background: var(--surface-2); color: var(--text-secondary); }
 
@@ -4081,7 +5158,7 @@ span.flatpickr-weekday {
    template reads the status through a class name rather than a chain
    of {% if %}. */
 .ib-tick { font-size: 0.6875rem; color: var(--text-ghost); }
-.ib-tick-read { color: var(--primary); }
+.ib-tick-read { color: var(--info-700); }
 .ib-tick-failed { color: var(--error-700); }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -4131,8 +5208,6 @@ span.flatpickr-weekday {
   margin-bottom: 0.75rem;
 }
 .crm-toolbar form { margin-bottom: 0; }
-.app-content .crm-contact-table { margin-bottom: 0; min-width: 44rem; }
-.app-content .crm-contact-table th { padding-top: 0.875rem; padding-bottom: 0.875rem; vertical-align: middle; }
 
 /* ── Filter builder ─────────────────────────────────────────── */
 
@@ -4187,7 +5262,7 @@ span.flatpickr-weekday {
   gap: 0.75rem;
   padding: 0.625rem 0.875rem;
   margin-bottom: 0.75rem;
-  border: 1px solid var(--primary);
+  border: 1px solid var(--ink);
   border-radius: var(--radius-lg);
   background: var(--surface-1);
 }
@@ -4235,7 +5310,7 @@ span.flatpickr-weekday {
   cursor: pointer;
 }
 .crm-suggestion:hover { background: var(--surface-2); color: var(--text-primary); }
-.crm-suggestion-new { color: var(--primary); font-weight: 600; }
+.crm-suggestion-new { color: var(--text-primary); font-weight: 600; }
 
 /* ── Detail page ────────────────────────────────────────────── */
 
@@ -4317,7 +5392,7 @@ span.flatpickr-weekday {
   border-left: 3px solid var(--border);
   background: var(--surface-1);
 }
-.crm-msg-in { border-left-color: var(--primary); }
+.crm-msg-in { border-left-color: var(--info-500); }
 .crm-msg-out { border-left-color: var(--neutral-400); }
 .crm-msg-meta {
   display: flex;
@@ -4341,7 +5416,13 @@ span.flatpickr-weekday {
   .app-content h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem; }
   .app-content h3 { font-size: 0.875rem; font-weight: 600; color: var(--text-primary); }
   .app-content p { font-size: 0.875rem; color: var(--text-secondary); }
-  .app-content a { color: var(--primary); }
+  /* Links are ink, not orange (the colour roles in :root). Only a bare <a> —
+     prose, a help line — gets the underline: a classed link is a button or a
+     row, and most of those set no text-decoration of their own, so a blanket
+     underline here would strike through half the app's buttons. */
+  .app-content a { color: var(--text-primary); }
+  .app-content a:not([class]) { text-decoration: underline; text-decoration-color: var(--border-hover); text-underline-offset: 2px; }
+  .app-content a:not([class]):hover { text-decoration-color: currentColor; }
   .app-content hr { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
 
   .app-content table {
@@ -4489,9 +5570,9 @@ span.flatpickr-weekday {
 }
 .bb-chip-selected,
 .bb-chip-selected:hover {
-  background: var(--primary-soft);
-  border-color: var(--primary);
-  color: var(--primary);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--text-inverse);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -4505,8 +5586,8 @@ span.flatpickr-weekday {
 
    Two to watch, for the reason the CRM section gives:
 
-     .bc-step sets `display: flex`, so `class="bc-step hidden"` renders
-       a visible step. Toggle a wrapper instead.
+     .stepper-step sets `display: flex`, so `class="stepper-step hidden"`
+       renders a visible step. Toggle a wrapper instead.
      .bc-tile sets padding and border-radius; vary them with a modifier
        here rather than a utility at the call site.
 
@@ -4517,62 +5598,7 @@ span.flatpickr-weekday {
 
 /* ── Composer step rail ─────────────────────────────────────── */
 
-/* A progress rail, not a row of pills.
-
-   The steps used to be four identical chips with only the current one tinted,
-   which said where you are but not how far along. Now the connector between
-   them fills in as they complete: a completed step is a tick, the current one
-   is its number in brand, and the rest are grey. Same four buttons, same
-   navigation — it just answers "how much is left" without being asked. */
-.bc-rail {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-}
-.bc-step {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
-  font-size: var(--fs-body-lg);
-  font-weight: 500;
-  line-height: 1.4;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.bc-step:disabled { opacity: 0.55; cursor: not-allowed; }
-.bc-step-current { color: var(--text-primary); font-weight: 700; }
-.bc-step-done { color: var(--text-primary); font-weight: 600; }
-.bc-step-index {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  flex-shrink: 0;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--text-tertiary);
-  font-size: var(--fs-body);
-  font-weight: 700;
-}
-.bc-step-current .bc-step-index { background: var(--primary); color: var(--text-inverse); }
-.bc-step-done .bc-step-index { background: var(--success-500); color: var(--text-inverse); }
-/* The connector. A flex-1 hairline that turns olive once the step behind it is
-   done, which is the whole "how far along am I" signal. */
-.bc-step-link {
-  flex: 1;
-  min-width: 1rem;
-  height: 2px;
-  border-radius: var(--radius-full);
-  background: var(--border);
-}
-.bc-step-link-done { background: var(--success-500); }
+/* The composer's progress rail is the shared .stepper now (REDESIGN COMPONENTS). */
 
 /* ── Panels shared by every step ────────────────────────────── */
 
@@ -4701,17 +5727,13 @@ span.flatpickr-weekday {
 }
 .bc-bar-fill {
   height: 100%;
-  background: var(--primary);
+  background: var(--success-500);
   transition: width var(--dur-base) ease;
 }
 
-/* SPEC §13's five statuses. Named for the stored value so a template can
-   write `status-pill-{{ broadcast.status }}` and never branch. */
-.status-pill-draft     { background: var(--neutral-100); color: var(--text-secondary); }
-.status-pill-scheduled { background: var(--warning-50);  color: var(--warning-700); }
-.status-pill-sending   { background: var(--brand-50);    color: var(--primary); }
-.status-pill-sent      { background: var(--success-50);  color: var(--success-700); }
-.status-pill-cancelled { background: var(--error-50);    color: var(--error-700); }
+/* SPEC §13's five statuses are in the status-pill tone table near the top of
+   this file, with every other family: `status-pill-{{ broadcast.status }}`
+   resolves there. */
 
 /* The bar with no value: fanout has not finished expanding the audience, so
    there is no honest denominator yet. A sweep rather than a width, because the
@@ -4814,7 +5836,7 @@ a.an-card:hover { border-color: var(--border-hover); }
 }
 .an-range-option + .an-range-option { border-left: 1px solid var(--border); }
 .an-range-option:hover { background: var(--surface-1); }
-.an-range-current { background: var(--brand-50); color: var(--primary); font-weight: 600; }
+.an-range-current { background: var(--ink); color: var(--text-inverse); font-weight: 600; }
 
 /* Chart.js draws into this; the height is here rather than on the element
    because a canvas with no CSS height grows without bound on a re-render. */
@@ -4843,14 +5865,10 @@ a.an-card:hover { border-color: var(--border-hover); }
 .an-table th.an-num { text-align: right; }
 .an-muted { color: var(--text-tertiary); }
 
-/* SPEC §5's flow statuses. The other three families of status pill are already
-   defined above for connections, WhatsApp templates and broadcasts; `active`
-   and `draft` are shared with them, and only `archived` and `offline` were
-   missing. Offline carries a dot like Live and a warning tint rather than
-   Draft's grey: it was running and somebody switched it off, which is worth
-   noticing in a list where a draft is not. */
-.status-pill-archived { background: var(--neutral-100); color: var(--text-tertiary); }
-.status-pill-offline  { background: var(--warning-50);  color: var(--warning-700); }
+/* SPEC §5's flow statuses (active, offline, draft, archived) are in the
+   status-pill tone table near the top of this file. Offline is amber rather
+   than Draft's grey: it was running and somebody switched it off, which is
+   worth noticing in a list where a draft is not. */
 
 /* ═══════════════════════════════════════════════════════════════
    CHANNEL PAGES
@@ -4916,9 +5934,9 @@ a.an-card:hover { border-color: var(--border-hover); }
   width: 26px;
   height: 26px;
   border-radius: var(--radius-full);
-  background: var(--primary-tint);
-  border: 1px solid var(--primary-tint-border);
-  color: var(--brand-700);
+  background: var(--surface-0);
+  border: 1px solid var(--border-strong);
+  color: var(--ink);
   font-size: var(--fs-sm);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -5084,8 +6102,8 @@ a.an-card:hover { border-color: var(--border-hover); }
 /* The plan you are on: a tint and a heavier rule, the same signal
    .tile-selected gives a chosen template. */
 .plan-card-current {
-  border: 1.5px solid var(--brand-500);
-  background: var(--primary-tint);
+  border: 1.5px solid var(--ink);
+  background: var(--surface-0);
 }
 
 .plan-card-head {

@@ -200,6 +200,96 @@ def ui_select(
     }
 
 
+def _filter_groups(groups: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalise a page's filter groups for the popover and its chips.
+
+    Each group is ``{"key", "label", "options"}``; ``key`` is the query
+    parameter and the property of the Alpine model that holds the group's
+    selection. Options take the same shapes ``ui_select`` does — ``(value,
+    label)`` pairs, plain strings, or dicts — and a dict may also carry
+    ``count`` (shown beside the label) and ``icon`` (a platform key). Values
+    are coerced to ``str`` so a UUID compares equal to what Alpine holds.
+    """
+    normalised = []
+    for group in groups:
+        options = []
+        for option in group["options"]:
+            if isinstance(option, dict):
+                value, label = option.get("value"), option.get("label")
+                count, icon = option.get("count"), option.get("icon")
+            elif isinstance(option, tuple | list) and len(option) >= 2:
+                value, label, count, icon = option[0], option[1], None, None
+            else:
+                value = label = option
+                count = icon = None
+            options.append({"value": "" if value is None else str(value), "label": label, "count": count, "icon": icon})
+        normalised.append({"key": group["key"], "label": group["label"], "options": options})
+    return normalised
+
+
+@register.inclusion_tag("components/filter_popover.html")
+def filter_popover(
+    *,
+    groups: Iterable[dict[str, Any]],
+    model: str = "filters",
+    onchange: str = "",
+    target: str = "",
+    count: int | None = None,
+    noun: str = "result",
+    noun_plural: str = "",
+) -> dict[str, Any]:
+    """The list toolbar's Filter button and its popover (HANDOFF §2.2).
+
+    Render it **inside** the toolbar's htmx form: it writes one hidden input
+    per selected value, so the form serialises ``?status=a&status=b`` and the
+    view reads it with :func:`apps.common.filters.multi`.
+
+    Params:
+      groups    the sections, see :func:`_filter_groups`.
+      model     Alpine expression for an object in the enclosing ``x-data``
+                holding one array per group key, e.g. ``filters`` with
+                ``{status: [], folder: []}``. Every key must be present.
+      onchange  Alpine expression run after each toggle, e.g. ``"reload()"``.
+                Filters apply as they are picked; the footer only closes.
+      target    CSS selector of the region the form swaps. The footer's count
+                is read from the ``data-result-count`` on that region's first
+                child after every swap.
+      count     the result count at render time, for the footer before any
+                swap has happened.
+      noun      what is being counted, singular: "flow", "contact".
+      noun_plural  its plural, when adding an "s" is wrong ("people").
+
+    Keyword-only, like ``ui_select``, so call sites document themselves.
+    """
+    return {
+        "groups": _filter_groups(groups),
+        "model": model,
+        "onchange": onchange,
+        "target": target,
+        "count": count,
+        "noun": noun,
+        "noun_plural": noun_plural or f"{noun}s",
+    }
+
+
+@register.inclusion_tag("components/filter_chips.html")
+def filter_chips(*, groups: Iterable[dict[str, Any]], model: str = "filters", onchange: str = "") -> dict[str, Any]:
+    """The removable chips under a list toolbar, one per active filter value.
+
+    Same ``groups`` and ``model`` as the :func:`filter_popover` beside it. The
+    labels travel as a JSON lookup so a chip says "Live" rather than "active"
+    and a channel's name rather than its id.
+    """
+    normalised = _filter_groups(groups)
+    return {
+        "groups": normalised,
+        "model": model,
+        "onchange": onchange,
+        "labels": {g["key"]: {o["value"]: str(o["label"]) for o in g["options"]} for g in normalised},
+        "group_labels": {g["key"]: str(g["label"]) for g in normalised},
+    }
+
+
 # The widths components/modal.html knows. Anything else raises at render rather
 # than falling back to the default, for the same reason ui_select's icon does: a
 # typo should be loud at the call site, not a quietly narrow form.

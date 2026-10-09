@@ -117,7 +117,7 @@ class TestSMTPConnect:
             ({"from_address": ""}, b"address this channel should send from"),
             ({"from_address": "not an address"}, b"address this channel should send from"),
             ({"host": ""}, b"SMTP host"),
-            ({"port": "not a number"}, b"port is a number"),
+            ({"port": "not a number"}, b"Enter a numeric SMTP port"),
             ({"security": "carrier-pigeon"}, b"STARTTLS, SSL or none"),
         ],
     )

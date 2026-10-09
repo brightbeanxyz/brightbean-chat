@@ -251,18 +251,62 @@ def _querystring(query: ContactQuery, *, page: int = 0) -> str:
     query parameters to the URL htmx pushes into the address bar. Page 1 is
     omitted, so the canonical URL for a view has no ``page`` in it.
     """
-    params: dict[str, str] = {}
+    params: dict[str, Any] = {}
     if query.segment is not None:
         params["segment"] = str(query.segment.pk)
     elif query.document:
         params["filter"] = query.raw_filter
     if query.search_term:
         params["q"] = query.search_term
+    # The popover's facets repeat (`channel=a&channel=b`), hence doseq below.
+    # They are tuples of already-parsed values, so nothing raw reaches the
+    # pushed URL here either.
+    if query.channels:
+        params["channel"] = list(query.channels)
+    if query.tags:
+        params["tag"] = list(query.tags)
+    if query.subscriptions:
+        params["subscription"] = list(query.subscriptions)
     if query.sort != DEFAULT_SORT:
         params["sort"] = query.sort
     if page > 1:
         params["page"] = str(page)
-    return urlencode(params)
+    return urlencode(params, doseq=True)
+
+
+def _facet_context(workspace: Any, query: ContactQuery) -> dict[str, Any]:
+    """The Filter popover's sections and its starting selection.
+
+    Channels are the ones contacts here are actually on, read off their
+    identities, so the section never offers a channel that cannot match.
+    """
+    identity = activity._identity_model()
+    channels: list[dict[str, Any]] = []
+    if identity is not None:
+        channels = [
+            {"value": pk, "label": name, "icon": platform}
+            for pk, name, platform in identity.objects.for_workspace(workspace)
+            .filter(channel_connection__isnull=False)
+            .values_list("channel_connection_id", "channel_connection__display_name", "channel_connection__platform")
+            .order_by("channel_connection__platform", "channel_connection__display_name")
+            .distinct()
+        ]
+    return {
+        "filters": {
+            "channel": list(query.channels),
+            "tag": list(query.tags),
+            "subscription": list(query.subscriptions),
+        },
+        "filter_groups": [
+            {"key": "channel", "label": "Channel", "options": channels},
+            {
+                "key": "tag",
+                "label": "Tag",
+                "options": [(t.pk, t.name) for t in Tag.objects.for_workspace(workspace).order_by("name")],
+            },
+            {"key": "subscription", "label": "Status", "options": list(filters.SUBSCRIPTIONS.items())},
+        ],
+    }
 
 
 def _filter_config(workspace: Any, query: ContactQuery) -> dict[str, Any]:
@@ -288,6 +332,7 @@ def contact_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         {
             **context,
             "filter_config": _filter_config(request.workspace, context["query"]),
+            **_facet_context(request.workspace, context["query"]),
             # Separate from `filter_config["sequences"]` on purpose: that list
             # feeds the §11.4 condition picker and has to offer every sequence,
             # while the bulk enrolment control must offer only the ones

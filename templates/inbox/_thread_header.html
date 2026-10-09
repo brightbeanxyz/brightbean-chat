@@ -24,38 +24,51 @@ it under the reader mid-choice.
       <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
     </svg>
   </a>
-  <span class="pi-chip {{ conversation.channel_connection.platform|platform_class }}" aria-hidden="true">
-    {% include "partials/_platform_icon.html" with platform=conversation.channel_connection.platform size="sm" %}
+  {% comment %}
+    The person, with the channel as a badge on their avatar — the same shape the
+    list row uses, so the thread reads as the row opened up.
+  {% endcomment %}
+  <span class="ib-row-avatar" aria-hidden="true">
+    <span class="avatar avatar-sm">{{ conversation.contact.display_name|make_list|first|upper }}</span>
+    <span class="ib-row-channel pi-chip {{ conversation.channel_connection.platform|platform_class }}">
+      {% include "partials/_platform_icon.html" with platform=conversation.channel_connection.platform size="sm" %}
+    </span>
   </span>
   <div class="ib-thread-title">
-    <div class="text-sm font-semibold truncate" style="color: var(--text-primary);">{{ conversation.contact.display_name }}</div>
-    <div class="text-xs truncate" style="color: var(--text-tertiary);">{{ conversation.channel_connection.display_name }}</div>
+    <div class="text-[15px] font-semibold truncate" style="color: var(--text-primary);">{{ conversation.contact.display_name }}</div>
+    <div class="text-xs truncate" style="color: var(--text-tertiary);">{{ conversation.channel_connection.get_platform_display }} · {{ conversation.channel_connection.display_name }}</div>
   </div>
 
   {% if can_reply %}
   <div class="ib-thread-actions">
-    <form hx-post="{% url 'inbox:state' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
-      {% csrf_token %}
-      {% if conversation.state == "done" %}
-        <input type="hidden" name="state" value="open">
-        <button type="submit" class="btn-outline btn-inline" data-shortcut="done">Reopen</button>
-      {% else %}
-        <input type="hidden" name="state" value="done">
-        <button type="submit" class="btn-outline btn-inline" data-shortcut="done">Mark done</button>
-      {% endif %}
-    </form>
-
+    {% comment %}
+      Assignee first, Mark done last: the done button is the one `e` presses,
+      and it sits at the end of the row where the eye finishes.
+    {% endcomment %}
     <form hx-post="{% url 'inbox:assign' workspace_id=request.workspace.id conversation_id=conversation.id %}"
           hx-swap="none"
           hx-trigger="change">
       {% csrf_token %}
       <label class="sr-only" for="assignee-{{ conversation.id }}">Assignee</label>
-      <select class="bb-select" id="assignee-{{ conversation.id }}" name="assignee">
+      <select class="bb-select ib-assignee" id="assignee-{{ conversation.id }}" name="assignee">
         <option value="">Unassigned</option>
         {% for membership in members %}
           <option value="{{ membership.user_id }}" {% if conversation.assignee_id == membership.user_id %}selected{% endif %}>{{ membership.user.display_name }}</option>
         {% endfor %}
       </select>
+    </form>
+
+    <form hx-post="{% url 'inbox:state' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+      {% csrf_token %}
+      {% if conversation.state == "done" %}
+        <input type="hidden" name="state" value="open">
+        <button type="submit" class="btn-pill-secondary btn-pill-sm" data-shortcut="done">Reopen</button>
+      {% else %}
+        <input type="hidden" name="state" value="done">
+        <button type="submit" class="btn-pill-secondary btn-pill-sm" data-shortcut="done">
+          {% include "partials/_nav_icon.html" with name="check" icon_size=15 %} Mark done
+        </button>
+      {% endif %}
     </form>
   </div>
   {% else %}

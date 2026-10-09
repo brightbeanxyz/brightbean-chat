@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MissingEnvError, readEnv } from "./env";
+import { MissingEnvError, readEnv, triggerEnabledUrl } from "./env";
 
 function mount(dataset: Record<string, string>): HTMLElement {
   const element = document.createElement("div");
@@ -34,7 +34,22 @@ describe("reading the mount div", () => {
       schemaUrl: "/w/ws/api/flows/schema/",
       mediaPickerUrl: "/w/ws/media/picker/",
       previewUrl: "/w/ws/settings/channels/telegram/preview/flow-1/",
+      // The top bar's, optional: absent on this mount div, so blank.
+      flowName: "",
+      listUrl: "",
+      renameUrl: "",
+      triggerEnabledUrl: "",
+      exportUrl: "",
+      exportBundleUrl: "",
     });
+  });
+
+  it("substitutes a trigger's id into the switch URL template", () => {
+    const env = readEnv(
+      mount({ ...COMPLETE, "trigger-enabled-url": "/w/ws/api/flows/flow-1/triggers/00000000-0000-0000-0000-000000000000/enabled/" }),
+    );
+
+    expect(triggerEnabledUrl(env, "t-9")).toBe("/w/ws/api/flows/flow-1/triggers/t-9/enabled/");
   });
 
   it('treats data-can-edit="false" as false', () => {

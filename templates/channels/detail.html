@@ -43,7 +43,7 @@ Never renders the webhook secret — see the views module docstring.
         {% if settings_url %}
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 py-3">
             <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Channel settings</span>
-            <a class="text-sm font-semibold" style="color: var(--brand-700);" href="{{ settings_url }}">{{ label }} settings for this workspace</a>
+            <a class="text-sm font-semibold underline underline-offset-2" style="color: var(--text-primary);" href="{{ settings_url }}">{{ label }} settings for this workspace</a>
         </div>
         {% endif %}
 

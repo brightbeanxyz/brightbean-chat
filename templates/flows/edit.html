@@ -29,69 +29,16 @@ guaranteed flash of an unstyled canvas.
 {% endblock %}
 
 {% comment %}
-  The header. No flow id and no version numbers — the redesign's fifth
-  principle, and this page was the worst offender: it printed
-  "flow_id 4f0c2a91-… · draft v12 · published v11" above the canvas.
+  No page header: the builder's own 56px top bar is the header (HANDOFF §3,
+  Flow builder) — back link, the name edited in place, status, save state,
+  undo/redo, Test, problems, Publish, and the downloads behind "…". It lives
+  in the island because every one of those answers changes while the page is
+  open, and a header Django rendered once could only go stale.
 
-  The React toolbar owns publication, trigger reachability and save status so
-  those answers update immediately after a publish or trigger change. Versions
-  remain available through the Versions view.
+  The page goes full-bleed through base.html's main_pad seam: the canvas is
+  the page, and a padded card around it only took space from it.
 {% endcomment %}
-{% block page_header %}
-<div class="flex flex-wrap items-center gap-3 mb-4">
-    <a href="{{ list_url }}" class="text-[13px] font-semibold inline-flex items-center gap-1.5 flex-shrink-0"
-       style="color: var(--text-tertiary);">
-        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-        Flows
-    </a>
-    <h1 class="text-base font-bold truncate min-w-0" style="color: var(--text-primary);">{{ flow.name }}</h1>
-    <div class="ml-auto flex items-center gap-2 text-xs" style="color: var(--text-tertiary);">
-        {% if not can_edit %}<span>Read-only</span>{% endif %}
-        {% comment %}
-          "When it runs" used to be a button here, and it was the wrong place
-          for it: the single most important fact about a flow — whether
-          anything will ever reach it — was behind a header button, invisible
-          until you went looking, and a flow with no trigger looked exactly
-          like a flow with one.
-
-          The builder's left column shows the triggers permanently now and
-          opens this same drawer to edit them
-          (apps/flows/frontend/src/editor/TriggerSection.tsx), by dispatching the
-          `toggle-triggers` event the drawer below still listens for. One door,
-          where the thing itself is.
-        {% endcomment %}
-        {% comment %}
-          Export from the builder as well as from the list (issue #27). Plain
-          links outside the mount div: the response is a file download, and the
-          React island reverses no URLs of its own — everything it needs arrives
-          as a data attribute, so an action it does not take belongs here.
-        {% endcomment %}
-        {% if can_edit %}
-        <div class="bb-split" x-data="{ choice: 'single', menuOpen: false }" @click.away="menuOpen = false"
-             @keydown.escape.window="menuOpen = false">
-            <a href="{{ export_url }}"
-               :href="choice === 'bundle' ? '{{ export_bundle_url|escapejs }}' : '{{ export_url|escapejs }}'"
-               :aria-label="choice === 'bundle' ? 'Download with everything it uses' : 'Download a copy'"
-               :title="choice === 'bundle' ? 'Download with everything it uses' : 'Download a copy'"
-               class="bb-split-main" aria-label="Download a copy" title="Download a copy">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg>
-            </a>
-            <button type="button" class="bb-split-toggle" @click="menuOpen = !menuOpen"
-                    :aria-expanded="menuOpen ? 'true' : 'false'" aria-haspopup="true"
-                    aria-label="Choose download type" title="Choose download type">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-            </button>
-            <div x-show="menuOpen" x-cloak class="bb-split-menu">
-                <button type="button" @click="choice = 'single'; menuOpen = false"
-                        :aria-current="choice === 'single' ? 'true' : null">Download a copy</button>
-                <button type="button" @click="choice = 'bundle'; menuOpen = false"
-                        :aria-current="choice === 'bundle' ? 'true' : null">With everything it uses</button>
-            </div>
-        </div>
-        {% endif %}
-    </div>
-</div>
-{% endblock %}
+{% block main_pad %}p-0{% endblock %}
 
 {% block content %}
 {% flow_builder_bundle as builder %}
@@ -121,9 +68,15 @@ attacker-authored HTML.
 {% endcomment %}
 <div id="flow-builder"
      x-ignore
-     class="fb-mount h-full rounded-xl border overflow-hidden"
-     style="border-color: var(--border); background: var(--surface-1); height: 100%;"
+     class="fb-mount h-full overflow-hidden"
+     style="background: var(--surface-1); height: 100%;"
      data-flow-id="{{ flow.id }}"
+     data-flow-name="{{ flow.name }}"
+     data-list-url="{{ list_url }}"
+     data-rename-url="{{ api_rename_url }}"
+     data-trigger-enabled-url="{{ api_trigger_enabled_url }}"
+     {% if can_edit %}data-export-url="{{ export_url }}"
+     data-export-bundle-url="{{ export_bundle_url }}"{% endif %}
      data-can-edit="{{ can_edit|yesno:"true,false" }}"
      data-detail-url="{{ api_detail_url }}"
      data-publish-url="{{ api_publish_url }}"
@@ -137,8 +90,9 @@ attacker-authored HTML.
     Replaced by createRoot().render() on mount. Kept until then so a slow parse
     is not a blank rectangle.
     {% endcomment %}
-    <div class="h-full flex items-center justify-center p-8">
+    <div class="h-full flex flex-col items-center justify-center gap-2 p-8">
         <p class="text-sm" style="color: var(--text-secondary);">Loading the flow builder…</p>
+        {% if not can_edit %}<p class="text-xs" style="color: var(--text-tertiary);">Read-only: you can look at this flow but not change it.</p>{% endif %}
     </div>
     {% else %}
     <div class="h-full flex items-center justify-center p-8">
@@ -148,6 +102,7 @@ attacker-authored HTML.
                 Its JavaScript bundle has not been built. Run <code>make frontend</code> and reload,
                 or rebuild the container image.
             </p>
+            {% if not can_edit %}<p class="mt-2">Read-only: you can look at this flow but not change it.</p>{% endif %}
         </div>
     </div>
     {% endif %}

@@ -107,7 +107,9 @@ function FlowNodeCardInner({
       <div className="fb-node-header">
         {!isNote ? (
           <span className="fb-node-kind">
-            <span className="fb-node-dot" aria-hidden="true" />
+            <span className="fb-node-icon" aria-hidden="true">
+              <GroupIcon group={group} />
+            </span>
             {plainKind(spec, type)}
           </span>
         ) : null}
@@ -177,6 +179,34 @@ function FlowNodeCardInner({
         </Handle>
       ))}
     </div>
+  );
+}
+
+/**
+ * The group's glyph, on a tile in the group's accent (HANDOFF §3: "cards use the
+ * group accent … on the icon tile only"). The accent used to be a dot and a
+ * tinted card; on the tile alone it still says "send", "decide" or "do" at a
+ * glance, and the card itself stays white so a canvas of twenty steps does not
+ * become a patchwork.
+ */
+function GroupIcon({ group }: { group: string }) {
+  if (group === "content") {
+    return (
+      <svg viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>
+    );
+  }
+  if (group === "logic") {
+    return (
+      <svg viewBox="0 0 24 24"><path d="M6 3v12" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg>
+    );
+  }
+  if (group === "actions") {
+    return (
+      <svg viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" /></svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /></svg>
   );
 }
 

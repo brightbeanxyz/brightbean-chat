@@ -24,8 +24,13 @@ goes.
         <div>
             <h1 class="page-title">{{ greeting }}, {{ request.user.display_name }}</h1>
         </div>
+        {% comment %}
+          One orange control per screen (HANDOFF §2.1): while setup is
+          unfinished, its next step's button below is the thing to do, so this
+          one steps back to secondary until setup is done.
+        {% endcomment %}
         {% if can_edit_flows %}
-        <a class="btn-pill-primary flex-shrink-0" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
+        <a class="{% if setup_remaining %}btn-pill-secondary{% else %}btn-pill-primary{% endif %} flex-shrink-0" href="{% url 'flows:list' workspace_id=request.workspace.id %}">
             {% include "partials/_nav_icon.html" with name="flows" icon_size=16 %} New flow
         </a>
         {% endif %}
@@ -47,7 +52,7 @@ goes.
             </div>
             <div class="flex items-center gap-3">
                 <div class="w-[180px] h-1.5 rounded-full overflow-hidden" style="background: var(--surface-2);">
-                    <div class="h-full" style="width: {{ setup_percent }}%; background: var(--primary);"></div>
+                    <div class="h-full" style="width: {{ setup_percent }}%; background: var(--success-500);"></div>
                 </div>
                 <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{{ setup_done }} of {{ setup_steps|length }}</span>
             </div>
@@ -64,7 +69,7 @@ goes.
                     <span class="text-sm font-semibold line-through" style="color: var(--text-tertiary);">{{ step.title }}</span>
                     {% else %}
                     <span class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold"
-                          style="background: {% if step.current %}var(--primary-tint); color: var(--brand-700){% else %}var(--surface-2); color: var(--text-tertiary){% endif %};">{{ step.number }}</span>
+                          style="background: {% if step.current %}var(--ink); color: var(--text-inverse){% else %}var(--surface-2); color: var(--text-tertiary){% endif %};">{{ step.number }}</span>
                     <span class="text-sm {% if step.current %}font-bold{% else %}font-semibold{% endif %}" style="color: var(--text-primary);">{{ step.title }}</span>
                     {% endif %}
                 </div>
@@ -120,7 +125,7 @@ goes.
             <div class="flex items-baseline justify-between mb-4">
                 <h2 class="section-title">Last 7 days</h2>
                 {% if can_view_analytics %}
-                <a class="text-[13px] font-semibold" style="color: var(--brand-700);"
+                <a class="text-[13px] font-semibold underline underline-offset-2" style="color: var(--text-primary);"
                    href="{% url 'analytics:overview' workspace_id=request.workspace.id %}?days=7">See insights</a>
                 {% endif %}
             </div>
@@ -151,7 +156,7 @@ goes.
             <div class="flex items-end gap-2 h-[110px] mt-6" role="img"
                  aria-label="Messages received per day over the last seven days">
                 {% for day in kpis.daily_messages %}
-                <div class="flex-1 rounded-t-md" style="height: {{ day.height }}%; min-height: 3px; background: var(--primary-muted);"
+                <div class="flex-1 rounded-t-md" style="height: {{ day.height }}%; min-height: 3px; background: var(--neutral-300);"
                      title="{{ day.date|date:'D j M' }}: {{ day.messages_in }}"></div>
                 {% endfor %}
             </div>
@@ -167,7 +172,7 @@ goes.
             <a class="flex gap-3 py-3.5 no-underline {% if not forloop.last %}border-b{% endif %}"
                style="border-color: var(--divider);" href="{{ item.url }}">
                 <span class="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                      style="background: {% if item.tone == 'bad' %}var(--error-50); color: var(--error-700){% elif item.tone == 'warn' %}var(--primary-tint); color: var(--brand-700){% else %}var(--surface-page); color: var(--text-secondary){% endif %};">
+                      style="background: {% if item.tone == 'bad' %}var(--error-50); color: var(--error-700){% elif item.tone == 'warn' %}var(--warning-50); color: var(--warning-700){% else %}var(--surface-page); color: var(--text-secondary){% endif %};">
                     {% include "partials/_nav_icon.html" with name="bell" icon_size=15 %}
                 </span>
                 <span class="min-w-0">

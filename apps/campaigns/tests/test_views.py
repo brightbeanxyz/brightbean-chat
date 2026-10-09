@@ -111,7 +111,20 @@ class TestTheList:
         response = client_for(tenancy.owner).get(url(tenancy, "?status=bogus"))
 
         assert [row.name for row in response.context["sequences"]] == ["Onboarding"]
-        assert response.context["status"] == ""
+        assert response.context["filters"]["status"] == []
+
+    def test_several_statuses_combine(self, tenancy, client_for):
+        """The Filter popover sends a repeated parameter; every value counts."""
+        drafted = sequence_with(tenancy.workspace, steps=1, name="Drafted")
+        Sequence.objects.for_workspace(tenancy.workspace).filter(pk=drafted.pk).update(status=SequenceStatus.DRAFT)
+        live = sequence_with(tenancy.workspace, steps=1, name="Running")
+        Sequence.objects.for_workspace(tenancy.workspace).filter(pk=live.pk).update(status=SequenceStatus.ACTIVE)
+        old = sequence_with(tenancy.workspace, steps=1, name="Retired")
+        Sequence.objects.for_workspace(tenancy.workspace).filter(pk=old.pk).update(status=SequenceStatus.ARCHIVED)
+
+        response = client_for(tenancy.owner).get(url(tenancy, "?status=active&status=archived"))
+
+        assert sorted(row.name for row in response.context["sequences"]) == ["Retired", "Running"]
 
     def test_a_hostile_name_is_escaped(self, tenancy, client_for):
         """Sequence names are user-authored text on the team-browser path
@@ -447,7 +460,7 @@ class TestSubscribers:
         body = client_for(tenancy.owner).get(url(tenancy, f"{sequence.pk}/subscribers/")).content.decode()
 
         assert "Nobody here yet" not in body
-        assert "on this sequence in all" in body
+        assert "enrolled in all" in body
 
     def test_a_sequence_with_nobody_on_it_still_says_so_plainly(self, tenancy, client_for):
         sequence = sequence_with(tenancy.workspace, steps=1)
@@ -534,8 +547,8 @@ class TestTheNav:
         template includes it."""
         body = client_for(tenancy.owner).get(url(tenancy, "")).content.decode()
 
-        strip = body[body.index('<nav class="subnav"') : body.index("</nav>", body.index('<nav class="subnav"'))]
-        assert f'href="{url(tenancy, "")}" class="subnav-item active"' in strip
+        strip = body[body.index('<nav class="tabs"') : body.index("</nav>", body.index('<nav class="tabs"'))]
+        assert f'href="{url(tenancy, "")}" class="tab active"' in strip
         assert 'aria-current="page">Sequences</a>' in strip
         assert ">Flows</a>" in strip
 

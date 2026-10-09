@@ -22,7 +22,7 @@ describe("publishView", () => {
   it("offers Set offline on a published flow with nothing new to publish", () => {
     const view = publishView(published, "active", 2, 1);
 
-    expect(view.statusLabel).toBe("Published");
+    expect(view.statusLabel).toBe("Live v2");
     expect(view.action).toBe("offline");
     expect(view.publishLabel).toBe("Set offline");
     expect(view.publishHint).toBe("Stops this flow now, including conversations already in it.");
@@ -32,7 +32,7 @@ describe("publishView", () => {
   it("calls out a published flow whose triggers are all off and offers to turn them on", () => {
     const view = publishView(published, "active", 2, 0);
 
-    expect(view.statusLabel).toBe("Published · Triggers off");
+    expect(view.statusLabel).toBe("Live v2 · Triggers off");
     expect(view.action).toBe("enable");
     expect(view.publishLabel).toBe("Turn on triggers");
     // Still live for the API, sequences and other flows, so it still needs a way out.
@@ -42,7 +42,7 @@ describe("publishView", () => {
   it("calls out a published flow with no triggers", () => {
     const view = publishView(published, "active", 0, 0);
 
-    expect(view.statusLabel).toBe("Published · No triggers");
+    expect(view.statusLabel).toBe("Live v2 · No triggers");
     // "All off" needs at least one trigger, so there is nothing to turn on.
     expect(view.action).toBe("offline");
   });
@@ -71,7 +71,7 @@ describe("publishView", () => {
   it("names a saved draft while still showing the published status", () => {
     const view = publishView(save({ version: version(3, false), publishedVersion: version(2, true) }), "active", 2, 0);
 
-    expect(view.statusLabel).toBe("Published · Triggers off");
+    expect(view.statusLabel).toBe("Live v2 · Triggers off");
     expect(view.saveLabel).toBe("No changes · Draft v3");
   });
 

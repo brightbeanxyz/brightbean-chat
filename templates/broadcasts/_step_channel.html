@@ -6,31 +6,32 @@ Step 1 — the channel (SPEC §13.1).
 filters on PlatformPolicy.broadcast_allowed. Instagram is absent from this list
 as *data*; there is no platform name in this template and there must not be one.
 {% endcomment %}
-<form class="bc-panel"
-      hx-post="{% url 'broadcasts:save_channel' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
+<form data-wizard-save hx-post="{% url 'broadcasts:save_channel' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
       hx-target="#broadcast-wizard"
       hx-swap="innerHTML">
     {% csrf_token %}
-    <div class="bc-panel-head">
-        <span class="bc-panel-title">Which channel?</span>
-        <span class="bc-hint">Only channels whose platform permits broadcasts are listed.</span>
-    </div>
+    <h2 class="wizard-title">Choose a channel</h2>
+    <p class="wizard-lede">Only channels whose platform permits broadcasts are listed.</p>
 
-    {% for connection in connections %}
-    <label class="bc-block flex items-center gap-3">
-        <input type="radio" name="connection_id" value="{{ connection.id }}"
-               {% if connection.id == broadcast.channel_connection_id %}checked{% endif %} required>
-        <span class="pi-chip {{ connection.platform|platform_class }}"></span>
-        <span>
-            <span style="color: var(--text-primary);">{{ connection.display_name }}</span>
-            <span class="bc-hint block">{{ connection.get_platform_display }}</span>
-        </span>
-    </label>
-    {% empty %}
-    <p class="bc-hint">No channel in this workspace accepts broadcasts.</p>
-    {% endfor %}
+    <fieldset class="option-cards">
+        <legend class="sr-only">Channel</legend>
+        {% for connection in connections %}
+        <label class="option-card">
+            <input type="radio" name="connection_id" value="{{ connection.id }}"
+                   {% if connection.id == broadcast.channel_connection_id %}checked{% endif %} required>
+            <span class="pi-chip pi-chip-md {{ connection.platform|platform_class }} w-9 h-9">{% include "partials/_platform_icon.html" with platform=connection.platform size="md" %}</span>
+            <span class="option-card-body">
+                <span class="option-card-title">{{ connection.display_name }}</span>
+                <span class="option-card-text">{{ connection.get_platform_display }}</span>
+            </span>
+            <span class="option-card-radio" aria-hidden="true"></span>
+        </label>
+        {% empty %}
+        {% include "components/empty_state.html" with icon="channels" title="No channel accepts broadcasts" body="Connect one whose platform permits broadcasts, then come back." %}
+        {% endfor %}
+    </fieldset>
 
-    <div class="bc-actions">
-        <button type="submit" class="btn-brand btn-inline" {% if not connections %}disabled{% endif %}>Continue</button>
+    <div class="wizard-actions">
+        <button type="submit" class="btn-pill-primary" {% if not connections %}disabled{% endif %}>Continue</button>
     </div>
 </form>

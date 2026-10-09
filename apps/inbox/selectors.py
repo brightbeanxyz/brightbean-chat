@@ -102,6 +102,10 @@ UNREAD_BADGE_CAP = 99
 #: response every three seconds.
 LIST_LIMIT = 100
 
+#: Cap on the list's search box, for the same reason the contact list caps
+#: its own: an ILIKE term is not a place to hand Postgres a megabyte.
+MAX_SEARCH_CHARS = 100
+
 
 def conversations_for(
     workspace: Any,
@@ -110,13 +114,22 @@ def conversations_for(
     state: str = "",
     connection_id: Any = None,
     assignee: str = "",
-    label: str = "",
+    label: Any = "",
+    search: str = "",
 ) -> QuerySet[Conversation]:
     """The conversation list, filtered and ordered by recency (SPEC §14).
 
     ``-last_message_at`` with ``state`` and ``workspace`` is exactly
     ``conv_ws_state_last_idx``, the index ``apps.messaging.models`` declares
     "SPEC §14's inbox list" for.
+
+    ``connection_id`` and ``label`` take one id or several — the Filter popover
+    lets a reader pick more than one channel or label, and any of them matches.
+
+    ``search`` matches the contact — name, email or phone — which is what
+    somebody looking for "the conversation with Priya" types. Message text is
+    deliberately not searched here: an ILIKE over every message body on a list
+    polled every three seconds is a different cost, and a different feature.
     """
     rows = (
         Conversation.objects.for_workspace(workspace)
@@ -131,9 +144,17 @@ def conversations_for(
     )
     if state in (ConversationState.OPEN, ConversationState.DONE):
         rows = rows.filter(state=state)
-    if connection_id:
-        parsed = _as_uuid(connection_id)
-        rows = rows.filter(channel_connection_id=parsed) if parsed else rows.none()
+    term = (search or "").strip()[:MAX_SEARCH_CHARS]
+    if term:
+        rows = rows.filter(
+            Q(contact__first_name__icontains=term)
+            | Q(contact__last_name__icontains=term)
+            | Q(contact__email__icontains=term)
+            | Q(contact__phone__icontains=term)
+        )
+    connection_ids = _as_uuids(connection_id)
+    if connection_ids is not None:
+        rows = rows.filter(channel_connection_id__in=connection_ids) if connection_ids else rows.none()
     if assignee == ASSIGNEE_ME:
         rows = rows.filter(assignee=viewer)
     elif assignee == ASSIGNEE_UNASSIGNED:
@@ -141,8 +162,8 @@ def conversations_for(
     elif assignee:
         parsed = _as_uuid(assignee)
         rows = rows.filter(assignee_id=parsed) if parsed else rows.none()
-    if label:
-        parsed = _as_uuid(label)
+    label_ids = _as_uuids(label)
+    if label_ids is not None:
         # ``Exists`` rather than a join: a join to the link table multiplies the
         # row out once per label and would need a ``distinct()`` that then has to
         # agree with the ``order_by`` above. The correlated probe is also what
@@ -151,14 +172,28 @@ def conversations_for(
             rows.filter(
                 Exists(
                     ConversationLabelLink.objects.for_workspace(workspace).filter(
-                        conversation=OuterRef("pk"), label_id=parsed
+                        conversation=OuterRef("pk"), label_id__in=label_ids
                     )
                 )
             )
-            if parsed
+            if label_ids
             else rows.none()
         )
     return with_unread(rows, workspace=workspace, viewer=viewer)
+
+
+def _as_uuids(value: Any) -> list[UUID] | None:
+    """An id filter that may hold one value or several, parsed.
+
+    ``None`` when the filter is not in use at all. Otherwise the ids that
+    parse — and an empty list when some were given and none parsed, which the
+    caller turns into ``none()``: a filter that was asked for and cannot match
+    shows nothing, as it did when this took a single id (see :func:`_as_uuid`).
+    """
+    values = [v for v in (value if isinstance(value, list | tuple | set) else [value]) if v]
+    if not values:
+        return None
+    return [parsed for parsed in map(_as_uuid, values) if parsed is not None]
 
 
 def _as_uuid(value: Any) -> UUID | None:
@@ -548,3 +583,42 @@ class _LooseRule:
         # shared by every instance ever made, and the first caller to append to
         # it would leak into every later dry-run in the process.
         self.actions_json: list[Any] = []
+
+
+def flow_names_for(workspace: Any, messages: list[Message]) -> dict[Any, str]:
+    """``{message.pk: flow name}`` for the automated messages in ``messages``.
+
+    The thread labels a flow's bubble with the flow that sent it (HANDOFF §3,
+    Inbox), so an agent reading a conversation can tell "the Price question
+    flow said this" from "a colleague said this". An automated send's
+    idempotency key is ``exec:{execution_id}:node:…`` (SPEC §9.4), which is
+    the only link from a message back to its run; one query resolves every
+    execution on the page. A key that does not parse — an older send, a
+    hand-made row — simply has no label.
+    """
+    from apps.flows.compat import installed_model
+
+    execution_model = installed_model("flows", "apps.flows", "FlowExecution")
+    if execution_model is None:
+        return {}
+    by_execution: dict[UUID, list[Any]] = {}
+    for message in messages:
+        key = message.idempotency_key or ""
+        if not key.startswith("exec:"):
+            continue
+        parsed = _as_uuid(key.split(":", 2)[1])
+        if parsed is not None:
+            by_execution.setdefault(parsed, []).append(message.pk)
+    if not by_execution:
+        return {}
+    names = dict(
+        execution_model.objects.for_workspace(workspace)
+        .filter(pk__in=list(by_execution))
+        .values_list("pk", "flow__name")
+    )
+    return {
+        message_pk: names[execution_pk]
+        for execution_pk, message_pks in by_execution.items()
+        if execution_pk in names
+        for message_pk in message_pks
+    }

@@ -90,6 +90,7 @@ class TestCrossTenantIsolation:
             "broadcasts:audience_preview",
             "broadcasts:save_content",
             "broadcasts:save_schedule",
+            "broadcasts:send",
             "broadcasts:cancel",
             "broadcasts:duplicate",
             "broadcasts:delete",
@@ -215,6 +216,8 @@ class TestCrossTenantIsolation:
             "flows:api_detail",
             "flows:api_publish",
             "flows:api_offline",
+            "flows:api_rename",
+            "flows:api_trigger_enabled",
             "flows:api_stats",
             "flows:api_schema",
         } <= names

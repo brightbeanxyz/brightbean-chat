@@ -10,34 +10,64 @@ per-step counts, which is why subscriber mutations fire both events.
 
 {% block title %}{{ sequence.name }} · Sequences · BrightBean Chat{% endblock %}
 
+{% comment %}
+The editor bar (HANDOFF §2.3): a way back, the sequence's name and state, and
+one action that says what it does. The status used to be a select beside a
+"Save status" button — three words to read before anything happened. Now a
+draft offers "Activate sequence", the one orange control on the page; a live
+one offers to go back to draft (which stops new subscribers and leaves the
+people already on it where they are); an archived one offers to come back.
+Archiving sits behind the same rule as every other destructive action: a red
+text link, away from the primary.
+
+The status endpoint answers with a toast; the page reloads on success so the
+bar shows the state it is now in.
+{% endcomment %}
 {% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div class="min-w-0">
-        <p class="text-xs" style="color: var(--text-tertiary);">
-            <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
-               class="btn-text-hover-primary">Sequences</a>
-        </p>
-        <h1 class="page-title truncate">{{ sequence.name }}</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
-            Steps run in order. Each waits its delay from the moment the previous step actually ran,
-            then opens inside its send window.
-        </p>
-    </div>
+<div class="editor-bar mb-2">
+    <a class="editor-bar-back" href="{% url 'campaigns:list' workspace_id=request.workspace.id %}">
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+        Sequences
+    </a>
+    <span class="editor-bar-sep" aria-hidden="true">/</span>
+    <h1 class="editor-bar-title truncate">{{ sequence.name }}</h1>
+    {% if sequence.status == "active" %}{% include "components/status_pill.html" with tone="success" label="Active" %}
+    {% elif sequence.status == "archived" %}<span class="status-pill status-pill-archived"><span class="status-pill-dot" aria-hidden="true"></span>Archived</span>
+    {% else %}{% include "components/status_pill.html" with tone="neutral" label="Draft" %}{% endif %}
     {% if can_edit %}
-    <form class="flex items-center gap-2"
-          hx-post="{% url 'campaigns:status' workspace_id=request.workspace.id sequence_id=sequence.id %}"
-          hx-swap="none">
-        {% csrf_token %}
-        <label for="sequence-status" class="sr-only">Status</label>
-        <select id="sequence-status" name="status" class="form-input-styled" style="width: 11rem;">
-            {% for value, label in status_options %}
-            <option value="{{ value }}" {% if sequence.status == value %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-        </select>
-        <button type="submit" class="btn-outline btn-inline">Save status</button>
-    </form>
+    <div class="ml-auto flex flex-wrap items-center gap-3" x-data>
+        {% if sequence.status == "draft" %}
+        <form hx-post="{% url 'campaigns:status' workspace_id=request.workspace.id sequence_id=sequence.id %}" hx-swap="none"
+              hx-confirm="Archive this sequence? It stops accepting new subscribers and leaves the list until you restore it."
+              @htmx:after-request="if (event.detail.successful) window.location.reload()">
+            {% csrf_token %}<input type="hidden" name="status" value="archived">
+            <button type="submit" class="btn-danger-link">Archive</button>
+        </form>
+        <form hx-post="{% url 'campaigns:status' workspace_id=request.workspace.id sequence_id=sequence.id %}" hx-swap="none"
+              @htmx:after-request="if (event.detail.successful) window.location.reload()">
+            {% csrf_token %}<input type="hidden" name="status" value="active">
+            <button type="submit" class="btn-pill-primary btn-pill-sm">Activate sequence</button>
+        </form>
+        {% elif sequence.status == "active" %}
+        <form hx-post="{% url 'campaigns:status' workspace_id=request.workspace.id sequence_id=sequence.id %}" hx-swap="none"
+              @htmx:after-request="if (event.detail.successful) window.location.reload()">
+            {% csrf_token %}<input type="hidden" name="status" value="draft">
+            <button type="submit" class="btn-pill-secondary btn-pill-sm" title="Stops new subscribers. People already on it carry on.">Move back to draft</button>
+        </form>
+        {% else %}
+        <form hx-post="{% url 'campaigns:status' workspace_id=request.workspace.id sequence_id=sequence.id %}" hx-swap="none"
+              @htmx:after-request="if (event.detail.successful) window.location.reload()">
+            {% csrf_token %}<input type="hidden" name="status" value="draft">
+            <button type="submit" class="btn-pill-secondary btn-pill-sm">Restore to draft</button>
+        </form>
+        {% endif %}
+    </div>
     {% endif %}
 </div>
+<p class="page-lede mb-6 max-w-[42rem]">
+    Steps run in order. Each waits its delay from the moment the previous step actually ran,
+    then opens inside its send window.
+</p>
 {% endblock %}
 
 {% block content %}

@@ -19,20 +19,29 @@ clicked. The header has the Flows page's shape for the same reason: three tabs
 of one section should not move the title about as you switch between them.
 {% endcomment %}
 {% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}
 
 {% block content %}
-<div class="max-w-[1060px] w-full">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+<div class="max-w-[1060px] w-full"
+     x-data="{
+        q: '{{ query|escapejs }}',
+        filters: {{ filters|json_attr }},
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        clearFilters() { this.q = ''; Object.keys(this.filters).forEach(k => this.filters[k] = []); this.reload(); }
+     }">
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">Sequences</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 A series of messages sent over days. Each step waits for the time you set, counting from the message before it, then runs a flow.
             </p>
         </div>
         {% if can_edit %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-sequence')">
-            {% include "partials/_nav_icon.html" with name="sequences" icon_size=16 %} New sequence
-        </button>
+        <div class="page-header-actions">
+            <button type="button" class="btn-pill-primary" @click="$modal('new-sequence')">
+                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} New sequence
+            </button>
+        </div>
         {% endif %}
     </div>
 
@@ -53,23 +62,23 @@ of one section should not move the title about as you switch between them.
     {% endmodal %}
     {% endif %}
 
-    <form id="sequence-filters"
-          class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3"
+    <div class="mb-5">
+    <form id="sequence-filters" x-ref="filters"
+          class="list-toolbar"
           hx-get="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
           hx-target="#sequence-rows"
           hx-swap="innerHTML"
-          hx-trigger="input changed delay:300ms, change"
+          hx-trigger="input changed delay:300ms from:#sequence-search, filters-changed"
           @submit.prevent>
-        <input type="search" name="q" value="{{ query }}" placeholder="Search sequences"
-               class="form-input-styled" style="width: 16rem;" aria-label="Search sequences">
-        <label for="sequence-status" class="sr-only">Status</label>
-        <select id="sequence-status" name="status" class="form-input-styled" style="width: 11rem;">
-            <option value="">All statuses</option>
-            {% for value, label in status_options %}
-            <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-        </select>
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input type="search" id="sequence-search" name="q" x-model="q" placeholder="Search sequences"
+                   class="search-input" aria-label="Search sequences">
+        </label>
+        {% filter_popover groups=filter_groups onchange="reload()" target="#sequence-rows" count=sequences|length noun="sequence" %}
     </form>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
+    </div>
 
     <div id="sequence-rows"
          hx-get="{% url 'campaigns:list' workspace_id=request.workspace.id %}"

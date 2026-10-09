@@ -22,6 +22,7 @@ of how many people a campaign is about to message.
 the row itself; these filters are what stop it being visible in the meantime.
 """
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,8 +38,11 @@ __all__ = ["SubscriberPage", "at_position", "sequences_for", "steps_for", "subsc
 MAX_SUBSCRIBERS = 200
 
 
-def sequences_for(workspace: Any, *, query: str = "", status: str = "") -> QuerySet[Sequence]:
+def sequences_for(workspace: Any, *, query: str = "", statuses: Collection[str] = ()) -> QuerySet[Sequence]:
     """The workspace's sequences, filtered by the toolbar, with two counts.
+
+    ``statuses`` is the Filter popover's selection — any of them matches, and
+    none means every status.
 
     Both counts are conditional aggregates over one join rather than two
     subqueries, so the list page costs one statement whatever it contains.
@@ -46,8 +50,8 @@ def sequences_for(workspace: Any, *, query: str = "", status: str = "") -> Query
     rows = Sequence.objects.for_workspace(workspace)
     if query:
         rows = rows.filter(name__icontains=query)
-    if status:
-        rows = rows.filter(status=status)
+    if statuses:
+        rows = rows.filter(status__in=statuses)
     return rows.annotate(
         subscriber_count=Count(
             "enrollments",
@@ -58,6 +62,11 @@ def sequences_for(workspace: Any, *, query: str = "", status: str = "") -> Query
             distinct=True,
         ),
         step_count=Count("steps", distinct=True),
+        # The list's completion bar: of everyone ever enrolled, how many reached
+        # the end. Unsubscribed people count in the denominator — they started
+        # and did not finish, which is what the bar is for.
+        enrolled_count=Count("enrollments", distinct=True),
+        completed_count=Count("enrollments", filter=Q(enrollments__status=EnrollmentStatus.COMPLETED), distinct=True),
     ).order_by("name")
 
 

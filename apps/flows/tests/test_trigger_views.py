@@ -186,8 +186,9 @@ class TestThePanel:
         nobody may make one — and #25's flow-start endpoint needs one to exist."""
         response = client_for(tenancy.owner).get(_url("flows:trigger_panel", tenancy, flow))
 
+        # One option card per type, each opening that type's form.
         for value in TriggerType.values:
-            assert f'value="{value}"'.encode() in response.content, value
+            assert f"triggers/form/?type={value}".encode() in response.content, value
 
     def test_keyword_text_is_escaped(self, tenancy, client_for, flow):
         """Keyword text is user-authored (SECURITY-BASELINE §2)."""

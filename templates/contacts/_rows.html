@@ -16,6 +16,7 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
 <div id="contact-rows"
      hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}{% if page_querystring %}?{{ page_querystring }}{% endif %}"
      hx-trigger="contactsChanged from:body"
+     data-result-count="{{ page.paginator.count }}"
      hx-swap="outerHTML">
 
   {% if list_error %}
@@ -30,8 +31,9 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
       when the redesign moved the page ground to --surface-page, so each screen
       supplies its own surfaces.
     {% endcomment %}
-    <div class="card overflow-x-auto">
-    <table class="crm-contact-table">
+    <div class="card overflow-hidden">
+    <div class="data-table-wrap">
+    <table class="data-table crm-contact-table">
       <thead>
         <tr>
           <th class="w-8">
@@ -45,11 +47,11 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
             <input type="checkbox" id="select-page" class="bb-checkbox"
                    x-on:change="togglePage({{ page_ids|json_attr }}, $event.target.checked)">
           </th>
-          <th>Name</th>
-          <th>Channels</th>
-          <th>Tags</th>
-          <th>Last seen</th>
-          <th>Contactable</th>
+          <th scope="col">Contact</th>
+          <th scope="col">Channels</th>
+          <th scope="col">Tags</th>
+          <th scope="col">Last active</th>
+          <th scope="col">Status</th>
         </tr>
       </thead>
       <tbody>
@@ -70,10 +72,10 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
               <span class="flex items-center gap-2.5">
                 <span class="avatar avatar-sm">{{ contact.display_name|make_list|first|upper }}</span>
                 <span class="min-w-0">
-                  <a class="block truncate" href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=contact.id %}">{{ contact.display_name }}</a>
-                  {% if contact.email %}<span class="block muted text-xs truncate">{{ contact.email }}</span>
-                  {% elif contact.phone %}<span class="block muted text-xs truncate">{{ contact.phone }}</span>
-                  {% else %}<span class="block muted text-xs">No email or phone yet</span>{% endif %}
+                  <a class="data-table-title block truncate" href="{% url 'contacts:detail' workspace_id=request.workspace.id contact_id=contact.id %}">{{ contact.display_name }}</a>
+                  {% if contact.email %}<span class="data-table-meta block truncate">{{ contact.email }}</span>
+                  {% elif contact.phone %}<span class="data-table-meta block truncate">{{ contact.phone }}</span>
+                  {% else %}<span class="data-table-meta block">No email or phone yet</span>{% endif %}
                 </span>
               </span>
             </td>
@@ -92,9 +94,11 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
             <td>{% if contact.last_interaction_at %}{{ contact.last_interaction_at|timesince }} ago{% else %}<span class="muted">Never</span>{% endif %}</td>
             <td>
               {% comment %}
-                "Contactable", in words. The column used to be headed "Opt-in"
-                and show the field's two pills; what a reader wants to know is
-                whether they may message this person.
+                Whether they may be messaged, as a status pill (HANDOFF §3,
+                Contacts) — the same words the Filter popover's Status group
+                uses. The column used to be headed "Opt-in" and then
+                "Contactable"; what a reader wants to know is whether they may
+                message this person.
 
                 Still two independent facts, never an if/elif chain.
                 `has_opt_in` and `has_opted_out` can both be true — a contact
@@ -106,21 +110,20 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
                 sentence instead.
               {% endcomment %}
               {% if contact.has_opt_in and contact.has_opted_out %}
-                <span class="health health-warn" title="Opted out on at least one channel, still opted in on another">
-                  <span class="health-dot"></span>On some channels
-                </span>
+                <span class="status-pill status-pill-warning" title="Opted out on at least one channel, still opted in on another"><span class="status-pill-dot" aria-hidden="true"></span>On some channels</span>
               {% elif contact.has_opt_in %}
-                <span class="health health-ok"><span class="health-dot"></span>Yes</span>
+                <span class="status-pill status-pill-success"><span class="status-pill-dot" aria-hidden="true"></span>Subscribed</span>
               {% elif contact.has_opted_out %}
-                <span class="health health-off"><span class="health-dot"></span>Opted out</span>
+                <span class="status-pill status-pill-error"><span class="status-pill-dot" aria-hidden="true"></span>Opted out</span>
               {% else %}
-                <span class="health health-off"><span class="health-dot"></span>Not yet</span>
+                <span class="status-pill"><span class="status-pill-dot" aria-hidden="true"></span>Not yet</span>
               {% endif %}
             </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
     </div>
 
     <p class="muted">
@@ -137,9 +140,11 @@ nothing is marked safe, and no value from a contact reaches an href or a src.
       {% endif %}
     </p>
   {% else %}
-    <p class="muted">
-      {% if query.is_filtered or query.segment %}No contacts match this filter.
-      {% else %}No contacts yet. They arrive when someone messages a connected channel, or when you import a CSV.{% endif %}
-    </p>
+    {% if query.is_filtered or query.segment %}
+      {% url 'contacts:list' workspace_id=request.workspace.id as everyone_url %}
+      {% include "components/empty_state.html" with icon="search" title="No contacts match this filter." body="Try a different word, or clear the filters." action_label="Clear filters" action_url=everyone_url %}
+    {% else %}
+      {% include "components/empty_state.html" with icon="contacts" title="No contacts yet" body="They arrive when someone messages a connected channel, or when you import a CSV." %}
+    {% endif %}
   {% endif %}
 </div>

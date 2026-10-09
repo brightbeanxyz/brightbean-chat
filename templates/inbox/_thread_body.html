@@ -32,8 +32,35 @@ are until they are sniffed at fetch time.
 {% endcomment %}
 <input type="hidden" id="inbox-thread-limit" name="limit" value="{{ limit }}">
 
+{% comment %}
+  The status bar (HANDOFF §3, Inbox): whether you may write to this person and
+  whether automation is answering them, said before anybody types. Three states,
+  in order of how much they change what an agent should do: automation paused
+  by a person (amber), sending blocked by the channel (red, in the compliance
+  notice below), or everything open (green) — with the one control that state
+  needs, "take over", right beside it. Absolute times, never countdowns: this
+  region re-renders only when its ETag moves (see the paused banner below).
+{% endcomment %}
+{% if not is_paused and compliance.allowed %}
+  <div class="ib-banner ib-banner-open">
+    <span class="dot dot-success" aria-hidden="true"></span>
+    <span>
+      {% if compliance.identity.window_expires_at %}Window open until {{ compliance.identity.window_expires_at|date:"j M, H:i" }}{% else %}You can reply at any time{% endif %}
+      · Automation can reply
+    </span>
+    {% if can_reply %}
+      <form class="ml-auto" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="pause">
+        <button type="submit" class="ib-banner-action" title="Pause automation so flows stop replying while you handle this">Pause automation (take over)</button>
+      </form>
+    {% endif %}
+  </div>
+{% endif %}
+
 {% if is_paused %}
   <div class="ib-banner ib-banner-paused">
+    <span class="dot dot-warning" aria-hidden="true"></span>
     {% comment %}
       An absolute time, not "29 minutes left". A countdown is a number that goes
       wrong on its own while the markup that carries it stays byte-identical —
@@ -47,7 +74,7 @@ are until they are sniffed at fetch time.
       <form class="ml-auto" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
         {% csrf_token %}
         <input type="hidden" name="action" value="resume">
-        <button type="submit" class="btn-link btn-inline">Resume</button>
+        <button type="submit" class="ib-banner-action">Resume automation</button>
       </form>
     {% endif %}
   </div>
@@ -78,8 +105,15 @@ are until they are sniffed at fetch time.
 
 <ol class="space-y-3 list-none p-0 m-0">
   {% for item in rendered %}
+    {% comment %}
+      Three voices, three looks (HANDOFF §3, Inbox): the contact in white on
+      the left; automation — a flow or a broadcast — in grey on the right,
+      labelled with the flow that said it; a person on the team in ink. The
+      source is the message's own column (MessageSource), so the look follows
+      what produced the message rather than guessing from its direction.
+    {% endcomment %}
     <li class="flex flex-col {% if item.is_inbound %}items-start{% else %}items-end{% endif %}">
-      <div class="ib-bubble {% if item.is_note %}ib-bubble-note{% elif item.is_inbound %}ib-bubble-in{% else %}ib-bubble-out{% endif %}{% if item.is_failed %} ib-bubble-failed{% endif %}">
+      <div class="ib-bubble {% if item.is_note %}ib-bubble-note{% elif item.is_inbound %}ib-bubble-in{% elif item.message.source == 'agent' %}ib-bubble-out{% else %}ib-bubble-auto{% endif %}{% if item.is_failed %} ib-bubble-failed{% endif %}">
         {% for part in item.parts %}
           {% if part.kind == "text" %}
             <span class="ib-text">{{ part.text }}</span>
@@ -134,7 +168,11 @@ are until they are sniffed at fetch time.
       </div>
 
       <div class="ib-bubble-meta flex items-center gap-2">
-        {% if item.is_note %}<span class="ib-chip">Internal note: never sent</span>{% endif %}
+        {% if item.is_note %}<span class="ib-chip">Internal note: never sent</span>
+        {% elif item.message.flow_name %}<span>Flow “{{ item.message.flow_name }}”</span>
+        {% elif item.message.source == "broadcast" %}<span>Broadcast</span>
+        {% elif item.message.source == "automation" %}<span>Automation</span>
+        {% elif item.message.source == "agent" %}<span>Team</span>{% endif %}
         {% if item.button_id %}<span class="ib-chip">Pressed: {{ item.button_id }}</span>{% endif %}
         {% if item.ref %}<span class="ib-chip">Ref: {{ item.ref }}</span>{% endif %}
         <span>{{ item.message.created_at|date:"j M H:i" }}</span>

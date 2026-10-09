@@ -1,5 +1,9 @@
 /**
- * Save state, undo/redo, the stats toggle and Publish.
+ * The builder's top bar (HANDOFF §3, Flow builder): one 56px row that replaced
+ * the page header and the old toolbar under it. The way back and the flow's
+ * name — edited in place — with its status and save state on the left; undo,
+ * redo, stats, Test, the problems count, Publish and the downloads behind "…"
+ * on the right. Publish is the bar's only orange control.
  *
  * Two pieces of copy here are load-bearing. "Saved" and "N problems" are shown
  * side by side rather than folded into one status, because a 200 from the API
@@ -13,17 +17,18 @@
  * case the action turns them on, and the status says plainly why the published
  * flow cannot start yet.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "./api/client";
 import { TestOnChannel } from "./TestOnChannel";
 import type { ValidationPayload } from "./schema/types";
-import { loadFlow, publishFlow, takeFlowOffline } from "./api/flows";
+import { loadFlow, publishFlow, renameFlow, takeFlowOffline } from "./api/flows";
 import { OFFLINE_HINT, publishView, type PublishAction } from "./publishState";
 import { refreshApplies } from "./refreshState";
 import { showToast } from "./toast";
 import type { Autosave } from "./persistence/autosave";
 import { useBuilder, useBuilderStore } from "./store/context";
+import { ProblemsRail } from "./validation/ProblemsRail";
 
 const OFFLINE_CONFIRM =
   "Set this flow offline? It stops replying straight away, including to people partway through it.";
@@ -54,6 +59,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const errorCount = useBuilder((state) => state.validation.errors.length);
   const warningCount = useBuilder((state) => state.validation.warnings.length);
   const flowStatus = useBuilder((state) => state.flow?.status);
+  const env = useBuilder((state) => state.env);
   const triggers = useBuilder((state) => state.triggers);
   const view = publishView(save, flowStatus, triggers.length, triggers.filter((trigger) => trigger.enabled).length);
   // Which action is in flight, not just whether one is: two buttons can start
@@ -70,7 +76,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       // success, which is worse than doing nothing.
       if (autosave && !(await autosave.flush())) {
         store.getState().setSave({
-          message: "Not set live: your latest changes could not be saved. Fix the problems below and try again.",
+          message: "Not set live: your latest changes could not be saved. Fix the problems listed here and try again.",
         });
         return;
       }
@@ -102,7 +108,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         if (payload?.validation) {
           store.getState().applyValidation(payload.validation, store.getState().revision);
         }
-        store.getState().setSave({ message: "Not set live: fix the problems below and try again." });
+        store.getState().setSave({ message: "Not set live: fix the problems listed here and try again." });
       } else if (error instanceof ApiError) {
         store.getState().setSave({ message: error.message });
       }
@@ -161,50 +167,65 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   };
 
   return (
-    <div className="fb-toolbar">
-      <span className={`fb-flow-status fb-flow-status-${view.statusTone}`} aria-live="polite">
-        <span className="fb-flow-status-dot" aria-hidden="true" />
-        {view.statusLabel}
-      </span>
-      <span className="fb-toolbar-divider" aria-hidden="true" />
-      {canEdit ? (
-        <>
-          <button type="button" className="fb-toolbar-icon" aria-label="Undo" title="Undo" disabled={!canUndo} onClick={() => store.getState().undo()}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
-          </button>
-          <button type="button" className="fb-toolbar-icon" aria-label="Redo" title="Redo" disabled={!canRedo} onClick={() => store.getState().redo()}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h2"/></svg>
-          </button>
-        </>
-      ) : null}
-
-      <button
-        type="button"
-        className="fb-toolbar-icon"
-        aria-label={statsVisible ? "Hide stats" : "Show stats"}
-        title={statsVisible ? "Hide stats" : "Show stats"}
-        aria-pressed={statsVisible}
-        onClick={() => store.getState().toggleStats()}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11M10 20V5M16 20v-8M22 20V8"/></svg>
-      </button>
-
-      {statsFailed ? <span className="fb-badge fb-badge-warning">Stats unavailable</span> : null}
-
-      {/*
-        Editors only. Testing runs the *draft* against a real chat and sends
-        real messages, which is an edit-shaped act however read-only the
-        surrounding canvas looks; the server enforces `edit_flows` on the
-        endpoint either way.
-      */}
-      {canEdit ? <TestOnChannel /> : null}
-
-      <span className="fb-toolbar-meta">
-        {errorCount > 0 ? <span className="fb-badge fb-badge-error">{errorCount} to fix</span> : null}
-        {warningCount > 0 ? <span className="fb-badge fb-badge-warning">{warningCount} to check</span> : null}
-        <span data-save-state={save.state}>
-          {view.saveLabel}
+    <div className="fb-toolbar" role="toolbar" aria-label="Flow">
+      {/* The way back and the flow's own name and state, on the left. */}
+      <div className="fb-toolbar-identity">
+        {env.listUrl ? (
+          <a className="fb-toolbar-back" href={env.listUrl}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+            Flows
+          </a>
+        ) : null}
+        {env.listUrl ? <span className="fb-toolbar-sep" aria-hidden="true">/</span> : null}
+        <FlowName />
+        <span className={`fb-flow-status fb-flow-status-${view.statusTone}`} aria-live="polite">
+          <span className="fb-flow-status-dot" aria-hidden="true" />
+          {view.statusLabel}
         </span>
+        {canEdit ? (
+          <span className="fb-save-state" data-save-state={save.state}>
+            {view.saveLabel}
+          </span>
+        ) : (
+          <span className="fb-save-state">Read-only</span>
+        )}
+      </div>
+
+      <div className="fb-toolbar-actions">
+        {canEdit ? (
+          <>
+            <button type="button" className="fb-toolbar-icon" aria-label="Undo" title="Undo" disabled={!canUndo} onClick={() => store.getState().undo()}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
+            </button>
+            <button type="button" className="fb-toolbar-icon" aria-label="Redo" title="Redo" disabled={!canRedo} onClick={() => store.getState().redo()}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h2"/></svg>
+            </button>
+          </>
+        ) : null}
+
+        <button
+          type="button"
+          className="fb-toolbar-icon"
+          aria-label={statsVisible ? "Hide stats" : "Show stats"}
+          title={statsVisible ? "Hide stats" : "Show stats"}
+          aria-pressed={statsVisible}
+          onClick={() => store.getState().toggleStats()}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11M10 20V5M16 20v-8M22 20V8"/></svg>
+        </button>
+
+        {statsFailed ? <span className="fb-badge fb-badge-warning">Stats unavailable</span> : null}
+
+        {/*
+          Editors only. Testing runs the *draft* against a real chat and sends
+          real messages, which is an edit-shaped act however read-only the
+          surrounding canvas looks; the server enforces `edit_flows` on the
+          endpoint either way.
+        */}
+        {canEdit ? <TestOnChannel /> : null}
+
+        <ProblemsMenu errorCount={errorCount} warningCount={warningCount} />
+
         {canEdit ? (
           <button
             type="button"
@@ -229,7 +250,199 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
             {busy === "offline" ? BUSY_LABEL.offline : "Set offline"}
           </button>
         ) : null}
-      </span>
+
+        <OverflowMenu />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The flow's name, edited where it is shown (HANDOFF §3: "inline-editable
+ * name"). A button until clicked, so it reads as a title and not as a field;
+ * Enter or leaving the field saves, Escape puts it back. A blank name is not
+ * sent — the server would refuse it, and the old name is the better answer.
+ */
+function FlowName() {
+  const store = useBuilderStore();
+  const flow = useBuilder((state) => state.flow);
+  const env = useBuilder((state) => state.env);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const name = flow?.name || env.flowName || "Untitled flow";
+  const canRename = env.canEdit && Boolean(env.renameUrl);
+
+  const commit = async () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (!flow || !next || next === flow.name) {
+      return;
+    }
+    // Optimistic: the bar shows the new name at once, and the old one comes
+    // back with the reason if the server says no.
+    store.getState().setFlow({ ...flow, name: next });
+    try {
+      const result = await renameFlow(env, next);
+      store.getState().setFlow(result.flow);
+    } catch (error) {
+      store.getState().setFlow(flow);
+      showToast({
+        tone: "error",
+        title: "Not renamed",
+        body: error instanceof ApiError ? error.message : "The name could not be saved.",
+      });
+    }
+  };
+
+  if (editing) {
+    return (
+      <input
+        className="fb-flow-name-input"
+        aria-label="Flow name"
+        value={draft}
+        maxLength={200}
+        autoFocus
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          } else if (event.key === "Escape") {
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+  return canRename ? (
+    <button
+      type="button"
+      className="fb-flow-name"
+      title="Rename this flow"
+      onClick={() => {
+        setDraft(name);
+        setEditing(true);
+      }}
+    >
+      <h1 className="fb-flow-name-text">{name}</h1>
+    </button>
+  ) : (
+    <h1 className="fb-flow-name-text">{name}</h1>
+  );
+}
+
+/** Close a popover on a click outside it or on Escape. */
+function useDismiss(open: boolean, ref: { current: HTMLElement | null }, close: () => void) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        close();
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, ref, close]);
+}
+
+/**
+ * The problems, behind one button that always says how many there are
+ * (HANDOFF §3: "Problems … becomes a popover from the problems button"). The
+ * list used to be a rail along the bottom of the canvas, permanently taking
+ * room from it whether or not anything was wrong. The count is always in
+ * view; the list is a click away, and opens by itself when a Set live is
+ * refused, because that is the moment someone needs to read it.
+ */
+function ProblemsMenu({ errorCount, warningCount }: { errorCount: number; warningCount: number }) {
+  const message = useBuilder((state) => state.save.message);
+  const [open, setOpen] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, wrapper, close);
+
+  useEffect(() => {
+    if (message) {
+      setOpen(true);
+    }
+  }, [message]);
+
+  const tone = errorCount > 0 ? "error" : warningCount > 0 ? "warning" : "ok";
+  const label =
+    errorCount > 0 ? `${errorCount} to fix` : warningCount > 0 ? `${warningCount} to check` : "Ready";
+
+  return (
+    <div className="fb-problems-menu" ref={wrapper}>
+      <button
+        type="button"
+        className={`fb-problems-button fb-problems-button-${tone}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+      >
+        <span className="fb-problems-dot" aria-hidden="true" />
+        {label}
+      </button>
+      {open ? (
+        <div className="fb-problems-popover" role="dialog" aria-label="Problems">
+          <ProblemsRail onPick={close} />
+          {errorCount === 0 && warningCount === 0 && !message ? (
+            <p className="fb-empty">Nothing to fix. This flow is ready to go live.</p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The actions people need now and then rather than every minute — the two
+ * downloads — behind "…", where the HANDOFF puts Export. Plain links: the
+ * response is a file.
+ */
+function OverflowMenu() {
+  const env = useBuilder((state) => state.env);
+  const [open, setOpen] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, wrapper, close);
+
+  if (!env.exportUrl && !env.exportBundleUrl) {
+    return null;
+  }
+  return (
+    <div className="fb-overflow" ref={wrapper}>
+      <button
+        type="button"
+        className="fb-toolbar-icon"
+        aria-label="More actions"
+        title="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="19" cy="12" r="1.2" /></svg>
+      </button>
+      {open ? (
+        <div className="fb-overflow-menu" role="menu">
+          {env.exportUrl ? (
+            <a role="menuitem" href={env.exportUrl} onClick={close}>Download a copy</a>
+          ) : null}
+          {env.exportBundleUrl ? (
+            <a role="menuitem" href={env.exportBundleUrl} onClick={close}>Download with everything it uses</a>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

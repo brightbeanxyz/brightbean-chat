@@ -1,4 +1,4 @@
-{% comment %}
+{% load tz %}{% comment %}
 Step 4 — when (SPEC §13.1: "schedule now/later, flatpickr, workspace timezone").
 
 The picker writes a naive local value and the server interprets it in
@@ -13,37 +13,51 @@ these contacts are outside the messaging window" — because the same annotation
 answers the preview and the gate, and a client-side check would be a second
 opinion that could disagree.
 {% endcomment %}
-<form class="bc-panel"
-      x-data="{ when: 'now' }"
+<form x-data="{ when: '{% if broadcast.scheduled_at %}later{% else %}now{% endif %}' }"
+      data-wizard-save
       hx-post="{% url 'broadcasts:save_schedule' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
       hx-target="#broadcast-wizard"
       hx-swap="innerHTML">
     {% csrf_token %}
-    <div class="bc-panel-head">
-        <span class="bc-panel-title">When should it go out?</span>
-        <span class="bc-hint">Times are in {{ request.workspace.effective_timezone }}.</span>
-    </div>
+    <h2 class="wizard-title">When should it go out?</h2>
+    <p class="wizard-lede">Times are in {{ request.workspace.effective_timezone }}. Nothing is sent until you confirm on the next step.</p>
 
-    <div class="bc-row">
-        <label><input type="radio" name="when" value="now" x-model="when"> Send now</label>
-        <label><input type="radio" name="when" value="later" x-model="when"> Schedule for later</label>
-    </div>
+    <fieldset class="option-cards">
+        <legend class="sr-only">When</legend>
+        <label class="option-card">
+            <input type="radio" name="when" value="now" x-model="when">
+            <span class="option-card-body">
+                <span class="option-card-title">Send now</span>
+                <span class="option-card-text">As soon as you confirm it</span>
+            </span>
+            <span class="option-card-radio" aria-hidden="true"></span>
+        </label>
+        <label class="option-card">
+            <input type="radio" name="when" value="later" x-model="when">
+            <span class="option-card-body">
+                <span class="option-card-title">Schedule for later</span>
+                <span class="option-card-text">Pick a date and time</span>
+            </span>
+            <span class="option-card-radio" aria-hidden="true"></span>
+        </label>
+    </fieldset>
 
-    <div class="bc-row mt-2" x-show="when === 'later'">
-        <label for="scheduled-at" class="sr-only">Send at</label>
+    <div class="field mt-4" x-show="when === 'later'" x-cloak>
+        <label for="scheduled-at" class="field-label">Send at</label>
         <input id="scheduled-at" type="text" name="scheduled_at" class="form-datetime" style="width: 16rem;"
-               placeholder="YYYY-MM-DD HH:MM"
+               placeholder="YYYY-MM-DD HH:MM" value="{% if broadcast.scheduled_at %}{{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:'Y-m-d H:i' }}{% endif %}"
                x-init="$nextTick(() => {
                    if (!window.flatpickr) return;
                    window.flatpickr($el, { enableTime: true, time_24hr: true, dateFormat: 'Y-m-d H:i', allowInput: true });
                })">
     </div>
 
-    <p class="bc-hint mt-3">
+    <p class="wizard-hint mt-4">
         A scheduled broadcast can be cancelled up to the moment it starts, and while it is sending.
     </p>
 
-    <div class="bc-actions">
-        <button type="submit" class="btn-brand btn-inline">Send</button>
+    <div class="wizard-actions">
+        {% include "broadcasts/_step_back.html" %}
+        <button type="submit" class="btn-pill-primary">Continue</button>
     </div>
 </form>

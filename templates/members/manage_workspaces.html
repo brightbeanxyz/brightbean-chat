@@ -25,7 +25,7 @@
     {% empty %}
       <p class="muted">You cannot manage members in any workspace.</p>
     {% endfor %}
-    <button type="submit">Save access</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">Save access</button>
   </form>
 
   <p><a href="{% url 'members:list' %}">Back to team members</a></p>

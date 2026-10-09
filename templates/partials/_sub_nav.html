@@ -1,5 +1,5 @@
 {% comment %}
-The tab strip under the app header.
+The tab strip at the top of a page (.tabs, the underline tabs in styles.css).
 
 Used by the automations section, where Flows, Sequences and Templates are three
 views of one job and used to be three separate rail rows. Rendered through the
@@ -12,9 +12,9 @@ Args:
           campaigns/list.html, flows/template_gallery.html), or the tab that
           was just clicked vanishes along with its neighbours.
 {% endcomment %}
-<nav class="subnav" aria-label="Section">
+<nav class="tabs" aria-label="Section">
     {% for group in groups %}{% for item in group.items %}
-    <a href="{{ item.url }}" class="subnav-item{% if item.active %} active{% endif %}"
+    <a href="{{ item.url }}" class="tab{% if item.active %} active{% endif %}"
        {% if item.active %}aria-current="page"{% endif %}>{{ item.label }}</a>
     {% endfor %}{% endfor %}
 </nav>

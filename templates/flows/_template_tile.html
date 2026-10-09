@@ -12,7 +12,7 @@ channel is connected, none of which fit a tile this size.
     {% csrf_token %}
     <button type="submit" class="tile p-4 block w-full h-full text-left cursor-pointer">
         <span class="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center mb-3"
-              style="background: var(--primary-tint); color: var(--brand-700);">
+              style="background: var(--surface-0); color: var(--text-secondary); border: 1px solid var(--border);">
             {% include "partials/_nav_icon.html" with name="flows" icon_size=17 %}
         </span>
         <span class="block text-sm font-semibold" style="color: var(--text-primary);">{{ template.name }}</span>
