@@ -12,6 +12,44 @@
     <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
 
     <link rel="stylesheet" href="{% static 'css/dist/styles.css' %}">
+    {% comment %}Synchronous on purpose: sets data-theme before first paint.{% endcomment %}
+    <script src="{% static 'js/theme.js' %}"></script>
+    {% comment %}
+      The workspace's Primary colour (Settings → Colours) replaces the brand
+      ramp. Only the 500 step is chosen; the rest is mixed from it, against
+      white/black in light mode and against the dark surface in dark mode,
+      mirroring what each step does in styles.css. primary_color_rgb is empty
+      unless the value is a strict #RRGGBB, so nothing else reaches this block.
+    {% endcomment %}
+    {% if current_workspace.primary_color_rgb %}
+    <style nonce="{{ request.csp_nonce }}">
+        :root {
+            --brand-500: {{ current_workspace.primary_color }};
+            --brand-500-rgb: {{ current_workspace.primary_color_rgb }};
+            --brand-50:  color-mix(in oklab, var(--brand-500) 8%, white);
+            --brand-75:  color-mix(in oklab, var(--brand-500) 10%, white);
+            --brand-100: color-mix(in oklab, var(--brand-500) 16%, white);
+            --brand-200: color-mix(in oklab, var(--brand-500) 32%, white);
+            --brand-300: color-mix(in oklab, var(--brand-500) 52%, white);
+            --brand-400: color-mix(in oklab, var(--brand-500) 76%, white);
+            --brand-600: color-mix(in oklab, var(--brand-500) 88%, black);
+            --brand-700: color-mix(in oklab, var(--brand-500) 72%, black);
+            --brand-800: color-mix(in oklab, var(--brand-500) 58%, black);
+            --brand-900: color-mix(in oklab, var(--brand-500) 46%, black);
+            --primary-tint-border: color-mix(in oklab, var(--brand-500) 28%, white);
+        }
+        :root[data-theme="dark"] {
+            --brand-50:  color-mix(in oklab, var(--brand-500) 14%, #1F1C1A);
+            --brand-75:  color-mix(in oklab, var(--brand-500) 16%, #1F1C1A);
+            --brand-100: color-mix(in oklab, var(--brand-500) 22%, #1F1C1A);
+            --brand-200: color-mix(in oklab, var(--brand-500) 38%, #1F1C1A);
+            --brand-700: color-mix(in oklab, var(--brand-500) 70%, white);
+            --brand-800: color-mix(in oklab, var(--brand-500) 50%, white);
+            --brand-900: color-mix(in oklab, var(--brand-500) 32%, white);
+            --primary-tint-border: color-mix(in oklab, var(--brand-500) 38%, #1F1C1A);
+        }
+    </style>
+    {% endif %}
 
     {% comment %}
       **Leg 1 of the anti-flash contract.** The sidebar can start a page at

@@ -19,7 +19,7 @@ from django.db import models
 
 from apps.common.managers import OrgScopedManager
 from apps.common.models import BaseModel
-from apps.common.validators import validate_hex_color
+from apps.common.validators import is_valid_hex_color, validate_hex_color
 
 
 class Workspace(BaseModel):
@@ -52,3 +52,16 @@ class Workspace(BaseModel):
     def effective_timezone(self) -> str:
         """The workspace's own timezone, or the organization's default."""
         return self.timezone or self.organization.default_timezone
+
+    @property
+    def primary_color_rgb(self) -> str:
+        """``primary_color`` as "r, g, b" for the stylesheet's rgba() tokens.
+
+        Empty when there is no valid override, which base.html reads as "keep
+        the BrightBean orange". It also gates the <style> block that injects
+        the colour, so only a strict #RRGGBB value ever reaches the page.
+        """
+        if not is_valid_hex_color(self.primary_color) or not self.primary_color:
+            return ""
+        value = self.primary_color.lstrip("#")
+        return ", ".join(str(int(value[i : i + 2], 16)) for i in (0, 2, 4))

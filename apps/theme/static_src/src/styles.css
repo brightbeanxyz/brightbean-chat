@@ -298,6 +298,110 @@
   --font-mono:    var(--brand-font-mono);
 }
 
+/* Dark mode. static/js/theme.js stamps data-theme on <html> before first
+   paint — from the account menu's toggle, or from the OS when the toggle is on
+   System. Overrides Layer-1/2 tokens only, so every component restyles
+   itself. The neutral ramp is inverted, which keeps "900 = strongest text,
+   50 = faintest surface" true in both themes. The -50 soft tints become dark
+   washes and the -700 text weights are lightened so they stay readable on
+   them. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --brand-50:  #2A1B10;
+  --brand-75:  #2E1D12;
+  --brand-100: #3A2314;
+  --brand-200: #5A3218;
+  --brand-700: #FB923C;
+  --brand-800: #FDBA74;
+  --brand-900: #FED7AA;
+  --primary-tint-border: #5A3218;
+
+  --brand-green-50:  #1E2414;
+  --brand-green-100: #232A16;
+  --brand-green-200: #343F1F;
+  --brand-green-700: #B8C76A;
+
+  --neutral-950: #FAFAF9;
+  --neutral-900: #F5F5F4;
+  --neutral-800: #E7E5E4;
+  --neutral-700: #D6D3D1;
+  --neutral-600: #B5AFA9;
+  --neutral-500: #948D87;
+  --neutral-400: #6E6762;
+  --neutral-300: #4F4A45;
+  --neutral-200: #3A3532;
+  --neutral-150: #2E2A27;
+  --neutral-125: #292523;
+  --neutral-100: #262220;
+  --neutral-75:  #1A1715;
+  --neutral-50:  #211E1C;
+
+  --surface-0: #1F1C1A;
+  --surface-page: #151311;
+  --color-illustration-card: var(--surface-0);
+
+  --warning-50: #2A2408; --warning-200: #5C4A0E; --warning-700: #FACC15;
+  --error-50:   #2C1414; --error-700:   #F87171;
+  --info-50:    #13203A; --info-700:    #93C5FD;
+
+  --accent-teal-soft:    #0F2A27;
+  --accent-sky-soft:     #0C2433;
+  --accent-rose-soft:    #2E1219;
+  --accent-amber-soft:   #2A2009;
+  --accent-indigo-soft:  #1C1D3A;
+  --accent-emerald-soft: #0D2A20;
+
+  --shadow-xs:  0 1px 2px rgba(0,0,0,0.4);
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md:  0 4px 6px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.3);
+  --shadow-lg:  0 10px 15px rgba(0,0,0,0.5), 0 4px 6px rgba(0,0,0,0.3);
+  --shadow-xl:  0 20px 25px rgba(0,0,0,0.55), 0 8px 10px rgba(0,0,0,0.3);
+  --shadow-toast: 0 12px 30px rgba(0,0,0,0.6);
+}
+
+/* The few components that put --text-inverse (white) on the darkest neutral,
+   which the inverted ramp turns light. The attribute selector also gives them
+   the specificity to win over the rules they override, which come later. */
+:root[data-theme="dark"] .chip-filter.active { color: var(--surface-0); }
+:root[data-theme="dark"] .bb-toast { background: var(--neutral-200); }
+:root[data-theme="dark"] .bb-toast-body,
+:root[data-theme="dark"] .bb-toast-dismiss { color: var(--neutral-600); }
+:root[data-theme="dark"] .bb-toast-error { background: #991B1B; }
+:root[data-theme="dark"] .bb-toast-error .bb-toast-icon,
+:root[data-theme="dark"] .bb-toast-error .bb-toast-body { color: #FEE2E2; }
+:root[data-theme="dark"] .fb-node-logic   { --flow-ink: #A5B4FC; }
+:root[data-theme="dark"] .fb-node-actions { --flow-ink: #5EEAD4; }
+
+/* The theme switch in the sidebar's account menu: three equal segments. */
+.theme-switch {
+  display: flex;
+  gap: 2px;
+  margin: 8px 14px;
+  padding: 2px;
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+.theme-switch-option {
+  flex: 1;
+  padding: 5px 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.theme-switch-option:hover { color: var(--text-primary); }
+.theme-switch-option.is-active {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-xs);
+}
+
 /* Base */
 body {
   font-family: var(--font-body);
