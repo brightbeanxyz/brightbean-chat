@@ -28,12 +28,13 @@ renders under Django's default autoescaping and none of it is marked safe.
     {% endcomment %}
     {% comment %}
       The bulk-select checkbox, a sibling of the row rather than inside it: a
-      checkbox inside an <a> is a control the link swallows.
+      checkbox inside an <a> is a control the link swallows. Its state lives in
+      the `inboxSelection` component wrapping the list, outside this partial, so
+      the three-second poll can replace these rows under a half-made selection.
 
-      Its state lives in the `inboxSelection` component wrapping the list, which
-      is *outside* this partial — so the three-second poll can replace these rows
-      underneath a half-made selection and x-bind restores every tick. The same
-      arrangement contacts/list.html uses, for the same reason.
+      Shown on hover, on focus, and on every row once anything is selected
+      (`.is-selecting` on the rail): the design's rows carry no checkbox, and a
+      column of empty boxes was the first thing the list said.
     {% endcomment %}
     <input type="checkbox" class="ib-row-select"
            aria-label="Select {{ row.conversation.contact.display_name }}"
@@ -50,44 +51,40 @@ renders under Django's default autoescaping and none of it is marked safe.
         thing about a row when you are deciding which one to open.
       {% endcomment %}
       <span class="ib-row-avatar" aria-hidden="true">
-        <span class="avatar avatar-sm">{{ row.conversation.contact.display_name|make_list|first|upper }}</span>
+        <span class="ib-avatar">{{ row.conversation.contact.display_name|make_list|first|upper }}</span>
         <span class="ib-row-channel pi-chip {{ row.conversation.channel_connection.platform|platform_class }}">
           {% include "partials/_platform_icon.html" with platform=row.conversation.channel_connection.platform size="sm" %}
         </span>
       </span>
-      <span class="flex items-center gap-2">
-        <span class="ib-row-name flex-1 min-w-0 truncate">{{ row.conversation.contact.display_name }}</span>
+      <span class="ib-row-body">
+      <span class="ib-row-top">
+        <span class="ib-row-name">{{ row.conversation.contact.display_name }}</span>
+        {% if row.age %}<span class="ib-row-time">{{ row.age }}</span>{% endif %}
         {% if row.unread %}<span class="ib-dot" role="img" aria-label="Unread"></span>{% endif %}
       </span>
-      <span class="ib-row-preview mt-0.5 block">
-        {% if row.last_internal %}<span class="ib-chip">Note</span> {% endif %}{{ row.preview }}
-      </span>
-      <span class="ib-row-meta mt-0.5 flex items-center gap-2">
-        {% if row.conversation.last_message_at %}<span>{{ row.conversation.last_message_at|timesince }} ago</span>{% endif %}
-        {% if row.conversation.state == "done" %}<span class="ib-chip">Done</span>{% endif %}
-        {% if row.conversation.assignee %}<span class="ib-chip">{{ row.conversation.assignee.display_name }}</span>{% endif %}
-        {% comment %}
-          A glyph, not a countdown. selectors.list_version hashes what this row
-          prints, and a due time here would re-derive from the clock and churn
-          every row in the inbox once a minute for every open tab — over markup
-          that shows a dot. The thread is where the countdown belongs.
-        {% endcomment %}
-        {% if row.has_pending %}<span class="ib-chip" title="Something is scheduled on this conversation">Scheduled</span>{% endif %}
-      </span>
-      {% if row.labels %}
+      <span class="ib-row-preview">{% if row.last_internal %}<span class="ib-chip">Note</span> {% endif %}{{ row.preview }}</span>
+      {% if row.labels or row.conversation.assignee or row.has_pending or row.conversation.state == "done" %}
+      <span class="ib-row-meta ib-row-labels">
         {% comment %}
           `chip.color` is the value apps.inbox.rendering vetted, never the stored
           column — see LabelChip. Capped at LIST_CHIPS with a "+n" remainder,
           because the hostile-content suite bounds the whole rendered list at
           20 kB and a hundred rows of unbounded chips is what trips it.
         {% endcomment %}
-        <span class="ib-row-labels mt-0.5 flex items-center gap-1 flex-wrap">
-          {% for chip in row.labels %}
-            <span class="ib-label-chip" style="--chip-ink: {{ chip.color }};">{{ chip.name }}</span>
-          {% endfor %}
-          {% if row.extra_labels %}<span class="ib-chip">+{{ row.extra_labels }}</span>{% endif %}
-        </span>
+        {% for chip in row.labels %}<span class="ib-label-chip" style="--chip-ink: {{ chip.color }};">{{ chip.name }}</span>{% endfor %}
+        {% if row.extra_labels %}<span class="ib-row-tag">+{{ row.extra_labels }}</span>{% endif %}
+        {% if row.conversation.state == "done" %}<span class="ib-row-tag">Done</span>{% endif %}
+        {% comment %}
+          A word, not a countdown. selectors.list_version hashes what this row
+          prints, and a due time here would re-derive from the clock and churn
+          every row in the inbox once a minute for every open tab. The thread is
+          where the countdown belongs.
+        {% endcomment %}
+        {% if row.has_pending %}<span class="ib-row-tag" title="Something is scheduled on this conversation">Scheduled</span>{% endif %}
+        {% if row.conversation.assignee %}<span class="ib-row-assignee">{{ row.conversation.assignee.display_name }}</span>{% endif %}
+      </span>
       {% endif %}
+      </span>
     </a>
     </div>
   {% endfor %}

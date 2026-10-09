@@ -59,12 +59,14 @@ unsaved work and a poll that swapped it would delete a half-typed reply.
 </div>
 
 {% comment %}
-  Hidden below `lg` rather than dropped: on a narrow screen the list and the
-  thread are already competing for width, and the contact detail is the least
-  urgent of the three. It refreshes on its own event because a tag edit changes
-  nothing in the thread.
+  Shown and hidden by the header's panel button (`info`, on the page's x-data),
+  through the is-open / is-closed classes rather than x-show, so that without
+  JavaScript it still shows wherever there is room. Beside the thread from `lg`;
+  below it opens over the thread instead, so labels and tags stay reachable on
+  a narrow screen. It refreshes on
+  its own event because a tag edit changes nothing in the thread.
 {% endcomment %}
-<aside id="inbox-sidebar" class="ib-side hidden lg:block"
+<aside id="inbox-sidebar" class="ib-side" :class="info ? 'is-open' : 'is-closed'" aria-label="Contact details"
        hx-get="{% url 'inbox:sidebar' workspace_id=request.workspace.id conversation_id=conversation.id %}"
        {% comment %}
          inboxThreadChanged as well as its own event: this panel's pause toggle

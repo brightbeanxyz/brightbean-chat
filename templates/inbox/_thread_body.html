@@ -34,25 +34,43 @@ are until they are sniffed at fetch time.
 
 {% comment %}
   The status bar (HANDOFF §3, Inbox): whether you may write to this person and
-  whether automation is answering them, said before anybody types. Three states,
-  in order of how much they change what an agent should do: automation paused
-  by a person (amber), sending blocked by the channel (red, in the compliance
-  notice below), or everything open (green) — with the one control that state
-  needs, "take over", right beside it. Absolute times, never countdowns: this
-  region re-renders only when its ETag moves (see the paused banner below).
+  whether automation is answering them, said before anybody types. Pinned under
+  the header (sticky in the scrolling pane), so it is there however far back
+  the reader has scrolled. Automation paused by a person is amber; otherwise
+  the bar says what the window allows (green dot when a reply can go out, grey
+  when the channel blocks it — the reason is the notice below) and offers
+  "Pause automation" in every one of those states, because a flow may go on
+  writing with a template even when an agent cannot.
+
+  "Window open for 3h 12m" is minutes-grained and part of this region's ETag
+  (see apps/inbox/views.py::messages), so it moves about once a minute. Once
+  the window has lapsed nothing here claims it is open: a reply that is still
+  allowed then rides on a message tag, and says so.
 {% endcomment %}
-{% if not is_paused and compliance.allowed %}
-  <div class="ib-banner ib-banner-open">
-    <span class="dot dot-success" aria-hidden="true"></span>
+<div class="ib-status">
+{% if not is_paused %}
+  <div class="ib-banner {% if compliance.allowed %}ib-banner-open{% else %}ib-banner-quiet{% endif %}">
+    <span class="ib-status-dot" aria-hidden="true"></span>
     <span>
-      {% if compliance.identity.window_expires_at %}Window open until {{ compliance.identity.window_expires_at|date:"j M, H:i" }}{% else %}You can reply at any time{% endif %}
-      · Automation can reply
+      {% if compliance.allowed %}
+        {% if compliance.window_left %}Window open for {{ compliance.window_left }}
+        {% elif compliance.tag %}Window closed, replies go out with a message tag
+        {% elif compliance.identity.window_expires_at %}You can reply
+        {% else %}You can reply at any time{% endif %}
+        ·
+      {% endif %}
+      {% comment %}
+        "On", not "running": not paused means flows may answer this contact,
+        which is true whether or not one happens to be mid-run — the contact
+        panel says which one last ran.
+      {% endcomment %}
+      Automation is on
     </span>
     {% if can_reply %}
       <form class="ml-auto" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
         {% csrf_token %}
         <input type="hidden" name="action" value="pause">
-        <button type="submit" class="ib-banner-action" title="Pause automation so flows stop replying while you handle this">Pause automation (take over)</button>
+        <button type="submit" class="ib-banner-action" title="Take over: flows stop replying to this contact while you handle it">Pause automation</button>
       </form>
     {% endif %}
   </div>
@@ -60,16 +78,13 @@ are until they are sniffed at fetch time.
 
 {% if is_paused %}
   <div class="ib-banner ib-banner-paused">
-    <span class="dot dot-warning" aria-hidden="true"></span>
+    <span class="ib-status-dot" aria-hidden="true"></span>
     {% comment %}
-      An absolute time, not "29 minutes left". A countdown is a number that goes
-      wrong on its own while the markup that carries it stays byte-identical —
-      and this region only re-renders when its ETag changes. The ETag does track
-      *whether* the pause is live (apps/inbox/views.py folds it in), so the
-      banner appears and disappears on time; what it must not do is claim a
-      precision the refresh cannot back.
+      An absolute time, not "29 minutes left". The ETag tracks *whether* the
+      pause is live (apps/inbox/views.py folds it in), so the bar appears and
+      disappears on time; it must not claim a precision the refresh cannot back.
     {% endcomment %}
-    <span>Automation is paused until {{ paused_until|time:"H:i" }}. Flows will not reply to this contact.</span>
+    <span>Automation paused until {{ paused_until|time:"H:i" }} · Flows will not reply to this contact</span>
     {% if can_reply %}
       <form class="ml-auto" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
         {% csrf_token %}
@@ -81,7 +96,9 @@ are until they are sniffed at fetch time.
 {% endif %}
 
 {% include "inbox/_compliance_notice.html" %}
+</div>
 
+<div class="ib-messages">
 {% include "inbox/_deferred.html" %}
 
 {% if has_more %}
@@ -103,8 +120,9 @@ are until they are sniffed at fetch time.
   </div>
 {% endif %}
 
-<ol class="space-y-3 list-none p-0 m-0">
+<ol class="ib-message-list">
   {% for item in rendered %}
+    {% ifchanged item.message.day_label %}<li class="ib-day" role="separator">{{ item.message.day_label }}</li>{% endifchanged %}
     {% comment %}
       Three voices, three looks (HANDOFF §3, Inbox): the contact in white on
       the left; automation — a flow or a broadcast — in grey on the right,
@@ -112,7 +130,7 @@ are until they are sniffed at fetch time.
       source is the message's own column (MessageSource), so the look follows
       what produced the message rather than guessing from its direction.
     {% endcomment %}
-    <li class="flex flex-col {% if item.is_inbound %}items-start{% else %}items-end{% endif %}">
+    <li class="ib-msg {% if item.is_inbound %}ib-msg-in{% else %}ib-msg-out{% endif %}">
       <div class="ib-bubble {% if item.is_note %}ib-bubble-note{% elif item.is_inbound %}ib-bubble-in{% elif item.message.source == 'agent' %}ib-bubble-out{% else %}ib-bubble-auto{% endif %}{% if item.is_failed %} ib-bubble-failed{% endif %}">
         {% for part in item.parts %}
           {% if part.kind == "text" %}
@@ -167,15 +185,21 @@ are until they are sniffed at fetch time.
         {% endif %}
       </div>
 
-      <div class="ib-bubble-meta flex items-center gap-2">
-        {% if item.is_note %}<span class="ib-chip">Internal note: never sent</span>
+      {% comment %}
+        Who, then when — "Sam · 10:41", "Flow “Price question” · 10:41". The
+        day is the divider above, so the line only needs the time.
+      {% endcomment %}
+      <div class="ib-bubble-meta">
+        {% if item.is_note %}<span>Internal note: never sent</span>
+        {% elif item.is_inbound %}<span>{{ conversation.contact.display_name }}</span>
         {% elif item.message.flow_name %}<span>Flow “{{ item.message.flow_name }}”</span>
         {% elif item.message.source == "broadcast" %}<span>Broadcast</span>
         {% elif item.message.source == "automation" %}<span>Automation</span>
         {% elif item.message.source == "agent" %}<span>Team</span>{% endif %}
+        <span aria-hidden="true">·</span>
+        <time datetime="{{ item.message.created_at|date:'c' }}" title="{{ item.message.created_at|date:'j M Y, H:i' }}">{{ item.message.created_at|date:"H:i" }}</time>
         {% if item.button_id %}<span class="ib-chip">Pressed: {{ item.button_id }}</span>{% endif %}
         {% if item.ref %}<span class="ib-chip">Ref: {{ item.ref }}</span>{% endif %}
-        <span>{{ item.message.created_at|date:"j M H:i" }}</span>
         {% if not item.is_inbound and not item.is_note %}
           {% comment %}
             Ticks read off the status rather than being computed here.
@@ -215,3 +239,4 @@ are until they are sniffed at fetch time.
     <li class="ib-empty">No messages yet.</li>
   {% endfor %}
 </ol>
+</div>

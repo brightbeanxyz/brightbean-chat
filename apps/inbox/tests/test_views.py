@@ -340,7 +340,8 @@ class TestTheRedesignedPane:
         body = agent_client.get(url_for("messages", conversation_id=conversation.pk)).content.decode()
 
         assert "ib-banner-open" in body
-        assert "Pause automation (take over)" in body
+        assert "Automation is on" in body
+        assert ">Pause automation</button>" in body
 
     def test_a_flows_message_is_labelled_with_the_flow(
         self, tenancy: Any, agent_client: Any, url_for: Any, conversation: Any, contact: Any, connection: Any

@@ -40,12 +40,12 @@ to the button, and tabbing out of it closes it too.
     {% for group in groups %}
     <template x-for="value in {{ model }}['{{ group.key|escapejs }}']" :key="value"><input type="hidden" name="{{ group.key }}" :value="value"></template>
     {% endfor %}
-    <button type="button" x-ref="trigger" class="filter-trigger"
+    <button type="button" x-ref="trigger" class="filter-trigger{% if icon_only %} filter-trigger-icon{% endif %}"
             :class="Object.values({{ model }}).some(a => a.length) && 'is-active'"
             @click="fpToggle($event)"
-            aria-haspopup="dialog" :aria-expanded="open ? 'true' : 'false'">
+            {% if icon_only %}title="Filter" {% endif %}aria-haspopup="dialog" :aria-expanded="open ? 'true' : 'false'">
         {% include "partials/_nav_icon.html" with name="filter" icon_size=15 %}
-        Filter
+        {% if icon_only %}<span class="sr-only">Filter</span>{% else %}Filter{% endif %}
         <span class="filter-trigger-count" x-show="Object.values({{ model }}).some(a => a.length)" x-cloak
               x-text="Object.values({{ model }}).reduce((n, a) => n + a.length, 0)"></span>
     </button>

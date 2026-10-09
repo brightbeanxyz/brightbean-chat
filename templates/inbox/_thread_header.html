@@ -25,32 +25,35 @@ it under the reader mid-choice.
     </svg>
   </a>
   {% comment %}
-    The person, with the channel as a badge on their avatar — the same shape the
-    list row uses, so the thread reads as the row opened up.
+    The person, then the channel they wrote in on and the account it reached
+    (HANDOFF §3, Inbox). The account is ours, hence "via": a contact's own
+    handle is not something every platform hands over.
   {% endcomment %}
-  <span class="ib-row-avatar" aria-hidden="true">
-    <span class="avatar avatar-sm">{{ conversation.contact.display_name|make_list|first|upper }}</span>
-    <span class="ib-row-channel pi-chip {{ conversation.channel_connection.platform|platform_class }}">
-      {% include "partials/_platform_icon.html" with platform=conversation.channel_connection.platform size="sm" %}
-    </span>
-  </span>
+  <span class="ib-avatar ib-avatar-md" aria-hidden="true">{{ conversation.contact.display_name|make_list|first|upper }}</span>
   <div class="ib-thread-title">
-    <div class="text-[15px] font-semibold truncate" style="color: var(--text-primary);">{{ conversation.contact.display_name }}</div>
-    <div class="text-xs truncate" style="color: var(--text-tertiary);">{{ conversation.channel_connection.get_platform_display }} · {{ conversation.channel_connection.display_name }}</div>
+    <div class="ib-thread-name">{{ conversation.contact.display_name }}</div>
+    <div class="ib-thread-sub">
+      <span class="pi-chip ib-sub-chip {{ conversation.channel_connection.platform|platform_class }}" aria-hidden="true">
+        {% include "partials/_platform_icon.html" with platform=conversation.channel_connection.platform size="sm" %}
+      </span>
+      <span class="truncate">{{ conversation.channel_connection.get_platform_display }} · via {{ conversation.channel_connection.display_name }}</span>
+    </div>
   </div>
 
-  {% if can_reply %}
   <div class="ib-thread-actions">
+  {% if can_reply %}
     {% comment %}
-      Assignee first, Mark done last: the done button is the one `e` presses,
-      and it sits at the end of the row where the eye finishes.
+      Assignee first, Mark done after it: the done button is the one `e`
+      presses, and it sits where the eye finishes. A real <select> dressed as
+      the design's quiet "Unassigned ▾" button, so the keyboard and screen
+      readers get a native control.
     {% endcomment %}
     <form hx-post="{% url 'inbox:assign' workspace_id=request.workspace.id conversation_id=conversation.id %}"
           hx-swap="none"
           hx-trigger="change">
       {% csrf_token %}
       <label class="sr-only" for="assignee-{{ conversation.id }}">Assignee</label>
-      <select class="bb-select ib-assignee" id="assignee-{{ conversation.id }}" name="assignee">
+      <select class="ib-assignee" id="assignee-{{ conversation.id }}" name="assignee">
         <option value="">Unassigned</option>
         {% for membership in members %}
           <option value="{{ membership.user_id }}" {% if conversation.assignee_id == membership.user_id %}selected{% endif %}>{{ membership.user.display_name }}</option>
@@ -62,56 +65,24 @@ it under the reader mid-choice.
       {% csrf_token %}
       {% if conversation.state == "done" %}
         <input type="hidden" name="state" value="open">
-        <button type="submit" class="btn-pill-secondary btn-pill-sm" data-shortcut="done">Reopen</button>
+        <button type="submit" class="ib-head-btn" data-shortcut="done">Reopen</button>
       {% else %}
         <input type="hidden" name="state" value="done">
-        <button type="submit" class="btn-pill-secondary btn-pill-sm" data-shortcut="done">
-          {% include "partials/_nav_icon.html" with name="check" icon_size=15 %} Mark done
-        </button>
+        <button type="submit" class="ib-head-btn" data-shortcut="done">Mark done</button>
       {% endif %}
     </form>
-  </div>
   {% else %}
     <span class="ib-chip">Read only</span>
   {% endif %}
+    {% comment %}
+      Shows and hides the contact panel. `info` and `toggleInfo` live on the
+      page's own x-data (inbox/list.html), so the choice survives this header
+      being re-fetched and a different conversation being opened.
+    {% endcomment %}
+    <button type="button" class="ib-info-toggle" :class="info && 'is-on'" @click="toggleInfo()"
+            :aria-pressed="info ? 'true' : 'false'" aria-controls="inbox-sidebar"
+            aria-label="Contact details" title="Contact details">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg>
+    </button>
+  </div>
 </header>
-
-{% comment %}
-  Labels, in the header rather than the polled body: the picker is a <select>,
-  and a three-second swap would close it under the reader mid-choice — the same
-  reason the assignee control lives up here.
-
-  `chip.color` is the vetted value from apps.inbox.rendering; the stored column
-  never reaches a style attribute. See LabelChip.
-
-  Not rendered at all when there is nothing to show: a workspace with no labels
-  otherwise got an empty, bordered strip — a second rule under the header.
-{% endcomment %}
-{% if thread_labels or can_reply and thread_label_options %}
-<div class="ib-thread-labels">
-  {% for chip in thread_labels %}
-    <span class="ib-label-chip" style="--chip-ink: {{ chip.color }};">
-      {{ chip.name }}
-      {% if can_reply %}
-        <form hx-post="{% url 'inbox:remove_label' workspace_id=request.workspace.id conversation_id=conversation.id label_id=chip.id %}"
-              hx-swap="none">
-          {% csrf_token %}
-          <button type="submit" class="btn-icon-hover" aria-label="Remove label {{ chip.name }}">×</button>
-        </form>
-      {% endif %}
-    </span>
-  {% endfor %}
-  {% if can_reply and thread_label_options %}
-    <form hx-post="{% url 'inbox:add_label' workspace_id=request.workspace.id conversation_id=conversation.id %}"
-          hx-swap="none"
-          hx-trigger="change">
-      {% csrf_token %}
-      <label class="sr-only" for="label-picker-{{ conversation.id }}">Add a label</label>
-      <select class="bb-select" id="label-picker-{{ conversation.id }}" name="label">
-        <option value="">Add a label…</option>
-        {% for option in thread_label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
-      </select>
-    </form>
-  {% endif %}
-</div>
-{% endif %}
