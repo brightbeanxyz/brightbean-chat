@@ -32,6 +32,13 @@ backdrop. A click's target is the nearest common ancestor of the two, so
 selecting the text in a field and letting go over the backdrop is a "click on
 the dialog" — and without the press check it would throw the typing away.
 
+It finds its dialog ONCE, in init(), and keeps it. `$root` is the nearest
+x-data to wherever it is read from, and a modal's body may hold an x-data of
+its own — the flows "Start from" picker does — so a Cancel button inside it
+calling close() got that form as `$root`, and a form has no close(). Read in
+init(), the only call that always runs in the dialog's own scope, it is the
+dialog.
+
 **`bbChanged`.** Whether a response actually changed anything. apps/common/htmx
 answers both success and refusal with a 204, so `detail.successful` is true for
 "Tag created" AND for "That tag already exists" — a create form keyed on it
@@ -72,19 +79,25 @@ include that partial.
     }
 
     window.bbModal = function (closeOn) {
+      // The <dialog>, kept out of the reactive object so Alpine never wraps it
+      // in a Proxy — showModal() and close() on a proxied element throw.
+      var dialog = null;
       return {
         pressedBackdrop: false,
+        init: function () {
+          dialog = this.$root;
+        },
         show: function () {
-          openModal(this.$root);
+          openModal(dialog);
         },
         close: function () {
-          this.$root.close();
+          if (dialog) dialog.close();
         },
         pressed: function (event) {
-          this.pressedBackdrop = event.target === this.$root;
+          this.pressedBackdrop = event.target === dialog;
         },
         clicked: function (event) {
-          if (this.pressedBackdrop && event.target === this.$root) this.close();
+          if (this.pressedBackdrop && event.target === dialog) this.close();
           this.pressedBackdrop = false;
         },
         afterRequest: function (event) {

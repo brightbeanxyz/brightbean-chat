@@ -110,3 +110,31 @@ class TestAPageThatAnswersARefusalByReRenderingOpensItsDialog:
         body = client_for(tenancy.owner).get(reverse("settings_org_api_keys")).content.decode()
 
         assert "show()" not in body
+
+
+@pytest.mark.django_db
+class TestCancelInsideANestedScopeClosesTheDialog:
+    """The flows dialog's form has an x-data of its own (the "Start from"
+    picker), and its Cancel calls the dialog's close(). bbModal used to find its
+    dialog through `this.$root`, which from inside that form is the form — so
+    Cancel threw "this.$root.close is not a function" and the dialog stayed
+    open. It now reads `$root` once, in init(), where it is the dialog."""
+
+    def test_the_flows_dialog_nests_a_scope_around_its_cancel(self, tenancy, client_for):
+        url = reverse("flows:list", kwargs={"workspace_id": tenancy.workspace.id})
+        body = client_for(tenancy.owner).get(url).content.decode()
+
+        start = body.index('<dialog id="new-flow"')
+        dialog = body[start : body.index("</dialog>", start)]
+        form = dialog[dialog.index("<form") :]
+        assert "x-data=" in form[: form.index(">")]
+        assert '@click="close()">Cancel</button>' in form
+
+    def test_the_behaviour_reads_root_only_in_init(self, tenancy, client_for):
+        url = reverse("flows:list", kwargs={"workspace_id": tenancy.workspace.id})
+        body = client_for(tenancy.owner).get(url).content.decode()
+
+        start = body.index("window.bbModal = function")
+        script = body[start : body.index("</script>", start)]
+        assert script.count("$root") == 1
+        assert "init: function () {\n          dialog = this.$root;" in script
