@@ -106,7 +106,7 @@ def sequence_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     for sequence in sequences:
         # One dot per step, the shape of the sequence at a glance; past eight
         # the dots stop and the count beside them carries the rest.
-        sequence.step_dots = range(min(sequence.step_count, 8))
+        sequence.step_dots = range(min(sequence.step_count, 8))  # type: ignore[attr-defined]
     context = {
         "sequences": sequences,
         "query": query,

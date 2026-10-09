@@ -45,29 +45,19 @@ REQUIREMENT_KIND_LABELS: dict[str, str] = {
 #: new kind that got one and not the other would render a bare slug as a heading
 #: or a heading with nothing under it.
 REQUIREMENT_KIND_HELP: dict[str, str] = {
-    "tag": (
-        "Create these tags or match them to tags you already use."
-    ),
-    "custom_field": (
-        "Create these fields or match them to existing ones. Field types cannot be changed later."
-    ),
-    "sequence": (
-        "New sequences arrive empty. Add their messages after importing."
-    ),
+    "tag": ("Create these tags or match them to tags you already use."),
+    "custom_field": ("Create these fields or match them to existing ones. Field types cannot be changed later."),
+    "sequence": ("New sequences arrive empty. Add their messages after importing."),
     "segment": "Choose an existing saved contact filter.",
     "member": "Choose who gets assigned or notified. Defaults to you.",
     "flow": "Choose the flows this one hands over to.",
     "media": "Pick an image or file from your library, or paste a link to use instead.",
-    "platform": (
-        "Choose an account for each trigger. Every account may include other supported channels."
-    ),
+    "platform": ("Choose an account for each trigger. Every account may include other supported channels."),
     "request_header": "Add your own headers. The export removed any secrets.",
     "whatsapp_template": "Make sure these approved templates exist in your WhatsApp account.",
     "link_handle": "The public @handle a link was built from was stripped when the file was made.",
     "from_override": "The sending address was stripped when the file was made.",
-    "comment_posts": (
-        "Enter the posts to watch. Blank means no posts, so the trigger will not run."
-    ),
+    "comment_posts": ("Enter the posts to watch. Blank means no posts, so the trigger will not run."),
 }
 
 

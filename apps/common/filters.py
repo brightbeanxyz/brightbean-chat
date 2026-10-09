@@ -17,6 +17,7 @@ is what a polling ETag built from it needs.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from typing import Any, overload
 from uuid import UUID
 
 from django.http import QueryDict
@@ -27,13 +28,21 @@ from django.http import QueryDict
 MAX_VALUES = 50
 
 
-def multi[T](
+@overload
+def multi[T](params: QueryDict, name: str, *, allowed: None = None, parse: Callable[[str], T | None]) -> list[T]: ...
+
+
+@overload
+def multi(params: QueryDict, name: str, *, allowed: Iterable[str] | None = None, parse: None = None) -> list[str]: ...
+
+
+def multi(
     params: QueryDict,
     name: str,
     *,
     allowed: Iterable[str] | None = None,
-    parse: Callable[[str], T | None] | None = None,
-) -> list[T] | list[str]:
+    parse: Callable[[str], Any] | None = None,
+) -> list[Any]:
     """Every recognised value of the repeated parameter ``name``.
 
     Args:
