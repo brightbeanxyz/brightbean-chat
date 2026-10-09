@@ -72,6 +72,22 @@ class TestTheDashboardDoesNotRepeatTheSwitcher:
 
 
 @pytest.mark.django_db
+class TestTheTemplateStrip:
+    def test_each_tile_carries_its_platforms_glyph_not_a_bare_colour(self, tenancy, client_for):
+        """The tiles drew an 18px square of the platform's colour and nothing
+        else, which says nothing to anyone not already fluent in the palette.
+        Each one is a .pi-chip with the platform's own glyph in it now."""
+        response = client_for(tenancy.owner).get(f"/w/{tenancy.workspace.pk}/")
+        body = response.content.decode()
+        platforms = {key for template in response.context["flow_templates"] for key in template["platforms"]}
+
+        assert platforms, "no template on the strip names a platform, so this asserts nothing"
+        for key in platforms:
+            assert f'class="pi-chip pi-{key} w-5 h-5"><svg class="bb-platform-icon"' in body
+        assert "var(--platform-" not in body
+
+
+@pytest.mark.django_db
 class TestWorkspaceSettings:
     def test_an_admin_can_rename_the_workspace(self, tenancy, client_for):
         client = client_for(tenancy.user_for("admin"))

@@ -2359,6 +2359,17 @@ span.flatpickr-weekday {
 .pi-email     { background: var(--platform-email); }
 /* Unknown platform key — the partial's fallback glyph on a neutral chip. */
 .pi-unknown   { background: var(--neutral-400); }
+/* The glyph never fills its chip. The 16px chips (w-4 h-4) hold the
+   partial's 16px "sm" glyph, which left the mark edge to edge — a white
+   disc, a white bubble — with none of the platform colour around it, so
+   Telegram, WhatsApp and SMS read as white blobs rather than marks. A cap
+   rather than a fixed size: the md and hero chips already pair a glyph at
+   50-60% of the chip, and stay as they are. */
+.pi-chip > .bb-platform-icon { max-width: 70%; max-height: 70%; }
+/* Telegram's two shapes; see partials/_platform_icon.html. */
+.bb-platform-icon .bb-glyph-chip { display: none; }
+.pi-chip > .bb-platform-icon .bb-glyph-chip { display: inline; }
+.pi-chip > .bb-platform-icon .bb-glyph-mark { display: none; }
 /* Size modifiers. These have to be classes: .pi-chip sets border-radius,
    this file is unlayered, and Tailwind's utilities live in @layer
    utilities — so `class="pi-chip rounded-xl"` is a silent no-op, which is
@@ -3879,18 +3890,14 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
    eyebrow and title in the same components a few pixels beneath it — so the
    editor read as one more row that started counting again at one.
 
-   Sticky, so the answer to "what am I editing?" survives scrolling: the list
-   above gives that answer today only while it is on screen, and a send_message
-   form runs well past it. Pinned, the border reads as the edge of a pane rather
-   than a divider, which is the rule's whole job here. */
+   Not sticky any more. It was pinned while the step list sat above it in this
+   pane, so "what am I editing?" survived the list scrolling away; the list has
+   since moved to the outline on the left, so it is the first thing in the
+   Settings tab and has nothing to stay ahead of. Pinned, it floated over the
+   form with a strip of the scrolled fields showing above it, because a sticky
+   top: 0 sits inside .fb-editor-body's padding. */
 .fb-edit-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  padding: 0.875rem 0 0.75rem;
-  border-top: 1px solid var(--border-inner);
-  /* Opaque, or the list scrolls through it. */
-  background: var(--surface-0);
+  padding: 0 0 0.75rem;
 }
 
 .fb-edit-caption {

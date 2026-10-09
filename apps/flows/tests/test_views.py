@@ -6,10 +6,12 @@ import pytest
 from django.test import Client
 from django.urls import reverse
 
+from apps.common.platforms import Platform
 from apps.flows.fixtures import graph_for
-from apps.flows.models import Flow, FlowStatus
+from apps.flows.models import Flow, FlowStatus, Trigger, TriggerType
 from apps.flows.portability.library import STARTER_CATEGORY
 from apps.flows.services import archive_flow, create_flow, publish, save_draft
+from apps.flows.tests.support import connection_for
 from apps.flows.views import UNFILED_VALUE
 from apps.members.roles import WorkspaceRole
 
@@ -129,6 +131,82 @@ class TestTheList:
         assert "No flows here yet" in client.get(list_url(tenancy)).content.decode()
         create_flow(workspace=tenancy.workspace, name="Welcome")
         assert "Nothing matches these filters" in client.get(list_url(tenancy), {"q": "zzz"}).content.decode()
+
+
+class TestThePlatformsOnTheRow:
+    """Each row leads with the channels its triggers run on, so a list can be
+    scanned by channel before anybody reads the sentence beside them."""
+
+    def _flow(self, tenancy, *triggers):
+        flow = create_flow(workspace=tenancy.workspace, name="Channels")
+        for trigger_type, connection in triggers:
+            Trigger.objects.create(
+                workspace=tenancy.workspace, flow=flow, type=trigger_type, channel_connection=connection, config_json={}
+            )
+        return flow
+
+    def _row(self, tenancy, client_for):
+        response = client_for(tenancy.owner).get(list_url(tenancy))
+        [flow] = response.context["groups"][0]["flows"]
+        return flow.platforms, response.content.decode()
+
+    def test_a_bound_trigger_shows_its_connections_platform(self, tenancy, client_for):
+        sms = connection_for(tenancy.workspace, platform=Platform.SMS, external_id="+15550011")
+        connection_for(tenancy.workspace, external_id="bot-1")
+        self._flow(tenancy, (TriggerType.DEFAULT_REPLY, sms))
+
+        platforms, body = self._row(tenancy, client_for)
+
+        assert platforms == [{"key": "sms", "label": "SMS"}]
+        assert 'class="pi-chip pi-sms w-4 h-4" title="SMS"><svg class="bb-platform-icon"' in body
+        assert "pi-chip pi-telegram w-4 h-4" not in body  # the sidebar has its own, sized differently
+
+    def test_an_unbound_trigger_shows_the_connected_platforms_it_covers(self, tenancy, client_for):
+        """A welcome runs on Telegram and Messenger; only Telegram is connected,
+        and an SMS connection does not count because a welcome never runs there."""
+        connection_for(tenancy.workspace, external_id="bot-1")
+        connection_for(tenancy.workspace, platform=Platform.SMS, external_id="+15550012")
+        self._flow(tenancy, (TriggerType.WELCOME, None))
+
+        platforms, _ = self._row(tenancy, client_for)
+
+        assert [p["key"] for p in platforms] == ["telegram"]
+
+    def test_with_none_of_its_platforms_connected_it_still_names_them(self, tenancy, client_for):
+        """An Instagram story flow in a workspace without Instagram is still an
+        Instagram flow; an empty row would say it runs nowhere in particular."""
+        self._flow(tenancy, (TriggerType.STORY_MENTION, None))
+
+        platforms, _ = self._row(tenancy, client_for)
+
+        assert [p["key"] for p in platforms] == ["instagram"]
+
+    def test_a_paused_trigger_still_labels_the_row(self, tenancy, client_for):
+        telegram = connection_for(tenancy.workspace, external_id="bot-1")
+        flow = self._flow(tenancy, (TriggerType.DEFAULT_REPLY, telegram))
+        Trigger.objects.for_workspace(tenancy.workspace).filter(flow=flow).update(enabled=False)
+
+        platforms, _ = self._row(tenancy, client_for)
+
+        assert [p["key"] for p in platforms] == ["telegram"]
+
+    def test_a_channel_independent_flow_shows_none(self, tenancy, client_for):
+        connection_for(tenancy.workspace, external_id="bot-1")
+        self._flow(tenancy, (TriggerType.API, None))
+
+        platforms, body = self._row(tenancy, client_for)
+
+        assert platforms == []
+        assert "pi-chip" not in body.split('class="list-row ', 1)[1]
+
+    def test_two_channels_draw_in_one_fixed_order(self, tenancy, client_for):
+        sms = connection_for(tenancy.workspace, platform=Platform.SMS, external_id="+15550013")
+        telegram = connection_for(tenancy.workspace, external_id="bot-1")
+        self._flow(tenancy, (TriggerType.DEFAULT_REPLY, sms), (TriggerType.DEFAULT_REPLY, telegram))
+
+        platforms, _ = self._row(tenancy, client_for)
+
+        assert [p["key"] for p in platforms] == ["telegram", "sms"]
 
 
 class TestTemplatesInTheEmptyState:

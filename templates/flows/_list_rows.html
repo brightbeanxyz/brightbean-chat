@@ -1,4 +1,4 @@
-{% load humanize %}{% comment %}
+{% load humanize common_extras %}{% comment %}
 The flow list: the summary cards, then the rows in Live / Offline / Draft
 sections (HANDOFF §3). Rendered both inside list.html and on its own for every
 HTMX refresh — one renderer, so a filtered view and a post-mutation refresh can
@@ -58,8 +58,17 @@ is what scrolls and a scroll event never bubbles out of it.
               so right here, which is where somebody notices before wondering
               why nothing happened. The folder rides along, now that rows are
               grouped by status rather than by folder.
+
+              Led by the channels it runs on (triggers/platforms.py
+              shown_platforms), so a list of a dozen flows can be scanned by
+              channel before anybody reads a sentence.
             {% endcomment %}
-            <div class="list-row-meta truncate">{% if flow.folder %}{{ flow.folder }} · {% endif %}{{ flow.trigger_summary }} · edited {{ flow.updated_at|naturaltime }}</div>
+            <div class="list-row-meta flex items-center gap-1.5 min-w-0">
+                {% for platform in flow.platforms %}
+                <span class="pi-chip {{ platform.key|platform_class }} w-4 h-4" title="{{ platform.label }}">{% include "partials/_platform_icon.html" with platform=platform.key size="sm" %}</span>
+                {% endfor %}
+                <span class="truncate{% if flow.platforms %} ml-0.5{% endif %}">{% if flow.folder %}{{ flow.folder }} · {% endif %}{{ flow.trigger_summary }} · edited {{ flow.updated_at|naturaltime }}</span>
+            </div>
         </div>
 
         <div class="text-right flex-shrink-0 hidden sm:block" title="Conversations it started in the last 7 days">

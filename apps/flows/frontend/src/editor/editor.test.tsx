@@ -148,6 +148,21 @@ describe("the seam between the list and the editor", () => {
     expect(head?.textContent).not.toContain("Then send");
   });
 
+  it("brings the header back into view when Settings is reopened", () => {
+    // The tabs share one scrolling body. A preview scrolled down and swapped
+    // for Settings kept that offset, which hid "Editing step N" once the
+    // header stopped being pinned.
+    const { container } = selectStep();
+    const body = container.querySelector(".fb-editor-body") as HTMLElement;
+
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    body.scrollTop = 400;
+    fireEvent.click(screen.getByRole("tab", { name: "Settings" }));
+
+    expect(body.scrollTop).toBe(0);
+    expect(screen.getByText("Editing step 1")).toBeInTheDocument();
+  });
+
   it("lets the title wrap instead of truncating it a second time", () => {
     // It is the thing being worked on, and the same sentence was being cut at
     // two different widths — once in the row, once in the header.
