@@ -57,9 +57,11 @@ something that should have been an attachment.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from django.urls import NoReverseMatch, reverse
+from django.utils import timezone
 from django.utils.timesince import timeuntil
 
 from apps.common.validators import is_renderable_url, is_valid_hex_color
@@ -692,3 +694,69 @@ def _display_name(user: Any) -> str:
     if user is None:
         return "someone who has left"
     return getattr(user, "display_name", "") or getattr(user, "email", "") or "a teammate"
+
+
+def short_age(when: datetime | None, *, now: datetime | None = None) -> str:
+    """How long ago, the way a chat list says it: "now", "4m", "3h",
+    "Yesterday", "Mon", "12 Sep".
+
+    The list row's timestamp (HANDOFF §3, Inbox). ``timesince`` wrote "1 day, 20
+    hours ago", which pushed the row to a third line and said more than anyone
+    choosing a conversation needs. Hours count only while it is still the same
+    day in the reader's time zone; after that the day is the useful word.
+
+    ``selectors.list_version`` hashes this string rather than the timestamp, so
+    the list refreshes when the words would change and not otherwise.
+    """
+    if when is None:
+        return ""
+    now = now or timezone.now()
+    delta = now - when
+    if delta < timedelta(minutes=1):
+        return "now"
+    if delta < timedelta(hours=1):
+        return f"{int(delta.total_seconds() // 60)}m"
+    local_now, local_then = timezone.localtime(now), timezone.localtime(when)
+    days = (local_now.date() - local_then.date()).days
+    if days == 0:
+        return f"{int(delta.total_seconds() // 3600)}h"
+    if days == 1:
+        return "Yesterday"
+    if days < 7:
+        return local_then.strftime("%a")
+    if local_then.year == local_now.year:
+        return f"{local_then.day} {local_then.strftime('%b')}"
+    return f"{local_then.day} {local_then.strftime('%b %Y')}"
+
+
+def time_left(until: datetime | None, *, now: datetime | None = None) -> str:
+    """ "3h 12m", "45m" — what is left of a messaging window, or "" once it has
+    closed. Minutes are the finest grain on purpose: the thread's ETag folds
+    this string in, so a finer one would re-render the pane every poll."""
+    if until is None:
+        return ""
+    seconds = int((until - (now or timezone.now())).total_seconds())
+    if seconds <= 0:
+        return ""
+    hours, minutes = divmod(seconds // 60, 60)
+    if hours >= 24:
+        return f"{hours // 24}d {hours % 24}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{max(minutes, 1)}m"
+
+
+def day_label(when: datetime, *, now: datetime | None = None) -> str:
+    """The divider above a day's messages: "Today", "Yesterday", "Mon 6 Oct",
+    or "6 Oct 2025" for another year. In the reader's time zone, because that is
+    whose "today" it is. The thread's ETag folds in today's date so the words
+    roll over at midnight."""
+    local_now, local_then = timezone.localtime(now or timezone.now()), timezone.localtime(when)
+    days = (local_now.date() - local_then.date()).days
+    if days == 0:
+        return "Today"
+    if days == 1:
+        return "Yesterday"
+    if local_then.year == local_now.year:
+        return f"{local_then.strftime('%a')} {local_then.day} {local_then.strftime('%b')}"
+    return f"{local_then.day} {local_then.strftime('%b %Y')}"

@@ -4566,19 +4566,21 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
    ═══════════════════════════════════════════════════════════════ */
 
 /* The list's controls, at the top of the rail they control: the view tabs,
-   then search and Filter, then any active filter chips. */
+   then search and Filter, then any active filter chips (prototype: Inbox). */
 .ib-filters {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 10px;
 }
-.ib-tabs { gap: 16px; padding: 0 12px; height: 42px; border-bottom: 1px solid var(--divider); }
-.ib-tabs .tab { font-size: var(--fs-body); }
-.ib-toolbar { display: flex; align-items: center; gap: 6px; padding: 10px 12px 0; }
+.ib-tabs { gap: 4px; height: auto; padding: 10px 12px 0; border-bottom: 1px solid var(--border); }
+.ib-tabs .tab { height: 36px; padding: 0 10px; font-size: var(--fs-body); color: var(--text-secondary); }
+.ib-tabs .tab-count { font-size: var(--fs-xs); color: var(--text-tertiary); }
+.ib-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.ib-toolbar .search-field { margin: 0; }
 .ib-toolbar .search-input { height: 34px; }
 .ib-toolbar .filter-trigger { height: 34px; padding: 0 10px; }
+.ib-chips { padding: 0 12px; }
+.ib-chips .filter-chips { margin: 0 0 10px; }
 
 /* The keyboard shortcuts beside the page title. */
 .ib-shortcuts { align-items: center; gap: 14px; font-size: var(--fs-sm); color: var(--text-tertiary); }
@@ -4610,13 +4612,55 @@ kbd {
   padding: 2rem;
   text-align: center;
 }
+.ib-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-0);
+  color: var(--text-secondary);
+}
+.ib-empty-title { font-size: 1rem; font-weight: 600; color: var(--text-primary); }
+.ib-empty-body { max-width: 20rem; margin-top: 6px; font-size: var(--fs-body); line-height: 1.5; color: var(--text-secondary); }
+.ib-empty-body b { color: var(--text-primary); }
+.ib-empty-action {
+  margin-top: 16px;
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.ib-empty-action:hover { border-color: var(--border-hover); }
+.ib-empty-action:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
 
+/* One card holding list, thread and contact panel, divided by hairlines —
+   the prototype's shape. They used to be three cards with gaps between them,
+   which read as three unrelated boxes rather than one inbox. */
 .ib-shell {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
-  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-0);
+  overflow: hidden;
 }
+
+/* Forms in here are controls inside a row or a bar, not page sections: the
+   content default's bottom margin stretched every chip and bar that held one.
+   Vertical only, so an `ml-auto` beside it still pushes it right. */
+.ib-shell form { margin-top: 0; margin-bottom: 0; }
 
 /* The list rail. A fixed basis rather than a Tailwind width because
    the pane also needs its own scroll containment, and the two belong
@@ -4625,54 +4669,110 @@ kbd {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  flex: 0 0 20rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  flex: 0 0 21.5rem;
+  border-right: 1px solid var(--border);
   background: var(--surface-0);
-  overflow: hidden;
 }
 
-.ib-rail-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.ib-rail-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--border); }
+
+/* Everything right of the rail: the thread and, beside it, the contact panel.
+   Positioned so the panel can open over the thread on a narrow screen. */
+.ib-main {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The bulk-select box sits over the avatar and appears on hover, on focus,
+   and on every row once anything is selected. Hidden, it takes no clicks, so
+   a click on the avatar opens the conversation. */
+.ib-row-wrap { position: relative; border-bottom: 1px solid var(--divider); }
+.ib-row-select {
+  position: absolute;
+  top: 23px;
+  left: 25px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+}
+.ib-row-wrap:hover .ib-row-select,
+.ib-row-select:focus-visible,
+.ib-row-select:checked,
+.is-selecting .ib-row-select { opacity: 1; pointer-events: auto; }
+/* A touch screen has no hover to reveal it, and a box hidden over the avatar
+   would turn a tap meant to open the thread into a selection. There the box
+   is always shown, in a column of its own left of the avatar. */
+@media (hover: none) {
+  .ib-row-select { top: 23px; left: 10px; opacity: 1; pointer-events: auto; }
+  .ib-row-wrap .ib-row { padding-left: 36px; }
+}
 
 .ib-row {
-  /* A grid rather than a block: the avatar is a column of its own now, and the
-     name, preview, meta and labels stack beside it.
+  /* A grid rather than a block: the avatar is a column of its own, and the
+     name, preview and meta stack beside it.
 
      `grid-auto-flow: row` with the avatar pinned to column 1 is NOT enough on
-     its own. A row's content children vary — labels render only when the
-     conversation has some — so anything that relies on the avatar spanning
-     exactly as many rows as there happen to be content children breaks the
-     moment the count changes. It did: with labels present the fifth child
-     overflowed the avatar's span and auto-placed into column 1, sliding under
-     the avatar. Every content child is pinned to column 2 below instead, which
-     is true whatever the row happens to carry. */
+     its own. A row's content children vary — the meta line renders only when
+     the conversation has something to put in it — so anything that relies on
+     the avatar spanning exactly as many rows as there happen to be content
+     children breaks the moment the count changes. Every content child is
+     pinned to column 2 below instead, which is true whatever the row carries. */
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 0.75rem;
+  grid-template-columns: 38px minmax(0, 1fr);
+  column-gap: 12px;
   width: 100%;
   text-align: left;
-  /* The row is an <a>, and .app-content a in @layer base paints links with
-     --primary. Unlayered wins, so the row keeps its own colours. */
+  /* The row is an <a>, and .app-content a in @layer base paints links.
+     Unlayered wins, so the row keeps its own colours. */
   color: inherit;
   text-decoration: none;
-  padding: 0.75rem;
-  border-radius: var(--radius-tile);
-  background: transparent;
+  padding: 12px 14px;
+  background: var(--surface-0);
   cursor: pointer;
 }
 /* The avatar owns column 1 for the row's whole height; everything else owns
    column 2, however many of them there are. */
 .ib-row > * { grid-column: 2; }
 .ib-row > .ib-row-avatar { grid-column: 1; grid-row: 1 / -1; }
-.ib-row:hover { background: var(--surface-page); }
+/* The lines beside the avatar, in one block: as separate grid items the first
+   one shared a track with the 38px avatar and grew to its height. */
+.ib-row-body { display: block; min-width: 0; }
+.ib-row-body > * { display: block; }
+.ib-row-body > .ib-row-top,
+.ib-row-body > .ib-row-meta { display: flex; }
+.ib-row:hover { background: var(--surface-sunken); }
 .ib-row.is-current { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border-hover); }
+.ib-row:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: -2px; }
+
+/* A person's initial in a grey circle — the list's and the header's avatar. */
+.ib-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-full);
+  background: var(--neutral-200);
+  color: var(--neutral-700);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+.ib-avatar-md { width: 36px; height: 36px; }
 /* The avatar, with the channel pinned to its corner — the person is what the
    row is about and the channel is a qualifier on them. */
-.ib-row-avatar { position: relative; display: flex; align-self: start; }
+.ib-row-avatar { position: relative; display: flex; align-self: start; width: 38px; height: 38px; }
 .ib-row-channel {
   position: absolute;
-  right: -3px;
-  bottom: -3px;
+  right: -5px;
+  bottom: -5px;
   width: 16px;
   height: 16px;
   border-radius: var(--radius-full);
@@ -4680,25 +4780,49 @@ kbd {
   box-sizing: content-box;
 }
 .ib-row.is-current .ib-row-channel { border-color: var(--surface-2); }
-.ib-row.is-unread .ib-row-name { font-weight: 700; color: var(--text-primary); }
 
+.ib-row-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ib-row-name {
-  font-size: 0.8125rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--text-primary);
 }
+.ib-row.is-unread .ib-row-name { font-weight: 700; }
+.ib-row-time { flex-shrink: 0; font-size: var(--fs-xs); color: var(--text-tertiary); }
 .ib-row-preview {
-  font-size: 0.75rem;
-  color: var(--text-tertiary);
+  margin-top: 2px;
+  font-size: var(--fs-body);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ib-row-meta { font-size: 0.6875rem; color: var(--text-ghost); }
+.ib-row.is-unread .ib-row-preview { color: var(--text-primary); font-weight: 500; }
+.ib-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+}
+.ib-row-tag {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+  color: var(--neutral-700);
+}
+.ib-row-assignee { font-size: var(--fs-xs); color: var(--text-tertiary); }
 
 .ib-dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 8px;
+  height: 8px;
   border-radius: 9999px;
   background: var(--ink);
   flex-shrink: 0;
@@ -4711,12 +4835,10 @@ kbd {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
   background: var(--surface-0);
-  overflow: hidden;
 }
-.ib-thread-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.75rem; }
+.ib-thread-empty { background: var(--surface-sunken); }
+.ib-thread-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; background: var(--surface-sunken); }
 .ib-thread-header {
   display: flex;
   align-items: center;
@@ -4724,8 +4846,8 @@ kbd {
      need and the contact's name — the one thing a reader is looking
      for — collapses to a single truncated letter on a phone. */
   flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.625rem 0.75rem;
+  gap: 10px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-0);
 }
@@ -4737,28 +4859,85 @@ kbd {
   flex: 1 1 11rem;
   min-width: 0;
 }
-.ib-thread-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-left: auto; }
-.ib-thread-actions .bb-select { min-height: 36px; }
-/* The assignee picker reads as a quiet button: it is a property of the thread,
-   not a form to fill in. */
+.ib-thread-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.ib-thread-sub { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-sm); color: var(--text-tertiary); }
+.ib-sub-chip { width: 16px; height: 16px; flex-shrink: 0; border-radius: var(--radius-full); }
+.ib-thread-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+/* The assignee picker reads as the prototype's quiet "Unassigned ▾" button:
+   it is a property of the thread, not a form to fill in. */
 .ib-assignee {
-  height: 36px;
+  height: 32px;
+  min-height: 32px;
+  max-width: 12rem;
   padding-left: 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-full);
   background-color: var(--surface-0);
   font-size: var(--fs-body);
-  font-weight: 600;
+  font-weight: 400;
   color: var(--text-primary);
 }
+.ib-head-btn {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ib-head-btn:hover { border-color: var(--border-hover); }
+.ib-head-btn:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+/* Shows and hides the contact panel; ink while the panel is open. */
+.ib-info-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.ib-info-toggle.is-on { border-color: var(--ink); background: var(--ink); color: var(--text-inverse); }
+.ib-info-toggle:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
 
 /* Bubbles. */
+/* The message area: a day divider, then each message with its bubble and a
+   "who · when" line beneath, the contact's on the left and ours on the right. */
+.ib-messages { padding: 18px; }
+.ib-message-list { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.ib-day {
+  align-self: center;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.ib-msg { display: flex; flex-direction: column; max-width: 70%; }
+.ib-msg-in { align-self: flex-start; align-items: flex-start; }
+.ib-msg-out { align-self: flex-end; align-items: flex-end; }
+
 .ib-bubble {
-  max-width: 42rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-lg);
-  font-size: 0.8125rem;
-  line-height: 1.5;
+  max-width: 100%;
+  padding: 9px 13px;
+  border-radius: var(--radius-tile);
+  font-size: 0.875rem;
+  line-height: 1.45;
   overflow-wrap: anywhere;
   border: 1px solid transparent;
 }
@@ -4781,11 +4960,11 @@ kbd {
 .ib-bubble-in  { background: var(--surface-0); border-color: var(--border); color: var(--text-primary); }
 /* Automation — a flow, a broadcast: grey, so a reader scanning a thread can
    tell at a glance which replies a person wrote. */
-.ib-bubble-auto { background: var(--surface-2); color: var(--text-primary); }
+.ib-bubble-auto { background: var(--neutral-150); color: var(--text-primary); }
 /* Ink, not --primary: orange is the call-to-action colour, and a thread full
    of it competed with the Send button for attention. Same ink as the active
    view tab, the other "this one is yours" state on the page. */
-.ib-bubble-out { background: var(--neutral-900); color: var(--text-inverse); }
+.ib-bubble-out { background: var(--neutral-800); color: var(--text-inverse); }
 .ib-bubble-out .ib-chip {
   border-color: rgba(255, 255, 255, 0.24);
   background: rgba(255, 255, 255, 0.1);
@@ -4799,9 +4978,13 @@ kbd {
 .ib-bubble-failed { border-color: var(--error-500); }
 
 .ib-bubble-meta {
-  font-size: 0.6875rem;
-  color: var(--text-ghost);
-  margin-top: 0.125rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
 }
 .ib-bubble-error { font-size: 0.6875rem; color: var(--error-700); }
 
@@ -4857,13 +5040,13 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  padding: 0.125rem 0.5rem;
+  padding: 1px 8px;
   border-radius: 9999px;
   font-size: 0.6875rem;
-  color: var(--chip-ink, var(--text-secondary));
-  border: 1px solid color-mix(in srgb, var(--chip-ink, var(--border)) 45%, transparent);
-  background: color-mix(in srgb, var(--chip-ink, var(--surface-1)) 12%, var(--surface-1));
+  color: color-mix(in srgb, var(--chip-ink, var(--text-secondary)) 70%, var(--neutral-900));
+  background: color-mix(in srgb, var(--chip-ink, var(--surface-2)) 14%, var(--surface-2));
 }
+.ib-side .ib-label-chip { padding: 2px 10px; font-size: var(--fs-sm); }
 
 .ib-label-chip form { display: inline; }
 
@@ -4878,15 +5061,6 @@ kbd {
   height: 16px;
   border-radius: var(--radius-full);
   background: var(--chip-ink, var(--neutral-300));
-}
-
-.ib-thread-labels {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  border-bottom: 1px solid var(--border);
 }
 
 .ib-row-labels { font-size: 0.6875rem; }
@@ -4918,59 +5092,50 @@ kbd {
   margin-top: 0.5rem;
 }
 
-.ib-schedule {
-  padding: 0.75rem;
-  margin-top: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-1);
+/* Send later, Reminder and the media picker: popovers above the compose box,
+   anchored to .ib-compose-wrap. */
+.ib-popover {
+  position: absolute;
+  left: 18px;
+  bottom: calc(100% - 8px);
+  z-index: 20;
+  width: min(24rem, calc(100% - 36px));
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-tile);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-lg);
 }
-.ib-schedule > label,
-.ib-remind-field > label {
-  display: block;
-  margin-bottom: 0.375rem;
-  font-size: 0.75rem;
+.ib-popover-title { font-size: 0.875rem; font-weight: 700; color: var(--text-primary); }
+.ib-popover-text { margin: 2px 0 12px; font-size: var(--fs-sm); line-height: 1.45; color: var(--text-secondary); }
+.ib-field-label { display: block; margin-bottom: 4px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
+.ib-field-label span { font-weight: 400; color: var(--text-tertiary); }
+.ib-popover input:not([type="hidden"]),
+.ib-popover select { display: block; width: 100%; min-width: 0; max-width: none; height: 36px; }
+.ib-popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+/* When gets the wider column: a date-and-time field is the longest control here. */
+.ib-remind-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 10px; margin-bottom: 10px; }
+@media (max-width: 480px) { .ib-remind-grid { grid-template-columns: minmax(0, 1fr); } }
+.ib-remind-field { min-width: 0; }
+/* A popover's confirm: ink, because Send is the inbox's one orange control. */
+.ib-ink-btn,
+.ib-plain-btn {
+  height: 34px;
+  padding: 0 16px;
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: var(--fs-body);
   font-weight: 600;
-  color: var(--text-secondary);
-}
-.ib-schedule-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.ib-schedule-controls .form-datetime { flex: 1 1 12rem; width: auto; min-width: 0; }
-
-.ib-remind {
-  border-top: 1px solid var(--border);
-  background: var(--surface-1);
-}
-.ib-remind-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 0.375rem 0.75rem;
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-align: left;
+  white-space: nowrap;
   cursor: pointer;
 }
-.ib-remind-toggle:hover { color: var(--text-primary); background: var(--surface-2); }
-.ib-remind-toggle:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: -2px; }
-.ib-remind-toggle svg { width: 0.875rem; height: 0.875rem; transition: transform var(--dur-fast) ease; }
-.ib-remind-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
-.ib-remind-fields { padding: 0.25rem 0.75rem 0.75rem; }
-.ib-remind-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 0.75rem; }
-.ib-remind-field { min-width: 0; }
-.ib-remind-field > label span { font-weight: 400; color: var(--text-tertiary); }
-.ib-remind-field input,
-.ib-remind-field select { display: block; width: 100%; min-width: 0; max-width: none; height: 2.5rem; }
-.ib-remind-foot { display: flex; flex-wrap: wrap; align-items: end; gap: 0.75rem; margin-top: 0.75rem; }
-.ib-remind-foot .ib-remind-field { flex: 1 1 15rem; }
-.ib-remind-foot > button { flex: 0 0 auto; }
-
-.ib-row-wrap { display: flex; align-items: flex-start; gap: 0.25rem; }
-.ib-row-wrap > .ib-row { flex: 1 1 auto; min-width: 0; }
-.ib-row-select { margin: 0.75rem 0 0 0.5rem; flex-shrink: 0; }
+.ib-ink-btn { border: 1px solid var(--ink); background: var(--ink); color: var(--text-inverse); }
+.ib-ink-btn:hover { background: var(--neutral-800); }
+.ib-ink-btn:disabled { opacity: 0.5; cursor: default; }
+.ib-plain-btn { border: 1px solid var(--border-strong); background: var(--surface-0); color: var(--text-primary); }
+.ib-plain-btn:hover { border-color: var(--border-hover); }
+.ib-ink-btn:focus-visible,
+.ib-plain-btn:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
 
 .ib-bulk {
   display: flex;
@@ -4982,14 +5147,7 @@ kbd {
   background: var(--surface-2);
 }
 
-.ib-picker {
-  margin-top: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  background: var(--surface-1);
-  max-height: 16rem;
-  overflow-y: auto;
-}
+.ib-picker { width: min(26rem, calc(100% - 36px)); max-height: 20rem; padding: 8px; overflow-y: auto; }
 
 .ib-picker-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; }
 .ib-picker-list { list-style: none; margin: 0; padding: 0; }
@@ -5056,86 +5214,294 @@ kbd {
 
 .ib-keyword { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.375rem; }
 
+/* The status bar under the thread header (prototype: "Window open for 3h 12m
+   · Automation is running   Pause automation"). Sticky inside the scrolling
+   pane, so it stays put however far back the reader goes. */
+.ib-status { position: sticky; top: 0; z-index: 2; }
 .ib-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: 4px 10px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--neutral-700);
 }
-/* Everything open: the green state, quiet — it is the normal one. */
-.ib-banner-open { background: var(--success-50); color: var(--success-700); }
+.ib-status-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: var(--radius-full); background: var(--neutral-400); }
+/* Everything open: the normal state, so the bar stays grey and only the dot
+   is green. */
+.ib-banner-open .ib-status-dot { background: var(--success-500); }
 .ib-banner-paused { background: var(--warning-50); color: var(--warning-700); }
-.ib-banner { flex-wrap: wrap; }
-/* The bar's one action, as underlined text in the bar's own colour: it is the
-   state's next step, not a call to action competing with Send. */
+.ib-banner-paused .ib-status-dot { background: var(--warning-500); }
+.ib-banner-blocked { background: var(--error-50); color: var(--error-700); }
+.ib-banner-blocked .ib-status-dot { background: var(--error-500); }
+.ib-banner-info { background: var(--surface-2); color: var(--text-secondary); }
+/* The bar's one action, as underlined text: it is the state's next step, not a
+   call to action competing with Send. */
 .ib-banner-action {
   padding: 0;
   border: 0;
   background: none;
   font: inherit;
-  font-weight: 600;
-  color: inherit;
+  color: var(--text-primary);
+  white-space: nowrap;
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
-/* A note is visibly not a reply: amber ground, the same tint the note bubble
-   wears in the thread. */
-.ib-compose-note { background: var(--warning-50); }
-.ib-compose-tabs { gap: 18px; }
-.ib-compose-tabs .tab { height: 32px; font-size: var(--fs-body); }
-.ib-banner-blocked { background: var(--error-50); color: var(--error-700); }
-.ib-banner-info { background: var(--surface-2); color: var(--text-secondary); }
+.ib-banner-paused .ib-banner-action,
+.ib-banner-blocked .ib-banner-action { color: inherit; }
 
-.ib-composer {
+/* The compose area: Reply / Internal note pills, then one bordered box holding
+   the text, the tools and Send (prototype: Inbox · thread). Never shrinks: the
+   history above is the part that scrolls, so a short pane gives up history
+   rather than clipping the Send row. */
+#inbox-composer { flex: 0 0 auto; }
+.ib-compose-wrap {
+  position: relative;
+  padding: 12px 18px 16px;
   border-top: 1px solid var(--border);
-  padding: 0.75rem;
   background: var(--surface-0);
 }
-/* Never shrinks: the message history above is the part that scrolls, so a
-   short pane gives up history rather than clipping the Send row. With
-   `flex-shrink: 1` the composer took its share of the squeeze and lost its
-   buttons under the pane's edge. The cap still holds when "Send later" and the
-   reminder are both open on a short screen — then the composer scrolls. */
-#inbox-composer { flex: 0 0 auto; max-height: min(48vh, 26rem); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.ib-compose-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 0.75rem; margin-bottom: 0.5rem; }
-.ib-compose-label { font-size: 0.8125rem; font-weight: 700; color: var(--text-primary); }
-.ib-compose-hint { font-size: 0.6875rem; line-height: 1.35; color: var(--text-tertiary); }
-.ib-composer textarea {
+.ib-composer-readonly {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text-tertiary);
+}
+.ib-compose-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-bottom: 8px; }
+.ib-compose-hint { font-size: var(--fs-xs); line-height: 1.35; color: var(--text-tertiary); }
+.ib-seg { display: flex; gap: 6px; }
+.ib-seg-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.ib-seg-btn[aria-selected="true"] { border-color: var(--ink); background: var(--ink); color: var(--text-inverse); }
+.ib-seg-btn:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+.ib-compose-box {
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--surface-0);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.ib-compose-box:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-muted); }
+/* A note is visibly not a reply: amber ground, the tint the note bubble wears. */
+.ib-compose-box.is-note { background: var(--warning-50); border-color: var(--warning-200); }
+.ib-compose-input {
+  display: block;
   width: 100%;
   max-width: none;
-  min-height: 3.75rem;
-  resize: vertical;
-  font-size: 0.8125rem;
+  min-height: 2.9em;
+  max-height: 12rem;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text-primary);
+  field-sizing: content;
 }
-.ib-compose-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.625rem; }
-.ib-compose-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; min-width: 0; }
-.ib-action-btn { min-height: 2.25rem; padding: 0.4rem 0.625rem; border-radius: var(--radius-sm); font-size: 0.75rem; white-space: nowrap; }
-.ib-send-btn { min-width: 4.5rem; }
+.ib-compose-input::placeholder { color: var(--text-ghost); }
+.ib-compose-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.ib-tool {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.ib-tool:hover,
+.ib-tool[aria-expanded="true"] { background: var(--neutral-200); }
+.ib-tool:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+.ib-compose-actions .ib-send-btn { height: 34px; min-width: 4.5rem; padding: 0 20px; font-weight: 700; }
 
-/* The contact panel. Hidden below `lg` by the utility on the element;
-   this only owns the look. */
+/* The contact panel (prototype: Inbox · thread, right). Beside the thread,
+   divided by a hairline; shown and hidden by the header's panel button. */
 .ib-side {
-  flex: 0 0 17rem;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  flex: 0 0 16.5rem;
   min-height: 0;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  padding: 18px;
+  border-left: 1px solid var(--border);
   background: var(--surface-0);
-  padding: 0.75rem;
+}
+/* Open and closed are classes the header's button sets (`info`), not x-show:
+   without JavaScript the panel still shows wherever there is room for it. */
+.ib-side.is-closed { display: none; }
+.ib-side-section { position: relative; }
+.ib-side-close {
+  display: none;
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  font-size: 1.125rem;
+  line-height: 1;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.ib-side-close:hover { background: var(--surface-2); color: var(--text-primary); }
+.ib-side-close:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 0; }
+/* Below `lg` there is no room beside the thread, so it opens over it — and
+   then needs its own way to close, because it covers the header's button. */
+@media (max-width: 1023px) {
+  .ib-side {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    width: min(18rem, 100%);
+    box-shadow: var(--shadow-xl);
+  }
+  .ib-side:not(.is-open) { display: none; }
+  .ib-side-close { display: inline-flex; align-items: center; justify-content: center; }
 }
 .ib-side-label {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  text-transform: uppercase;
+  margin: 0 0 8px;
+  font-size: var(--fs-xs);
+  font-weight: 500;
   letter-spacing: 0.06em;
-  color: var(--text-ghost);
-  margin-top: 0.75rem;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
 }
-.ib-side-value { font-size: 0.8125rem; color: var(--text-primary); overflow-wrap: anywhere; }
+.ib-side-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+  font-size: var(--fs-body);
+}
+.ib-side-grid dt { color: var(--text-tertiary); }
+.ib-side-grid dd { margin: 0; min-width: 0; color: var(--text-primary); overflow-wrap: anywhere; }
+.ib-side-grid .ib-side-good { color: var(--success-700); font-weight: 600; }
+.ib-side-grid .ib-side-bad { color: var(--error-700); font-weight: 600; }
+.ib-side-muted { font-size: var(--fs-body); color: var(--text-tertiary); }
+.ib-side-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ib-side-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ib-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--text-primary);
+}
+.ib-tag form { display: inline-flex; }
+.ib-chip-x {
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--fs-body);
+  line-height: 1;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.ib-chip-x:hover { color: var(--text-primary); }
+.ib-add { position: relative; }
+.ib-add-chip {
+  padding: 2px 10px;
+  border: 1px dashed var(--neutral-300);
+  border-radius: var(--radius-full);
+  background: var(--surface-0);
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.ib-add-chip:hover { border-color: var(--neutral-400); }
+.ib-add-chip:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: 2px; }
+.ib-add-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-lg);
+}
+.ib-add-option {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.ib-add-option:hover,
+.ib-add-option:focus-visible { background: var(--surface-2); outline: none; }
+.ib-side-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.ib-side-card + .ib-side-card { margin-top: 8px; }
+.ib-side-card b { color: var(--text-primary); }
+.ib-side-card-paused { border-color: var(--warning-200); background: var(--warning-50); }
+.ib-side-action {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ib-side-action-danger { color: var(--error-700); }
 
 /* Below 1280px, show either the list or the open conversation. Keeping both
    alongside the contact panel leaves the message column too narrow to write.
@@ -5146,10 +5512,10 @@ kbd {
    only exists inside a rendered conversation. */
 @media (max-width: 1279px) {
   .ib-shell { flex-direction: column; }
-  .ib-rail { flex: 1 1 auto; }
-  .ib-shell > section:last-child { flex: 1 1 auto; }
+  .ib-rail { flex: 1 1 auto; border-right: 0; }
+  .ib-main { flex: 1 1 auto; }
   .ib-shell:has(.ib-thread-header) .ib-rail { display: none; }
-  .ib-shell:not(:has(.ib-thread-header)) > section:last-child { display: none; }
+  .ib-shell:not(:has(.ib-thread-header)) > .ib-main { display: none; }
 }
 
 .ib-empty {

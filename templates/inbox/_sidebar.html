@@ -1,116 +1,166 @@
 {% comment %}
-The contact panel: who this is, whether we may write to them, what automation
-is doing, and the tags an agent can apply without leaving the thread.
+The contact panel (HANDOFF §3, Inbox): who this is, the thread's labels and the
+person's tags, and the automation that last ran for them.
 
 Attacker-controlled here too (SECURITY-BASELINE §2): the contact's name, email
 and phone came from a platform profile, and `platform_user_id` is a raw chat id
 or PSID. All of it renders escaped; none of it becomes a URL.
+
+Pausing lives in the thread's status bar, not here — one control for one
+thing. The panel only says so while a pause is on, with the way back out.
 {% endcomment %}
 {% load common_extras %}
 
-<div class="flex items-start gap-3">
-  <span class="avatar" aria-hidden="true">{{ contact.display_name|make_list|first|upper }}</span>
-  <div class="min-w-0 flex-1">
-    <div class="text-[15px] font-semibold" style="color: var(--text-primary); overflow-wrap: anywhere;">{{ contact.display_name }}</div>
-    {% if contact.email %}<div class="ib-side-value">{{ contact.email }}</div>{% endif %}
-    {% if contact.phone %}<div class="ib-side-value">{{ contact.phone }}</div>{% endif %}
-  </div>
-  <a class="btn-pill-secondary btn-pill-sm" href="{{ contact_url }}">Open</a>
-</div>
-
-<div class="ib-side-label">Channels</div>
-{% for identity in identities %}
-  <div class="mt-1">
-    <div class="flex items-center gap-2">
-      <span class="{{ identity.platform|platform_ink_class }}" aria-hidden="true">
-        {% include "partials/_platform_icon.html" with platform=identity.platform size="sm" %}
-      </span>
-      <span class="ib-side-value flex-1 min-w-0 truncate">{{ identity.platform_user_id }}</span>
-    </div>
-    <div class="text-xs" style="color: var(--text-tertiary);">
-      {% if identity.opted_out_at %}
-        Opted out {{ identity.opted_out_at|date:"j M Y" }}
-      {% elif identity.opt_in %}
-        Opted in{% if identity.opt_in_source %} via {{ identity.get_opt_in_source_display }}{% endif %}
-      {% else %}
-        No opt-in recorded
-      {% endif %}
-      {% if identity.window_expires_at %}
-        · window closes {{ identity.window_expires_at|date:"j M H:i" }}
-      {% endif %}
-      {% if identity.is_pending %} · not yet linked to a connection{% endif %}
-    </div>
-  </div>
-{% empty %}
-  <p class="text-xs" style="color: var(--text-tertiary);">No channel addresses recorded.</p>
-{% endfor %}
-
-<div class="ib-side-label">Automation</div>
-{% if execution %}
-  <div class="flex items-center gap-2 mt-1">
-    <span class="ib-chip">{{ execution.get_status_display }}</span>
-    <span class="ib-side-value flex-1 min-w-0 truncate">{{ execution.flow.name }}</span>
-  </div>
-  {% if can_reply %}
-    <form class="mt-1" hx-post="{% url 'inbox:stop' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
-      {% csrf_token %}
-      <button type="submit" class="btn-pill-secondary btn-pill-sm">Stop automation</button>
-    </form>
-  {% endif %}
-{% else %}
-  <p class="text-xs" style="color: var(--text-tertiary);">Nothing running for this contact.</p>
-{% endif %}
-{% if can_reply %}
-  <form class="mt-1" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
-    {% csrf_token %}
-    <input type="hidden" name="action" value="{% if is_paused %}resume{% else %}pause{% endif %}">
-    <button type="submit" class="btn-pill-secondary btn-pill-sm">{% if is_paused %}Resume automation{% else %}Pause automation{% endif %}</button>
-  </form>
-{% endif %}
-
-<div class="ib-side-label">Tags</div>
-<div class="flex flex-wrap gap-1 mt-1">
-  {% for tag in contact_tags %}
-    {% if can_edit_contact %}
-      <form hx-post="{% url 'inbox:tags' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
-        {% csrf_token %}
-        <input type="hidden" name="tag" value="{{ tag.id }}">
-        <input type="hidden" name="action" value="remove">
-        <button type="submit" class="ib-chip" title="Remove tag">{{ tag.name }} ×</button>
-      </form>
-    {% else %}
-      <span class="ib-chip">{{ tag.name }}</span>
-    {% endif %}
-  {% empty %}
-    <span class="text-xs" style="color: var(--text-tertiary);">None yet.</span>
-  {% endfor %}
-</div>
-{% if can_edit_contact and available_tags %}
+<section class="ib-side-section" aria-labelledby="side-contact-{{ conversation.id }}">
   {% comment %}
-    Only tags this workspace already has. Creating one is `manage_crm` and lives
-    on the contacts settings page — the split SPEC §4.2 already draws between
-    the tag vocabulary and one contact's values, which is what lets an agent use
-    this control at all.
+    Only shown where the panel opens over the thread (below `lg`), because there
+    it covers the header button that opened it.
   {% endcomment %}
-  <form class="mt-2 flex items-center gap-1"
-        hx-post="{% url 'inbox:tags' workspace_id=request.workspace.id conversation_id=conversation.id %}"
-        hx-swap="none"
-        hx-trigger="change">
-    {% csrf_token %}
-    <label class="sr-only" for="add-tag-{{ conversation.id }}">Add a tag</label>
-    <select class="bb-select" id="add-tag-{{ conversation.id }}" name="tag">
-      <option value="">Add a tag…</option>
-      {% for tag in available_tags %}<option value="{{ tag.id }}">{{ tag.name }}</option>{% endfor %}
-    </select>
-  </form>
+  <button type="button" class="ib-side-close" @click="toggleInfo()" aria-label="Close contact details">×</button>
+  <h2 class="ib-side-label" id="side-contact-{{ conversation.id }}">Contact</h2>
+  <dl class="ib-side-grid">
+    <dt>Name</dt><dd>{{ contact.display_name }}</dd>
+    {% for row in identities %}
+      <dt>{{ row.get_platform_display }}</dt>
+      <dd class="truncate" title="{{ row.platform_user_id }}">{{ row.platform_user_id }}</dd>
+    {% endfor %}
+    {% if contact.email %}<dt>Email</dt><dd>{{ contact.email }}</dd>{% endif %}
+    {% if contact.phone %}<dt>Phone</dt><dd>{{ contact.phone }}</dd>{% endif %}
+    <dt>First seen</dt><dd>{{ contact.created_at|date:"j M Y" }}</dd>
+    <dt>Opt-in</dt>
+    {% comment %}
+      The address this conversation is on, because it is the one a reply here
+      goes to. A word and a colour, never the colour alone.
+    {% endcomment %}
+    {% if identity.opted_out_at %}
+      <dd class="ib-side-bad">Opted out {{ identity.opted_out_at|date:"j M" }}</dd>
+    {% elif identity.opt_in %}
+      <dd class="ib-side-good" {% if identity.opt_in_source %}title="Via {{ identity.get_opt_in_source_display|lower }}"{% endif %}>Subscribed</dd>
+    {% else %}
+      <dd class="ib-side-muted">Not recorded</dd>
+    {% endif %}
+  </dl>
+  <a class="ib-side-link" href="{{ contact_url }}">Open contact</a>
+</section>
+
+{% if thread_labels or can_reply and thread_label_options %}
+<section class="ib-side-section" aria-labelledby="side-labels-{{ conversation.id }}">
+  <h2 class="ib-side-label" id="side-labels-{{ conversation.id }}">Labels</h2>
+  <div class="ib-side-chips">
+    {% comment %}
+      `chip.color` is the vetted value from apps.inbox.rendering; the stored
+      column never reaches a style attribute. See LabelChip.
+    {% endcomment %}
+    {% for chip in thread_labels %}
+      <span class="ib-label-chip" style="--chip-ink: {{ chip.color }};">
+        {{ chip.name }}
+        {% if can_reply %}
+          <form hx-post="{% url 'inbox:remove_label' workspace_id=request.workspace.id conversation_id=conversation.id label_id=chip.id %}"
+                hx-swap="none">
+            {% csrf_token %}
+            <button type="submit" class="ib-chip-x" aria-label="Remove label {{ chip.name }}">×</button>
+          </form>
+        {% endif %}
+      </span>
+    {% endfor %}
+    {% if can_reply and thread_label_options %}
+      <div class="ib-add" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
+        <button type="button" class="ib-add-chip" @click="open = !open" aria-haspopup="true"
+                :aria-expanded="open ? 'true' : 'false'">+ Add</button>
+        <form class="ib-add-menu" x-show="open" x-cloak aria-label="Add a label"
+              hx-post="{% url 'inbox:add_label' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+              hx-swap="none">
+          {% csrf_token %}
+          {% for option in thread_label_options %}
+            <button type="submit" class="ib-add-option" name="label" value="{{ option.value }}">{{ option.label }}</button>
+          {% endfor %}
+        </form>
+      </div>
+    {% endif %}
+  </div>
+</section>
 {% endif %}
+
+<section class="ib-side-section" aria-labelledby="side-tags-{{ conversation.id }}">
+  <h2 class="ib-side-label" id="side-tags-{{ conversation.id }}">Tags</h2>
+  <div class="ib-side-chips">
+    {% for tag in contact_tags %}
+      <span class="ib-tag">
+        {{ tag.name }}
+        {% if can_edit_contact %}
+          <form hx-post="{% url 'inbox:tags' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+            {% csrf_token %}
+            <input type="hidden" name="tag" value="{{ tag.id }}">
+            <input type="hidden" name="action" value="remove">
+            <button type="submit" class="ib-chip-x" aria-label="Remove tag {{ tag.name }}">×</button>
+          </form>
+        {% endif %}
+      </span>
+    {% empty %}
+      {% if not can_edit_contact or not available_tags %}<span class="ib-side-muted">None yet.</span>{% endif %}
+    {% endfor %}
+    {% if can_edit_contact and available_tags %}
+      {% comment %}
+        Only tags this workspace already has. Creating one is `manage_crm` and
+        lives on the contacts settings page — the split SPEC §4.2 draws between
+        the tag vocabulary and one contact's values, which is what lets an agent
+        use this control at all.
+      {% endcomment %}
+      <div class="ib-add" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
+        <button type="button" class="ib-add-chip" @click="open = !open" aria-haspopup="true"
+                :aria-expanded="open ? 'true' : 'false'">+ Add</button>
+        <form class="ib-add-menu" x-show="open" x-cloak aria-label="Add a tag"
+              hx-post="{% url 'inbox:tags' workspace_id=request.workspace.id conversation_id=conversation.id %}"
+              hx-swap="none">
+          {% csrf_token %}
+          {% for tag in available_tags %}
+            <button type="submit" class="ib-add-option" name="tag" value="{{ tag.id }}">{{ tag.name }}</button>
+          {% endfor %}
+        </form>
+      </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="ib-side-section" aria-labelledby="side-automation-{{ conversation.id }}">
+  <h2 class="ib-side-label" id="side-automation-{{ conversation.id }}">Automation</h2>
+  {% if is_paused %}
+    <div class="ib-side-card ib-side-card-paused">
+      <b>Paused until {{ conversation.automation_paused_until|time:"H:i" }}</b>
+      <span>Flows will not reply to this contact until then.</span>
+      {% if can_reply %}
+        <form hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="resume">
+          <button type="submit" class="ib-side-action">Resume automation</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endif %}
+  {% if last_run %}
+    <div class="ib-side-card">
+      <b>{{ last_run.execution.flow.name }}</b>
+      <span>
+        {% if last_run.is_live %}{{ last_run.execution.get_status_display }} · started {{ last_run.execution.created_at|timesince }} ago{% else %}Last ran {{ last_run.execution.updated_at|timesince }} ago{% endif %}
+        · {{ last_run.sent }} message{{ last_run.sent|pluralize }} sent
+      </span>
+      {% if last_run.is_live and can_reply %}
+        <form hx-post="{% url 'inbox:stop' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
+          {% csrf_token %}
+          <button type="submit" class="ib-side-action ib-side-action-danger">Stop automation</button>
+        </form>
+      {% endif %}
+    </div>
+  {% elif not is_paused %}
+    <p class="ib-side-muted">Nothing has run for this contact yet.</p>
+  {% endif %}
+</section>
 
 {% if custom_fields %}
-  <div class="ib-side-label">Fields</div>
-  {% for field in custom_fields %}
-    <div class="mt-1">
-      <div class="text-xs" style="color: var(--text-tertiary);">{{ field.name }}</div>
-      <div class="ib-side-value">{{ field.value }}</div>
-    </div>
-  {% endfor %}
+<section class="ib-side-section" aria-labelledby="side-fields-{{ conversation.id }}">
+  <h2 class="ib-side-label" id="side-fields-{{ conversation.id }}">Fields</h2>
+  <dl class="ib-side-grid">
+    {% for field in custom_fields %}<dt>{{ field.name }}</dt><dd>{{ field.value }}</dd>{% endfor %}
+  </dl>
+</section>
 {% endif %}

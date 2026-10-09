@@ -60,6 +60,17 @@ inert.
         assignee: '{{ assignee|escapejs }}',
         q: '{{ q|escapejs }}',
         filters: {{ filters|json_attr }},
+        {% comment %}
+          The contact panel's toggle (the square button at the end of the
+          thread header). Where there is room beside the thread it is open by
+          default and the choice is remembered per browser; below `lg` it is an
+          overlay over the thread, so it always starts closed there and a choice
+          made there is not stored — an overlay that reopened itself over every
+          conversation would be in the way. Reading storage can throw in a
+          private window, which just means the default.
+        {% endcomment %}
+        info: (() => { if (!window.matchMedia('(min-width: 1024px)').matches) return false; try { const v = localStorage.getItem('bb.inbox.info'); if (v !== null) return v === '1'; } catch (e) {} return true; })(),
+        toggleInfo() { this.info = !this.info; if (!window.matchMedia('(min-width: 1024px)').matches) return; try { localStorage.setItem('bb.inbox.info', this.info ? '1' : '0'); } catch (e) {} },
         openFirstUnread() {
           const row = document.querySelector('#inbox-list .ib-row.is-unread') || document.querySelector('#inbox-list .ib-row');
           if (row) { row.click(); row.scrollIntoView({ block: 'nearest' }); }
@@ -99,6 +110,7 @@ inert.
     {% endcomment %}
     <section class="ib-rail" aria-label="Conversations"
              x-data="inboxSelection()"
+             :class="count && 'is-selecting'"
              x-on:inbox-list-changed.camel.window="clear()">
       {% comment %}
         The list's controls live at the top of the list they control (HANDOFF
@@ -130,7 +142,7 @@ inert.
           <button type="button" role="tab" class="tab" aria-controls="inbox-list"
                   :aria-selected="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') ? 'true' : 'false'"
                   @click="state = '{{ view.state|escapejs }}'; assignee = '{{ view.assignee|escapejs }}'; reload()">
-            {{ view.label }}{% if view.count %} <span class="tab-count">{{ view.count }}</span>{% endif %}
+            {{ view.label }} <span class="tab-count">{{ view.count }}</span>
           </button>
           {% endfor %}
         </div>
@@ -140,9 +152,9 @@ inert.
             <input type="search" id="inbox-search" name="q" x-model="q" class="search-input"
                    placeholder="Search conversations" aria-label="Search conversations" maxlength="100">
           </label>
-          {% filter_popover groups=filter_groups onchange="reload()" noun="conversation" %}
+          {% filter_popover groups=filter_groups onchange="reload()" noun="conversation" icon_only=True %}
         </div>
-        <div class="px-3">{% filter_chips groups=filter_groups onchange="reload()" %}</div>
+        <div class="ib-chips">{% filter_chips groups=filter_groups onchange="reload()" %}</div>
       </form>
       {% comment %}
         The bulk bar. Outside #inbox-list so the three-second poll cannot swap it
@@ -185,7 +197,7 @@ inert.
       changes the thread can also change the contact's window status, and two
       targets would mean the row that opens a thread has to fill both.
     {% endcomment %}
-    <section id="inbox-thread" class="flex flex-1 min-w-0 min-h-0 gap-4" aria-label="Conversation" aria-live="polite">
+    <section id="inbox-thread" class="ib-main" aria-label="Conversation" aria-live="polite">
       {% if conversation %}
         {% include "inbox/_thread.html" %}
       {% else %}
@@ -194,20 +206,18 @@ inert.
           move through it, and offer the first thing that needs a reply rather
           than a blank pane.
         {% endcomment %}
-        <div class="ib-thread">
+        <div class="ib-thread ib-thread-empty">
           <div class="ib-empty-state">
-            <span class="empty-state-icon" aria-hidden="true">{% include "partials/_nav_icon.html" with name="inbox" icon_size=20 %}</span>
-            <p class="empty-state-title">Select a conversation</p>
-            <p class="empty-state-body">
+            <span class="ib-empty-icon" aria-hidden="true">{% include "partials/_nav_icon.html" with name="inbox" icon_size=26 %}</span>
+            <p class="ib-empty-title">Select a conversation</p>
+            <p class="ib-empty-body">
               {% if unread_count %}{{ unread_count }} conversation{{ unread_count|pluralize }} need{{ unread_count|pluralize:"s," }} a reply.{% else %}You are all caught up.{% endif %}
-              Use <kbd>j</kbd> and <kbd>k</kbd> to move through the list.
+              Use <b>j</b> and <b>k</b> to move through the list.
             </p>
             {% if conversations %}
-            <div class="empty-state-actions">
-              <button type="button" class="btn-pill-secondary btn-pill-sm" @click="openFirstUnread()">
+              <button type="button" class="ib-empty-action" @click="openFirstUnread()">
                 {% if unread_count %}Open first unread{% else %}Open the newest{% endif %}
               </button>
-            </div>
             {% endif %}
           </div>
         </div>
@@ -348,7 +358,6 @@ inert.
       // Reply or Internal note — which tab the compose box is on.
       mode: 'reply',
       items: [],
-      scheduling: false,
       picker: { open: false, loading: false, error: '', term: '', results: [] },
 
       drop(id) {

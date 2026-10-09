@@ -237,6 +237,7 @@ def filter_popover(
     count: int | None = None,
     noun: str = "result",
     noun_plural: str = "",
+    icon_only: bool = False,
 ) -> dict[str, Any]:
     """The list toolbar's Filter button and its popover (HANDOFF §2.2).
 
@@ -258,6 +259,8 @@ def filter_popover(
                 swap has happened.
       noun      what is being counted, singular: "flow", "contact".
       noun_plural  its plural, when adding an "s" is wrong ("people").
+      icon_only the funnel without the word, for a narrow rail (the inbox).
+                "Filter" stays as the accessible name.
 
     Keyword-only, like ``ui_select``, so call sites document themselves.
     """
@@ -269,6 +272,7 @@ def filter_popover(
         "count": count,
         "noun": noun,
         "noun_plural": noun_plural or f"{noun}s",
+        "icon_only": icon_only,
     }
 
 
