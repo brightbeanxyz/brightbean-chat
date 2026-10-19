@@ -59,13 +59,14 @@ export function picklistSelect(list: ListKey, { creatable }: { creatable: boolea
 
     return (
       <FieldShell {...props}>
-        <select
-          id={fieldId(path)}
-          className="bb-select"
-          value={current}
-          disabled={readOnly}
-          onChange={(event) => set(path, event.target.value, `pick:${path.join(".")}`)}
-        >
+        <span className="bb-select-wrap--full">
+          <select
+            id={fieldId(path)}
+            className="bb-select"
+            value={current}
+            disabled={readOnly}
+            onChange={(event) => set(path, event.target.value, `pick:${path.join(".")}`)}
+          >
           <option value="">{i18n.t("inspector.choose")}</option>
           {options.map((option) => (
             <option key={option.id} value={option.id}>
@@ -82,7 +83,8 @@ export function picklistSelect(list: ListKey, { creatable }: { creatable: boolea
               nothing they can act on. What they need to know is that this one
               points at something gone, and to pick again. */}
           {current && !known ? <option value={current}>{i18n.t("picklist.gone")}</option> : null}
-        </select>
+          </select>
+        </span>
         {options.length === 0 ? <p className="fb-field-help">{emptyCopy(list)}</p> : null}
       </FieldShell>
     );
