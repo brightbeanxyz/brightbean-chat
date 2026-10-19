@@ -162,7 +162,7 @@ export function SelectField(props: FieldProps) {
 
   return (
     <FieldShell {...props}>
-      <span className="bb-select-wrap--full">
+      <span className="bb-select-wrap">
         <select
           id={fieldId(path)}
           className="bb-select"

@@ -427,7 +427,7 @@ export function VariantField({
           {required ? null : <span className="fb-empty"> {i18n.t("inspector.optional")}</span>}
         </>
       )}
-      <span className="bb-select-wrap--full">
+      <span className="bb-select-wrap">
         <select
           id={fieldId(path)}
           aria-label={labelFor(propertyName, schema.title)}
@@ -508,7 +508,7 @@ export function UnionField({
           {required ? null : <span className="fb-empty"> {i18n.t("inspector.optional")}</span>}
         </>
       )}
-      <span className="bb-select-wrap--full">
+      <span className="bb-select-wrap">
         <select
           id={fieldId(path)}
           aria-label={labelFor(propertyName, schema.title)}

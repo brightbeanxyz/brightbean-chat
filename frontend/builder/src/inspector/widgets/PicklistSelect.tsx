@@ -59,7 +59,7 @@ export function picklistSelect(list: ListKey, { creatable }: { creatable: boolea
 
     return (
       <FieldShell {...props}>
-        <span className="bb-select-wrap--full">
+        <span className="bb-select-wrap">
           <select
             id={fieldId(path)}
             className="bb-select"
