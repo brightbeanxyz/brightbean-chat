@@ -15,24 +15,27 @@ same PAIRS list when it derives dark values — one shared source of truth for
 
 Resolution already handles ``light-dark(a, b)``, split on balanced parens
 rather than a naive comma split (a branch like
-``color-mix(in srgb, var(--x) 6%, transparent)`` has its own commas). Today
-every token is a single literal, so both branches resolve identically; from
-Phase 2c onward this same code checks the real dark values with no changes
-here.
+``color-mix(in srgb, var(--x) 6%, transparent)`` has its own commas).
+
+The actual check (``TestTextSurfaceContrast``) resolves tokens through
+``_parse_shipped_tokens()``, which layers ``themes/brightbean.css`` over
+``tokens.css`` the same way the browser's cascade does — ``tokens.css``
+alone has no ``light-dark()`` in it, so reading only that file (as this
+guard did through Phase 2c) made the "dark branch" just the light value
+resolved twice, never the real generated dark colour (found in review of
+PR #12).
 """
 
 import re
 
 import pytest
 
-from tests.test_theme_tokens import _COMMENT, _VAR_DEF, TOKENS, _blank_comments
+from tests.test_theme_tokens import _COMMENT, _VAR_DEF, CSS_DIR, TOKENS, _blank_comments
 
 #: role -> minimum contrast ratio (WCAG 2.x AA). "text" is normal-size text
-#: (1.4.3). Only role PAIRS ever uses today — add "non-text": 3.0 (UI
-#: component / graphical object boundary, 1.4.11) back when a pair actually
-#: needs it, not before: an entry with no PAIRS row exercising it is a
-#: reviewer trap, not documentation (found in review of PR #7).
-_MIN_RATIO = {"text": 4.5}
+#: (1.4.3); "non-text" is a UI component / graphical object boundary (1.4.11)
+#: — a focus ring or a status dot, not prose.
+_MIN_RATIO = {"text": 4.5, "non-text": 3.0}
 
 #: (foreground token, background token, role). Scoped to exactly what Phase
 #: 2's "Done when" names — ``--text-*`` on ``--surface-*`` — not every token
@@ -65,23 +68,101 @@ _KNOWN_LIGHT_MODE_GAPS = {
     ("--text-tertiary", "--surface-page"),
     ("--text-tertiary", "--surface-2"),
 }
-PAIRS: list[tuple[str, str, str]] = [
-    (text, surface, "text")
-    for text in _PROSE_TEXT
-    for surface in _CONTENT_SURFACES
-    if (text, surface) not in _KNOWN_LIGHT_MODE_GAPS
-]
+
+#: --primary/--primary-ring/--brand-green-200/--warning-500 were never
+#: 4.5:1 (text) or 3.0:1 (non-text) against white in the *light* theme
+#: either — an orange brand colour and a yellow warning swatch were never
+#: going to clear AA on their own surface, dark mode or not. Pre-existing,
+#: not introduced by or in scope for Phase 2 (found only once ai-zirek[bot]'s
+#: PR #12 review prompted adding these tokens to PAIRS at all).
+#:
+#: Unlike ``_KNOWN_LIGHT_MODE_GAPS`` above, these stay IN ``PAIRS`` — this
+#: set only tells ``TestTextSurfaceContrast`` to skip the light branch for
+#: them. Pulling them out of ``PAIRS`` entirely was tried first and broke
+#: scripts/derive_dark_palette.py's solve pass: that script reads this same
+#: ``PAIRS`` list for "which dark backgrounds does this foreground have to
+#: clear", and with all 4 surfaces excluded for a token, it had none left to
+#: solve against and silently fell back to unsolved, broken inversion —
+#: exactly the bug this PAIRS entry exists to catch in the first place.
+_LIGHT_BRANCH_KNOWN_GAPS = {
+    (t, s)
+    for t in ("--primary", "--primary-ring", "--brand-green-200", "--warning-500")
+    for s in ("--surface-0", "--surface-page", "--surface-1", "--surface-2")
+}
+
+#: Accent/brand colours doing double duty as text (links, active nav/flow
+#: labels, the flow-builder's teal eyebrow ink) — not just fills, which the
+#: original PAIRS list never claimed to cover. Found missing by
+#: ai-zirek[bot]'s PR #12 review: --primary at ~1.4:1 and --brand-700 at
+#: ~2.4:1 against dark surfaces, both shipped as real link/label colour.
+_ACCENT_TEXT = ("--primary", "--brand-700", "--accent-teal-ink")
+
+#: Status text set directly against its own soft pill/badge/toast
+#: background — a fixed real combination (templates/styles.css's
+#: ``.status-pill-*``/``.notif-icon-*``/``.fb-badge-*`` classes), not a
+#: surface cross-product.
+_STATUS_TEXT_ON_SOFT = (
+    ("--warning-700", "--warning-50"),
+    ("--error-700", "--error-50"),
+)
+
+#: Focus rings and status-indicator fills/borders — these only need to stay
+#: visible (1.4.11's 3:1), not readable as text. Added after ai-zirek[bot]
+#: found --primary-ring and --brand-green-200 landing at ~1:1 against dark
+#: surfaces (PR #12 review): the OKLCH inversion had no role-aware floor for
+#: anything but body text until now.
+_NON_TEXT_FOREGROUNDS = ("--primary-ring", "--brand-green-200", "--warning-500", "--error-500")
+
+PAIRS: list[tuple[str, str, str]] = (
+    [
+        (text, surface, "text")
+        for text in _PROSE_TEXT
+        for surface in _CONTENT_SURFACES
+        if (text, surface) not in _KNOWN_LIGHT_MODE_GAPS
+    ]
+    + [(text, surface, "text") for text in _ACCENT_TEXT for surface in _CONTENT_SURFACES]
+    + [(fg, bg, "text") for fg, bg in _STATUS_TEXT_ON_SOFT]
+    + [(fg, surface, "non-text") for fg in _NON_TEXT_FOREGROUNDS for surface in _CONTENT_SURFACES]
+)
+
+
+def _parse_css_vars(css_text: str) -> dict[str, str]:
+    """``{name: raw value}`` for every ``--x: value;`` in blank-commented CSS text."""
+    values: dict[str, str] = {}
+    for match in _VAR_DEF.finditer(css_text):
+        name = match.group(1)
+        start = match.end()
+        end = css_text.find(";", start)
+        values[name] = css_text[start:end].strip()
+    return values
 
 
 def _parse_tokens() -> dict[str, str]:
     """``{name: raw value}`` for every ``--x: value;`` in tokens.css."""
-    css = _blank_comments(TOKENS.read_text(), _COMMENT)
-    values: dict[str, str] = {}
-    for match in _VAR_DEF.finditer(css):
-        name = match.group(1)
-        start = match.end()
-        end = css.find(";", start)
-        values[name] = css[start:end].strip()
+    return _parse_css_vars(_blank_comments(TOKENS.read_text(), _COMMENT))
+
+
+#: The theme overlay that actually supplies the ``light-dark()`` values once
+#: a theme is active — ``[data-theme="brightbean"]`` is more specific than
+#: ``:root`` and loaded after, so its declarations win in the real cascade.
+THEME_CSS = CSS_DIR / "themes" / "brightbean.css"
+
+
+def _parse_shipped_tokens() -> dict[str, str]:
+    """``_parse_tokens()``, overridden by ``themes/brightbean.css``.
+
+    ``_parse_tokens()`` alone (tokens.css only) is what
+    scripts/derive_dark_palette.py reads to regenerate — it needs the plain
+    light literals, not last run's own generated output. But it's also what
+    this guard used to check, which meant the dark values it generates were
+    never actually exercised: tokens.css itself has no ``light-dark()`` in
+    it, so the "dark branch" was the same light value resolved twice (found
+    in review of PR #12). This is the one the contrast test uses instead, so
+    it validates what the browser actually paints.
+    """
+    values = _parse_tokens()
+    if THEME_CSS.exists():
+        values.update(_parse_css_vars(_blank_comments(THEME_CSS.read_text(), _COMMENT)))
     return values
 
 
@@ -206,6 +287,22 @@ _KNOWN_LIGHT_MODE_GAP_RATIOS: list[tuple[str, str, float]] = [
     ("--border-strong", "--surface-0", 1.26),
     ("--text-tertiary", "--surface-page", 4.44),
     ("--text-tertiary", "--surface-2", 4.40),
+    ("--primary", "--surface-0", 2.80),
+    ("--primary", "--surface-page", 2.59),
+    ("--primary", "--surface-1", 2.68),
+    ("--primary", "--surface-2", 2.57),
+    ("--primary-ring", "--surface-0", 1.35),
+    ("--primary-ring", "--surface-page", 1.25),
+    ("--primary-ring", "--surface-1", 1.30),
+    ("--primary-ring", "--surface-2", 1.24),
+    ("--brand-green-200", "--surface-0", 1.32),
+    ("--brand-green-200", "--surface-page", 1.22),
+    ("--brand-green-200", "--surface-1", 1.27),
+    ("--brand-green-200", "--surface-2", 1.21),
+    ("--warning-500", "--surface-0", 1.92),
+    ("--warning-500", "--surface-page", 1.77),
+    ("--warning-500", "--surface-1", 1.84),
+    ("--warning-500", "--surface-2", 1.76),
 ]
 
 
@@ -225,11 +322,13 @@ class TestKnownLightModeGaps:
 
 class TestTextSurfaceContrast:
     def test_every_pair_meets_its_wcag_aa_threshold(self):
-        tokens = _parse_tokens()
+        tokens = _parse_shipped_tokens()
         offenders = []
         for fg, bg, role in PAIRS:
             min_ratio = _MIN_RATIO[role]
             for branch, label in ((0, "light"), (1, "dark")):
+                if branch == 0 and (fg, bg) in _LIGHT_BRANCH_KNOWN_GAPS:
+                    continue
                 fg_hex = _resolve(fg, tokens, branch)
                 bg_hex = _resolve(bg, tokens, branch)
                 ratio = _contrast_ratio(fg_hex, bg_hex)

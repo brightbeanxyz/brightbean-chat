@@ -241,20 +241,46 @@ Split into five PRs, each its own branch off a fresh `main`
   mapping block still exists and every value stays `var()`, so a future
   edit can't silently drop it.
 
-**2c — dark palette.**
+**2c — dark palette ✅ done**
 - `scripts/derive_dark_palette.py`: no stdlib OKLCH conversion exists
-  (`colorsys` only covers HSV/HLS/YIQ) — implement the sRGB↔linear↔XYZ↔OKLab
-  matrices directly (Björn Ottosson's published constants), no dependency.
-  - Neutrals invert lightness (`L' = 1 − L`, with a small lift so the
-    darkest surface isn't pure black), keeping hue and chroma.
-  - Accents and status colours keep their hue; lightness is solved against
-    the same (foreground, background, role) pairs 2a's guard checks — not
-    an independent notion of "meets AA contrast".
-- Commit the generated `light-dark()` values to a new
+  (`colorsys` only covers HSV/HLS/YIQ) — the sRGB↔linear↔XYZ↔OKLab matrices
+  are implemented directly (Björn Ottosson's published constants), no
+  dependency. Every hex-literal token in `tokens.css` inverts lightness
+  (`L' = max(1 − L, 0.15)`, same hue and chroma) — **the floor applies to
+  every token, not just neutrals**: the first run floored only the neutral
+  ramp, on the theory that only "surfaces" needed it, and several soft tints
+  (`--brand-50`, `--warning-50`, every `--accent-*-soft`) are pale enough
+  that uninverted `1 − L` lands near 0, where the sRGB gamut is so narrow
+  that their small original chroma pushed a channel slightly negative —
+  every one of them clamped straight to the same `#000000`, hue and all.
+  Fixed two ways: the floor is universal now, and `oklch_to_hex` does real
+  gamut mapping (bisect chroma down to the in-gamut boundary, keeping L and
+  H, the CSS Color 4 approach) instead of clamping each RGB channel
+  independently after the fact.
+  - `--text-primary/-secondary/-tertiary`'s dark value is then *solved*, not
+    just inverted: bisected lighter against the real (already-inverted) dark
+    backgrounds from `tests/test_theme_contrast.py`'s own `PAIRS` list until
+    every row clears 4.5:1 — the concrete shape of "lightness solved against
+    the same pairs the guard checks." **Only these three tokens are solved
+    today**: `PAIRS` has no accent/brand/status entry, so the roadmap's
+    "accents keep hue, lightness solved" only has a real target for the
+    neutral ramp; everything else gets the inversion with no solve step,
+    which is still mathematical, just not contrast-pinned (nothing claims it
+    needs to be, today).
+- The generated `light-dark()` values live in the new
   `theme/static_src/src/themes/brightbean.css` (per Architecture: `tokens.css`
-  stays names/wiring only; a theme file holds the values). `--platform-*`
-  brand literals stay as they are.
-- The contrast guard (2a) now has real dark branches to check.
+  stays names/wiring only; a theme file holds the values) — 62 tokens, every
+  hex literal in `tokens.css` except `--platform-*` and `--text-on-fill`
+  (stays white in every mode, per its own comment). `styles.css` imports it
+  right after `tokens.css`. Everything written as `var(--brand-500)` etc.
+  needed no changes at all — it inherits the dark value through the chain.
+- The contrast guard (2a) now exercises real dark branches, not light twice.
+- Checked with a real browser (not just the guard), forcing `color-scheme:
+  dark` and `data-color-mode="system"` since the registry isn't `dark`-aware
+  yet (that's 2e): shell nav, forms, member rows, filter toolbars all stayed
+  legible, platform brand icons stayed their own colours (exempt, correctly).
+  Not a full 2d pass — just confirms the maths didn't produce something
+  obviously broken before 2d's per-app review.
 
 **2d — visual pass, app by app**, like the i18n rollout: shell/auth/errors,
 inbox, contacts, flows+builder, broadcasts/campaigns, analytics, settings.

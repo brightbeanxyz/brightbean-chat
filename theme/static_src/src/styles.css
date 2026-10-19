@@ -16,6 +16,12 @@
 /* Every theme-able value (colours, fonts, radii, shadows, motion). Themes
    override these; nothing below this line may write a colour literal (tests/test_theme_tokens.py). */
 @import "./tokens.css";
+/* The brightbean theme's own Layer-1 values, generated (Phase 2c) by
+   scripts/derive_dark_palette.py. [data-theme="brightbean"] has the same
+   specificity as tokens.css's :root, so loading this after it is what makes
+   these win — a page with no data-theme still gets the :root/light values
+   tokens.css itself defines. */
+@import "./themes/brightbean.css";
 
 /* The complete content list. Per-app template directories are deliberately
    absent: APP_DIRS is on, so Django would load templates from there, but none
