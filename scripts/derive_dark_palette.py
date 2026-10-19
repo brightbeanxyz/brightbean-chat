@@ -177,22 +177,63 @@ MIN_CONTRAST = {"text": 4.5, "non-text": 3.0}
 #: would do; that's what independent per-token flooring can't give it.
 _SURFACE_ELEVATION_STEP = 0.02
 
+#: Below this, a token's own light-mode chroma is indistinguishable from
+#: "meant to be neutral gray" — --surface-0 is C=0, --neutral-50/-100 are
+#: C=0.0013, --surface-page (the dullest "neutral" token) is C=0.0054.
+#: Every pale *tint* — --warning-50, --brand-50, every --accent-*-soft —
+#: sits at C>=0.013, comfortably above that. Gates _MIN_TINT_CHROMA below so
+#: a genuinely neutral surface never picks up an unwanted colour cast.
+_NEUTRAL_CHROMA_THRESHOLD = 0.008
+
+#: A pale tint's chroma was already small in *light* mode; keeping it
+#: unchanged through inversion still collapses it, because FLOOR_L sits
+#: where the sRGB gamut is narrowest and squeezes what little chroma there
+#: was down to a handful of 8-bit levels — every --warning-50/--error-50/
+#: --accent-*-soft token's shipped dark value landed within ~12 RGB units of
+#: pure gray (measured on PR #12's first output), so status pills and
+#: toasts lose their colour coding even though the text on them is AA-safe
+#: (found in a second read of PR #12 after merge). Lifting chroma to at
+#: least this much before inverting — but only when _NEUTRAL_CHROMA_THRESHOLD
+#: says the source meant to carry a hue at all — keeps that hue visible at
+#: the floor without turning a subtle pastel wash into a loud dark chip. A
+#: starting point, not a final call, same status as FLOOR_L (the user
+#: reviews actual screenshots in Phase 2d).
+_MIN_TINT_CHROMA = 0.04
+
 _HEX_LITERAL = re.compile(r"^#[0-9a-fA-F]{6}$")
-_VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*\)")
+_VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,.*)?\)")
 
 
-def _trace_to_literal(name: str, raw_tokens: dict[str, str]) -> str:
+def _trace_to_literal(name: str, raw_tokens: dict[str, str], _seen: frozenset[str] = frozenset()) -> str:
     """Follow ``var()`` chains to the token name actually holding a value —
     e.g. ``--text-tertiary`` -> ``--neutral-500``. A no-op for a name that
     already holds its own literal."""
+    if name in _seen:
+        raise ValueError(f"circular var() reference: {name}")
     ref = _VAR_CALL.fullmatch(raw_tokens[name].strip())
-    return _trace_to_literal(ref.group(1), raw_tokens) if ref else name
+    return _trace_to_literal(ref.group(1), raw_tokens, _seen | {name}) if ref else name
 
 
 def _naive_dark(hex_colour: str) -> tuple[float, float, float]:
-    """Plain ``L' = max(1 - L, FLOOR_L)`` inversion, same hue and chroma."""
+    """Plain ``L' = max(1 - L, FLOOR_L)`` inversion, same hue; chroma is
+    lifted to ``_MIN_TINT_CHROMA`` when the floor is the thing actually
+    biting (the token started near-white) *and* its light-mode chroma
+    already clears ``_NEUTRAL_CHROMA_THRESHOLD``.
+
+    Both gates matter, not just the chroma one: the warm neutral ramp
+    (--neutral-700 C=0.0087, --neutral-400 C=0.0090) clears
+    _NEUTRAL_CHROMA_THRESHOLD too, but at mid-lightness, where ``1 -
+    lightness`` is nowhere near FLOOR_L — those tokens invert normally with
+    no gamut-narrowing collapse, so a chroma-only gate tinted them visibly
+    brown here first (caught before this shipped). Restricting to "the
+    floor actually fired" scopes this to the near-white tint family the
+    comment above is about, and leaves every token that was already fine
+    alone."""
     lightness, c, h = hex_to_oklch(hex_colour)
-    return max(1 - lightness, FLOOR_L), c, h
+    dark_l = max(1 - lightness, FLOOR_L)
+    if dark_l == FLOOR_L and c > _NEUTRAL_CHROMA_THRESHOLD:
+        c = max(c, _MIN_TINT_CHROMA)
+    return dark_l, c, h
 
 
 def _solve_lightness(l_start: float, c: float, h: float, bg_hexes: list[str], min_contrast: float) -> float:
