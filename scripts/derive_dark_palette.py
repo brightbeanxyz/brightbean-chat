@@ -201,7 +201,11 @@ _NEUTRAL_CHROMA_THRESHOLD = 0.008
 _MIN_TINT_CHROMA = 0.04
 
 _HEX_LITERAL = re.compile(r"^#[0-9a-fA-F]{6}$")
-_VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,.*)?\)")
+#: re.DOTALL to match test_theme_contrast.py's own copy of this pattern — a
+#: fallback value broken onto a second line would otherwise match there but
+#: not here (found reviewing this PR: the fallback-comma group below was
+#: copied over, the flag wasn't).
+_VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,.*)?\)", re.DOTALL)
 
 
 def _trace_to_literal(name: str, raw_tokens: dict[str, str], _seen: frozenset[str] = frozenset()) -> str:

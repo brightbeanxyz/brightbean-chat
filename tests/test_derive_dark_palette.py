@@ -34,6 +34,15 @@ class TestNaiveDarkChromaFloor:
         assert dark_l == FLOOR_L
         assert c == pytest.approx(0.0, abs=1e-6)
 
+    def test_a_near_white_surface_just_under_the_bar_is_not_tinted(self):
+        # --surface-page: near-white like the pale tints above (so the floor
+        # does fire, unlike --neutral-700), but its own chroma (0.0054) sits
+        # just under _NEUTRAL_CHROMA_THRESHOLD rather than at the C=0 extreme
+        # #FFFFFF already covers — the gate itself, not just its endpoints.
+        dark_l, c, _h = _naive_dark("#F7F6F2")
+        assert dark_l == FLOOR_L
+        assert c < _MIN_TINT_CHROMA
+
     def test_a_mid_lightness_warm_neutral_is_not_boosted(self):
         # --neutral-700: warm enough to clear the chroma bar on its own, but
         # never near-white, so the floor never bites and this must invert
