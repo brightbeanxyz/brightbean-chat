@@ -162,24 +162,26 @@ export function SelectField(props: FieldProps) {
 
   return (
     <FieldShell {...props}>
-      <select
-        id={fieldId(path)}
-        className="bb-select"
-        value={typeof value === "string" ? value : ""}
-        disabled={readOnly}
-        onChange={(event) => set(path, event.target.value, `enum:${path.join(".")}`)}
-      >
-        {required && typeof value === "string" && options.includes(value) ? null : (
-          <option value="">{i18n.t("inspector.choose")}</option>
-        )}
-        {/* The label, not the wire value. These rendered verbatim, so a select
-            offered `system_field` and `has_no_value` — see ENUM_LABELS. */}
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {variantLabel(option)}
-          </option>
-        ))}
-      </select>
+      <span className="bb-select-wrap">
+        <select
+          id={fieldId(path)}
+          className="bb-select"
+          value={typeof value === "string" ? value : ""}
+          disabled={readOnly}
+          onChange={(event) => set(path, event.target.value, `enum:${path.join(".")}`)}
+        >
+          {required && typeof value === "string" && options.includes(value) ? null : (
+            <option value="">{i18n.t("inspector.choose")}</option>
+          )}
+          {/* The label, not the wire value. These rendered verbatim, so a select
+              offered `system_field` and `has_no_value` — see ENUM_LABELS. */}
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {variantLabel(option)}
+            </option>
+          ))}
+        </select>
+      </span>
     </FieldShell>
   );
 }
@@ -197,31 +199,35 @@ export function ScalarField(props: FieldProps) {
   return (
     <FieldShell {...props}>
       <div className="flex gap-1">
-        <select
-          id={fieldId(path)}
-          className="bb-select w-28"
-          aria-label={i18n.t("fields.valueKind")}
-          value={kind}
-          disabled={readOnly}
-          onChange={(event) => {
-            const next = event.target.value;
-            set(path, next === "number" ? 0 : next === "boolean" ? true : String(value ?? ""), `scalar:${path.join(".")}`);
-          }}
-        >
-          <option value="text">{i18n.t("fields.kindText")}</option>
-          <option value="number">{i18n.t("fields.kindNumber")}</option>
-          <option value="boolean">{i18n.t("fields.kindBoolean")}</option>
-        </select>
-        {kind === "boolean" ? (
+        <span className="bb-select-wrap w-28">
           <select
+            id={fieldId(path)}
             className="bb-select"
-            value={value === true ? "true" : "false"}
+            aria-label={i18n.t("fields.valueKind")}
+            value={kind}
             disabled={readOnly}
-            onChange={(event) => set(path, event.target.value === "true", `scalar:${path.join(".")}`)}
+            onChange={(event) => {
+              const next = event.target.value;
+              set(path, next === "number" ? 0 : next === "boolean" ? true : String(value ?? ""), `scalar:${path.join(".")}`);
+            }}
           >
-            <option value="true">{i18n.t("fields.yes")}</option>
-            <option value="false">{i18n.t("fields.no")}</option>
+            <option value="text">{i18n.t("fields.kindText")}</option>
+            <option value="number">{i18n.t("fields.kindNumber")}</option>
+            <option value="boolean">{i18n.t("fields.kindBoolean")}</option>
           </select>
+        </span>
+        {kind === "boolean" ? (
+          <span className="bb-select-wrap">
+            <select
+              className="bb-select"
+              value={value === true ? "true" : "false"}
+              disabled={readOnly}
+              onChange={(event) => set(path, event.target.value === "true", `scalar:${path.join(".")}`)}
+            >
+              <option value="true">{i18n.t("fields.yes")}</option>
+              <option value="false">{i18n.t("fields.no")}</option>
+            </select>
+          </span>
         ) : (
           <input
             type={kind === "number" ? "number" : "text"}

@@ -104,15 +104,26 @@ this issue), so nothing here reaches a CDN.
     // it would be the one element on the page that does not follow the theme.
     // No hex fallbacks: tests/test_theme_tokens.py proves every name below is
     // defined, and a fallback would only be a second copy of the palette to drift.
-    var style = getComputedStyle(document.documentElement);
-    var token = function (name) { return style.getPropertyValue(name).trim(); };
+    //
+    // Resolved through a hidden probe element, not getPropertyValue: a custom
+    // property's computed value is its own literal text (from Phase 2c on,
+    // "light-dark(#a, #b)"), never resolved to a real colour except where a
+    // real CSS property consumes it — probe.style.color = 'var(--primary)'
+    // followed by getComputedStyle(probe).color is where that happens.
+    var probe = document.createElement("span");
+    probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;";
+    document.body.appendChild(probe);
+    var token = function (name) {
+      probe.style.color = "var(" + name + ")";
+      return getComputedStyle(probe).color;
+    };
     var lines = [
-      { key: "sent", label: "{{ chart_label_sent|escapejs }}", color: token("--primary") },
-      { key: "delivered", label: "{{ chart_label_delivered|escapejs }}", color: token("--success-700") },
-      { key: "failed", label: "{{ chart_label_failed|escapejs }}", color: token("--error-700") },
-      { key: "clicked", label: "{{ chart_label_clicked|escapejs }}", color: token("--text-secondary") }
+      { key: "sent", label: "{{ chart_label_sent|escapejs }}", tokenName: "--primary", color: token("--primary") },
+      { key: "delivered", label: "{{ chart_label_delivered|escapejs }}", tokenName: "--success-700", color: token("--success-700") },
+      { key: "failed", label: "{{ chart_label_failed|escapejs }}", tokenName: "--error-700", color: token("--error-700") },
+      { key: "clicked", label: "{{ chart_label_clicked|escapejs }}", tokenName: "--text-secondary", color: token("--text-secondary") }
     ];
-    new Chart(canvas, {
+    var chart = new Chart(canvas, {
       type: "line",
       data: {
         labels: payload.labels,
@@ -138,6 +149,20 @@ this issue), so nothing here reaches a CDN.
           y: { beginAtZero: true, ticks: { precision: 0 } }
         }
       }
+    });
+
+    // *system* mode resolves color-scheme from the OS live, with no reload —
+    // a chart built once at load would otherwise go stale the instant the OS
+    // flips. Explicit light/dark mode needs no listener: color-scheme there
+    // comes from data-color-mode, not the OS, and nothing changes without a
+    // navigation, which already rebuilds the whole page.
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      chart.data.datasets.forEach(function (dataset, i) {
+        var color = token(lines[i].tokenName);
+        dataset.borderColor = color;
+        dataset.backgroundColor = color;
+      });
+      chart.update();
     });
   })();
 </script>

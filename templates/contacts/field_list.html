@@ -28,9 +28,11 @@ partial.
         </div>
         <div class="field field-inline">
             <label class="field-label" for="new-field-type">{% translate "Type" %}</label>
-            <select class="form-input-styled bb-select" id="new-field-type" name="field_type" required style="width: 11rem;">
+            <span class="bb-select-wrap" style="width: 11rem;">
+            <select class="form-input-styled bb-select" id="new-field-type" name="field_type" required>
                 {% for value, label in field_types %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
             </select>
+            </span>
         </div>
         <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Add it" %}</button>
         <button type="button" class="btn-pill-secondary btn-pill-sm" @click="adding = false">{% translate "Cancel" %}</button>

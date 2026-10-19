@@ -210,6 +210,47 @@ class TestEveryTokenIsDefined:
         )
 
 
+class TestFlowBuilderXyMapping:
+    """#flow-builder maps xyflow's whole --xy-* variable surface onto our own
+    tokens (Architecture note in styles.css: the builder's stylesheet loads
+    after this one, unlayered, and every xyflow rule reads
+    var(--xy-thing, var(--xy-thing-default)), so the unsuffixed name set here
+    wins by inheritance regardless of source order). Deleting the mapping
+    entirely isn't a colour literal (already guarded above) or an undefined
+    var() (also already guarded) — it's just the builder quietly reverting to
+    xyflow's own light defaults, with nothing else to catch it.
+    """
+
+    #: A bare number (line width) and the universal `transparent` keyword —
+    #: neither carries a palette value, so neither needs to be var(--token).
+    #: Every other --xy-* property here should.
+    _NON_COLOUR = frozenset({"--xy-edge-stroke-width", "--xy-attribution-background-color"})
+
+    def test_the_mapping_survives_and_stays_tokenised(self):
+        css = _blank_comments(STYLES.read_text(), _COMMENT)
+        match = re.search(r"#flow-builder\s*\{([^}]*)\}", css, re.DOTALL)
+        assert match, (
+            "#flow-builder is gone from styles.css — the builder would fall back to xyflow's own light defaults"
+        )
+        declarations = [
+            (name, value) for name, value in _DECLARATION.findall(match.group(1)) if name.startswith("--xy-")
+        ]
+
+        offenders = [
+            f"{name}: {value.strip()}"
+            for name, value in declarations
+            if name not in self._NON_COLOUR and "var(" not in value
+        ]
+        assert not offenders, _format(offenders, "every --xy-* colour here should read var(--our-token), not a literal")
+
+        # 28 as of Phase 2b; a lower count means a chunk of the mapping got
+        # deleted, not that xyflow shrank its own variable surface.
+        assert len(declarations) >= 25, (
+            f"only {len(declarations)} --xy-* declarations found under #flow-builder — "
+            "did part of the mapping get deleted?"
+        )
+
+
 class TestEveryRootCarriesTheTheme:
     def test_every_html_root_calls_theme_attrs(self):
         """``data-theme`` and ``data-color-mode`` are what the tokens resolve against,

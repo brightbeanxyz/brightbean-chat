@@ -245,10 +245,12 @@
   --dur-base:    200ms;
   --dur-slow:    350ms;
 
-  /* Inline SVG chevrons. A data: URI cannot read a custom property or
-     currentColor, so the stroke colour has to be baked into the encoded
-     markup — keeping the whole value here means there is still exactly one
-     place to change it. %2378716C is --neutral-500. */
+  /* Inline SVG chevrons — shape only, consumed as mask-image (styles.css:
+     .bb-select-wrap/.bb-filter-select-wrap), not background-image, since
+     Phase 2b. mask-image reads only a source's alpha, so %2378716C
+     (--neutral-500) baked into the stroke no longer has any visible effect;
+     kept rather than re-encoded to avoid churn over a value nothing reads
+     anymore. The wrapper's own `color` is what the chevron actually shows. */
   --chevron-neutral: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2378716C' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
   --chevron-neutral-sm: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 

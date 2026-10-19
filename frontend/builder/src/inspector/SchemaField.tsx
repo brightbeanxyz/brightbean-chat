@@ -427,21 +427,23 @@ export function VariantField({
           {required ? null : <span className="fb-empty"> {i18n.t("inspector.optional")}</span>}
         </>
       )}
-      <select
-        id={fieldId(path)}
-        aria-label={labelFor(propertyName, schema.title)}
-        className="bb-select"
-        value={typeof current === "string" ? current : ""}
-        disabled={readOnly}
-        onChange={(event) => set(path, seedVariant(rawSchema, event.target.value), `variant:${formatPath(path)}`)}
-      >
-        <option value="">{i18n.t("inspector.choose")}</option>
-        {tags.map((tag) => (
-          <option key={tag} value={tag}>
-            {variantLabel(tag)}
-          </option>
-        ))}
-      </select>
+      <span className="bb-select-wrap">
+        <select
+          id={fieldId(path)}
+          aria-label={labelFor(propertyName, schema.title)}
+          className="bb-select"
+          value={typeof current === "string" ? current : ""}
+          disabled={readOnly}
+          onChange={(event) => set(path, seedVariant(rawSchema, event.target.value), `variant:${formatPath(path)}`)}
+        >
+          <option value="">{i18n.t("inspector.choose")}</option>
+          {tags.map((tag) => (
+            <option key={tag} value={tag}>
+              {variantLabel(tag)}
+            </option>
+          ))}
+        </select>
+      </span>
       {branch ? (
         <div className="fb-subgroup">
           {BranchOverride ? (
@@ -506,23 +508,25 @@ export function UnionField({
           {required ? null : <span className="fb-empty"> {i18n.t("inspector.optional")}</span>}
         </>
       )}
-      <select
-        id={fieldId(path)}
-        aria-label={labelFor(propertyName, schema.title)}
-        className="bb-select"
-        value={current === -1 ? "" : String(current)}
-        disabled={readOnly}
-        onChange={(event) =>
-          set(path, defaultFor(branchAt(rawSchema, Number(event.target.value))), `union:${formatPath(path)}`)
-        }
-      >
-        {current === -1 ? <option value="">{i18n.t("inspector.choose")}</option> : null}
-        {labels.map((label, index) => (
-          <option key={index} value={index}>
-            {label}
-          </option>
-        ))}
-      </select>
+      <span className="bb-select-wrap">
+        <select
+          id={fieldId(path)}
+          aria-label={labelFor(propertyName, schema.title)}
+          className="bb-select"
+          value={current === -1 ? "" : String(current)}
+          disabled={readOnly}
+          onChange={(event) =>
+            set(path, defaultFor(branchAt(rawSchema, Number(event.target.value))), `union:${formatPath(path)}`)
+          }
+        >
+          {current === -1 ? <option value="">{i18n.t("inspector.choose")}</option> : null}
+          {labels.map((label, index) => (
+            <option key={index} value={index}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </span>
       {branch ? (
         <div className="fb-subgroup">
           {scalarBranch ? (

@@ -130,10 +130,12 @@ inert.
           {% translate "selected" as selected_word %}
           <span class="text-xs" x-text="count + ' {{ selected_word|escapejs }}'"></span>
           <label class="sr-only" for="bulk-label">{% translate "Label" %}</label>
+          <span class="bb-select-wrap">
           <select id="bulk-label" class="bb-select" name="label" required>
             <option value="">{% translate "Choose a label…" %}</option>
             {% for option in label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
           </select>
+          </span>
           <button type="submit" class="btn-outline btn-inline" name="action" value="add">{% translate "Add" %}</button>
           <button type="submit" class="btn-outline btn-inline" name="action" value="remove">{% translate "Remove" %}</button>
           <button type="button" class="btn-link btn-inline" @click="clear()">{% translate "Clear" %}</button>

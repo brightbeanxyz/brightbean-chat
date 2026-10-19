@@ -39,9 +39,11 @@ can demote the person reading it, is not a thing to leave lying in a list.
         </div>
         <div class="field">
             <label class="field-label" for="invite-role">{% translate "Organization role" %}</label>
-            <select class="form-input-styled bb-select" id="invite-role" name="org_role" style="width: 14rem;">
+            <span class="bb-select-wrap" style="width: 14rem;">
+            <select class="form-input-styled bb-select" id="invite-role" name="org_role">
                 {% for value, label in org_role_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
             </select>
+            </span>
         </div>
         <div class="field">
             <span class="field-label">{% translate "Workspace access" %}</span>
@@ -52,9 +54,11 @@ can demote the person reading it, is not a thing to leave lying in a list.
                     <span class="field-check-body"><span class="field-label">{{ workspace.name }}</span></span>
                 </label>
                 {% blocktranslate asvar role_in_ws_label with name=workspace.name %}Role in {{ name }}{% endblocktranslate %}
-                <select class="form-input-styled bb-select" name="ws_role_{{ workspace.id }}" aria-label="{{ role_in_ws_label }}" style="width: 12rem;">
+                <span class="bb-select-wrap" style="width: 12rem;">
+                <select class="form-input-styled bb-select" name="ws_role_{{ workspace.id }}" aria-label="{{ role_in_ws_label }}">
                     {% for value, label in workspace_roles %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
                 </select>
+                </span>
             </div>
             {% empty %}
             <p class="section-note">{% translate "You cannot manage members in any workspace yet." %}</p>
@@ -101,9 +105,11 @@ can demote the person reading it, is not a thing to leave lying in a list.
             <form x-show="changing" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" method="post" action="{% url 'members:update_role' membership_id=row.membership.id %}">
                 {% csrf_token %}
                 <label class="sr-only" for="role-{{ row.membership.id }}">{% translate "Organization role" %}</label>
-                <select class="form-input-styled bb-select" id="role-{{ row.membership.id }}" name="org_role" style="width: 14rem;">
+                <span class="bb-select-wrap" style="width: 14rem;">
+                <select class="form-input-styled bb-select" id="role-{{ row.membership.id }}" name="org_role">
                     {% for value, label in org_role_choices %}<option value="{{ value }}" {% if row.membership.org_role == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
                 </select>
+                </span>
                 <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Update" %}</button>
                 <button type="button" class="btn-pill-secondary btn-pill-sm" @click="changing = false">{% translate "Cancel" %}</button>
             </form>

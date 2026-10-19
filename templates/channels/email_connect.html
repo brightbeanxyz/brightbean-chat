@@ -92,11 +92,13 @@ submit either — the view's `_echoed` names only non-secret fields.
             </div>
             <div class="field">
                 <label class="field-label" for="security">{% translate "Encryption" %}</label>
-                <select class="form-input-styled bb-select" id="security" name="security" style="width: 18rem;">
+                <span class="bb-select-wrap" style="width: 18rem;">
+                <select class="form-input-styled bb-select" id="security" name="security">
                     <option value="starttls" {% if form.security == "starttls" or not form.security %}selected{% endif %}>STARTTLS ({% translate "port" %} 587)</option>
                     <option value="ssl" {% if form.security == "ssl" %}selected{% endif %}>SSL/TLS ({% translate "port" %} 465)</option>
                     <option value="none" {% if form.security == "none" %}selected{% endif %}>{% translate "None" %}</option>
                 </select>
+                </span>
                 <p class="field-hint">{% blocktranslate %}Choose "none" only for a relay on your own private network.{% endblocktranslate %}</p>
             </div>
             <div class="field">

@@ -97,10 +97,12 @@ or PSID. All of it renders escaped; none of it becomes a URL.
         hx-trigger="change">
     {% csrf_token %}
     <label class="sr-only" for="add-tag-{{ conversation.id }}">{% translate "Add a tag" %}</label>
+    <span class="bb-select-wrap">
     <select class="bb-select" id="add-tag-{{ conversation.id }}" name="tag">
       <option value="">{% translate "Add a tag…" %}</option>
       {% for tag in available_tags %}<option value="{{ tag.id }}">{{ tag.name }}</option>{% endfor %}
     </select>
+    </span>
   </form>
 {% endif %}
 

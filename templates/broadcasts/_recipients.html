@@ -14,11 +14,13 @@ template value (SECURITY-BASELINE §2).
       hx-swap="innerHTML"
       hx-trigger="change">
     <label for="recipient-status" class="bc-hint">{% translate "Show" %}</label>
+    <span class="bb-filter-select-wrap">
     <select id="recipient-status" name="status" class="bb-filter-select">
         {% for value, label in status_options %}
         <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
     </select>
+    </span>
 </form>
 
 <table class="w-full text-sm">

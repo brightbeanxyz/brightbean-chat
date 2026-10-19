@@ -54,10 +54,12 @@ refuses what the view would refuse.
             </p>
             <div class="field">
                 <label class="field-label" for="ws-timezone">{% translate "Timezone" %}</label>
+                <span class="bb-select-wrap bb-select-wrap--full">
                 <select class="form-input-styled bb-select" id="ws-timezone" name="timezone">
                     <option value="">{% blocktranslate with default_tz=request.org.default_timezone %}Use the organization default ({{ default_tz }}){% endblocktranslate %}</option>
                     {% for name in timezone_choices %}<option value="{{ name }}" {% if name == request.workspace.timezone %}selected{% endif %}>{{ name }}</option>{% endfor %}
                 </select>
+                </span>
             </div>
         </section>
 

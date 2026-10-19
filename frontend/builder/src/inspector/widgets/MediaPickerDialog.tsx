@@ -102,33 +102,37 @@ export function MediaPickerDialog({ env, platform, kind: fixedKind, onPick, onCl
           onChange={(event) => setTerm(event.target.value)}
         />
         {fixedKind ? null : (
+          <span className="bb-select-wrap w-28">
+            <select
+              className="bb-select"
+              aria-label={i18n.t("mediaPicker.kindLabel")}
+              value={kind}
+              onChange={(event) => setKind(event.target.value)}
+            >
+              {KINDS.map((option) => (
+                <option key={option} value={option}>
+                  {option === "" ? i18n.t("mediaPicker.anyKind") : variantLabel(option)}
+                </option>
+              ))}
+            </select>
+          </span>
+        )}
+        <span className="bb-select-wrap w-32">
           <select
-            className="bb-select w-28"
-            aria-label={i18n.t("mediaPicker.kindLabel")}
-            value={kind}
-            onChange={(event) => setKind(event.target.value)}
+            className="bb-select"
+            aria-label={i18n.t("mediaPicker.folderLabel")}
+            value={folder}
+            onChange={(event) => setFolder(event.target.value)}
           >
-            {KINDS.map((option) => (
-              <option key={option} value={option}>
-                {option === "" ? i18n.t("mediaPicker.anyKind") : variantLabel(option)}
+            <option value="">{i18n.t("mediaPicker.allFolders")}</option>
+            <option value={ROOT_FOLDER}>{i18n.t("mediaPicker.noFolder")}</option>
+            {folders.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.name}
               </option>
             ))}
           </select>
-        )}
-        <select
-          className="bb-select w-32"
-          aria-label={i18n.t("mediaPicker.folderLabel")}
-          value={folder}
-          onChange={(event) => setFolder(event.target.value)}
-        >
-          <option value="">{i18n.t("mediaPicker.allFolders")}</option>
-          <option value={ROOT_FOLDER}>{i18n.t("mediaPicker.noFolder")}</option>
-          {folders.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.name}
-            </option>
-          ))}
-        </select>
+        </span>
         <button type="button" className="btn-link text-xs" onClick={onClose}>
           {i18n.t("mediaPicker.close")}
         </button>

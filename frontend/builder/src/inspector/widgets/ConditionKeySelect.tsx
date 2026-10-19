@@ -44,21 +44,23 @@ export function ConditionKeySelect(props: FieldProps) {
 
   return (
     <FieldShell {...props}>
-      <select
-        id={fieldId(path)}
-        className="bb-select"
-        value={current}
-        disabled={readOnly}
-        onChange={(event) => set(path, event.target.value, `key:${path.join(".")}`)}
-      >
-        <option value="">Choose…</option>
-        {options.map((option) => (
-          <option key={option.id} value={option.id}>
-            {option.label}
-          </option>
-        ))}
-        {current && !known ? <option value={current}>{current} (no longer available)</option> : null}
-      </select>
+      <span className="bb-select-wrap">
+        <select
+          id={fieldId(path)}
+          className="bb-select"
+          value={current}
+          disabled={readOnly}
+          onChange={(event) => set(path, event.target.value, `key:${path.join(".")}`)}
+        >
+          <option value="">Choose…</option>
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.label}
+            </option>
+          ))}
+          {current && !known ? <option value={current}>{current} (no longer available)</option> : null}
+        </select>
+      </span>
       {options.length === 0 ? (
         <p className="fb-field-help">
           Nothing to choose from yet — create one first, then come back to this rule.

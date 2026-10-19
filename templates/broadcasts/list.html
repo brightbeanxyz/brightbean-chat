@@ -32,11 +32,13 @@ actually happens. There is no platform name in this file.
         <input type="text" name="name" maxlength="200" required placeholder="{{ new_broadcast_name_label }}"
                class="form-input-styled" style="width: 14rem;" aria-label="{{ new_broadcast_name_label }}">
         <label class="sr-only" for="new-broadcast-connection">{% translate "Channel" %}</label>
+        <span class="bb-filter-select-wrap">
         <select id="new-broadcast-connection" name="connection_id" class="bb-filter-select" required>
             {% for connection in connections %}
             <option value="{{ connection.id }}">{{ connection.display_name }}</option>
             {% endfor %}
         </select>
+        </span>
         <button type="submit" class="btn-brand btn-inline">{% translate "Create" %}</button>
     </form>
     {% endif %}

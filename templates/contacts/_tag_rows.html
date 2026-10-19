@@ -62,10 +62,12 @@ the menu with the other twice-a-year action.
       <form x-show="merging" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_merge' workspace_id=request.workspace.id tag_id=tag.id %}" hx-confirm="{{ tag_merge_confirm }}" @htmx:after-request="if (bbChanged($event, 'tagsChanged')) merging = false">
         {% blocktranslate asvar tag_merge_into_label with name=tag.name %}Merge {{ name }} into{% endblocktranslate %}
         <label class="sr-only" for="tag-merge-{{ tag.id }}">{{ tag_merge_into_label }}</label>
-        <select class="form-input-styled bb-select" id="tag-merge-{{ tag.id }}" name="target_id" required style="width: 16rem;">
+        <span class="bb-select-wrap" style="width: 16rem;">
+        <select class="form-input-styled bb-select" id="tag-merge-{{ tag.id }}" name="target_id" required>
           <option value="">{% translate "Choose a tag…" %}</option>
           {% for other in tags %}{% if other.id != tag.id %}<option value="{{ other.id }}">{{ other.name }}</option>{% endif %}{% endfor %}
         </select>
+        </span>
         <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Merge" %}</button>
         <button type="button" class="btn-pill-secondary btn-pill-sm" @click="merging = false">{% translate "Cancel" %}</button>
       </form>

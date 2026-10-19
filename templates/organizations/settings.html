@@ -29,9 +29,11 @@ workspace without its own clock reads — so its select has no blank option.
             </div>
             <div class="field">
                 <label class="field-label" for="org-tz">{% translate "Default timezone" %}</label>
+                <span class="bb-select-wrap bb-select-wrap--full">
                 <select class="form-input-styled bb-select" id="org-tz" name="default_timezone">
                     {% for name in timezone_choices %}<option value="{{ name }}" {% if name == request.org.default_timezone %}selected{% endif %}>{{ name }}</option>{% endfor %}
                 </select>
+                </span>
                 <p class="field-hint">{% translate "Every workspace that has not set its own clock keeps this one." %}</p>
             </div>
             <div class="field">

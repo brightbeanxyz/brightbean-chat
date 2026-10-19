@@ -1801,14 +1801,51 @@ span.flatpickr-weekday {
 }
 
 /* Select with a custom chevron inset from the edge (the native arrow hugs
-   the right border). Pair with the usual border/padding utility classes. */
+   the right border). Pair with the usual border/padding utility classes.
+   <select> can't host generated content itself at a Baseline 2024 floor
+   (Customizable Select isn't there), so the chevron lives on a wrapper's
+   ::after instead, masked by the same SVG shape --chevron-neutral always
+   was — mask-image only reads a source's alpha, so the stroke colour baked
+   into that data-URI stopped mattering the moment it became a mask rather
+   than a background-image, and painting the shape with currentColor (via
+   `color: var(--text-tertiary)` below) is what lets it track dark mode
+   automatically once that token does, with no separate dark stroke to pick.
+
+   Wrap the <select> in `<span class="bb-select-wrap">` (`--full` if the
+   select should stretch to fill its row, matching .form-input-styled's own
+   width: 100% — plain wraps content-width, right for anything with an
+   explicit inline width or no width opinion of its own). */
+.bb-select-wrap {
+  position: relative;
+  display: inline-block;
+}
+.bb-select-wrap--full {
+  display: block;
+  width: 100%;
+}
+.bb-select-wrap::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  color: var(--text-tertiary);
+  background-color: currentColor;
+  -webkit-mask-image: var(--chevron-neutral);
+  mask-image: var(--chevron-neutral);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  pointer-events: none;
+}
 .bb-select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: var(--chevron-neutral);
-  background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  background-size: 1rem 1rem;
   padding-right: 2.5rem;
 }
 
@@ -1882,10 +1919,39 @@ span.flatpickr-weekday {
   appearance: none;
   -webkit-appearance: none;
   white-space: nowrap;
+}
+/* Only a *native* <select class="bb-filter-select"> needs this wrapper —
+   the {% ui_select %} trigger button carrying the same class already paints
+   its own chevron as a real inline <svg style="color: var(--text-ghost)">,
+   which is how it got dark-mode-correct colour before this phase existed;
+   wrapping it too would just stack a second, now-redundant one behind it.
+   flex-shrink moved here from .bb-filter-select itself: whichever element
+   is the direct flex child is the one that has to carry it, and wrapping
+   makes that this span, not the <select> anymore. */
+.bb-filter-select-wrap {
+  position: relative;
+  display: inline-block;
   flex-shrink: 0;
-  background-image: var(--chevron-neutral-sm);
-  background-repeat: no-repeat;
-  background-position: right 8px center;
+}
+.bb-filter-select-wrap::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 6px;
+  color: var(--text-tertiary);
+  background-color: currentColor;
+  -webkit-mask-image: var(--chevron-neutral-sm);
+  mask-image: var(--chevron-neutral-sm);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  pointer-events: none;
 }
 .bb-filter-select.has-icon {
   padding-left: 28px;

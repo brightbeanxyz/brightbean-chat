@@ -49,12 +49,14 @@ it under the reader mid-choice.
           hx-trigger="change">
       {% csrf_token %}
       <label class="sr-only" for="assignee-{{ conversation.id }}">{% translate "Assignee" %}</label>
+      <span class="bb-select-wrap">
       <select class="bb-select" id="assignee-{{ conversation.id }}" name="assignee">
         <option value="">{% translate "Unassigned" %}</option>
         {% for membership in members %}
           <option value="{{ membership.user_id }}" {% if conversation.assignee_id == membership.user_id %}selected{% endif %}>{{ membership.user.display_name }}</option>
         {% endfor %}
       </select>
+      </span>
     </form>
   {% else %}
     <span class="ib-chip">{% translate "Read only" %}</span>
@@ -89,10 +91,12 @@ it under the reader mid-choice.
           hx-trigger="change">
       {% csrf_token %}
       <label class="sr-only" for="label-picker-{{ conversation.id }}">{% translate "Add a label" %}</label>
+      <span class="bb-select-wrap">
       <select class="bb-select" id="label-picker-{{ conversation.id }}" name="label">
         <option value="">{% translate "Add a label…" %}</option>
         {% for option in thread_label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
       </select>
+      </span>
     </form>
   {% endif %}
 </div>

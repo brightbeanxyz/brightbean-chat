@@ -211,24 +211,35 @@ Split into five PRs, each its own branch off a fresh `main`
   border, or `--text-tertiary` itself — a branding call, not a
   guard-writing one).
 
-**2b — plumbing, light only.**
-- Chart: `flow_detail.html` currently reads tokens once via
-  `getPropertyValue` (the *unresolved* string) with no live update. Resolve
-  through a probe element (`probe.style.color = 'var(--x)'` →
-  `getComputedStyle(probe).color`), and re-render on
-  `matchMedia('(prefers-color-scheme: dark)').change`.
-- Select chevrons: `--chevron-neutral*` become a wrapper `::after`
-  pseudo-element, `mask-image`d by the SVG and painted `currentColor`, so
-  they track whatever text token 2c derives instead of a hand-picked dark
-  stroke colour. `<select>` doesn't carry pseudo-elements at a Baseline 2024
-  floor, so this touches markup, not just CSS: **17 templates** hold a
-  native `<select class="bb-select">` or `<select class="bb-filter-select">`
-  that need the wrapper. Share one include/snippet for the wrapper so the
-  per-template diff stays small. Delete `--chevron-neutral*` once done.
-- `#flow-builder` → `--xy-*`: **already mapped** (`styles.css:2310-2373`,
-  every value already a Layer-2 token) — nothing to change here. Add the
-  guard test only: assert the mapping block still exists and every value is
-  a `var()` reference, so a future edit can't silently drop it.
+**2b — plumbing, light only ✅ done**
+- Chart: `flow_detail.html` now resolves each token through a hidden probe
+  element (`probe.style.color = 'var(--x)'` → `getComputedStyle(probe)
+  .color`) instead of `getPropertyValue` on `:root` (which returns a custom
+  property's own *unresolved* text — harmless today, would hand Chart.js
+  the literal string `"light-dark(...)"` the moment 2c lands), and
+  re-renders on `matchMedia('(prefers-color-scheme: dark)').change`.
+- Select chevrons: `--chevron-neutral`/`--chevron-neutral-sm` are unchanged
+  (kept, not deleted — the baked-in stroke colour stopped mattering the
+  moment they became `mask-image` sources instead of `background-image`,
+  since a mask only reads a source's alpha; re-encoding them for no reason
+  would just be churn) but now consumed as `mask-image` on a wrapper's
+  `::after`, painted with `currentColor` via `color: var(--text-tertiary)`
+  — automatically dark-mode-correct once that token is, no separate dark
+  stroke to pick. `<select>` doesn't carry pseudo-elements at a Baseline
+  2024 floor, so this touched markup: **24 native `<select>` elements
+  across 17 templates**, each now wrapped in `<span class="bb-select-wrap">`
+  or `<span class="bb-filter-select-wrap">` (`--full` modifier, or an
+  inline width moved onto the wrapper, for the ones that need to size
+  themselves rather than shrink to content). Verified live (Playwright
+  against a real dev server, not just guard tests) across all three wrapper
+  shapes actually exercised — full-width, explicit pixel width, and the
+  compact filter-select — no layout regression, chevron correctly
+  positioned in every case.
+- `#flow-builder` → `--xy-*`: **already mapped** (`styles.css:2336-2373`,
+  every value already a Layer-2 token) — nothing to change there.
+  `TestFlowBuilderXyMapping` (`tests/test_theme_tokens.py`) now asserts the
+  mapping block still exists and every value stays `var()`, so a future
+  edit can't silently drop it.
 
 **2c — dark palette.**
 - `scripts/derive_dark_palette.py`: no stdlib OKLCH conversion exists

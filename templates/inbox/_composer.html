@@ -151,12 +151,14 @@ could flip by hand.
     <label class="sr-only" for="remind-at-{{ conversation.id }}">{% translate "Remind at" %}</label>
     <input id="remind-at-{{ conversation.id }}" class="form-datetime" type="datetime-local" name="remind_at">
     <label class="sr-only" for="remind-who-{{ conversation.id }}">{% translate "Remind" %}</label>
+    <span class="bb-select-wrap">
     <select id="remind-who-{{ conversation.id }}" class="bb-select" name="recipient">
       <option value="">{% translate "Me" %}</option>
       {% for membership in members %}
         <option value="{{ membership.user_id }}">{{ membership.user.display_name }}</option>
       {% endfor %}
     </select>
+    </span>
     <label class="sr-only" for="remind-note-{{ conversation.id }}">{% translate "Note" %}</label>
     {% translate "Chase the refund" as remind_note_placeholder %}
     <input id="remind-note-{{ conversation.id }}" type="text" name="note" maxlength="500" placeholder="{{ remind_note_placeholder }}">

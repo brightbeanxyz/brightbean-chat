@@ -41,9 +41,11 @@ destructive action is the one thing that must not be the row's obvious button.
         </div>
         <div class="field">
             <label class="field-label" for="key-workspace">{% translate "Workspace" %}</label>
-            <select class="form-input-styled bb-select" id="key-workspace" name="workspace" required style="width: 20rem;">
+            <span class="bb-select-wrap" style="width: 20rem;">
+            <select class="form-input-styled bb-select" id="key-workspace" name="workspace" required>
                 {% for workspace in workspaces %}<option value="{{ workspace.id }}" {% if workspace.id|stringformat:'s' == submitted_workspace %}selected{% endif %}>{{ workspace.name }}</option>{% endfor %}
             </select>
+            </span>
         </div>
         <div class="field">
             <span class="field-label">{% translate "Scopes" %}</span>

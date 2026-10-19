@@ -35,12 +35,14 @@ operator agrees to is computed from the rules they are looking at.
 
     <div class="bc-row mb-3">
       <label for="audience-segment" class="bc-hint">{% translate "Saved segment" %}</label>
+      <span class="bb-filter-select-wrap">
       <select id="audience-segment" name="segment" class="bb-filter-select" x-model="segment">
         <option value="">{% translate "Build the rules below" %}</option>
         {% for option in filter_config.segments %}
         <option value="{{ option.value }}">{{ option.label }}</option>
         {% endfor %}
       </select>
+      </span>
       <span class="bc-hint">{% translate "A segment is copied, not linked. Editing it later will not change this broadcast." %}</span>
     </div>
 

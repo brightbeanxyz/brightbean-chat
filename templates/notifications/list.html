@@ -32,6 +32,7 @@
 </div>
 
 <div class="flex flex-wrap items-center gap-2 mb-4">
+    <span class="bb-filter-select-wrap">
     <select name="event_type" aria-label="{% translate 'Filter by type' %}" class="bb-filter-select"
             hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
             hx-include="[name='read_state']">
@@ -40,6 +41,8 @@
         <option value="{{ value }}" {% if value == selected_event_type %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
     </select>
+    </span>
+    <span class="bb-filter-select-wrap">
     <select name="read_state" aria-label="{% translate 'Filter by read state' %}" class="bb-filter-select"
             hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
             hx-include="[name='event_type']">
@@ -47,6 +50,7 @@
         <option value="unread" {% if selected_read_state == "unread" %}selected{% endif %}>{% translate "Unread only" %}</option>
         <option value="read" {% if selected_read_state == "read" %}selected{% endif %}>{% translate "Read only" %}</option>
     </select>
+    </span>
 </div>
 
 {% comment %}

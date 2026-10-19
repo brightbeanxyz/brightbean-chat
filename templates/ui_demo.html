@@ -102,9 +102,11 @@ nothing but a form posting to a toast_response view.
         <div class="space-y-3 max-w-sm">
             <input type="text" class="form-input-styled" placeholder="Text input">
             <input type="text" class="form-input-styled is-error" placeholder="Input with an error">
+            <span class="bb-select-wrap bb-select-wrap--full">
             <select class="form-input-styled bb-select">
                 <option>Select with a custom chevron</option>
             </select>
+            </span>
             <label class="flex items-center gap-2 text-sm" style="color: var(--text-secondary);">
                 <input type="checkbox" class="bb-checkbox" checked> Checkbox, bean green
             </label>
@@ -130,7 +132,9 @@ nothing but a form posting to a toast_response view.
             </div>
             <div class="field">
                 <label class="field-label" for="demo-tz">Timezone<span class="field-label-optional">optional</span></label>
+                <span class="bb-select-wrap bb-select-wrap--full">
                 <select class="form-input-styled bb-select" id="demo-tz"><option>Europe/Berlin</option></select>
+                </span>
             </div>
             <div class="field">
                 <label class="field-label" for="demo-colour">Colour</label>
