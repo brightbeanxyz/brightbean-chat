@@ -57,3 +57,16 @@ class TestTraceToLiteralCycleGuard:
         tokens = {"--a": "var(--b)", "--b": "var(--a)"}
         with pytest.raises(ValueError, match="circular"):
             _trace_to_literal("--a", tokens)
+
+
+class TestTraceToLiteralStopsAtAFallback:
+    def test_a_fallback_with_an_undefined_primary_name_is_not_chased(self):
+        # var(--missing, ...) names a token that was never given its own
+        # entry on purpose — that's what the fallback is for. Chasing into
+        # --missing anyway would KeyError on the next lookup (found by
+        # ai-zirek[bot] reviewing PR #17, from an earlier version of
+        # _VAR_CALL that matched the fallback form). Stopping here and
+        # returning --has-fallback's own name, same as any other
+        # non-bare-var() value, is what keeps this safe.
+        tokens = {"--has-fallback": "var(--missing, #FAFAFA)"}
+        assert _trace_to_literal("--has-fallback", tokens) == "--has-fallback"

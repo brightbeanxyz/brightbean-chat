@@ -201,11 +201,21 @@ _NEUTRAL_CHROMA_THRESHOLD = 0.008
 _MIN_TINT_CHROMA = 0.04
 
 _HEX_LITERAL = re.compile(r"^#[0-9a-fA-F]{6}$")
-#: re.DOTALL to match test_theme_contrast.py's own copy of this pattern — a
-#: fallback value broken onto a second line would otherwise match there but
-#: not here (found reviewing this PR: the fallback-comma group below was
-#: copied over, the flag wasn't).
-_VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,.*)?\)", re.DOTALL)
+#: Deliberately narrower than test_theme_contrast.py's _VAR_CALL, which
+#: matches and discards a `var(x, fallback)` fallback — that's safe there
+#: because _resolve only ever needs *a* colour and test_theme_tokens.py's
+#: own guard keeps x always defined, so the fallback is accepted dead code.
+#: _trace_to_literal has a different job: finding the name that actually
+#: *holds* a value, to look its OKLCH up by. A `var(x, fallback)` entry
+#: already supplies its own terminal value regardless of whether x
+#: resolves — chasing into x here, instead of stopping, means an x that
+#: isn't independently defined (the exact case a fallback exists for)
+#: raises KeyError at the next raw_tokens[name] lookup instead of treating
+#: this token as the literal/non-hex value it actually is. A version of
+#: this pattern that matched the fallback form did exactly that (found by
+#: ai-zirek[bot] reviewing this PR) — reverted rather than taught to
+#: resolve the fallback, since this function was never meant to.
+_VAR_CALL = re.compile(r"var\(\s*(--[\w-]+)\s*\)")
 
 
 def _trace_to_literal(name: str, raw_tokens: dict[str, str], _seen: frozenset[str] = frozenset()) -> str:
