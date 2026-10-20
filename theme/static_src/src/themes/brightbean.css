@@ -2,8 +2,8 @@
  * Regenerate after any Layer-1 colour change in tokens.css. */
 
 [data-theme="brightbean"] {
-  --brand-50: light-dark(#FFF7ED, #0F0A05);
-  --brand-75: light-dark(#FFF3E8, #110904);
+  --brand-50: light-dark(#FFF7ED, #130900);
+  --brand-75: light-dark(#FFF3E8, #150800);
   --brand-100: light-dark(#FFEDD5, #130900);
   --brand-200: light-dark(#FED7AA, #7F5E34);
   --brand-300: light-dark(#FDBA74, #190A00);
@@ -13,8 +13,8 @@
   --brand-700: light-dark(#C2410C, #D95729);
   --brand-800: light-dark(#9A3412, #AE4727);
   --brand-900: light-dark(#7C2D12, #B86348);
-  --brand-green-50: light-dark(#F1F6E9, #0A0C05);
-  --brand-green-100: light-dark(#EFF2DC, #0B0C01);
+  --brand-green-50: light-dark(#F1F6E9, #080E00);
+  --brand-green-100: light-dark(#EFF2DC, #0B0C00);
   --brand-green-200: light-dark(#DDE4B9, #626841);
   --brand-green-500: light-dark(#94A43F, #2F3600);
   --brand-green-600: light-dark(#7B8A33, #434D00);
@@ -38,28 +38,28 @@
   --text-inverse: light-dark(#FFFFFF, #0B0B0B);
   --color-illustration-card: light-dark(#FFFFFF, #0B0B0B);
   --warning-500: light-dark(#EAB308, #7F6000);
-  --warning-50: light-dark(#FEFCE8, #0D0B01);
+  --warning-50: light-dark(#FEFCE8, #0E0B00);
   --warning-700: light-dark(#A16207, #AA6B18);
   --warning-200: light-dark(#FDE68A, #0F0B00);
   --error-500: light-dark(#EF4444, #C81022);
-  --error-50: light-dark(#FEF2F2, #100909);
+  --error-50: light-dark(#FEF2F2, #190406);
   --error-700: light-dark(#B91C1C, #DA4139);
   --error-600: light-dark(#DC2626, #96000B);
   --info-500: light-dark(#3B82F6, #003A90);
-  --info-50: light-dark(#EFF6FF, #070B11);
+  --info-50: light-dark(#EFF6FF, #020B1B);
   --info-700: light-dark(#1D4ED8, #2356E0);
   --accent-teal: light-dark(#14B8A6, #00352F);
-  --accent-teal-soft: light-dark(#F0FDFA, #050D0B);
+  --accent-teal-soft: light-dark(#F0FDFA, #000F0C);
   --accent-sky: light-dark(#0EA5E9, #003650);
-  --accent-sky-soft: light-dark(#F0F9FF, #070C10);
+  --accent-sky-soft: light-dark(#F0F9FF, #000D17);
   --accent-rose: light-dark(#F43F5E, #740020);
-  --accent-rose-soft: light-dark(#FFF1F2, #110909);
+  --accent-rose-soft: light-dark(#FFF1F2, #190407);
   --accent-amber: light-dark(#F59E0B, #2C1800);
-  --accent-amber-soft: light-dark(#FFFBEB, #0E0B03);
+  --accent-amber-soft: light-dark(#FFFBEB, #0F0B00);
   --accent-indigo: light-dark(#6366F1, #3A2CB6);
-  --accent-indigo-soft: light-dark(#EEF2FF, #090B13);
+  --accent-indigo-soft: light-dark(#EEF2FF, #06091C);
   --accent-emerald: light-dark(#10B981, #003925);
-  --accent-emerald-soft: light-dark(#ECFDF5, #040E09);
+  --accent-emerald-soft: light-dark(#ECFDF5, #000F08);
   --accent-indigo-ink: light-dark(#3730A3, #6A70E8);
   --accent-teal-ink: light-dark(#0F766E, #328E85);
 }
