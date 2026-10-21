@@ -11,6 +11,7 @@ this app renders.
 
 import ast
 import re
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -31,13 +32,41 @@ def _url(name, tenancy, **kwargs):
 
 @pytest.mark.django_db
 class TestChannelSelector:
-    def test_a_platform_that_forbids_broadcasts_is_absent(self, tenancy):
-        """SPEC §13.2: "Instagram never appears in the broadcast channel selector".
-
-        Asserted through ``PlatformPolicy.broadcast_allowed`` rather than through
-        the name: what has to be true is that the *flag* governs, so a future
-        platform that forbids broadcasts is excluded the day its policy row lands.
+    def test_the_flag_decides_which_platforms_are_offered(self, tenancy):
+        """Asserted through ``PlatformPolicy.broadcast_allowed``, never a name:
+        what has to be true is that the *flag* governs, so a platform that
+        forbids broadcasts is excluded the day its policy row says so.
         """
+        self._one_connection_per_platform(tenancy)
+
+        offered = {connection.platform for connection in composer.broadcastable_connections(tenancy.workspace)}
+        allowed = {p for p in Platform.values if channel_policy.policy_for(p).broadcast_allowed}
+
+        assert offered == allowed
+        # And, concretely: every shipped platform permits broadcasts, Instagram
+        # included. What narrows an Instagram broadcast is its messaging window
+        # (SPEC §6.3), which is the audience step's business and not this list's.
+        assert offered == set(Platform.values)
+
+    def test_a_platform_that_forbids_broadcasts_is_absent(self, tenancy, monkeypatch):
+        """The exclusion, on a synthetic row, because no shipped row sets it.
+
+        SPEC §13.2's selector rule outlived the platform it was written for. It
+        is still the rule, so it is still tested — with a policy row patched to
+        forbid broadcasts, which is exactly the shape a future platform's row
+        would have.
+        """
+        self._one_connection_per_platform(tenancy)
+        forbidden = replace(channel_policy.POLICIES[Platform.INSTAGRAM], broadcast_allowed=False)
+        monkeypatch.setitem(channel_policy.POLICIES, Platform.INSTAGRAM, forbidden)
+
+        offered = {connection.platform for connection in composer.broadcastable_connections(tenancy.workspace)}
+
+        assert Platform.INSTAGRAM not in offered
+        assert offered == set(Platform.values) - {Platform.INSTAGRAM}
+
+    @staticmethod
+    def _one_connection_per_platform(tenancy):
         for platform in Platform.values:
             ChannelConnection.objects.create(
                 workspace=tenancy.workspace,
@@ -47,28 +76,23 @@ class TestChannelSelector:
                 status=ConnectionStatus.ACTIVE,
             )
 
-        offered = {connection.platform for connection in composer.broadcastable_connections(tenancy.workspace)}
-        allowed = {p for p in Platform.values if channel_policy.policy_for(p).broadcast_allowed}
-
-        assert offered == allowed
-        # And, concretely, the one SPEC names.
-        assert Platform.INSTAGRAM not in offered
-
     def test_a_disabled_connection_is_not_offered(self, tenancy, connection):
         connection.status = ConnectionStatus.DISABLED
         connection.save(update_fields=["status"])
 
         assert composer.broadcastable_connections(tenancy.workspace) == []
 
-    def test_creating_on_a_forbidden_channel_404s_rather_than_validating(self, tenancy, client_for):
-        """The endpoint has to agree with the selector, or "never appears" is
-        only true of the markup."""
-        instagram = ChannelConnection.objects.create(
-            workspace=tenancy.workspace,
-            platform=Platform.INSTAGRAM,
-            display_name="IG",
-            external_id=f"ig-{tenancy.slug}",
-            status=ConnectionStatus.ACTIVE,
+    def test_creating_on_a_forbidden_channel_404s_rather_than_validating(
+        self, tenancy, client_for, monkeypatch, instagram_connection
+    ):
+        """The endpoint has to agree with the selector, or the exclusion is only
+        true of the markup. On a synthetic row, since no shipped row forbids
+        broadcasts — the rule is about the *flag*, which is what is patched."""
+        instagram = instagram_connection
+        monkeypatch.setitem(
+            channel_policy.POLICIES,
+            Platform.INSTAGRAM,
+            replace(channel_policy.POLICIES[Platform.INSTAGRAM], broadcast_allowed=False),
         )
 
         response = client_for(tenancy.owner).post(
@@ -78,19 +102,33 @@ class TestChannelSelector:
         assert response.status_code == 404
         assert not Broadcast.objects.for_workspace(tenancy.workspace).exists()
 
-    def test_the_service_refuses_it_too(self, tenancy):
-        instagram = ChannelConnection.objects.create(
-            workspace=tenancy.workspace,
-            platform=Platform.INSTAGRAM,
-            display_name="IG",
-            external_id=f"ig2-{tenancy.slug}",
-            status=ConnectionStatus.ACTIVE,
+    def test_the_service_refuses_it_too(self, tenancy, monkeypatch, instagram_connection):
+        instagram = instagram_connection
+        monkeypatch.setitem(
+            channel_policy.POLICIES,
+            Platform.INSTAGRAM,
+            replace(channel_policy.POLICIES[Platform.INSTAGRAM], broadcast_allowed=False),
         )
 
         with pytest.raises(services.BroadcastError, match="does not allow broadcasts"):
             services.create_broadcast(
                 workspace=tenancy.workspace, name="Nope", connection=instagram, user=tenancy.owner
             )
+
+    def test_an_instagram_draft_is_created_like_any_other(self, tenancy, client_for, instagram_connection):
+        """Unpatched, which is the point: the platform SPEC §13.2 once excluded
+        now reaches the composer, and the window narrows it from there."""
+        instagram = instagram_connection
+
+        response = client_for(tenancy.owner).post(
+            _url("broadcasts:create", tenancy), {"name": "Story teaser", "connection_id": str(instagram.pk)}
+        )
+
+        draft = Broadcast.objects.for_workspace(tenancy.workspace).get()
+        # 204 + HX-Redirect, which is how every create answers (views._redirect).
+        assert response.status_code == 204
+        assert response.headers["HX-Redirect"] == _url("broadcasts:compose", tenancy, broadcast_id=draft.pk)
+        assert draft.channel_connection_id == instagram.pk
 
 
 @pytest.mark.django_db
@@ -458,6 +496,123 @@ class TestPermissions:
         response = client_for(tenancy.user_for(WorkspaceRole.EDITOR)).get(_url("broadcasts:list", tenancy))
 
         assert response.status_code == 200
+
+
+class TestTheWindowNotice:
+    """``composer.window_notice`` — SPEC §13.1's sentence, from the policy row.
+
+    The one affordance in the composer that exists because a platform offers
+    *nothing*: where the window cannot be reopened, the only honest control is a
+    sentence saying so before the counts do. Which means the interesting
+    assertion is not the wording but which platforms get one, and that it is the
+    policy field deciding and not a platform name.
+    """
+
+    def test_a_window_with_no_escape_from_it_gets_a_notice(self):
+        notice = composer.window_notice(ChannelConnection(platform=Platform.INSTAGRAM))
+
+        assert notice
+        # The two facts an operator needs: how long the window is, and that the
+        # rest of the audience is dropped rather than queued.
+        assert "24" in notice
+        assert "left out" in notice
+
+    @pytest.mark.parametrize(
+        "platform",
+        [
+            p
+            for p in Platform.values
+            if not channel_policy.POLICIES[p].has_window() or channel_policy.POLICIES[p].outside_window != "blocked"
+        ],
+    )
+    def test_a_platform_with_an_escape_or_no_window_gets_none(self, platform):
+        """Telegram, SMS and email have no window; Messenger has tags and
+        WhatsApp has templates, and both of those are controls the composer
+        already offers. A notice there would be telling an operator about a
+        limit the next step lets them clear."""
+        assert composer.window_notice(ChannelConnection(platform=platform)) == ""
+
+    def test_the_notice_follows_the_policy_row_and_not_the_platform(self, monkeypatch):
+        """Give a platform an escape and the sentence goes away, with no edit
+        here and none in the composer — which is the whole claim."""
+        escapable = replace(channel_policy.POLICIES[Platform.INSTAGRAM], outside_window="needs_template")
+        monkeypatch.setitem(channel_policy.POLICIES, Platform.INSTAGRAM, escapable)
+
+        assert composer.window_notice(ChannelConnection(platform=Platform.INSTAGRAM)) == ""
+
+    @pytest.mark.django_db
+    def test_composer_config_carries_it(self, tenancy, instagram_connection):
+        """Carried in the one payload every step already reads, so the review
+        template asks for it the same way it asks for ``tag_choices``."""
+        config = composer.composer_config(tenancy.workspace, instagram_connection)
+
+        assert config["window_notice"] == composer.window_notice(instagram_connection)
+        assert config["window_notice"]
+
+
+@pytest.mark.django_db
+class TestTheWindowNoticeReachesThePage:
+    """Rendered HTML, not the payload — because the failure mode is silent.
+
+    ``{{ window_notice }}`` against a context that never set it renders the
+    empty string and raises nothing, so a view that forgets the key loses the
+    sentence with no test going red anywhere near it. Both steps that owe the
+    operator the sentence are asserted on their own output, and the endpoint
+    that re-renders the fragment on every keystroke is one of them: the notice
+    has to survive the swap or it blinks out of the page as soon as somebody
+    touches the filter bar.
+    """
+
+    def _ready(self, make_broadcast, connection):
+        broadcast = make_broadcast(connection=connection)
+        services.set_send_time(broadcast, None)
+        broadcast.refresh_from_db()
+        return broadcast
+
+    def test_every_render_path_carries_it(self, tenancy, client_for, make_broadcast, instagram_connection):
+        """Three paths, because the fragment has three ways onto the screen.
+
+        The audience step is the one that matters most and the one a payload
+        test cannot reach: ``_wizard_context`` renders the preview fragment
+        server-side so the counts are up before the first poll, and it reads
+        ``window_notice`` as a top-level key rather than off ``composer``. The
+        notice was missing from exactly that paint until this asserted it.
+        """
+        broadcast = self._ready(make_broadcast, instagram_connection)
+        sentence = composer.window_notice(instagram_connection)
+        assert sentence, "the fixture platform is supposed to have a notice"
+        client = client_for(tenancy.owner)
+
+        audience = client.get(_url("broadcasts:wizard", tenancy, broadcast_id=broadcast.pk) + "?step=audience")
+        preview = client.get(
+            _url("broadcasts:audience_preview", tenancy, broadcast_id=broadcast.pk)
+            + '?filter={"match":"all","rules":[]}'
+        )
+        review = client.get(_url("broadcasts:wizard", tenancy, broadcast_id=broadcast.pk) + "?step=review")
+
+        for response in (audience, preview, review):
+            assert response.status_code == 200
+            assert sentence.encode() in response.content
+
+    def test_a_platform_with_an_escape_renders_nothing(self, tenancy, client_for, make_broadcast, connection):
+        """Telegram: no window, so no notice and no empty element where one
+        would have been.
+
+        Asserted against the sentence an Instagram connection would have
+        produced rather than against ``role="note"`` in general: the subject is
+        this notice, and a page is free to carry other advisories.
+        """
+        broadcast = self._ready(make_broadcast, connection)
+        would_have_said = composer.window_notice(ChannelConnection(platform=Platform.INSTAGRAM))
+
+        review = client_for(tenancy.owner).get(
+            _url("broadcasts:wizard", tenancy, broadcast_id=broadcast.pk) + "?step=review"
+        )
+
+        assert review.status_code == 200
+        assert composer.window_notice(connection) == ""
+        assert would_have_said.encode() not in review.content
+        assert b"no way to reopen a messaging window" not in review.content
 
 
 class TestNoPlatformBranches:

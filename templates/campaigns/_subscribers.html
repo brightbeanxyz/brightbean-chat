@@ -61,7 +61,7 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
     {% endcomment %}
     {% if enrolled_total %}
     <p class="text-sm" style="color: var(--text-secondary);">
-        {% blocktranslate with word=status_word count=enrolled_total %}Nobody is {{ word }} right now — {{ count }} on this sequence in all.{% endblocktranslate %}
+        {% blocktranslate with word=status_word count=enrolled_total %}Nobody is {{ word }} right now — {{ count }} enrolled in all.{% endblocktranslate %}
     </p>
     {% else %}
     <p class="text-sm" style="color: var(--text-secondary);">{% translate "Nobody here yet." %}</p>

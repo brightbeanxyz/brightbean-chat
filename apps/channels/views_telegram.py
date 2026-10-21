@@ -55,8 +55,8 @@ __all__ = ["telegram_connect"]
 #: try again), and a message that distinguished them would be an oracle for
 #: whether a given token string is a real bot.
 REJECTED_MESSAGE = _(
-    "Telegram did not accept that token. Copy it again from BotFather — it looks like "
-    "123456789:AA... — and make sure the bot has not been revoked."
+    "Telegram did not accept that token. Copy it again from BotFather (it looks like "
+    "123456789:AA...) and check that the bot is active."
 )
 
 #: Telegram usernames: 5-32 characters of ``[A-Za-z0-9_]``. Checked before a

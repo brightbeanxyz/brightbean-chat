@@ -1,19 +1,30 @@
 """Per-type config schemas, and the caps that run before them."""
 
+import json
+
 import pytest
 
 from apps.flows.models import TriggerType
 from apps.flows.triggers.registry import TRIGGER_TYPES, spec_for
-from apps.flows.triggers.schema import trigger_json_schema
+from apps.flows.triggers.schema import MAX_PUBLIC_REPLIES, trigger_json_schema
 from apps.flows.triggers.validation import (
     MAX_TRIGGER_CONFIG_BYTES,
     MAX_TRIGGER_CONFIG_DEPTH,
+    config_byte_size,
     validate_config,
 )
 
 
 def _codes(issues):
     return {issue.code for issue in issues}
+
+
+def _emoji_reply_config():
+    """The widest legal set of emoji public replies that still fits the cap."""
+    return {
+        "post_scope": "all",
+        "public_reply": {"mode": "random", "texts": ["\U0001f600" * 100] * MAX_PUBLIC_REPLIES},
+    }
 
 
 class TestTheRegistry:
@@ -98,6 +109,52 @@ class TestCaps:
 
         assert len(issues) == 1
         assert str(MAX_TRIGGER_CONFIG_BYTES) in issues[0].message
+
+    def test_emoji_replies_are_measured_the_way_the_column_stores_them(self):
+        """`public_reply.texts` is where emoji actually turn up, and the jsonb
+        column holds them as four bytes of UTF-8 — not as the twelve-byte
+        surrogate-pair escape `json.dumps` writes unless told otherwise.
+
+        The first assertion is what pins this as a regression test: the config
+        has to sit *inside* the window where the two measurements disagree, or
+        it would pass against the bug as well. Without it, raising the cap or
+        shrinking the fixture would quietly turn this into a test of nothing.
+        """
+        config = _emoji_reply_config()
+
+        escaped = len(json.dumps(config, separators=(",", ":")).encode("utf-8"))
+        assert escaped > MAX_TRIGGER_CONFIG_BYTES, "fixture no longer exercises the bug"
+
+        assert config_byte_size(config) <= MAX_TRIGGER_CONFIG_BYTES
+        assert validate_config(TriggerType.COMMENT, config) == []
+
+    def test_a_value_the_column_cannot_hold_is_not_reported_as_a_size(self):
+        """A lone surrogate — which `json.loads` hands you from any webhook or
+        API body — makes a three-hundred-byte config unstorable. Routing it to
+        the size refusal told the author it was 16385 bytes, which it is not,
+        and pointed them at shortening something that is not too long."""
+        config = {"post_scope": "all", "public_reply": {"mode": "static", "texts": [json.loads('"\\ud800"')]}}
+
+        assert config_byte_size(config) is None
+
+        issues = validate_config(TriggerType.COMMENT, config)
+        assert len(issues) == 1
+        assert "cannot be stored as JSON" in issues[0].message
+        assert str(MAX_TRIGGER_CONFIG_BYTES) not in issues[0].message
+
+    def test_a_known_size_over_the_cap_is_a_bound_not_a_verdict(self):
+        """`check_limits` documents known_size as an upper bound and re-measures
+        when the bound alone is over, "so the error can name the real size".
+        This shortcut claimed to be the same one while refusing outright, so a
+        caller passing len(request.body) — the documented use — would refuse a
+        small config for the size of the envelope it arrived in."""
+        config = {"post_scope": "all"}
+
+        assert validate_config(TriggerType.COMMENT, config, known_size=MAX_TRIGGER_CONFIG_BYTES * 4) == []
+
+    def test_a_known_size_under_the_cap_still_skips_the_walk(self):
+        """The shortcut has to survive the fix, or every save re-serialises."""
+        assert validate_config(TriggerType.COMMENT, {"post_scope": "all"}, known_size=16) == []
 
     def test_a_too_deep_config_is_refused(self):
         nested = {"keywords": []}

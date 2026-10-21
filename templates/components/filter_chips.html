@@ -1,0 +1,23 @@
+{% load common_extras %}{% comment %}
+The active filters, as removable chips under a list toolbar (HANDOFF §2.2) —
+see the `filter_chips` inclusion tag. Same `model` and `groups` as the
+filter_popover beside it; each chip removes one value, and "Clear all" empties
+every group. Hidden while nothing is filtered, so an unfiltered list carries no
+empty row.
+{% endcomment %}
+<div class="filter-chips" x-cloak
+     x-data="{ fcLabels: {{ labels|json_attr }}, fcGroups: {{ group_labels|json_attr }} }"
+     x-show="Object.values({{ model }}).some(a => a.length)">
+    {% for group in groups %}
+    <template x-for="value in {{ model }}['{{ group.key|escapejs }}']" :key="'{{ group.key|escapejs }}:' + value">
+        <button type="button" class="filter-chip"
+                :aria-label="'Remove filter ' + fcGroups['{{ group.key|escapejs }}'] + ': ' + (fcLabels['{{ group.key|escapejs }}'][value] || value)"
+                @click="{{ model }}['{{ group.key|escapejs }}'] = {{ model }}['{{ group.key|escapejs }}'].filter(v => v !== value); {{ onchange }}">
+            <span class="filter-chip-key">{{ group.label }}:</span>
+            <span x-text="fcLabels['{{ group.key|escapejs }}'][value] || value"></span>
+            {% include "partials/_nav_icon.html" with name="x" icon_size=12 %}
+        </button>
+    </template>
+    {% endfor %}
+    <button type="button" class="filter-clear" @click="Object.keys({{ model }}).forEach(k => {{ model }}[k] = []); {{ onchange }}">Clear all</button>
+</div>

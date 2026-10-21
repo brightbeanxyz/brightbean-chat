@@ -13,9 +13,10 @@ from django.test import Client
 from django.urls import reverse
 
 from apps.flows.fixtures import graph_for
-from apps.flows.models import FlowVersion
+from apps.flows.models import FlowVersion, Trigger
 from apps.flows.schema import empty_graph, json_schema
 from apps.flows.services import archive_flow, create_flow, latest_version, publish, save_draft
+from apps.flows.triggers.types import TriggerType
 from apps.members.roles import WorkspaceRole
 
 pytestmark = pytest.mark.django_db
@@ -27,6 +28,10 @@ def detail_url(tenancy, flow):
 
 def publish_url(tenancy, flow):
     return reverse("flows:api_publish", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
+
+
+def offline_url(tenancy, flow):
+    return reverse("flows:api_offline", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
 
 
 def stats_url(tenancy, flow):
@@ -188,6 +193,26 @@ class TestSave:
 
 
 class TestPublishEndpoint:
+    def test_it_reports_triggers_enabled_by_publishing(self, tenancy, client_for, flow):
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        trigger = Trigger.objects.create(
+            workspace=tenancy.workspace,
+            flow=flow,
+            type=TriggerType.API,
+            config_json={},
+            enabled=False,
+        )
+
+        response = client_for(tenancy.owner).post(publish_url(tenancy, flow))
+
+        assert response.status_code == 200
+        assert response.json()["triggers"][0]["enabled"] is True
+        assert "flow_triggers_all_disabled" not in {
+            issue["code"] for issue in response.json()["validation"]["warnings"]
+        }
+        trigger.refresh_from_db()
+        assert trigger.enabled is True
+
     def test_it_publishes_a_valid_draft(self, tenancy, client_for, flow):
         save_draft(flow, graph_for("send_message"), user=tenancy.owner)
 
@@ -196,6 +221,7 @@ class TestPublishEndpoint:
         assert response.status_code == 200
         assert response.json()["version"]["published"] is True
         assert response.json()["flow"]["status"] == "active"
+        assert response.json()["triggers"] == []
 
     def test_errors_answer_422_with_the_same_shape_the_save_returns(self, tenancy, client_for, flow):
         response = client_for(tenancy.owner).post(publish_url(tenancy, flow))
@@ -206,6 +232,83 @@ class TestPublishEndpoint:
 
     def test_a_get_is_not_a_publish(self, tenancy, client_for, flow):
         assert client_for(tenancy.owner).get(publish_url(tenancy, flow)).status_code == 405
+
+    def test_a_plan_limit_is_a_json_refusal_not_a_500(self, tenancy, client_for, flow, monkeypatch):
+        """The default handler answers in HTML, which the builder reads as an
+        expired session — so going offline and back over the limit said
+        "your session expired" instead of what to do about it."""
+        from apps.flows import services
+
+        def refuse(flow):
+            raise services.FlowPlanLimitError("Your plan allows 1 active automation; switch one off to free up a slot.")
+
+        monkeypatch.setattr(services, "_check_plan_allows_activation", refuse)
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+
+        response = client_for(tenancy.owner).post(publish_url(tenancy, flow))
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "plan_limit"
+        assert "switch one off" in response.json()["error"]["message"]
+        flow.refresh_from_db()
+        assert flow.status == "draft"
+
+
+class TestOfflineEndpoint:
+    def test_it_takes_a_live_flow_offline(self, tenancy, client_for, flow):
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+
+        response = client_for(tenancy.owner).post(offline_url(tenancy, flow))
+        payload = response.json()
+
+        assert response.status_code == 200
+        assert payload["flow"]["status"] == "offline"
+        assert payload["version"]["version"] == 1
+        assert payload["version"]["published"] is False
+        assert payload["version"]["published_at"] is not None
+        assert payload["triggers"] == []
+        assert payload["stopped"] == 0
+        assert FlowVersion.objects.for_workspace(tenancy.workspace).filter(flow=flow, published=True).count() == 0
+
+    def test_the_detail_read_agrees_afterwards(self, tenancy, client_for, flow):
+        """What the builder re-reads on focus, so another tab catches up."""
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        client = client_for(tenancy.owner)
+        client.post(offline_url(tenancy, flow))
+
+        payload = client.get(detail_url(tenancy, flow)).json()
+
+        assert payload["flow"]["status"] == "offline"
+        assert payload["published_version"] is None
+
+    def test_a_flow_that_is_not_live_is_a_409(self, tenancy, client_for, flow):
+        response = client_for(tenancy.owner).post(offline_url(tenancy, flow))
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "not_live"
+
+    def test_a_broadcasts_own_flow_is_a_409(self, tenancy, client_for, flow):
+        from apps.broadcasts.models import Broadcast
+        from apps.flows.tests.support import connection_for
+
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        Broadcast.objects.create(
+            workspace=tenancy.workspace,
+            name="Spring sale",
+            channel_connection=connection_for(tenancy.workspace),
+            flow=flow,
+        )
+
+        response = client_for(tenancy.owner).post(offline_url(tenancy, flow))
+
+        assert response.status_code == 409
+        assert "broadcast" in response.json()["error"]["message"]
+
+    def test_a_get_is_not_a_take_offline(self, tenancy, client_for, flow):
+        assert client_for(tenancy.owner).get(offline_url(tenancy, flow)).status_code == 405
 
 
 class TestStats:
@@ -294,6 +397,7 @@ class TestPermissions:
 
         assert put(client, detail_url(tenancy, flow), graph_for("send_message")).status_code == 200
         assert client.post(publish_url(tenancy, flow)).status_code == 200
+        assert client.post(offline_url(tenancy, flow)).status_code == 200
 
     @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
     def test_agents_and_viewers_are_read_only(self, tenancy, client_for, flow, role):
@@ -303,6 +407,11 @@ class TestPermissions:
         assert client.get(stats_url(tenancy, flow)).status_code == 200
         assert put(client, detail_url(tenancy, flow), graph_for("send_message")).status_code == 403
         assert client.post(publish_url(tenancy, flow)).status_code == 403
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        publish(flow, user=tenancy.owner)
+        assert client.post(offline_url(tenancy, flow)).status_code == 403
+        flow.refresh_from_db()
+        assert flow.status == "active"
 
     def test_a_read_by_a_viewer_does_not_change_the_draft(self, tenancy, client_for, flow):
         client_for(tenancy.user_for(WorkspaceRole.VIEWER)).get(detail_url(tenancy, flow))
@@ -357,12 +466,13 @@ class TestTenantIsolation:
         assert client.get(url).status_code == 404
         assert put(client, url, graph_for("send_message")).status_code == 404
 
-    def test_the_same_holds_for_publish_and_stats(self, tenancy, other_tenancy, client_for):
+    def test_the_same_holds_for_publish_offline_and_stats(self, tenancy, other_tenancy, client_for):
         victim_flow = create_flow(workspace=tenancy.workspace, name="Victim")
         keys = {"workspace_id": other_tenancy.workspace.pk, "flow_id": victim_flow.pk}
         client = client_for(other_tenancy.owner)
 
         assert client.post(reverse("flows:api_publish", kwargs=keys)).status_code == 404
+        assert client.post(reverse("flows:api_offline", kwargs=keys)).status_code == 404
         assert client.get(reverse("flows:api_stats", kwargs=keys)).status_code == 404
 
     def test_a_flow_that_does_not_exist_answers_the_same_404(self, tenancy, client_for):
@@ -436,3 +546,103 @@ class TestHostileBodies:
         )
 
         assert response.status_code == 400
+
+
+def rename_url(tenancy, flow):
+    return reverse("flows:api_rename", kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk})
+
+
+def enabled_url(tenancy, flow, trigger):
+    return reverse(
+        "flows:api_trigger_enabled",
+        kwargs={"workspace_id": tenancy.workspace.pk, "flow_id": flow.pk, "trigger_id": trigger.pk},
+    )
+
+
+def _api_trigger(flow, *, enabled=True):
+    return Trigger.objects.create(
+        workspace=flow.workspace, flow=flow, type=TriggerType.API, config_json={}, enabled=enabled
+    )
+
+
+class TestRenameEndpoint:
+    """The builder's top bar edits the name in place."""
+
+    def test_it_renames_and_answers_with_the_flow(self, tenancy, client_for, flow):
+        response = client_for(tenancy.owner).post(
+            rename_url(tenancy, flow), data=json.dumps({"name": "  Price question  "}), content_type="application/json"
+        )
+
+        flow.refresh_from_db()
+        assert response.status_code == 200
+        assert flow.name == "Price question"
+        assert response.json()["flow"]["name"] == "Price question"
+
+    @pytest.mark.parametrize("body", [{}, {"name": ""}, {"name": "   "}, {"name": 4}])
+    def test_a_blank_or_missing_name_is_refused(self, tenancy, client_for, flow, body):
+        response = client_for(tenancy.owner).post(
+            rename_url(tenancy, flow), data=json.dumps(body), content_type="application/json"
+        )
+
+        flow.refresh_from_db()
+        assert response.status_code == 400
+        assert flow.name == "Welcome"
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_without_edit_flows_cannot(self, tenancy, client_for, flow, role):
+        response = client_for(tenancy.user_for(role)).post(
+            rename_url(tenancy, flow), data=json.dumps({"name": "Hijacked"}), content_type="application/json"
+        )
+
+        assert response.status_code == 403
+
+
+class TestTriggerEnabledEndpoint:
+    """The outline's switch: an explicit state, never a flip."""
+
+    def test_it_sets_the_state_asked_for(self, tenancy, client_for, flow):
+        trigger = _api_trigger(flow, enabled=True)
+        client = client_for(tenancy.owner)
+
+        first = client.post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+        again = client.post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+
+        trigger.refresh_from_db()
+        assert first.status_code == again.status_code == 200
+        assert trigger.enabled is False, "a second identical request must not flip it back"
+        assert again.json()["triggers"][0]["enabled"] is False
+
+    def test_a_non_boolean_is_refused(self, tenancy, client_for, flow):
+        trigger = _api_trigger(flow)
+
+        response = client_for(tenancy.owner).post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": "no"}), content_type="application/json"
+        )
+
+        trigger.refresh_from_db()
+        assert response.status_code == 400
+        assert trigger.enabled is True
+
+    def test_a_trigger_of_another_flow_is_not_found(self, tenancy, client_for, flow):
+        other = create_flow(workspace=tenancy.workspace, name="Other", user=tenancy.owner)
+        trigger = _api_trigger(other)
+
+        response = client_for(tenancy.owner).post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+
+        assert response.status_code == 404
+
+    @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
+    def test_a_role_without_edit_flows_cannot(self, tenancy, client_for, flow, role):
+        trigger = _api_trigger(flow)
+
+        response = client_for(tenancy.user_for(role)).post(
+            enabled_url(tenancy, flow, trigger), data=json.dumps({"enabled": False}), content_type="application/json"
+        )
+
+        assert response.status_code == 403

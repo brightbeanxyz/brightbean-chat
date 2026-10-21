@@ -19,6 +19,12 @@ Three narrowings, and why only one of them is the condition engine's
   scale badly and re-implement the operator semantics the engine owns.
 * ``?segment=`` names a saved filter. It is the same document, fetched from a
   row instead of the query string.
+* ``?channel=``, ``?tag=`` and ``?subscription=`` are the Filter popover's
+  facets (docs/design/HANDOFF.md, "Contacts"): the three questions people ask
+  of a contact list most, answerable without opening the rule builder. They
+  narrow whatever the document or segment selects, and like search they are
+  not written into a saved segment — a facet is how a list is read, the
+  builder is how a segment is made.
 * ``?q=`` and ``?sort=`` are not filter rules at all and deliberately do not
   become them. Search is a UI affordance over four columns, not a segmentable
   predicate, and ordering is not a predicate in any sense; pushing either into
@@ -41,12 +47,14 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from django.db.models import F, Q, QuerySet
+from django.db.models import Exists, F, OuterRef, Q, QuerySet
 
+from apps.common.filters import multi, parse_uuid
 from apps.common.shortcuts import get_scoped_object_or_404
 from apps.contacts import conditions
+from apps.contacts.activity import _identity_model
 from apps.contacts.conditions import ConditionError, ConditionValidationError
-from apps.contacts.models import Contact, ContactStatus, Segment
+from apps.contacts.models import Contact, ContactStatus, ContactTag, Segment
 
 __all__ = [
     "DEFAULT_SORT",
@@ -83,6 +91,13 @@ SORTS: dict[str, tuple[Any, ...]] = {
 
 DEFAULT_SORT = "recent"
 
+#: The subscription facet's values. Same two facts
+#: ``apps.contacts.activity.annotate_reachability`` draws as the row's pill, so a
+#: contact the facet calls "opted out" is one the list shows as opted out. They
+#: are independent — consented on Telegram, opted out on SMS — so a contact can
+#: match both, and picking both means either.
+SUBSCRIPTIONS: dict[str, str] = {"subscribed": "Subscribed", "opted_out": "Opted out"}
+
 #: Cap on the search box. Longer than any name and short enough that the ILIKE
 #: it becomes cannot be used to hand Postgres a megabyte to compare per row.
 MAX_SEARCH_CHARS = 200
@@ -104,10 +119,19 @@ class ContactQuery:
     #: Non-empty when the filter could not be compiled. Rendered as a warning
     #: beside an empty list.
     error: str = ""
+    #: The Filter popover's facets, each a sorted tuple of the values that
+    #: parsed. Any value within a facet matches; the facets AND together.
+    channels: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    subscriptions: tuple[str, ...] = ()
 
     @property
     def is_filtered(self) -> bool:
-        return bool(self.document) or bool(self.search_term)
+        return bool(self.document) or bool(self.search_term) or self.has_facets
+
+    @property
+    def has_facets(self) -> bool:
+        return bool(self.channels or self.tags or self.subscriptions)
 
     @property
     def raw_filter(self) -> str:
@@ -184,19 +208,60 @@ def resolve_query(request: Any, workspace: Any) -> ContactQuery:
     if sort not in SORTS:
         sort = DEFAULT_SORT
     term = (params.get("q") or "").strip()[:MAX_SEARCH_CHARS]
+    # Unparseable ids are dropped rather than refused: a facet is a convenience
+    # over the list, not a filter document, and a stale bookmark should show the
+    # list it can rather than an error. Ids from another workspace parse fine
+    # and then match nothing, because the subqueries below are workspace-scoped.
+    facets: dict[str, Any] = {
+        "channels": tuple(str(pk) for pk in multi(params, "channel", parse=parse_uuid)),
+        "tags": tuple(str(pk) for pk in multi(params, "tag", parse=parse_uuid)),
+        "subscriptions": tuple(multi(params, "subscription", allowed=SUBSCRIPTIONS)),
+    }
 
     segment: Segment | None = None
     segment_id = params.get("segment") or ""
     if segment_id:
         segment = get_scoped_object_or_404(Segment, workspace, pk=segment_id)
         document: dict[str, Any] = segment.filter_json if isinstance(segment.filter_json, dict) else {}
-        return ContactQuery(document=document, segment=segment, search_term=term, sort=sort)
+        return ContactQuery(document=document, segment=segment, search_term=term, sort=sort, **facets)
 
     try:
         document = parse_filter_document(params.get("filter"))
     except ConditionValidationError as exc:
-        return ContactQuery(search_term=term, sort=sort, error=str(exc))
-    return ContactQuery(document=document, search_term=term, sort=sort)
+        return ContactQuery(search_term=term, sort=sort, error=str(exc), **facets)
+    return ContactQuery(document=document, search_term=term, sort=sort, **facets)
+
+
+def _with_facets(rows: QuerySet[Contact], workspace: Any, query: ContactQuery) -> QuerySet[Contact]:
+    """Narrow ``rows`` by the popover's facets.
+
+    ``Exists`` probes rather than joins, so a contact on two matching channels
+    is still one row and the paginator's count stays honest. Every subquery is
+    ``.for_workspace(...)``-scoped: the scoping guard cannot see inside an
+    ``Exists``, so it has to be written out (see apps.contacts.activity).
+    """
+    identity = _identity_model()
+    if query.channels and identity is not None:
+        rows = rows.filter(
+            Exists(
+                identity.objects.for_workspace(workspace).filter(
+                    contact=OuterRef("pk"), channel_connection_id__in=query.channels
+                )
+            )
+        )
+    if query.tags:
+        rows = rows.filter(
+            Exists(ContactTag.objects.for_workspace(workspace).filter(contact=OuterRef("pk"), tag_id__in=query.tags))
+        )
+    if query.subscriptions and identity is not None:
+        scoped = identity.objects.for_workspace(workspace).filter(contact=OuterRef("pk"))
+        either = Q()
+        if "subscribed" in query.subscriptions:
+            either |= Q(Exists(scoped.filter(opt_in=True, opted_out_at__isnull=True)))
+        if "opted_out" in query.subscriptions:
+            either |= Q(Exists(scoped.filter(opted_out_at__isnull=False)))
+        rows = rows.filter(either)
+    return rows
 
 
 def contacts_for(workspace: Any, query: ContactQuery) -> tuple[QuerySet[Contact], str]:
@@ -224,6 +289,7 @@ def contacts_for(workspace: Any, query: ContactQuery) -> tuple[QuerySet[Contact]
 
     # Every failure above returns early, so reaching here means there is nothing
     # to report — the empty string is the answer, not a variable's last value.
+    rows = _with_facets(rows, workspace, query)
     return search(rows, query.search_term).order_by(*SORTS[query.sort]), ""
 
 

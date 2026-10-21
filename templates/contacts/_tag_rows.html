@@ -77,15 +77,14 @@ the menu with the other twice-a-year action.
   {% else %}
   {% comment %}
     .btn-pill-secondary, not primary: the header already holds this screen's one
-    primary action, and `adding` resolves to the wrapper in contacts/tag_list.html
-    through Alpine's scope chain.
+    primary action. It opens the same modal as the header's, by id.
   {% endcomment %}
   <div class="empty-state">
     <p class="empty-state-title">{% translate "No tags yet" %}</p>
     <p class="empty-state-body">
       {% translate "A tag is how a flow says “this person asked about pricing”, so a filter can find them again later." %}
     </p>
-    <button type="button" class="btn-pill-secondary mt-4" @click="adding = true">{% translate "New tag" %}</button>
+    <button type="button" class="btn-pill-secondary mt-4" @click="$modal('new-tag')">{% translate "New tag" %}</button>
   </div>
   {% endif %}
 </div>

@@ -221,7 +221,7 @@ def _error_handle(config: dict[str, Any]) -> str:
     """Which handle a failure leaves by.
 
     ``fallback_handle_on_error`` is labelled "Follow the error handle on
-    failure" in the builder (``frontend/builder/src/inspector/copy.ts``), so
+    failure" in the builder (``apps/flows/frontend/src/inspector/copy.ts``), so
     true means ``error`` and anything else means ``default``. Either way SPEC
     §9.2 applies to what happens next — "missing edge for a handle -> End" — so
     an author who drew no error branch gets a run that finishes rather than one

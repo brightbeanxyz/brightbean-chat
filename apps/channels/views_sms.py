@@ -61,7 +61,7 @@ __all__ = ["sms_connect", "sms_segment_preview", "sms_settings", "sms_settings_u
 #: given account SID exists.
 REJECTED_MESSAGE = (
     "Twilio did not accept those credentials. Copy the Account SID and Auth Token "
-    "again from the Twilio console — the SID looks like AC… — and check the account is active."
+    "again from the Twilio console (the SID starts with AC), then check that the account is active."
 )
 
 #: Shown when the credentials work but the sender does not belong to them. A
@@ -160,7 +160,7 @@ def _connect(
         # Exactly one. Twilio's Messages API accepts ``From`` or
         # ``MessagingServiceSid`` and refuses both, so a row holding both would
         # be a connection whose every send is rejected.
-        return "Give either a from-number or a messaging service SID — not both, and not neither."
+        return "Give either a from-number or a messaging service SID, but not both."
 
     # Shape-checked before any of these reaches a URL. Both SIDs are
     # interpolated into request paths — by ``sms._account_url`` and

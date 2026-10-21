@@ -17,7 +17,7 @@ no node types; importing the node registry into it would invert the dependency.
 **The copy is a real sentence, not a placeholder.** ``blocks`` requires at least
 one item and a text block requires at least one character, so a seed built from
 empty strings would greet the author with a red banner about a node they never
-touched — the same reasoning ``frontend/builder/src/schema/sample.ts`` gives for
+touched — the same reasoning ``apps/flows/frontend/src/schema/sample.ts`` gives for
 generating valid config rather than blank config. Changing the node type here
 means re-checking that the result still validates clean on every platform, which
 ``tests/test_starter.py`` does.
@@ -32,7 +32,7 @@ from apps.flows.schema.envelope import SCHEMA_VERSION
 __all__ = ["starter_graph"]
 
 #: Far enough in to leave room for the trigger cards, which sit to the *left* of
-#: whichever node starts the flow (frontend/builder/src/canvas/triggerNodes.ts).
+#: whichever node starts the flow (apps/flows/frontend/src/canvas/triggerNodes.ts).
 #: At x=160 the card landed at x=-160 and opened outside the visible pane, so
 #: the one thing a brand-new flow most needs to show was the one thing off
 #: screen.
@@ -42,7 +42,7 @@ _POSITION = {"x": 520, "y": 160}
 # before any language is active). str() below, inside starter_graph(), is
 # where the lazy proxy actually resolves — at flow-creation time, in whichever
 # language is active for that request.
-_FIRST_MESSAGE = _("Hi! Thanks for getting in touch — how can we help?")
+_FIRST_MESSAGE = _("Hi! Thanks for getting in touch. How can we help?")
 
 
 def starter_graph() -> dict[str, Any]:

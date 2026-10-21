@@ -14,6 +14,7 @@ verbatim, so the policy row carries it.
 {% endcomment %}
 {% if not compliance.allowed %}
   <div class="ib-banner ib-banner-blocked">
+    <span class="ib-status-dot" aria-hidden="true"></span>
     <span>
       {{ compliance.reason }}
       {% if compliance.allowed_use_text %} {{ compliance.allowed_use_text }}{% endif %}
@@ -21,6 +22,7 @@ verbatim, so the policy row carries it.
   </div>
 {% elif compliance.tag %}
   <div class="ib-banner ib-banner-info">
+    <span class="ib-status-dot" aria-hidden="true"></span>
     <span>{{ compliance.reason }}</span>
   </div>
 {% endif %}

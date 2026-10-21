@@ -50,9 +50,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+          cache-dependency-path: requirements/*.txt
 
       - name: Install ruff
-        # Pinned to the same version as requirements-dev.txt so a lint failure
+        # Pinned to the same version as requirements/dev.txt so a lint failure
         # here is reproducible with `make lint` locally.
         run: pip install "ruff==0.16.4"
 
@@ -85,19 +86,19 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-          cache-dependency-glob: requirements*.txt
+          cache-dependency-glob: requirements/*.txt
 
       - name: Install dependencies
         # uv rather than pip: it resolves and installs the tree in a fraction
         # of the time, and its own cache replaces setup-python's pip cache,
         # which only ever cached the downloads and still paid to reinstall
         # every wheel.
-        run: uv pip install --system -r requirements-dev.txt
+        run: uv pip install --system -r requirements/dev.txt
 
       - name: mypy
         # django-stubs loads config.settings.test, which supplies its own
         # SECRET_KEY / ENCRYPTION_KEY_SALT defaults — no secrets needed here.
-        run: mypy apps/ config/ theme/ tests/ --ignore-missing-imports
+        run: mypy apps/ config/ tests/ --ignore-missing-imports
 
       - name: Set up Node
         # Version from .nvmrc; the rationale is on the test job's copy below.
@@ -170,11 +171,11 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
-          cache-dependency-glob: requirements*.txt
+          cache-dependency-glob: requirements/*.txt
 
       - name: Install dependencies
         # See the typecheck job for why this is uv rather than pip.
-        run: uv pip install --system -r requirements-dev.txt
+        run: uv pip install --system -r requirements/dev.txt
 
       - name: Set up Node
         # .nvmrc is the single version CI runs on. It cannot be the only copy:
@@ -271,6 +272,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+          cache-dependency-path: requirements/*.txt
 
       - name: Set up Node
         # Version from .nvmrc; the rationale is on the test job's copy above.
@@ -291,7 +293,7 @@ jobs:
         # No waivers today. Any future one goes here as
         # `--ignore-vuln GHSA-xxxx` with a comment naming the advisory, why it
         # does not apply, and when it gets revisited (SECURITY-BASELINE §10).
-        run: pip-audit --strict --requirement requirements.txt --requirement requirements-dev.txt
+        run: pip-audit --strict --requirement requirements/base.txt --requirement requirements/dev.txt
 
       - name: pip-audit gate self-test
         # Proves the gate actually fails on a vulnerable pin rather than
@@ -336,12 +338,12 @@ jobs:
           dockerfile="$(sed -n 's/^FROM node:\([0-9][0-9]*\)-slim.*/\1/p' Dockerfile | head -1)"
           compose="$(sed -n 's/^[[:space:]]*image:[[:space:]]*node:\([0-9][0-9]*\)-slim.*/\1/p' docker-compose.override.yml | head -1)"
           engines="$(node -p "((require('./package.json').engines||{}).node||'').match(/[0-9]+/)?.[0] || ''")"
-          # The prose pin lives in CONTRIBUTING.md's "Local development"
+          # The prose pin lives in .github/CONTRIBUTING.md's "Local development"
           # section. It was in the README until issue #28 rebuilt that around
           # deploying rather than developing and moved the setup detail here;
           # this check followed the sentence rather than being weakened to
           # accept its absence.
-          contributing="$(sed -n 's/.*Node \([0-9][0-9]*\)+ and.*/\1/p' CONTRIBUTING.md | head -1)"
+          contributing="$(sed -n 's/.*Node \([0-9][0-9]*\)+ and.*/\1/p' .github/CONTRIBUTING.md | head -1)"
 
           # An empty capture means the pattern stopped matching — a silently
           # skipped comparison would be worse than no check at all.
@@ -372,12 +374,12 @@ jobs:
         # churn the manifest hash on every deploy for no reason.
         run: |
           npm run build:css
-          cp theme/static/css/dist/styles.css /tmp/styles.first.css
-          rm -rf theme/static/css/dist
+          cp apps/theme/static/css/dist/styles.css /tmp/styles.first.css
+          rm -rf apps/theme/static/css/dist
           npm run build:css
-          cmp /tmp/styles.first.css theme/static/css/dist/styles.css
-          test -s theme/static/css/dist/styles.css
-          echo "Tailwind output is reproducible ($(wc -c < theme/static/css/dist/styles.css) bytes)."
+          cmp /tmp/styles.first.css apps/theme/static/css/dist/styles.css
+          test -s apps/theme/static/css/dist/styles.css
+          echo "Tailwind output is reproducible ($(wc -c < apps/theme/static/css/dist/styles.css) bytes)."
 
       - name: Flow-builder bundle is deterministic
         # The same contract as the Tailwind step above, for the same reason: a

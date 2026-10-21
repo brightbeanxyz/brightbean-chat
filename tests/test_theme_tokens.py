@@ -32,7 +32,7 @@ from pathlib import Path
 from django.conf import settings
 
 ROOT = Path(settings.BASE_DIR)
-CSS_DIR = ROOT / "theme" / "static_src" / "src"
+CSS_DIR = ROOT / "apps" / "theme" / "static_src" / "src"
 #: Shared with tests/test_theme_contrast.py: TOKENS, _COMMENT, _VAR_DEF and
 #: _blank_comments below are imported there rather than reimplemented (found
 #: in review of PR #7 — nothing here said so before). Renaming or changing
@@ -133,7 +133,7 @@ def _format(offenders: list[str], advice: str) -> str:
 
 class TestNoColourLiterals:
     def test_the_token_file_exists_and_is_imported(self):
-        assert TOKENS.exists(), "theme/static_src/src/tokens.css is where colour values live"
+        assert TOKENS.exists(), "apps/theme/static_src/src/tokens.css is where colour values live"
         assert '@import "./tokens.css"' in STYLES.read_text(), "styles.css must @import tokens.css"
 
     def test_component_css_has_no_colour_literals(self):

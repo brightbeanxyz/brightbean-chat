@@ -268,7 +268,7 @@ def _complete(request: Any, workspace: Any, code: str) -> str:
         request,
         gettext(
             "Connected %(name)s. Subscribe your Meta app to this account's "
-            "webhook fields to start receiving messages — see docs/channels/instagram.md."
+            "webhook fields to start receiving messages. See docs/channels/instagram.md."
         )
         % {"name": connection.display_name},
     )

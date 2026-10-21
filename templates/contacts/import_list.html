@@ -39,7 +39,7 @@ so there is a record that the person who imported the list was told.
       </span>
     </label>
 
-    <button type="submit" class="btn-brand btn-inline mt-3">{% translate "Upload" %}</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm mt-3">{% translate "Upload" %}</button>
   </form>
 </section>
 
@@ -51,7 +51,7 @@ so there is a record that the person who imported the list was told.
       <tbody>
         {% for run in runs %}
           <tr>
-            <td>{{ run.original_filename|default:"—" }}<br><span class="muted text-xs">{{ run.created_at }}</span></td>
+            <td>{{ run.original_filename|default:"Unknown file" }}<br><span class="muted text-xs">{{ run.created_at }}</span></td>
             <td><span class="status-pill status-pill-{% if run.status == 'done' %}active{% elif run.status == 'failed' %}disabled{% else %}needs_reauth{% endif %}">{{ run.get_status_display }}</span></td>
             <td>{{ run.processed_rows }}{% if run.total_rows %} / {{ run.total_rows }}{% endif %}</td>
             <td class="text-xs">

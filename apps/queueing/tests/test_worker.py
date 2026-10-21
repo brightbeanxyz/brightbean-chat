@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from django.db import connection
 from django.utils import timezone
 
 from apps.common.models import RateLimitCounter
@@ -18,6 +19,7 @@ from apps.queueing.tests.support import (
 )
 from apps.queueing.worker import (
     BACKOFF_SCHEDULE,
+    CLAIM_SQL,
     BatchResult,
     claim_batch,
     drain,
@@ -59,6 +61,18 @@ class TestBackoffSchedule:
     def test_a_zero_attempt_count_is_treated_as_the_first(self) -> None:
         now = timezone.now()
         assert next_run_at(0, now) == now + timedelta(seconds=30)
+
+
+def test_the_claim_statement_is_materialised() -> None:
+    """The limit has to be a property of the statement, not of the plan.
+
+    Asserted on the SQL because the behavioural half
+    (``TestClaim::test_the_limit_bounds_the_statement_and_not_the_plan``) can
+    only ever catch the planner in the act, and it took a specific table state
+    to do that. Dropping ``MATERIALIZED`` back to a plain locking subquery is the
+    regression, and it is invisible in review.
+    """
+    assert "AS MATERIALIZED" in CLAIM_SQL
 
 
 @pytest.mark.django_db
@@ -105,6 +119,33 @@ class TestClaim:
         claimed = claim_batch(2)
 
         assert [row.pk for row in claimed] == [oldest[0].pk, oldest[1].pk]
+
+    def test_the_limit_bounds_the_statement_and_not_the_plan(self, tenancy: Tenancy) -> None:
+        """A claim may never exceed its limit, whatever plan the optimiser picks.
+
+        ``WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP LOCKED)`` reads as if the
+        limit bounds the claim, and usually behaves that way — but a locking
+        subquery under a semi-join is a ``LockRows`` node the planner is free to
+        re-evaluate, and then the limit bounds each evaluation rather than the
+        statement. ``claim_batch(2)`` was observed returning five rows from a
+        single execution once a bulk insert elsewhere in the suite had moved this
+        table's statistics enough to change the plan, which is what ``ANALYZE``
+        stands in for here.
+
+        Everything downstream reads this number: ``drain`` decides the queue is
+        empty by comparing ``claimed < batch_size``, the batch size paces a
+        worker against the token buckets, and ``--max-batches`` is an operator's
+        bound on one process. The structural half of the guard is
+        :func:`test_the_claim_statement_is_materialised`.
+        """
+        for _ in range(12):
+            make_action(tenancy.workspace)
+        with connection.cursor() as cursor:
+            cursor.execute("ANALYZE queueing_scheduled_action")
+
+        assert len(claim_batch(2)) == 2
+        assert len(claim_batch(3)) == 3
+        assert len(claim_batch(50)) == 7
 
     def test_a_second_claim_sees_nothing(self, tenancy: Tenancy) -> None:
         """The first claim committed 'running', so there is nothing left to take."""

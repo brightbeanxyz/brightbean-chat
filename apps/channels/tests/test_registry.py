@@ -165,7 +165,11 @@ class TestSpecValues:
         assert policy.window_hours == 24
         assert policy.outside_window == "blocked"
         assert policy.human_agent_days == 7
-        assert policy.broadcast_allowed is False
+        # Broadcasts are permitted and narrowed by the window rather than
+        # refused outright (SPEC §6.3): the three values above are what makes an
+        # Instagram broadcast a small one, and nothing above reopens a closed
+        # window, which is the part this platform's operators have to know.
+        assert policy.broadcast_allowed is True
 
     def test_messenger_needs_a_non_promotional_tag(self) -> None:
         policy = policy_for(Platform.MESSENGER)

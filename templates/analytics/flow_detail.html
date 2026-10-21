@@ -74,7 +74,7 @@ this issue), so nothing here reaches a CDN.
                     <td class="an-num">{{ row.delivered }}</td>
                     <td class="an-num">{{ row.failed }}</td>
                     <td class="an-num">{{ row.clicked }}</td>
-                    <td class="an-num">{% if row.ctr is not None %}{{ row.ctr }}%{% else %}<span class="an-muted">—</span>{% endif %}</td>
+                    <td class="an-num">{% if row.ctr is not None %}{{ row.ctr }}%{% else %}<span class="an-muted">N/A</span>{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -100,7 +100,7 @@ this issue), so nothing here reaches a CDN.
     var canvas = document.getElementById("flow-trend");
     if (!canvas || typeof Chart === "undefined") { return; }
     // Read the theme's own tokens rather than hard-coding hexes: the palette is
-    // defined once in theme/static_src/src/tokens.css and a chart that ignored
+    // defined once in apps/theme/static_src/src/tokens.css and a chart that ignored
     // it would be the one element on the page that does not follow the theme.
     // No hex fallbacks: tests/test_theme_tokens.py proves every name below is
     // defined, and a fallback would only be a second copy of the palette to drift.
@@ -108,8 +108,8 @@ this issue), so nothing here reaches a CDN.
     // Resolved through a hidden probe element, not getPropertyValue: a custom
     // property's computed value is its own literal text (from Phase 2c on,
     // "light-dark(#a, #b)"), never resolved to a real colour except where a
-    // real CSS property consumes it — probe.style.color = 'var(--primary)'
-    // followed by getComputedStyle(probe).color is where that happens.
+    // real CSS property consumes it — setting probe.style.color to a var()
+    // reference, then reading getComputedStyle(probe).color, is where that happens.
     var probe = document.createElement("span");
     probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;";
     document.body.appendChild(probe);

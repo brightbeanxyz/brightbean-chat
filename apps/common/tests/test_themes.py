@@ -14,7 +14,7 @@ from apps.common import themes
 from apps.common.checks import check_themes
 
 DUO = themes.Theme("duo", "Duo", ("light", "dark"))
-TOKENS = Path(django_settings.BASE_DIR) / "theme" / "static_src" / "src" / "tokens.css"
+TOKENS = Path(django_settings.BASE_DIR) / "apps" / "theme" / "static_src" / "src" / "tokens.css"
 
 
 @pytest.fixture

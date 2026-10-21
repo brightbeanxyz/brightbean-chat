@@ -1,0 +1,117 @@
+{% comment %}
+The modal's behaviour, and the one helper it shares with the lists. Included
+once by templates/base.html, after htmx and before the deferred Alpine, so the
+definitions exist by the time Alpine boots — on every page, because a create
+button can sit on any of them. The markup is components/modal.html, rendered by
+the `{% templatetag openblock %} modal {% templatetag closeblock %}` tag in
+apps/common/templatetags/common_extras.py.
+
+**`$modal(id)`.** Opens a dialog by id from anywhere. Most triggers are not
+inside the dialog's own Alpine scope — a header button, or the empty state of a
+rows partial that htmx replaces on every mutation — so reaching it through
+`$refs` would depend on where each one happens to sit.
+
+**`bbModal(closeOn)`.** The dialog's own x-data. It closes after a request
+whose HX-Trigger names `closeOn` and stays open otherwise, which is the reason
+it reads the header rather than `detail.successful`: see `bbChanged` below. With
+no `closeOn` it never closes itself — the right thing for a form that navigates
+away on success (an HX-Redirect, or a plain POST).
+
+Its forms are reset as it OPENS, not as it closes, so every open starts from
+the page's own values whichever way the last one ended — Escape, the × button,
+Cancel, the backdrop or a successful submit. Resetting on the `close` event
+looked equivalent and is not: Chrome dispatches that event with the next
+rendering update, so it is late or absent in a tab that is not being painted,
+and a form reset that depends on it is a form reset that sometimes does not
+happen. A page re-rendered with a refusal loses nothing to it either: reset()
+returns each field to its `value` attribute, which is what the server filled in.
+Hidden inputs are kept as they are — see resetTyping().
+
+The backdrop closes it only when the press AND the release both land on the
+backdrop. A click's target is the nearest common ancestor of the two, so
+selecting the text in a field and letting go over the backdrop is a "click on
+the dialog" — and without the press check it would throw the typing away.
+
+It finds its dialog ONCE, in init(), and keeps it. `$root` is the nearest
+x-data to wherever it is read from, and a modal's body may hold an x-data of
+its own — the flows "Start from" picker does — so a Cancel button inside it
+calling close() got that form as `$root`, and a form has no close(). Read in
+init(), the only call that always runs in the dialog's own scope, it is the
+dialog.
+
+**`bbChanged`.** Whether a response actually changed anything. apps/common/htmx
+answers both success and refusal with a 204, so `detail.successful` is true for
+"Tag created" AND for "That tag already exists" — a create form keyed on it
+wiped what the operator typed on the one response where they needed it back.
+Only the success path sets the HX-Trigger, which is what this reads. It lived
+in partials/_list_behaviours.html until the modal needed it on pages that never
+include that partial.
+{% endcomment %}
+<script nonce="{{ request.csp_nonce }}">
+  (function () {
+    window.bbChanged = function (event, name) {
+      if (!event.detail || !event.detail.successful) return false;
+      var xhr = event.detail.xhr;
+      var triggered = (xhr && xhr.getResponseHeader('HX-Trigger')) || '';
+      return triggered.indexOf(name) !== -1;
+    };
+
+    // reset() is for what the person typed. A hidden input carries the page's
+    // state instead — the contact list's live filter document, bound with
+    // :value; the folder a new one goes into — and is put back exactly as it
+    // was. Today reset() would leave it alone anyway, since a hidden input's
+    // value IS its value attribute, but that is a spec detail nobody reading
+    // this would guess, and saving a segment without its rules is the price.
+    // A VISIBLE field bound with x-model would still drift from its Alpine
+    // state on reset, so keep the typing fields in a modal plain.
+    function resetTyping(form) {
+      var hidden = Array.prototype.map.call(form.querySelectorAll('input[type="hidden"]'), function (input) {
+        return [input, input.value];
+      });
+      form.reset();
+      hidden.forEach(function (pair) { pair[0].value = pair[1]; });
+    }
+
+    function openModal(dialog) {
+      if (!dialog || dialog.open) return;
+      dialog.querySelectorAll('form').forEach(resetTyping);
+      dialog.showModal();
+    }
+
+    window.bbModal = function (closeOn) {
+      // The <dialog>, kept out of the reactive object so Alpine never wraps it
+      // in a Proxy — showModal() and close() on a proxied element throw.
+      var dialog = null;
+      return {
+        pressedBackdrop: false,
+        init: function () {
+          dialog = this.$root;
+        },
+        show: function () {
+          openModal(dialog);
+        },
+        close: function () {
+          if (dialog) dialog.close();
+        },
+        pressed: function (event) {
+          this.pressedBackdrop = event.target === dialog;
+        },
+        clicked: function (event) {
+          if (this.pressedBackdrop && event.target === dialog) this.close();
+          this.pressedBackdrop = false;
+        },
+        afterRequest: function (event) {
+          if (closeOn && window.bbChanged(event, closeOn)) this.close();
+        },
+      };
+    };
+
+    document.addEventListener('alpine:init', function () {
+      window.Alpine.magic('modal', function () {
+        return function (id) {
+          openModal(document.getElementById(id));
+        };
+      });
+    });
+  })();
+</script>

@@ -27,7 +27,7 @@ services:
       # request. That matters because `app` deliberately does not wait for the
       # watcher: if `npm ci` is slow, or the registry is unreachable, or the
       # watcher dies, the page stays styled instead of silently losing its CSS.
-      - theme_css:/app/theme/static/css/dist
+      - theme_css:/app/apps/theme/static/css/dist
       # The same hole, the same patch, for the flow-builder island (issue #10).
       # It is gitignored too, so the bind-mount above replaces the copy the
       # `frontend` stage compiled with nothing at all — and the builder page
@@ -97,7 +97,7 @@ services:
       # native Linux a bind-mounted write would leave root-owned files in the
       # developer's checkout that a later host-side `npm run build:css` or a
       # plain `rm -rf` then cannot touch without sudo.
-      - theme_css:/app/theme/static/css/dist
+      - theme_css:/app/apps/theme/static/css/dist
       # node_modules likewise: the container's linux binaries (esbuild,
       # @parcel/watcher) must never clobber a macOS or Windows host install.
       - tailwind_node_modules:/app/node_modules

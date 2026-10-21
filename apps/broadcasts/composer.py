@@ -12,9 +12,11 @@ Where each answer comes from:
 
 ===========================  ==================================================
 Which connections may be     ``apps.channels.policy.policy_for(p).broadcast_allowed``
-picked                       — SPEC §13.2's "Instagram never appears in the
-                             broadcast channel selector" is that flag being
-                             False, not a name this module knows.
+picked                       — a flag, not a name this module knows. No shipped
+                             platform sets it False; one that does is excluded
+                             the day its row lands.
+Whether to warn that the     ``policy.outside_window`` being ``"blocked"`` on a
+window is the whole gate     platform that *has* a window — :func:`window_notice`
 Which blocks render          ``apps.channels.capabilities.capabilities_for(p)``
 Message tags + Meta's copy   ``policy.outside_window`` being a ``policy.NeedsTag``
 Approved templates           ``apps.channels.whatsapp_templates.approved_templates_for``
@@ -50,6 +52,7 @@ __all__ = [
     "composer_config",
     "tag_choices",
     "template_options",
+    "window_notice",
 ]
 
 #: The block kinds a broadcast composer offers, in the order it offers them.
@@ -69,12 +72,15 @@ BLOCK_KINDS: tuple[str, ...] = ("image", "video", "audio", "file", "card")
 def broadcastable_connections(workspace: Any) -> list[ChannelConnection]:
     """The connections a broadcast may be sent on.
 
-    Instagram disappears from this list because
-    ``PlatformPolicy.broadcast_allowed`` is False for it (SPEC §6.3: "no tag
-    that permits it"), which is the whole of SPEC §13.2's "Instagram never
-    appears in the broadcast channel selector". Reading the flag rather than
-    naming the platform means a future platform that forbids broadcasts is
-    excluded on the day its policy row lands.
+    ``PlatformPolicy.broadcast_allowed`` decides it, and every shipped platform
+    sets it True — including Instagram, whose broadcasts are narrowed by its
+    messaging window rather than forbidden outright (SPEC §6.3). The flag stays
+    because contract 4 fixes it and because reading it rather than naming a
+    platform is what excludes a future platform that forbids broadcasts on the
+    day its policy row lands.
+
+    A platform whose window closes with no way to reopen it is a thin audience,
+    not an absent affordance, and :func:`window_notice` is what says so.
 
     Disabled connections are excluded too — a broadcast is scheduled now and
     sends later, and a connection nobody can send on is not a choice.
@@ -106,6 +112,36 @@ def tag_choices(connection: Any) -> tuple[tuple[str, ...], str]:
     if isinstance(outside, channel_policy.NeedsTag):
         return outside.tags, outside.allowed_use_text
     return (), ""
+
+
+def window_notice(connection: Any) -> str:
+    """Why this platform's audience will be smaller than the filter suggests.
+
+    The composer's other per-platform affordances are things an operator can
+    *act* on — pick a tag, pick a template. This one is the opposite: a platform
+    whose ``outside_window`` is ``"blocked"`` offers no action at all, so the
+    only honest affordance is a sentence setting the expectation before the
+    counts do it for us. Without it an Instagram broadcast reads as broken: 5,000
+    match the filter, 400 receive it, and the per-reason row explaining why is
+    below the fold.
+
+    Driven by the policy row, so it appears for any platform with a window and
+    no escape from it and stays absent for the rest: Telegram, SMS and email
+    have no window, Messenger has tags, WhatsApp has templates. The platform
+    label is interpolated from the connection rather than written out, which is
+    what keeps this a registry answer and not a branch.
+
+    ``""`` where the question does not arise, which is how the notice disappears
+    from five of the six composers without a condition.
+    """
+    policy = _policy(connection)
+    if not policy.has_window() or policy.outside_window != "blocked":
+        return ""
+    return (
+        f"{connection.get_platform_display()} has no way to reopen a messaging window once it closes, so "
+        f"this broadcast can only reach people who messaged in the last {policy.window_hours} hours. "
+        "Everyone else in the audience is left out, and on a large filter that is usually most of it."
+    )
 
 
 def template_options(workspace: Any, connection: Any) -> list[dict[str, Any]]:
@@ -162,6 +198,8 @@ def composer_config(workspace: Any, connection: Any) -> dict[str, Any]:
         "window_hours": policy.window_hours,
         "tag_choices": list(tags),
         "tag_allowed_use_text": allowed_use_text,
+        # Not an affordance but its absence explained — see window_notice.
+        "window_notice": window_notice(connection),
         "needs_template_outside_window": policy.outside_window == "needs_template",
         "templates": templates,
         "cost_hint": _cost_hint(workspace, templates),

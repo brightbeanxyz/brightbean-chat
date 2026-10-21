@@ -40,10 +40,10 @@ inert — a button that looks fine and does nothing.
 {% endblock %}
 
 {% block page_header %}
-  <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-    <div>
+  <div class="page-header">
+    <div class="page-header-text">
       <h1 class="page-title">{% translate "Contacts" %}</h1>
-      <p class="page-lede mt-1.5">
+      <p class="page-lede">
         {% if total_contacts %}
           {% blocktranslate count count=total_contacts %}{{ count }} person has messaged you or been imported.{% plural %}{{ count }} people have messaged you or been imported.{% endblocktranslate %}
         {% else %}
@@ -52,16 +52,32 @@ inert — a button that looks fine and does nothing.
       </p>
     </div>
     {% if can_manage_crm %}
-      <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="bb-split" x-data="{ choice: 'import', menuOpen: false }" @click.away="menuOpen = false"
+           @keydown.escape.window="menuOpen = false">
         {% comment %}
-          A plain link, and it carries the toolbar's canonical querystring, which
-          is what makes "export what you are looking at" true rather than
-          approximately true. It is regenerated on every rows render, so it
-          follows the filter.
+          Export follows the current list URL. Filtering updates that URL through
+          HX-Push-Url, so the download includes the contacts on screen.
         {% endcomment %}
-        <a class="btn-pill-secondary" id="contact-export"
-           href="{% url 'contacts:export' workspace_id=request.workspace.id %}{% if querystring %}?{{ querystring }}{% endif %}">{% translate "Export" %}</a>
-        <a class="btn-pill-primary" href="{% url 'contacts:import_list' workspace_id=request.workspace.id %}">{% translate "Import a CSV" %}</a>
+        {% translate "Export contacts" as export_contacts_label %}
+        {% translate "Import contacts" as import_contacts_label %}
+        <a class="bb-split-main" href="{% url 'contacts:import_list' workspace_id=request.workspace.id %}"
+           :href="choice === 'export' ? '{% url 'contacts:export' workspace_id=request.workspace.id %}' + window.location.search : '{% url 'contacts:import_list' workspace_id=request.workspace.id %}'"
+           :aria-label="choice === 'export' ? '{{ export_contacts_label|escapejs }}' : '{{ import_contacts_label|escapejs }}'"
+           :title="choice === 'export' ? '{{ export_contacts_label|escapejs }}' : '{{ import_contacts_label|escapejs }}'">
+          <svg x-show="choice === 'import'" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V8m0 0 4 4m-4-4-4 4M4 4v3h16V4"/></svg>
+          <svg x-show="choice === 'export'" x-cloak viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg>
+        </a>
+        <button type="button" class="bb-split-toggle" @click="menuOpen = !menuOpen"
+                :aria-expanded="menuOpen ? 'true' : 'false'" aria-haspopup="true"
+                aria-label="{% translate 'Choose import or export' %}" title="{% translate 'Choose import or export' %}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div x-show="menuOpen" x-cloak class="bb-split-menu">
+          <button type="button" @click="choice = 'import'; menuOpen = false"
+                  :aria-current="choice === 'import' ? 'true' : null">{{ import_contacts_label }}</button>
+          <button type="button" @click="choice = 'export'; menuOpen = false"
+                  :aria-current="choice === 'export' ? 'true' : null">{{ export_contacts_label }}</button>
+        </div>
       </div>
     {% endif %}
   </div>
@@ -92,14 +108,16 @@ inert — a button that looks fine and does nothing.
     segment's rules to the browser so the client could hydrate one would put a
     workspace's whole filter library in every page load.
   {% endcomment %}
-  <div class="flex flex-wrap items-center gap-2 mb-4">
-    <a class="chip-filter{% if not filter_config.segmentId %} active{% endif %}"
-       href="{% url 'contacts:list' workspace_id=request.workspace.id %}">{% translate "Everyone" %}</a>
+  {% if filter_config.segments %}
+  <nav class="tabs tabs-inline mb-4" aria-label="{% translate 'Saved filters' %}">
+    <a class="tab" href="{% url 'contacts:list' workspace_id=request.workspace.id %}"
+       {% if not filter_config.segmentId %}aria-current="page"{% endif %}>{% translate "Everyone" %}</a>
     {% for segment in filter_config.segments %}
-      <a class="chip-filter{% if filter_config.segmentId == segment.value %} active{% endif %}"
-         href="{% url 'contacts:list' workspace_id=request.workspace.id %}?segment={{ segment.value }}">{{ segment.label }}</a>
+      <a class="tab" href="{% url 'contacts:list' workspace_id=request.workspace.id %}?segment={{ segment.value }}"
+         {% if filter_config.segmentId == segment.value %}aria-current="page"{% endif %}>{{ segment.label }}</a>
     {% endfor %}
-  </div>
+  </nav>
+  {% endif %}
 
   {% comment %}
     The filter component wraps BOTH forms rather than sitting on the toolbar.
@@ -108,34 +126,46 @@ inert — a button that looks fine and does nothing.
     segment could be saved as something other than what the list is showing.
   {% endcomment %}
   <div x-data="contactFilters({{ filter_config|json_attr }})">
-  <form id="contact-toolbar"
+  <form id="contact-toolbar" x-ref="filters"
+        x-data="{
+          filters: {{ filters|json_attr }},
+          reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+        }"
         hx-get="{% url 'contacts:rows' workspace_id=request.workspace.id %}"
         hx-target="#contact-rows"
         hx-swap="outerHTML"
-        hx-trigger="submit, input changed delay:300ms from:#contact-search, change from:#contact-sort">
+        hx-trigger="submit, input changed delay:300ms from:#contact-search, change from:#contact-sort, filters-changed">
 
-    <div class="crm-toolbar">
+    <div class="list-toolbar mb-3">
       {% translate "Search by name, email or phone" as search_placeholder %}
-      <div class="flex-1 min-w-48">
-        <label for="contact-search" class="sr-only">{% translate "Search contacts" %}</label>
-        <input type="search" id="contact-search" name="q" value="{{ query.search_term }}"
-               placeholder="{{ search_placeholder }}" maxlength="200">
-      </div>
+      {% translate "Search contacts" as search_contacts_label %}
+      <label class="search-field flex-1 min-w-48 sm:max-w-80">
+        {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+        <input type="search" id="contact-search" name="q" value="{{ query.search_term }}" class="search-input"
+               placeholder="{{ search_placeholder }}" maxlength="200" aria-label="{{ search_contacts_label }}">
+      </label>
+      {% comment %}
+        The three questions people ask of a contact list most — which channel,
+        which tag, still subscribed — in the one Filter popover every list has
+        (HANDOFF §2.2). Several values per group; they narrow whatever the
+        rules or the saved filter select. See apps/contacts/filters.py.
+      {% endcomment %}
+      {% filter_popover groups=filter_groups onchange="reload()" target="#contact-rows" count=page.paginator.count noun="contact" %}
       {% comment %}
         The rule builder is a powerful thing most readers do not want on most
         visits — it is how a segment gets made, not how a list gets read. It
-        starts closed behind this chip, and opens already open when the current
-        view has rules in it, so nobody is shown a filtered list with no visible
-        reason for it.
+        starts closed behind this button, and opens already open when the
+        current view has rules in it, so nobody is shown a filtered list with
+        no visible reason for it.
       {% endcomment %}
-      <button type="button" class="chip-filter chip-filter-add flex-shrink-0"
-              :class="rules.length && 'active'"
+      <button type="button" class="filter-trigger"
+              :class="rules.length && 'is-active'"
               @click="showBuilder = !showBuilder"
               :aria-expanded="showBuilder ? 'true' : 'false'">
-        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18"/><path d="M6 12h12"/><path d="M10 19h4"/></svg>
-        {% translate "Filter" %}<span x-show="rules.length" x-text="rules.length" x-cloak></span>
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18"/><path d="M6 12h12"/><path d="M10 19h4"/></svg>
+        {% translate "Advanced rules" %}<span class="filter-trigger-count" x-show="rules.length" x-text="rules.length" x-cloak></span>
       </button>
-      <div class="flex-shrink-0">
+      <div class="flex-shrink-0 ml-auto">
         <label for="contact-sort" class="sr-only">{% translate "Sort" %}</label>
         <select id="contact-sort" name="sort" class="w-48">
           {% for option in sorts %}
@@ -144,6 +174,7 @@ inert — a button that looks fine and does nothing.
         </select>
       </div>
     </div>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
 
     <div x-show="showBuilder" x-cloak>
       {% include "contacts/_filter_bar.html" %}
@@ -155,18 +186,34 @@ inert — a button that looks fine and does nothing.
     toolbar's and they all POST while it GETs. Each reads the same Alpine
     `serialised`, so no two of them can describe different rules.
 
+    Saving a new one asks for its name in a modal. The dialog stays where the
+    hidden form used to be, inside this scope, so `serialised` still reaches it:
+    a <dialog> opened with showModal() is drawn in the top layer without moving
+    in the DOM.
+
     A successful update or delete reloads rather than swapping: both change what
     the *filter builder* should be showing, and the builder is server-hydrated —
     a toast alone would leave the page describing a segment that no longer says
     what the panel shows, or one that is gone.
   {% endcomment %}
   {% if can_manage_crm %}
-    <form x-ref="saveSegment" class="hidden"
-          hx-post="{% url 'contacts:segment_create' workspace_id=request.workspace.id %}"
-          hx-swap="none">
-      <input type="hidden" name="name" :value="segmentName">
-      <input type="hidden" name="filter" :value="serialised">
+    {% translate "Save as a segment" as save_segment_title %}
+    {% modal "save-segment" title=save_segment_title close_on="segmentsChanged" %}
+    <form hx-post="{% url 'contacts:segment_create' workspace_id=request.workspace.id %}" hx-swap="none">
+      <div class="bb-modal-body">
+        <div class="field">
+          <label class="field-label" for="segment-name">{% translate "What is the segment called?" %}</label>
+          <input class="form-input-styled" type="text" id="segment-name" name="name" maxlength="100" required autofocus placeholder="{% translate 'Repeat customers' %}">
+          <span class="field-hint">{% translate "It keeps the filter rules you have set right now." %}</span>
+        </div>
+        <input type="hidden" name="filter" :value="serialised">
+      </div>
+      <div class="bb-modal-actions">
+        <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+        <button type="submit" class="btn-pill-primary">{% translate "Save segment" %}</button>
+      </div>
     </form>
+    {% endmodal %}
 
     {% if filter_config.segmentId %}
       <form x-ref="updateSegment" class="hidden"

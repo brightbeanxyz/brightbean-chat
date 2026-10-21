@@ -1,0 +1,27 @@
+{% comment %}
+The empty state (HANDOFF §2.2): an icon tile, one line of title, one line of
+explanation, and at most one action — a secondary one, because the page's
+primary action is already in its header.
+
+    {% include "components/empty_state.html" with icon="flows" title="No flows match" body="Try a different word, or clear the filters." action_label="Clear filters" action_click="clearFilters()" %}
+
+Args:
+  icon          a partials/_nav_icon.html name. Optional.
+  title         one line.
+  body          one line. Optional.
+  action_label  the button's words. Optional; without it there is no button.
+  action_url    makes the action a link…
+  action_click  …or an Alpine expression run on click. A search with no
+                results always offers "Clear filters" this way.
+  bare          truthy inside a card that already draws the frame.
+{% endcomment %}<div class="empty-state{% if bare %} empty-state-bare{% endif %}">
+    {% if icon %}<span class="empty-state-icon" aria-hidden="true">{% include "partials/_nav_icon.html" with name=icon icon_size=20 %}</span>{% endif %}
+    <p class="empty-state-title">{{ title }}</p>
+    {% if body %}<p class="empty-state-body">{{ body }}</p>{% endif %}
+    {% if action_label %}
+    <div class="empty-state-actions">
+        {% if action_url %}<a class="btn-pill-secondary btn-pill-sm" href="{{ action_url }}">{{ action_label }}</a>
+        {% else %}<button type="button" class="btn-pill-secondary btn-pill-sm" @click="{{ action_click }}">{{ action_label }}</button>{% endif %}
+    </div>
+    {% endif %}
+</div>

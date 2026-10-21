@@ -39,7 +39,7 @@
 
   {% url 'account_signup' as signup_url %}
   <p class="text-center text-sm mt-5" style="color: var(--text-secondary);">
-    {% blocktranslate %}No account yet? <a href="{{ signup_url }}" style="color: var(--primary);">Create one</a>.{% endblocktranslate %}
+    {% blocktranslate %}No account yet? <a href="{{ signup_url }}" class="font-semibold underline underline-offset-2" style="color: var(--text-primary);">Create one</a>.{% endblocktranslate %}
   </p>
 </div>
 {% endblock %}

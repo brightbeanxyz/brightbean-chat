@@ -57,10 +57,9 @@ colour IS its identity on this page, and no neutral glyph can carry it.
   <div class="empty-state">
     <p class="empty-state-title">{% translate "No labels yet" %}</p>
     <p class="empty-state-body">
-      {% blocktranslate %}A label files one conversation — "waiting on shipping", "needs a refund" — and stops being
-      true when the thread is answered.{% endblocktranslate %}
+      {% translate "Label conversations so your team can find and sort them." %}
     </p>
-    <button type="button" class="btn-pill-secondary mt-4" @click="adding = true">{% translate "New label" %}</button>
+    <button type="button" class="btn-pill-secondary mt-4" @click="$modal('new-label')">{% translate "New label" %}</button>
   </div>
   {% endif %}
 </div>

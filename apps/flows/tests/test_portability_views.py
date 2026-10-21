@@ -188,7 +188,7 @@ class TestReviewAndConfirm:
 
         assert response.status_code == 200
         assert b"https://api.example.com/leads" in response.content
-        assert b"calls out to the internet" in response.content
+        assert b"External requests" in response.content
 
     def test_imported_text_reaches_the_page_escaped(self, tenancy: Any, client_for: Any) -> None:
         """A template's flow name is a stranger's text like any other."""

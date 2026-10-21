@@ -49,7 +49,7 @@ and Studio hides it in the rail for the same reason.
 {% for row in channels.connections %}
 <a href="{{ row.url }}" class="sidebar-nav-item{% if row.active %} active{% endif %}"
    {% if row.active %}aria-current="page"{% endif %}
-   title="{{ row.name }}{% if row.needs_reauth %} — {% translate 'needs reconnecting' %}{% elif row.disabled %} — {% translate 'turned off' %}{% endif %}">
+         title="{{ row.name }}{% if row.needs_reauth %} — {% translate 'needs reconnecting' %}{% elif row.disabled %} — {% translate 'turned off' %}{% endif %}">
     {% comment %}
       Two states mean the channel is not carrying messages, and they are not the
       same news: `needs_reauth` is something to fix, `disabled` is somebody's

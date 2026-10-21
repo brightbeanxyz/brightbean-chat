@@ -86,7 +86,7 @@ class TestTheCommittedArtefact:
 
         from django.conf import settings
 
-        src = Path(settings.BASE_DIR) / "theme/static_src/src"
+        src = Path(settings.BASE_DIR) / "apps/theme/static_src/src"
         css = (src / "styles.css").read_text()
         tokens = (src / "tokens.css").read_text()
 

@@ -30,6 +30,7 @@ urlpatterns = [
     path("<uuid:broadcast_id>/compose/audience/preview/", views.audience_preview, name="audience_preview"),
     path("<uuid:broadcast_id>/compose/content/", views.save_content, name="save_content"),
     path("<uuid:broadcast_id>/compose/schedule/", views.save_schedule, name="save_schedule"),
+    path("<uuid:broadcast_id>/compose/send/", views.send, name="send"),
     path("<uuid:broadcast_id>/cancel/", views.broadcast_cancel, name="cancel"),
     path("<uuid:broadcast_id>/duplicate/", views.broadcast_duplicate, name="duplicate"),
     path("<uuid:broadcast_id>/delete/", views.broadcast_delete, name="delete"),

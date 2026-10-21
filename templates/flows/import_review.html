@@ -18,16 +18,19 @@ from visiting a stranger's address.
 {% block title %}{% translate "Import a flow" %} · BrightBean Chat{% endblock %}
 
 {% block page_header %}
-<div class="mb-6">
+<div class="page-header max-w-4xl">
+  <div class="page-header-text">
     <h1 class="page-title">{% translate "Review this import" %}</h1>
-    <p class="text-sm" style="color: var(--text-secondary);">
+    <p class="page-lede">
         {% comment %}
           A shipped template is named the way its tile named it, not by its
           slug — see _source_label in apps/flows/views_portability.py.
         {% endcomment %}
-        {{ source_label }} {% translate "Nothing has been created yet. Answer what it asks for below, then import." %}
+        {{ source_label }} {% translate "Check what will be added." %}
     </p>
+  </div>
 </div>
+{% include "flows/_import_steps.html" with current=2 %}
 {% endblock %}
 
 {% block content %}
@@ -47,8 +50,7 @@ from visiting a stranger's address.
                 · {% blocktranslate count count=flow.graph.nodes|length %}{{ count }} step{% plural %}{{ count }} steps{% endblocktranslate %},
                 {% blocktranslate count count=flow.triggers|length %}{{ count }} trigger{% plural %}{{ count }} triggers{% endblocktranslate %}
                 {% if flow.key == plan.document.entry %}
-                <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ml-1"
-                      style="background: var(--primary-soft); color: var(--primary);">{% translate "Main flow" %}</span>
+                <span class="status-pill status-pill-info ml-1">{% translate "Main flow" %}</span>
                 {% endif %}
             </li>
             {% endfor %}
@@ -60,7 +62,7 @@ from visiting a stranger's address.
           first template asked, reasonably, how they were supposed to test it.
         {% endcomment %}
         <p class="text-xs mt-3" style="color: var(--text-tertiary);">
-            {% translate "Nothing goes live on its own. Each arrives as a draft with its trigger switched off, so after importing you open it, check the messages read the way you want, switch the trigger on and set the flow live." %}
+            {% translate "Flows arrive as drafts with triggers off. Review each one before setting it live." %}
         </p>
     </section>
 
@@ -68,9 +70,9 @@ from visiting a stranger's address.
     {% if plan.outbound_requests %}
     <section class="rounded-xl border p-4 mb-4"
              style="border-color: var(--warning-500); background: color-mix(in srgb, var(--warning-500) 8%, transparent);">
-        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">{% translate "This flow calls out to the internet" %}</h2>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">{% translate "External requests" %}</h2>
         <p class="text-xs mb-2" style="color: var(--text-secondary);">
-            {% translate "Whoever wrote this template chose these addresses. Read them before you publish the flow." %}
+            {% translate "Check these addresses before publishing." %}
         </p>
         <ul class="space-y-1">
             {% for call in plan.outbound_requests %}
@@ -123,7 +125,7 @@ from visiting a stranger's address.
         <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-1);">
             <h2 class="text-sm font-semibold" style="color: var(--text-primary);">{% translate "Triggers" %}</h2>
             <p class="text-xs mt-0.5 mb-3" style="color: var(--text-tertiary);">
-                {% translate "What starts each flow. Keeping one imports it switched off, ready for you to turn on once you have read the flow. Skipping one leaves it out of the import entirely." %}
+                {% translate "Keep a trigger off for now, or skip it entirely." %}
             </p>
             <div class="space-y-3">
                 {% for choice in plan.triggers %}
@@ -166,11 +168,11 @@ from visiting a stranger's address.
             <button type="submit" name="then" value="import" class="btn-pill-primary">
                 {% blocktranslate count count=plan.document.flows|length %}Import {{ count }} flow{% plural %}Import {{ count }} flows{% endblocktranslate %}
             </button>
-            <button type="submit" class="btn-pill-secondary">{% translate "Save and come back later" %}</button>
-            <button type="button" class="btn-pill-secondary btn-danger-soft"
+            <button type="submit" class="btn-pill-secondary">{% translate "Save for later" %}</button>
+            <a href="{{ list_url }}" class="btn-link">{% translate "Back to flows" %}</a>
+            <button type="button" class="btn-danger-link ml-auto"
                     hx-post="{{ discard_url }}" hx-swap="none"
-                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">{% translate "Discard" %}</button>
-            <a href="{{ list_url }}" class="btn-pill-secondary">{% translate "Back to flows" %}</a>
+                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">{% translate "Discard this import" %}</button>
         </div>
         {% comment %}
           Names them, and links to them. A bare count is only useful to somebody
@@ -179,9 +181,9 @@ from visiting a stranger's address.
         {% endcomment %}
         {% if not plan.can_apply %}
         <p class="import-todo">
-            {% translate "Importing now will bring you back here. Still to answer:" %}
+            {% translate "Still needed:" %}
             {% for item in unanswered %}<a href="#{{ item.anchor }}">{{ item.label }}: {{ item.name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}.
-            {% translate "Save your answers to re-check." %}
+            {% translate "Save to check again." %}
         </p>
         {% endif %}
     </form>

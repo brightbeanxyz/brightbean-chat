@@ -1,0 +1,23 @@
+{% comment %}
+  Workspace-wide counts, not the filtered view's: they answer "how much is
+  running" whatever is selected below. Each card is also the quickest way to
+  that section alone — it sets the status filter, and pressing it again clears
+  it, which aria-pressed says out loud.
+
+  Above the toolbar, so it is not inside the region the filters swap. A switch
+  on a row moves a flow between sections, so every rows response carries this
+  too, out of band (`oob`), and the counts never disagree with the list.
+{% endcomment %}
+{% if summary %}
+<div id="flow-summary" class="summary-cards mb-6"{% if oob %} hx-swap-oob="true"{% endif %}>
+    {% for card in summary %}
+    <button type="button" class="summary-card"
+            :aria-pressed="(filters.status.length === 1 && filters.status[0] === '{{ card.status }}') ? 'true' : 'false'"
+            @click="filters.status = (filters.status.length === 1 && filters.status[0] === '{{ card.status }}') ? [] : ['{{ card.status }}']; reload()">
+        <span class="dot dot-{{ card.tone }}" aria-hidden="true"></span>
+        <span class="summary-card-value">{{ card.count }}</span>
+        <span class="summary-card-label">{{ card.label }}</span>
+    </button>
+    {% endfor %}
+</div>
+{% endif %}

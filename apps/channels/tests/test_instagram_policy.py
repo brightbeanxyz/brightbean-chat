@@ -34,9 +34,10 @@ class TestThePolicyRow:
         assert policy.outside_window == "blocked"
         # "HUMAN_AGENT tag extends to 7 days, allowed only for agent sends."
         assert policy.human_agent_days == 7
-        # "broadcast_allowed false", and SPEC §13.2: "Instagram never appears in
-        # the broadcast channel selector."
-        assert policy.broadcast_allowed is False
+        # "broadcast_allowed true", gated entirely by the window (SPEC §6.3):
+        # nothing above reopens a closed one, so a broadcast reaches whoever is
+        # inside it and the rest are skipped with `outside_window`.
+        assert policy.broadcast_allowed is True
         # SPEC §8's default token-bucket rate.
         assert policy.rate_default == 8.0
 

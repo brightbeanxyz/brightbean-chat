@@ -286,7 +286,7 @@ def describe(trigger: Trigger) -> str:
             }
         )
     if trigger.type == TriggerType.REF_URL:
-        return gettext("Reference “%(ref)s”") % {"ref": config.get("ref") or "—"}
+        return gettext("Reference “%(ref)s”") % {"ref": config.get("ref") or "None"}
     if trigger.type == TriggerType.COMMENT:
         return _describe_comment(config)
     spec = spec_for(trigger.type)

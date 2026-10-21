@@ -10,6 +10,8 @@ from collections.abc import Iterable
 from typing import Any
 
 from django import template
+from django.template.base import FilterExpression, NodeList, Parser, Token, token_kwargs
+from django.template.context import Context
 from django.utils.html import escape, format_html
 from django.utils.safestring import SafeString, mark_safe
 
@@ -222,3 +224,173 @@ def theme_attrs(context: template.Context) -> SafeString:
     else:
         theme, mode = resolve("", "")
     return format_html('data-theme="{}" data-color-mode="{}"', theme.slug, mode)
+
+
+def _filter_groups(groups: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalise a page's filter groups for the popover and its chips.
+
+    Each group is ``{"key", "label", "options"}``; ``key`` is the query
+    parameter and the property of the Alpine model that holds the group's
+    selection. Options take the same shapes ``ui_select`` does — ``(value,
+    label)`` pairs, plain strings, or dicts — and a dict may also carry
+    ``count`` (shown beside the label) and ``icon`` (a platform key). Values
+    are coerced to ``str`` so a UUID compares equal to what Alpine holds.
+    """
+    normalised = []
+    for group in groups:
+        options = []
+        for option in group["options"]:
+            if isinstance(option, dict):
+                value, label = option.get("value"), option.get("label")
+                count, icon = option.get("count"), option.get("icon")
+            elif isinstance(option, tuple | list) and len(option) >= 2:
+                value, label, count, icon = option[0], option[1], None, None
+            else:
+                value = label = option
+                count = icon = None
+            options.append({"value": "" if value is None else str(value), "label": label, "count": count, "icon": icon})
+        normalised.append({"key": group["key"], "label": group["label"], "options": options})
+    return normalised
+
+
+@register.inclusion_tag("components/filter_popover.html")
+def filter_popover(
+    *,
+    groups: Iterable[dict[str, Any]],
+    model: str = "filters",
+    onchange: str = "",
+    target: str = "",
+    count: int | None = None,
+    noun: str = "result",
+    noun_plural: str = "",
+    icon_only: bool = False,
+) -> dict[str, Any]:
+    """The list toolbar's Filter button and its popover (HANDOFF §2.2).
+
+    Render it **inside** the toolbar's htmx form: it writes one hidden input
+    per selected value, so the form serialises ``?status=a&status=b`` and the
+    view reads it with :func:`apps.common.filters.multi`.
+
+    Params:
+      groups    the sections, see :func:`_filter_groups`.
+      model     Alpine expression for an object in the enclosing ``x-data``
+                holding one array per group key, e.g. ``filters`` with
+                ``{status: [], folder: []}``. Every key must be present.
+      onchange  Alpine expression run after each toggle, e.g. ``"reload()"``.
+                Filters apply as they are picked; the footer only closes.
+      target    CSS selector of the region the form swaps. The footer's count
+                is read from the ``data-result-count`` on that region's first
+                child after every swap.
+      count     the result count at render time, for the footer before any
+                swap has happened.
+      noun      what is being counted, singular: "flow", "contact".
+      noun_plural  its plural, when adding an "s" is wrong ("people").
+      icon_only the funnel without the word, for a narrow rail (the inbox).
+                "Filter" stays as the accessible name.
+
+    Keyword-only, like ``ui_select``, so call sites document themselves.
+    """
+    return {
+        "groups": _filter_groups(groups),
+        "model": model,
+        "onchange": onchange,
+        "target": target,
+        "count": count,
+        "noun": noun,
+        "noun_plural": noun_plural or f"{noun}s",
+        "icon_only": icon_only,
+    }
+
+
+@register.inclusion_tag("components/filter_chips.html")
+def filter_chips(*, groups: Iterable[dict[str, Any]], model: str = "filters", onchange: str = "") -> dict[str, Any]:
+    """The removable chips under a list toolbar, one per active filter value.
+
+    Same ``groups`` and ``model`` as the :func:`filter_popover` beside it. The
+    labels travel as a JSON lookup so a chip says "Live" rather than "active"
+    and a channel's name rather than its id.
+    """
+    normalised = _filter_groups(groups)
+    return {
+        "groups": normalised,
+        "model": model,
+        "onchange": onchange,
+        "labels": {g["key"]: {o["value"]: str(o["label"]) for o in g["options"]} for g in normalised},
+        "group_labels": {g["key"]: str(g["label"]) for g in normalised},
+    }
+
+
+# The widths components/modal.html knows. Anything else raises at render rather
+# than falling back to the default, for the same reason ui_select's icon does: a
+# typo should be loud at the call site, not a quietly narrow form.
+MODAL_SIZES = frozenset({"", "lg"})
+MODAL_ARGS = frozenset({"title", "close_on", "open", "size"})
+
+
+class ModalNode(template.Node):
+    def __init__(self, nodelist: NodeList, modal_id: FilterExpression, kwargs: dict[str, FilterExpression]) -> None:
+        self.nodelist = nodelist
+        self.modal_id = modal_id
+        self.kwargs = kwargs
+
+    def render(self, context: Context) -> str:
+        values = {name: expression.resolve(context) for name, expression in self.kwargs.items()}
+        size = values.get("size") or ""
+        if size not in MODAL_SIZES:
+            raise ValueError(f"modal: unknown size {size!r}; expected one of {sorted(MODAL_SIZES)}")
+        assert context.template is not None  # noqa: S101 - always set while a template renders
+        dialog = context.template.engine.get_template("components/modal.html")
+        with context.push(
+            id=self.modal_id.resolve(context),
+            title=values.get("title", ""),
+            close_on=values.get("close_on") or "",
+            open=bool(values.get("open")),
+            size=size,
+            body=self.nodelist.render(context),
+        ):
+            return dialog.render(context)
+
+
+@register.tag
+def modal(parser: Parser, token: Token) -> ModalNode:
+    """A dialog around whatever the block contains — usually one create form.
+
+        {% modal "new-tag" title="New tag" close_on="tagsChanged" %}
+          <form hx-post="...">...</form>
+        {% endmodal %}
+
+    Inside the form: a ``.bb-modal-body`` of fields, the first with
+    ``autofocus``, then a ``.bb-modal-actions`` row — Cancel calling
+    ``close()``, then the submit. Open it from anywhere with
+    ``@click="$modal('new-tag')"``. templates/contacts/tag_list.html is the
+    plainest example.
+
+    Args:
+      id        positional; the dialog's DOM id, and the argument to ``$modal``.
+      title     the heading, which also labels the dialog.
+      close_on  an HX-Trigger event name. The dialog closes after a response
+                that sets it, and stays open on any other — including a 204
+                refusal, so the typed value survives the error toast. Omit it
+                for a form that navigates away on success.
+      open      truthy opens the dialog on load: for a page that answers a
+                refused plain POST by re-rendering itself with the error.
+      size      "" (default) or "lg", for forms longer than a field or two.
+
+    A block tag rather than an inclusion tag because the caller supplies the
+    body. Everything else — the heading, the close button, the backdrop
+    handling — is the component's, so no page can drift from the others.
+    """
+    bits = token.split_contents()
+    if len(bits) < 2:
+        raise template.TemplateSyntaxError("modal takes the dialog id as its first argument")
+    modal_id = parser.compile_filter(bits[1])
+    remaining = bits[2:]
+    kwargs = token_kwargs(remaining, parser)
+    if remaining:
+        raise template.TemplateSyntaxError(f"modal: unexpected arguments {remaining}")
+    unknown = set(kwargs) - MODAL_ARGS
+    if unknown:
+        raise template.TemplateSyntaxError(f"modal: unknown arguments {sorted(unknown)}")
+    nodelist = parser.parse(("endmodal",))
+    parser.delete_first_token()
+    return ModalNode(nodelist, modal_id, kwargs)

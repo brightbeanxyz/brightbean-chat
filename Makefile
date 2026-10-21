@@ -10,7 +10,7 @@ help: ## Show this help
 
 setup: ## Initial project setup (copy env, install deps, build CSS, migrate)
 	@test -f .env || cp .env.example .env
-	pip install -r requirements-dev.txt
+	pip install -r requirements/dev.txt
 	$(MAKE) frontend
 	$(MAKE) i18n-compile
 	python manage.py migrate
@@ -103,10 +103,10 @@ format: ## Auto-fix lint and formatting issues
 	ruff format .
 
 typecheck: ## Run mypy type checker
-	mypy apps/ config/ theme/ tests/ --ignore-missing-imports
+	mypy apps/ config/ tests/ --ignore-missing-imports
 
 audit: ## Run the dependency audits CI runs (SECURITY-BASELINE §10)
-	pip-audit --strict --requirement requirements.txt --requirement requirements-dev.txt
+	pip-audit --strict --requirement requirements/base.txt --requirement requirements/dev.txt
 	npm audit --audit-level=low
 	@echo "Checking the audit gate itself rejects a known-vulnerable pin..."
 	@if pip-audit --no-deps --requirement tests/fixtures/vulnerable-requirements.txt; then \

@@ -15,6 +15,6 @@
 {% else %}
   <form method="post">
     {% csrf_token %}
-    <button type="submit">{% blocktranslate with org_name=invitation.organization.name %}Join {{ org_name }}{% endblocktranslate %}</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">{% blocktranslate with org_name=invitation.organization.name %}Join {{ org_name }}{% endblocktranslate %}</button>
   </form>
 {% endif %}

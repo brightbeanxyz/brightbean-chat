@@ -27,18 +27,18 @@ RUN npm ci --no-audit --no-fund
 # bundle that could not possibly have changed.
 #
 # These paths must track the @source directives in
-# theme/static_src/src/styles.css. TestTailwindSourceCoverage in
+# apps/theme/static_src/src/styles.css. TestTailwindSourceCoverage in
 # apps/common/tests/test_shell.py fails if a template appears somewhere this
 # stage does not copy, so the two cannot drift apart silently.
 #
-# frontend/builder/ is one of those globs — the island's class names live in
+# apps/flows/frontend/ is one of those globs — the island's class names live in
 # TSX — and it is also the input to the build:js below, so it arrives once and
 # serves both.
-COPY theme/static_src/ ./theme/static_src/
+COPY apps/theme/static_src/ ./apps/theme/static_src/
 COPY templates/ ./templates/
-COPY frontend/ ./frontend/
+COPY apps/flows/frontend/ ./apps/flows/frontend/
 RUN npm run build:css \
-    && test -s theme/static/css/dist/styles.css
+    && test -s apps/theme/static/css/dist/styles.css
 
 # The flow-builder React island (issue #10). A separate layer from the CSS so a
 # stylesheet change does not rebuild the bundle and vice versa.
@@ -63,7 +63,7 @@ RUN npm run build:js \
 # Studio's image is single-stage and ships pip's build cache, the dev tooling
 # and a compiler toolchain into production. Here the runtime stage gets the
 # virtualenv and nothing else. Only the runtime requirements are installed:
-# pytest, ruff and mypy live in requirements-dev.txt and never reach the image.
+# pytest, ruff and mypy live in requirements/dev.txt and never reach the image.
 FROM python:3.12-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -73,10 +73,10 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /app
-COPY requirements.txt .
+COPY requirements/base.txt ./requirements/base.txt
 # psycopg[binary] and cryptography ship manylinux wheels, so no compiler or
 # libpq-dev is needed — which is also why the runtime stage stays minimal.
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements/base.txt
 
 # ---------------------------------------------------------------------------
 # Runtime
@@ -100,7 +100,7 @@ COPY --chown=app:app . .
 # The compiled stylesheet, which .gitignore keeps out of the build context.
 # Must land before the collectstatic below, and be owned by the app user, which
 # is what runs it.
-COPY --from=frontend --chown=app:app /app/theme/static/css/dist /app/theme/static/css/dist
+COPY --from=frontend --chown=app:app /app/apps/theme/static/css/dist /app/apps/theme/static/css/dist
 
 # The flow-builder island, for the same two reasons: .gitignore keeps it out of
 # the build context, and the collectstatic below has to see it.

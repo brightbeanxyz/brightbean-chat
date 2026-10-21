@@ -3,38 +3,41 @@
 {% comment %}
 Outbound webhooks, in the shape contacts/tag_list.html established.
 
-The add form re-opens on an error because the view re-renders this page with the
-message rather than redirecting, and a disclosure that closed itself would hide
-the form that produced it.
+The add form is a modal that opens itself on an error (`open=error`), because
+the view re-renders this page with the message rather than redirecting, and a
+dialog that stayed shut would hide the form that produced it. The message
+renders inside it.
 
 No "…" on a row: disabling, rotating and deleting an endpoint all live on its own
 page, and a second copy of them here is the seven-buttons-per-row problem coming
 back. Open is the one action, and it is where the rest are.
 {% endcomment %}
+{% load common_extras %}
 {% block title %}{% translate "Webhooks" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
-<div class="max-w-[860px] w-full" x-data="{ adding: {% if error %}true{% else %}false{% endif %} }">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+<div class="max-w-[1060px] w-full">
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">{% translate "Outbound webhooks" %}</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 {% url 'api_docs' as api_docs_url %}
                 {% blocktranslate %}BrightBean Chat POSTs a signed JSON document to your endpoint when something happens in this workspace. See the <a href="{{ api_docs_url }}">API reference</a> for the payload shape and a signature-verification snippet.{% endblocktranslate %}
             </p>
         </div>
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newUrl.focus())">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} {% translate "Add an endpoint" %}</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('add-endpoint')">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} {% translate "Add an endpoint" %}</button>
     </div>
 
-    {% if error %}<div class="alert-error mb-5">{{ error }}</div>{% endif %}
-
-    <form class="card p-6 mb-5" method="post" action="{% url 'api_webhooks:create' workspace_id=request.workspace.id %}" x-show="adding" x-cloak>
+    {% translate "Add an endpoint" as add_endpoint_title %}
+    {% modal "add-endpoint" title=add_endpoint_title open=error size="lg" %}
+    <form method="post" action="{% url 'api_webhooks:create' workspace_id=request.workspace.id %}">
         {% csrf_token %}
-        <h2 class="section-title mb-5">{% translate "Add an endpoint" %}</h2>
+        <div class="bb-modal-body">
+        {% if error %}<div class="alert-error mb-5">{{ error }}</div>{% endif %}
         <div class="field">
             <label class="field-label" for="webhook-url">{% translate "URL" %}</label>
-            <input class="form-input-styled" id="webhook-url" x-ref="newUrl" type="url" name="url" maxlength="500" required value="{{ submitted_url|default:'' }}" placeholder="https://example.com/hooks/brightbean">
+            <input class="form-input-styled" id="webhook-url" type="url" name="url" maxlength="500" required autofocus value="{{ submitted_url|default:'' }}" placeholder="https://example.com/hooks/brightbean">
         </div>
         <div class="field">
             <span class="field-label">{% translate "Events" %}</span>
@@ -47,11 +50,13 @@ back. Open is the one action, and it is where the rest are.
                 {% endfor %}
             </div>
         </div>
-        <div class="form-actions">
+        </div>
+        <div class="bb-modal-actions">
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
             <button type="submit" class="btn-pill-primary">{% translate "Add endpoint" %}</button>
-            <button type="button" class="btn-pill-secondary" @click="adding = false">{% translate "Cancel" %}</button>
         </div>
     </form>
+    {% endmodal %}
 
     <h2 class="section-title mb-3">{% translate "Endpoints" %}</h2>
     {% if webhooks %}
@@ -78,7 +83,7 @@ back. Open is the one action, and it is where the rest are.
         <p class="empty-state-body">
             {% translate "An endpoint is how something outside BrightBean Chat hears about a new message, a finished flow or a tagged contact, as it happens." %}
         </p>
-        <button type="button" class="btn-pill-secondary mt-4" @click="adding = true">{% translate "Add an endpoint" %}</button>
+        <button type="button" class="btn-pill-secondary mt-4" @click="$modal('add-endpoint')">{% translate "Add an endpoint" %}</button>
     </div>
     {% endif %}
 </div>

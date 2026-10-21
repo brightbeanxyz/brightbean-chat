@@ -27,7 +27,7 @@
     {% empty %}
       <p class="muted">{% translate "You cannot manage members in any workspace." %}</p>
     {% endfor %}
-    <button type="submit">{% translate "Save access" %}</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save access" %}</button>
   </form>
 
   <p><a href="{% url 'members:list' %}">{% translate "Back to team members" %}</a></p>

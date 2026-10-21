@@ -120,6 +120,16 @@ class TestTheCallsToAction:
         assert "Pick a template" not in body
         assert "Invite people" not in body
 
+    def test_the_current_step_is_a_tile_with_the_selected_modifier(self, tenancy, client_for):
+        """`.tile-selected` only recolours; the radius is on `.tile`. The
+        current step rendered the modifier on its own and drew the one
+        highlighted card of the three with square corners."""
+        body = _home(tenancy, client_for).content.decode()
+
+        assert body.count('class="tile tile-selected p-[18px]"') == 1
+        assert body.count('class="tile p-[18px]"') == 2
+        assert 'class="tile-selected' not in body
+
     @pytest.mark.parametrize("role", [WorkspaceRole.AGENT, WorkspaceRole.VIEWER])
     def test_a_member_who_cannot_act_is_not_offered_the_link(self, tenancy, client_for, role):
         """channels:list is gated on manage_channels, so the link an Agent saw

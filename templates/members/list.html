@@ -12,30 +12,33 @@ Changing somebody's role is an inline reveal off the "…" rather than a select
 sitting in every row. A dropdown that silently posts on change, on a control that
 can demote the person reading it, is not a thing to leave lying in a list.
 {% endcomment %}
+{% load common_extras %}
 {% block title %}{% translate "Team members" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
-<div class="max-w-[860px] w-full" x-data="{ inviting: false }">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+<div class="max-w-[1060px] w-full">
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">{% translate "Team members" %}</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 {% translate "Everybody in this organization, what they can do across it, and which workspaces they can reach." %}
             </p>
         </div>
         {% if can_invite %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="inviting = true; $nextTick(() => $refs.inviteEmail.focus())">{% include "partials/_nav_icon.html" with name="users" icon_size=16 %} {% translate "Invite someone" %}</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('invite-member')">{% include "partials/_nav_icon.html" with name="users" icon_size=16 %} {% translate "Invite someone" %}</button>
         {% endif %}
     </div>
 
     {% if can_invite %}
-    <form class="card p-6 mb-5" method="post" action="{% url 'members:invite' %}" x-show="inviting" x-cloak>
+    {% translate "Invite someone" as invite_someone_title %}
+    {% modal "invite-member" title=invite_someone_title size="lg" %}
+    <form method="post" action="{% url 'members:invite' %}">
         {% csrf_token %}
-        <h2 class="section-title mb-5">{% translate "Invite someone" %}</h2>
+        <div class="bb-modal-body">
         <div class="field">
             <label class="field-label" for="invite-email">{% translate "Email" %}</label>
-            <input class="form-input-styled" id="invite-email" x-ref="inviteEmail" type="email" name="email" required style="width: 22rem;">
+            <input class="form-input-styled" id="invite-email" type="email" name="email" required autofocus placeholder="name@company.com">
         </div>
         <div class="field">
             <label class="field-label" for="invite-role">{% translate "Organization role" %}</label>
@@ -48,7 +51,7 @@ can demote the person reading it, is not a thing to leave lying in a list.
         <div class="field">
             <span class="field-label">{% translate "Workspace access" %}</span>
             {% for workspace in workspaces %}
-            <div class="flex flex-wrap items-center gap-3 py-2">
+            <div class="flex flex-wrap items-center justify-between gap-3 py-2">
                 <label class="field-check field-check-inline" for="ws-{{ workspace.id }}">
                     <input class="bb-checkbox" id="ws-{{ workspace.id }}" type="checkbox" name="ws_{{ workspace.id }}" value="1">
                     <span class="field-check-body"><span class="field-label">{{ workspace.name }}</span></span>
@@ -64,11 +67,13 @@ can demote the person reading it, is not a thing to leave lying in a list.
             <p class="section-note">{% translate "You cannot manage members in any workspace yet." %}</p>
             {% endfor %}
         </div>
-        <div class="form-actions">
+        </div>
+        <div class="bb-modal-actions">
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
             <button type="submit" class="btn-pill-primary">{% translate "Send invitation" %}</button>
-            <button type="button" class="btn-pill-secondary" @click="inviting = false">{% translate "Cancel" %}</button>
         </div>
     </form>
+    {% endmodal %}
     {% endif %}
 
     <h2 class="section-title mb-3">{% translate "Members" %}</h2>
@@ -96,7 +101,13 @@ can demote the person reading it, is not a thing to leave lying in a list.
             <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
                 <button type="button" class="row-menu-item" role="menuitem" @click="changing = true; menuOpen = false">{% translate "Change role…" %}</button>
                 <div class="row-menu-sep"></div>
-                <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}">
+                {% comment %}
+                  Asked first (HANDOFF §2.4): they lose access at once, and only
+                  a new invitation brings them back. Alpine's @submit, because
+                  the CSP blocks an inline onsubmit.
+                {% endcomment %}
+                <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}"
+                      @submit="if (!window.confirm('Remove {{ row.membership.user.display_name|escapejs }} from the organization? They lose access straight away.')) $event.preventDefault()">
                     {% csrf_token %}
                     <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">{% translate "Remove from organization" %}</button>
                 </form>
@@ -144,7 +155,7 @@ can demote the person reading it, is not a thing to leave lying in a list.
             </form>
             <form method="post" action="{% url 'members:revoke_invite' invitation_id=invite.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn-pill-secondary btn-pill-sm" style="color: var(--error-700);">{% translate "Revoke" %}</button>
+                <button type="submit" class="btn-danger-link ml-1">{% translate "Revoke" %}</button>
             </form>
             {% endif %}
         </div>

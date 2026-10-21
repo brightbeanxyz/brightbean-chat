@@ -20,7 +20,8 @@ to do here, Meta does not allow.
 
 Three things, and the third is the one that takes weeks rather than minutes.
 
-1. **A Meta app** with the *Instagram* product added, in the Meta app dashboard.
+1. **A Meta app** with the *Manage messaging & content on Instagram* use case
+   added, in the Meta app dashboard.
 2. **A professional Instagram account** (Settings → Account type and tools →
    Switch to professional account), with *Settings → Messages and story replies
    → Allow access to messages* turned on.
@@ -31,7 +32,7 @@ Three things, and the third is the one that takes weeks rather than minutes.
 ## Connecting an account
 
 1. **Add the callback URL.** In the Meta app dashboard, under the Instagram
-   product's *Business login settings*, add this deployment's redirect URI
+   use case's *Business login settings*, add this deployment's redirect URI
    **exactly** as the connect page shows it:
 
    ```
@@ -99,6 +100,9 @@ application ships them listed (`OAUTH_FORM_ACTION` in
 app's own header has to list them too. Issue #115.
 
 ### Permissions requested
+
+All three live under the *Manage messaging & content on Instagram* use case, in
+its *Permissions and features* list.
 
 | Scope | What it buys |
 |---|---|
@@ -258,7 +262,7 @@ channel in the product, and none of it is this project's choice.
 | Automation, outside 24 hours | **Blocked** |
 | An agent reply from the inbox, within **7 days** of last inbound | Sends, tagged `HUMAN_AGENT` |
 | An agent reply, beyond 7 days | **Blocked** |
-| Broadcasts | **Never** — Instagram does not appear in the broadcast composer at all |
+| Broadcasts | Allowed, but **only to the open-window audience** — everyone past 24 hours is skipped with `outside_window` and counted |
 | A contact who has never messaged the account | **Blocked**, except a private reply to their comment |
 
 The human-agent allowance is available to inbox sends only, hard-coded (SPEC
@@ -358,7 +362,12 @@ screencast. This is a Meta process; nothing in this product changes it.
 
 ## Out of scope in v1
 
-- **Broadcasts.** Instagram never appears in the composer (SPEC §13.2).
+- **Reaching a closed window.** Instagram broadcasts themselves are in scope —
+  Instagram appears in the composer and sends to whoever is inside the 24-hour
+  window — but nothing here reopens a closed one. Meta offers no tag or template
+  for it; `HUMAN_AGENT` is inbox-only and promotional use of it violates policy.
+  The composer says so in a sentence on the audience and review steps rather
+  than letting the skip counts explain themselves (SPEC §13.2).
 - **Facebook-Login-based Instagram.** This product uses Instagram Login only;
   the Page-linked variant is a different API surface with different permissions.
 - **Liking comments**, for the reason above.

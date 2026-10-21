@@ -138,7 +138,7 @@ for free.
       own Save button. The hidden input above is what both surfaces actually
       need; this button belongs only to the page that submits nothing else.
     {% endcomment %}
-    {% if not filter_embedded %}<button type="submit" class="btn-brand btn-inline">{% translate "Apply filter" %}</button>{% endif %}
+    {% if not filter_embedded %}<button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Apply filter" %}</button>{% endif %}
 
     {% if can_manage_crm %}
       {% comment %}
@@ -159,13 +159,8 @@ for free.
           <button type="button" class="btn-outline btn-inline"
                   @click="$refs.updateSegment.requestSubmit()">{{ update_segment_label }}</button>
         {% endif %}
-        <label for="segment-name" class="sr-only">{% translate "Segment name" %}</label>
-        {% translate "Save as a new segment…" as save_segment_placeholder %}
-        <input type="text" id="segment-name" class="w-52" x-model="segmentName"
-               placeholder="{{ save_segment_placeholder }}" maxlength="100">
         <button type="button" class="btn-outline btn-inline"
-                :disabled="!segmentName.trim()"
-                @click="$refs.saveSegment.requestSubmit()">{% translate "Save as segment" %}</button>
+                @click="$modal('save-segment')">{% translate "Save as segment" %}</button>
       </span>
 
       {% if filter_config.segmentId %}

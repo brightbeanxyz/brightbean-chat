@@ -120,6 +120,20 @@ class TestFirstMatchWins:
 
         assert match(_context(connection, text="hi")).trigger.pk == winner.pk
 
+    def test_a_trigger_on_an_offline_flow_is_not_a_candidate(self, tenancy, connection):
+        """Its triggers stay enabled when it goes offline, so this is the filter
+        that keeps them quiet — and lets the next match through."""
+        from apps.flows.services import take_offline
+
+        offline = _flow(tenancy.workspace, "Offline")
+        _trigger(offline, TriggerType.KEYWORD, {"keywords": [{"text": "hi", "mode": "exact"}]}, priority=0)
+        take_offline(offline)
+
+        live = _flow(tenancy.workspace, "Live")
+        winner = _trigger(live, TriggerType.KEYWORD, {"keywords": [{"text": "hi", "mode": "exact"}]}, priority=10)
+
+        assert match(_context(connection, text="hi")).trigger.pk == winner.pk
+
 
 @pytest.mark.django_db
 class TestConnectionBinding:

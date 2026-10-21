@@ -256,7 +256,7 @@ def _credentials(request: WorkspaceRequest, provider: str, from_address: str) ->
         return gettext("Enter the SMTP host your provider gave you.")
     port = (request.POST.get("port") or "").strip() or "587"
     if not port.isdigit():
-        return gettext("The SMTP port is a number — usually 587 for STARTTLS or 465 for SSL.")
+        return gettext("Enter a numeric SMTP port, usually 587 for STARTTLS or 465 for SSL.")
     security = (request.POST.get("security") or "starttls").strip().lower()
     if security not in {"starttls", "ssl", "none"}:
         return gettext("Choose STARTTLS, SSL or none for the connection encryption.")

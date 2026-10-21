@@ -136,9 +136,9 @@ THIRD_PARTY_APPS = [
 # The first six are the tenancy, auth and credential substrate (issue #31);
 # the Layer-2 domain apps follow it.
 #
-# ``theme`` holds the compiled Tailwind bundle. It has to be an installed app
+# ``apps.theme`` holds the compiled Tailwind bundle. It has to be an installed app
 # rather than a STATICFILES_DIRS entry, because that is what puts
-# theme/static/ in front of the app-directories finder and makes
+# apps/theme/static/ in front of the app-directories finder and makes
 # {% static 'css/dist/styles.css' %} resolve. There is deliberately no
 # django-tailwind dependency and no TAILWIND_APP_NAME: Studio carries both and
 # never invokes `manage.py tailwind`, so the npm scripts in package.json are
@@ -170,7 +170,7 @@ LOCAL_APPS = [
     # configured — see apps/billing/apps.py for why this is a settings switch
     # rather than an INSTALLED_APPS one.
     "apps.billing",
-    "theme",
+    "apps.theme",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -277,7 +277,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # bcrypt(sha256) first, PBKDF2 retained so existing hashes still verify and are
-# upgraded transparently. Requires the `bcrypt` package (requirements.txt).
+# upgraded transparently. Requires the `bcrypt` package (requirements/base.txt).
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",

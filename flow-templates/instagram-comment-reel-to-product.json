@@ -57,7 +57,7 @@
           },
           {
             "config": {
-              "text": "Reel comments arrive on the same Instagram comments field as post comments, so this is an ordinary comment trigger — there is no separate Reel trigger. If you only want it on Reels, narrow the trigger to specific posts once the Reel is live.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+              "text": "Reel comments arrive on the same Instagram comments field as post comments, so this is an ordinary comment trigger. There is no separate Reel trigger. If you only want it on Reels, narrow the trigger to specific posts once the Reel is live.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
             },
             "id": "same_field",
             "position": {

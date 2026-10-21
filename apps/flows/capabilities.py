@@ -109,7 +109,8 @@ _VENDORED: dict[str, Capabilities] = {
         broadcast_allowed=True,
     ),
     # 24h window, HUMAN_AGENT extends to 7 days for agent sends only.
-    # proactive_send false and broadcast_allowed false (SPEC §6.3).
+    # proactive_send false, broadcast_allowed true: nothing reopens a closed
+    # window, and a broadcast is an in-window send repeated (SPEC §6.3).
     Platform.INSTAGRAM: Capabilities(
         image=True,
         audio=True,
@@ -126,6 +127,7 @@ _VENDORED: dict[str, Capabilities] = {
         max_buttons=3,
         max_quick_replies=13,
         max_text_len=1000,
+        broadcast_allowed=True,
     ),
     # Same shape as Instagram, but broadcasts are allowed with a message tag
     # (SPEC §6.4).

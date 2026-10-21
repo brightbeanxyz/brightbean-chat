@@ -63,7 +63,7 @@ def stats(workspace: Any, flow_id: Any, *, days: Any = None) -> dict[str, Any] |
     false`` — the state its docstring has described since L2-D, now meaning "this
     deployment does not install the analytics app" rather than "L7-A has not
     shipped". The builder distinguishes it from an empty result on purpose
-    (``frontend/builder/src/stats/useStats.ts``): painting zeros that look like
+    (``apps/flows/frontend/src/stats/useStats.ts``): painting zeros that look like
     real counters is worse than saying there is nothing behind them.
     """
     selectors = _module(_SELECTORS_MODULE)

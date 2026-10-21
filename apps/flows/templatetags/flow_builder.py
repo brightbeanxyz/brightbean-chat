@@ -30,7 +30,7 @@ register = template.Library()
 __all__ = ["BUNDLE_CSS", "BUNDLE_JS", "BuilderBundle", "flow_builder_bundle"]
 
 #: Fixed names, because Django content-hashes at ``collectstatic``. Vite emits
-#: no hash of its own — see frontend/builder/vite.config.mts for why a second,
+#: no hash of its own — see apps/flows/frontend/vite.config.mts for why a second,
 #: nested hash would only make the filename unknowable to this module.
 BUNDLE_JS = "flows/builder/builder.js"
 BUNDLE_CSS = "flows/builder/builder.css"

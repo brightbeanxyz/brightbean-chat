@@ -174,9 +174,13 @@ same three commands.
 Open `https://chat.example.com/accounts/signup/`. The first account gets its own
 organization and workspace and lands in the app.
 
-Password reset and address verification need SMTP (`EMAIL_HOST` and friends in
-`.env`). Nothing is gated on a verified address, so you can come back to this —
-but you cannot reset a forgotten password without it.
+Password reset, address verification, member invitations and notification
+emails need SMTP (`EMAIL_HOST` and friends in `.env`). Nothing is gated on a
+verified address, so you can come back to this, but you cannot reset a
+forgotten password without it, and invitations never arrive. This is the
+deployment's own [account email](../README.md#account-email), not the email
+channel you message contacts through, which is connected per workspace in the
+app ([Email](channels/email.md)).
 
 ---
 
@@ -563,8 +567,10 @@ all variables are scoped to one. `production` exists already.
      staging, staging needs production's two values or every encrypted
      credential in that dump is unreadable.
    - **The staging bucket and its own token** in the `S3_*` variables.
-   - **SMTP** pointed at a sandbox, or `EMAIL_BACKEND_TYPE=console`, so staging
-     cannot email real contacts.
+   - **SMTP** pointed at a sandbox, or `EMAIL_BACKEND_TYPE=console`, so
+     staging's invitations and password resets cannot reach real people. These
+     variables do not touch the email channel, whose credentials live in the
+     database with the rest of the channel connections.
    - A generated domain for staging's `web`. The `${{RAILWAY_PUBLIC_DOMAIN}}`
      references above pick it up on their own.
 3. **Deploy.** The duplicated Postgres is a new, empty instance — no data is
@@ -660,7 +666,7 @@ deployment actually decides:
 | `TICK_TOKEN` | Shared secret for `/internal/tick`. Unset means the route does not exist. |
 | `EXTERNAL_REQUEST_ALLOW_PRIVATE` | Lets the External Request node reach private address ranges, for an on-prem deployment calling services on its own network. It relaxes *only* the private-range rule — loopback, cloud metadata, multicast and this deployment's own host stay denied ([`SECURITY-BASELINE.md`](SECURITY-BASELINE.md) §6). |
 | `DEFAULT_SEND_RATE_OVERRIDES` | JSON per-platform send rates, when your app's limits differ from the published defaults. An unknown platform or a non-positive value fails a startup check rather than being ignored. |
-| `EMAIL_HOST` and friends | SMTP for password reset and address verification. |
+| `EMAIL_HOST` and friends | SMTP for the deployment's own account email: password reset, address verification, invitations and notifications. STARTTLS only, so port 587. Not used by the email channel, which has its own credentials per connection. |
 | `STORAGE_BACKEND` / `S3_*` | `local` (a shared volume) or `s3` (S3, R2, B2, MinIO). `local` requires the web and worker processes to share a filesystem, which is true of the compose stack and of no PaaS — see [Storage](#storage-when-web-and-worker-are-separate). |
 | `SENTRY_DSN` | Optional error reporting; empty disables it. |
 
@@ -801,7 +807,7 @@ job and CI enforces the automatable ones. These are yours:
       a database problem, which is the failure you want to hear about first.
 
 Found a vulnerability in the software rather than in a deployment? See
-[`SECURITY.md`](../SECURITY.md).
+[`SECURITY.md`](../.github/SECURITY.md).
 
 ---
 

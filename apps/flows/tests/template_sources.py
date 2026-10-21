@@ -306,7 +306,7 @@ _FOLLOW_TO_UNLOCK = TemplateSource(
         _note(
             "why_honour_system",
             "This asks people to confirm the follow rather than checking it. Instagram with Instagram "
-            "Login publishes no follow webhook, so nothing can verify it \u2014 there is no 'is a follower' "
+            "Login publishes no follow webhook, so nothing can verify it. There is no 'is a follower' "
             "condition to branch on. The tag is what you segment on later.\n\n" + _REPLACE,
             900,
         ),
@@ -360,7 +360,7 @@ _LINK_IN_DM = TemplateSource(
         ),
         _note(
             "opening_dm",
-            "The first message exists to open the 24-hour messaging window \u2014 Instagram only lets you "
+            "The first message exists to open the 24-hour messaging window. Instagram only lets you "
             "reply inside it, and a tap is what starts the clock. Sending the link straight away works too, "
             "but you lose the chance to follow up.\n\n" + _REPLACE,
             600,
@@ -406,7 +406,7 @@ _AFFILIATE_PICKS = TemplateSource(
         _node("tag_shopper", "action", {"actions": [{"verb": "add_tag", "tag": "Affiliate interest"}]}, x=300),
         _note(
             "disclosure",
-            "Affiliate links usually have to be disclosed. Say so in the first message \u2014 the rules "
+            "Affiliate links usually have to be disclosed. Say so in the first message. The rules "
             "differ by country and by network, and the DM is where people read it.\n\n"
             "A gallery holds up to ten cards. Add your own photos in the builder: a template cannot ship "
             "images, so every card here is text only until you pick one.\n\n" + _REPLACE,
@@ -456,8 +456,8 @@ _PRODUCT_GALLERY = TemplateSource(
         ),
         _note(
             "two_questions",
-            "The two quick replies are the questions that actually stop a sale. Replace them with yours "
-            "\u2014 read your own DMs for a week and use the two you answer most.\n\n" + _REPLACE,
+            "The two quick replies are the questions that actually stop a sale. Replace them with yours. "
+            "Read your own DMs for a week and use the two you answer most.\n\n" + _REPLACE,
             600,
         ),
     ],
@@ -489,7 +489,7 @@ _REEL_TO_PRODUCT = TemplateSource(
         _note(
             "same_field",
             "Reel comments arrive on the same Instagram comments field as post comments, so this is an "
-            "ordinary comment trigger \u2014 there is no separate Reel trigger. If you only want it on "
+            "ordinary comment trigger. There is no separate Reel trigger. If you only want it on "
             "Reels, narrow the trigger to specific posts once the Reel is live.\n\n" + _REPLACE,
             600,
         ),
@@ -519,7 +519,7 @@ _RSVP = TemplateSource(
         _note(
             "reminders",
             "The tag is the point: broadcast the reminder to everyone carrying 'RSVP yes' the day before. "
-            "A per-person reminder cannot live in this flow \u2014 Instagram closes the messaging window "
+            "A per-person reminder cannot live in this flow because Instagram closes the messaging window "
             "24 hours after their last message.\n\n" + _REPLACE,
             600,
         ),
@@ -577,7 +577,7 @@ _AUTORESPONDER = TemplateSource(
             "personalised_not_ai",
             "'Personalised' here means {{placeholders}}, not AI: the greeting fills in whatever you know "
             "about the contact. There is no intent detection in this flow.\n\n"
-            "A default reply runs only when nothing else matched, and at most once per contact per day \u2014 "
+            "A default reply runs only when nothing else matched, and at most once per contact per day, "
             "so keyword automations always win, and nobody gets this twice.\n\n" + _REPLACE,
             900,
         ),

@@ -1,0 +1,31 @@
+{% comment %}
+The modal, rendered by the `{% templatetag openblock %} modal {% templatetag closeblock %}` block tag in
+apps/common/templatetags/common_extras.py — read that for the arguments, and
+partials/_modal_behaviours.html for what bbModal() does.
+
+A native <dialog> opened with showModal(), not an Alpine overlay. The browser
+puts it in the top layer, so no ancestor's transform or overflow can trap or
+clip it (the trap that made the notification panel teleport itself — see
+notifications/partials/_bell.html), and it supplies the focus trap, Escape and
+`autofocus` on its own. The element never moves in the DOM either, so htmx
+attributes inside it keep working and an Alpine scope around it stays in reach.
+
+`.bb-modal` has no padding of its own: every pixel inside the box belongs to a
+child, so a click whose target is the dialog itself is a click on the backdrop.
+
+Args:
+  id, title, close_on, open, size, body — see the tag.
+{% endcomment %}
+<dialog id="{{ id }}" class="bb-modal{% if size == 'lg' %} bb-modal-lg{% endif %}" aria-labelledby="{{ id }}-title"
+        x-data="bbModal('{{ close_on|escapejs }}')"{% if open %}
+        x-init="$nextTick(() => show())"{% endif %}
+        @mousedown="pressed($event)" @click="clicked($event)"
+        @htmx:after-request="afterRequest($event)">
+    <div class="bb-modal-head">
+        <h2 id="{{ id }}-title" class="section-title">{{ title }}</h2>
+        <button type="button" class="btn-icon-round" @click="close()" aria-label="Close">
+            <svg width="17" height="17" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+    </div>
+    {{ body }}
+</dialog>

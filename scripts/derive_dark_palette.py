@@ -19,7 +19,7 @@ Run it with::
 It reads every hex-literal custom property in tokens.css's ``:root`` block,
 skips the ones that get no dark counterpart at all (``--platform-*`` brand
 marks, ``--text-on-fill``, which is documented to stay white in every mode),
-and writes theme/static_src/src/themes/brightbean.css — overwriting whatever
+and writes apps/theme/static_src/src/themes/brightbean.css — overwriting whatever
 is there, since this is generated output, not hand-maintained.
 
 tests/test_theme_tokens.py's TestFlowBuilderXyMapping and
@@ -45,7 +45,7 @@ django.setup()
 
 from tests.test_theme_contrast import _CONTENT_SURFACES, PAIRS, _contrast_ratio, _parse_tokens  # noqa: E402
 
-THEME_CSS = ROOT / "theme" / "static_src" / "src" / "themes" / "brightbean.css"
+THEME_CSS = ROOT / "apps" / "theme" / "static_src" / "src" / "themes" / "brightbean.css"
 
 # ---------------------------------------------------------------------------
 # sRGB <-> OKLCH

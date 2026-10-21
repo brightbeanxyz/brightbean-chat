@@ -1,12 +1,12 @@
 {% extends "layouts/settings.html" %}
-{% load i18n %}
+{% load common_extras i18n %}
 {% comment %}
 The organization's workspaces, in the shape contacts/tag_list.html established.
 
-The create form moved above the list. It was below it, while the webhooks page
-put its add form above — the two pages are one click apart in the settings
-column, and disagreeing about where the "new" control lives is the kind of thing
-that makes a product feel assembled rather than designed.
+The create form is a modal opened from the header, like every other "new"
+control in the settings column — the pages are one click apart, and disagreeing
+about where that control lives is the kind of thing that makes a product feel
+assembled rather than designed.
 
 Archived state is the whole point of this page: it is the only way back to an
 archived workspace, so it reads as a pill on the row rather than as a word in a
@@ -16,29 +16,36 @@ column.
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
-<div class="max-w-[860px] w-full" x-data="{ adding: false }">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+<div class="max-w-[1060px] w-full">
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">{% translate "Workspaces" %}</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 {% translate "Each workspace has its own channels, contacts and inbox. Archiving one keeps everything and takes it out of the switcher." %}
             </p>
         </div>
         {% if can_manage %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newName.focus())">{% include "partials/_nav_icon.html" with name="grid" icon_size=16 %} {% translate "New workspace" %}</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-workspace')">{% include "partials/_nav_icon.html" with name="grid" icon_size=16 %} {% translate "New workspace" %}</button>
         {% endif %}
     </div>
 
     {% if can_manage %}
-    <form class="card p-4 mb-5 flex flex-wrap items-end gap-3" method="post" action="{% url 'organizations:create_workspace' %}" x-show="adding" x-cloak>
+    {% translate "New workspace" as new_workspace_title %}
+    {% modal "new-workspace" title=new_workspace_title %}
+    <form method="post" action="{% url 'organizations:create_workspace' %}">
         {% csrf_token %}
-        <div class="field field-inline">
-            <label class="field-label" for="new-workspace">{% translate "What is it called?" %}</label>
-            <input class="form-input-styled" id="new-workspace" x-ref="newName" type="text" name="name" maxlength="100" required style="width: 18rem;">
+        <div class="bb-modal-body">
+            <div class="field">
+                <label class="field-label" for="new-workspace-name">{% translate "What is it called?" %}</label>
+                <input class="form-input-styled" id="new-workspace-name" type="text" name="name" maxlength="100" required autofocus placeholder="{% translate 'Acme EU' %}">
+            </div>
         </div>
-        <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Create" %}</button>
-        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="adding = false">{% translate "Cancel" %}</button>
+        <div class="bb-modal-actions">
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Create workspace" %}</button>
+        </div>
     </form>
+    {% endmodal %}
     {% endif %}
 
     {% if workspaces %}

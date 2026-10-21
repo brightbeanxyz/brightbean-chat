@@ -1,7 +1,7 @@
 {% extends "layouts/workspace_settings.html" %}
 {% load i18n %}
 {% block title %}{% translate "SMS settings" %} · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>{% translate "SMS settings" %}</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">{% translate "SMS settings" %}</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
@@ -67,7 +67,7 @@
       </label>
     </p>
 
-    <button type="submit">{% translate "Save" %}</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save" %}</button>
   </form>
 
   {% comment %}

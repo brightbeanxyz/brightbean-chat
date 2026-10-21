@@ -121,7 +121,7 @@ def ui_demo(request: HttpRequest) -> HttpResponse:
 def ui_demo_toast(request: HttpRequest) -> HttpResponse:
     """Fire a toast of the requested tone, to prove the host needs no include."""
     bodies: dict[Tone, str] = {
-        "success": "Nothing was saved — this is the style guide.",
+        "success": "Nothing was saved. This is the style guide.",
         "info": "Toasts arrive over HX-Trigger, rendered by the host in base.html.",
         "warn": "The body is written with textContent, so markup here is inert.",
         "error": "Errors stay visible longer and use the alert role.",

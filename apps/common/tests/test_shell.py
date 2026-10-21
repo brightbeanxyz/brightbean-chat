@@ -168,9 +168,18 @@ class TestTheSidebar:
         assert "document.documentElement.classList.remove('sidebar-is-collapsed')" in sidebar
 
     def test_the_collapse_is_persisted_rather_than_reset_on_every_page(self, tenant_client, shell_urls, shell_url):
+        """The write is a call into the nonced head script, not an inline `try`.
+
+        This used to assert the inline form, which was a SyntaxError to Alpine:
+        the string was in the page and the effect never ran. Whether a
+        directive compiles is tests/js/alpine-directives.test.ts's job; this
+        only pins the wiring between the two halves.
+        """
         body = tenant_client.get(shell_url).content.decode()
 
-        assert "localStorage.setItem('sidebarCollapsed', sidebarCollapsed)" in body
+        assert "localStorage.setItem('sidebarCollapsed'" in body
+        assert "window.__bbStoreSidebarCollapsed = function" in body
+        assert 'x-effect="window.__bbStoreSidebarCollapsed(sidebarCollapsed)"' in body
 
     def test_the_collapse_never_reaches_inside_a_popover(self):
         """A row rule scoped to the whole sidebar hits the switcher's panel.
@@ -650,6 +659,19 @@ class TestTheWorkspaceSettingsAreReachable:
 
         assert 'class="flex-shrink-0" width="18" height="18"' in html
 
+    def test_every_nav_row_names_a_glyph_the_partial_draws(self):
+        """`partials/_nav_icon.html` draws a neutral dot for a name it does not
+        know — deliberately visible, but a dot in a row of Lucide glyphs reads
+        as a design choice in review, not as a typo. Every nav the sidebar and
+        the tab strip render is checked against the partial's own branches."""
+        from apps.common.context_processors import FLOWS_TABS, MAIN_NAV, SETTINGS_NAV
+
+        source = (Path(__file__).parents[3] / "templates/partials/_nav_icon.html").read_text()
+        drawn = set(re.findall(r'name == "([a-z_]+)"', source))
+        asked = {item.icon for nav in (MAIN_NAV, SETTINGS_NAV, FLOWS_TABS) for group in nav for item in group.items}
+
+        assert asked - drawn == set()
+
 
 @pytest.mark.django_db
 class TestTheAccountMenu:
@@ -962,6 +984,43 @@ class TestLogoSizing:
         assert "sidebar-logo-mark-sm" not in html
 
 
+class TestStatusPillDot:
+    def test_a_pill_holding_a_dot_lays_out_as_a_flex_row(self):
+        """`.status-pill` is inline-block, and the dot is a 6px span that only
+        has a size once its parent is a flex container. The call sites asked
+        for that with `inline-flex items-center gap-1.5`, which the unlayered
+        `.status-pill` beat, so every "Live" pill shipped without its dot.
+        Read from the compiled bundle, because the bundle is what ships."""
+        from django.contrib.staticfiles import finders
+
+        bundle = Path(finders.find("css/dist/styles.css")).read_text()
+        rule = re.search(r"\.status-pill:has\(>\.status-pill-dot\)\{([^}]*)\}", bundle)
+
+        assert rule, "no rule lays out a pill that holds a dot"
+        assert "display:inline-flex" in rule.group(1)
+
+    def test_every_dot_is_a_direct_child_of_its_pill(self):
+        """The rule above matches `> .status-pill-dot`, so a dot wrapped in
+        anything else — or set in a pill-less span — is back to rendering as
+        nothing."""
+        dots = 0
+        offenders = []
+        for path in (Path(__file__).parents[3] / "templates").rglob("*.html"):
+            src = path.read_text()
+            found = src.count('class="status-pill-dot"')
+            # The dot may carry attributes of its own (aria-hidden: the word
+            # beside it is the label, the dot is decoration).
+            seated = len(
+                re.findall(r'<span class="status-pill\b[^"]*"[^>]*>\s*<span class="status-pill-dot"[^>]*>', src)
+            )
+            dots += found
+            if found != seated:
+                offenders.append(path.name)
+
+        assert dots, "no template uses the dot any more"
+        assert not offenders, f"a dot outside a .status-pill renders as nothing: {offenders}"
+
+
 @pytest.mark.django_db
 class TestSettingsLayouts:
     def test_the_settings_rows_are_the_sidebar_rather_than_a_second_column(self, tenant_client, shell_urls):
@@ -1135,14 +1194,14 @@ class TestStaticReferences:
         assert not missing, f"referenced but not found by any static finder: {missing}"
 
     def test_the_compiled_stylesheet_is_the_one_the_theme_app_serves(self):
-        """theme/ exists only to put the Tailwind output on the app-directories
+        """apps/theme/ exists only to put the Tailwind output on the app-directories
         finder. If it were dropped from INSTALLED_APPS this would be the symptom."""
         from django.contrib.staticfiles import finders
 
         found = finders.find("css/dist/styles.css")
 
         assert found, "the Tailwind bundle is missing — run `npm run build:css`"
-        assert "theme/static" in found.replace("\\", "/")
+        assert "apps/theme/static" in found.replace("\\", "/")
 
 
 class TestTailwindSourceCoverage:
@@ -1164,7 +1223,7 @@ class TestTailwindSourceCoverage:
     construction. The failure only shows up in a browser. Hence a test.
     """
 
-    CSS = Path(__file__).parents[3] / "theme" / "static_src" / "src" / "styles.css"
+    CSS = Path(__file__).parents[3] / "apps" / "theme" / "static_src" / "src" / "styles.css"
 
     def _globs(self):
         text = self.CSS.read_text()
@@ -1207,7 +1266,7 @@ class TestTailwindSourceCoverage:
         pattern = re.compile(r"""["']class["']\s*:|\bclass=["']""")
 
         offenders = []
-        for directory in ("apps", "config", "theme"):
+        for directory in ("apps", "config"):
             for path in (root / directory).rglob("*.py"):
                 if "/tests/" in path.as_posix() or "/migrations/" in path.as_posix():
                     continue
