@@ -21,6 +21,10 @@
   <a href="https://www.djangoproject.com/"><img src="https://img.shields.io/badge/Django-5.x-green.svg" alt="Django 5.x"></a>
 </p>
 
+<p align="center">
+  <a href="https://brightbean.xyz/chat/"><img src="https://img.shields.io/badge/Hosted%20version-brightbean.xyz%2Fchat-FFB300?style=for-the-badge" alt="Hosted version at brightbean.xyz/chat"></a>
+</p>
+
 ---
 
 ## About BrightBean Chat
@@ -35,6 +39,9 @@ audience.
 The application calls each platform's official API with your credentials.
 There is no aggregator in the middle and no payment provider to sign up for.
 Every installation has every feature.
+
+If you'd rather not run a server, a hosted version is available at
+[brightbean.xyz/chat](https://brightbean.xyz/chat/).
 
 ## How it compares to ManyChat
 
@@ -130,6 +137,15 @@ The full [self-hosting guide](docs/self-hosting.md) covers first boot, TLS,
 backups, upgrades, storage, tick mode, and hardening. The reference production
 stack is Docker Compose and is secure by default: no placeholder secrets,
 `DEBUG` off, PostgreSQL closed to the internet, and only Caddy exposed publicly.
+
+### Hosted version
+
+A hosted version of BrightBean Chat is available at
+[brightbean.xyz/chat](https://brightbean.xyz/chat/). It runs the same codebase
+as this repository, with no setup or maintenance required, and is free for your
+first 25 contacts a month.
+
+If you'd rather self-host, choose one of the options below.
 
 ### Docker Compose on a VPS
 
