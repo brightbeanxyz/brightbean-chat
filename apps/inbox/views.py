@@ -28,6 +28,7 @@ from dataclasses import replace
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import F
 from django.http import Http404, HttpResponse, HttpResponseNotModified
 from django.shortcuts import render
 from django.urls import NoReverseMatch, reverse
@@ -552,8 +553,19 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
         "identities": identities,
         # The address this conversation is on — the opt-in the panel reports
         # first, because it is the one a reply here goes to.
-        "identity": next(
-            (row for row in identities if row.channel_connection_id == conversation.channel_connection_id), None
+        #
+        # Not picked out of `identities` above: `(contact, channel_connection)`
+        # is not unique the way `(channel_connection, platform_user_id)` is — a
+        # contact merge (apps/messaging/merge.py) re-points identities onto the
+        # survivor unconditionally, so one contact can hold two identity rows on
+        # the same connection with different platform_user_ids. Most recently
+        # active wins, on the theory that it is the one this open thread is
+        # actually hearing from.
+        "identity": (
+            ContactChannelIdentity.objects.for_workspace(request.workspace)
+            .filter(contact=contact, channel_connection_id=conversation.channel_connection_id)
+            .order_by(F("last_inbound_at").desc(nulls_last=True))
+            .first()
         ),
         "last_run": selectors.last_execution_for(request.workspace, contact, conversation),
         # The conversation's labels live in this panel beside the contact's
