@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The subscriber typeahead's results. Each row POSTs the contact it names.
 
 Contacts already walking the sequence are excluded by the view, so the panel
@@ -12,6 +12,6 @@ deliberate act, and the CRM's bulk control is where it belongs.
           hx-swap="none">{{ contact.display_name }}</button>
 {% empty %}
   <p class="muted text-xs mt-1">
-    {% if term %}Nobody matches “{{ term }}”.{% else %}Everyone is already on this sequence.{% endif %}
+    {% if term %}{% blocktranslate %}Nobody matches “{{ term }}”.{% endblocktranslate %}{% else %}{% translate "Everyone is already on this sequence." %}{% endif %}
   </p>
 {% endfor %}

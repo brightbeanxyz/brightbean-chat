@@ -52,6 +52,12 @@ sentry-sdk[django]==2.68.1
 
 # Auth
 django-allauth[socialaccount]==65.19.7   # 65.x API: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS
+                                          # 65.19.6 raised the oauthlib floor to >=4.0.0 (GHSA-hj66-6f7g-4r5v,
+                                          # GHSA-xpv3-w29h-x7cv / PYSEC-2026-4114) — oauthlib itself isn't
+                                          # pinned here, so pip was free to resolve the vulnerable 3.3.1 under
+                                          # the old <4 ceiling. 65.19.7's own security fix (Tumblr identifiers)
+                                          # and 65.19.6's (Bitbucket/Pinterest identifiers) don't apply: only
+                                          # the google provider is installed (config/settings/base.py).
 bcrypt==5.0.0             # BCryptSHA256PasswordHasher's runtime dep; Django does not declare it
 
 # QR codes for ref-URL triggers (issue #11, SPEC §21 phase 2). Pure Python with

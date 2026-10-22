@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 {% comment %}
 The composer page (SPEC §13.1). The page itself is a shell; everything inside
 `#broadcast-wizard` is _wizard.html, so a step's POST answers with the next
@@ -12,7 +12,7 @@ page in the product that needs a date picker, and styles.css has themed
 flatpickr since L1-B in anticipation.
 {% endcomment %}
 
-{% block title %}{{ broadcast.name }} · Broadcasts · BrightBean Chat{% endblock %}
+{% block title %}{{ broadcast.name }} · {% translate "Broadcasts" %} · BrightBean Chat{% endblock %}
 
 {% block extra_head %}
   <link rel="stylesheet" href="{% static 'js/vendor/flatpickr.min.css' %}">
@@ -30,13 +30,13 @@ flatpickr since L1-B in anticipation.
 <div class="editor-bar mb-5">
     <a class="editor-bar-back" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-        Broadcasts
+        {% translate "Broadcasts" %}
     </a>
     <span class="editor-bar-sep" aria-hidden="true">/</span>
     <h1 class="editor-bar-title">{{ broadcast.name }}</h1>
     <span class="status-pill status-pill-{{ broadcast.status }}"><span class="status-pill-dot" aria-hidden="true"></span>{{ broadcast.get_status_display }}</span>
     <a class="btn-pill-secondary btn-pill-sm ml-auto" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}"
-       x-data="broadcastWizardExit()" @click="leave($event)">Save and exit</a>
+       x-data="broadcastWizardExit()" @click="leave($event)">{% translate "Save and exit" %}</a>
 </div>
 {% endblock %}
 

@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The live audience count (SPEC §13.1: "live audience-count + estimated-eligible
 preview via set-wise compliance").
 
@@ -26,20 +26,20 @@ template like any other value; nothing here is marked safe.
   <div class="flex flex-wrap items-baseline gap-6">
     <div>
       <div class="bc-preview-figure">{{ preview.eligible }}</div>
-      <div class="bc-tile-label">will receive it</div>
+      <div class="bc-tile-label">{% translate "will receive it" %}</div>
     </div>
     <div>
       <div class="bc-preview-figure">{{ preview.total }}</div>
-      <div class="bc-tile-label">match the filter</div>
+      <div class="bc-tile-label">{% translate "match the filter" %}</div>
     </div>
     <div>
       <div class="bc-preview-figure">{{ preview.skipped_total }}</div>
-      <div class="bc-tile-label">will be skipped</div>
+      <div class="bc-tile-label">{% translate "will be skipped" %}</div>
     </div>
   </div>
 
   {% if preview.total == 0 %}
-  <p class="bc-hint mt-2">Nobody matches these rules yet.</p>
+  <p class="bc-hint mt-2">{% translate "Nobody matches these rules yet." %}</p>
   {% endif %}
 
   {% for reason in reasons %}
@@ -47,7 +47,7 @@ template like any other value; nothing here is marked safe.
     <span>
       {{ reason.label }}
       {% if reason.names %}
-      <span class="bc-reason-names block">e.g. {% for name in reason.names %}{{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}</span>
+      <span class="bc-reason-names block">{% translate "e.g." %} {% for name in reason.names %}{{ name }}{% if not forloop.last %}, {% endif %}{% endfor %}</span>
       {% endif %}
     </span>
     <span class="bc-reason-count">{{ reason.count }}</span>
@@ -55,5 +55,5 @@ template like any other value; nothing here is marked safe.
   {% endfor %}
 </div>
 {% else %}
-<p class="bc-hint mt-3">Add a rule to see who this reaches.</p>
+<p class="bc-hint mt-3">{% translate "Add a rule to see who this reaches." %}</p>
 {% endif %}

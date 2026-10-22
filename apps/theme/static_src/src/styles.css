@@ -13,6 +13,15 @@
    only rows/cols, never a class attribute. Anything that starts generating
    class names in Python needs its path added here. */
 @import "tailwindcss" source(none);
+/* Every theme-able value (colours, fonts, radii, shadows, motion). Themes
+   override these; nothing below this line may write a colour literal (tests/test_theme_tokens.py). */
+@import "./tokens.css";
+/* The brightbean theme's own Layer-1 values, generated (Phase 2c) by
+   scripts/derive_dark_palette.py. [data-theme="brightbean"] has the same
+   specificity as tokens.css's :root, so loading this after it is what makes
+   these win — a page with no data-theme still gets the :root/light values
+   tokens.css itself defines. */
+@import "./themes/brightbean.css";
 
 /* The complete content list. Per-app template directories are deliberately
    absent: APP_DIRS is on, so Django would load templates from there, but none
@@ -32,272 +41,6 @@
    bundle — and the only symptom is an unstyled panel in a production build.
    Like the glob above, the frontend stage of the Dockerfile has to copy it. */
 @source "../../../flows/frontend/src/**/*.{ts,tsx}";
-
-/* ═══════════════════════════════════════════════════════════════
-   WHITE-LABEL TOKEN ARCHITECTURE
-   Layer 1 → Brand Tokens   (swap these to white-label)
-   Layer 2 → Semantic Tokens (reference brand tokens)
-   Layer 3 → Component Tokens (reference semantic tokens)
-   To rebrand: change ONLY the brand token values below.
-   ═══════════════════════════════════════════════════════════════ */
-
-:root {
-  /* Brand Tokens - BrightBean Orange */
-  --brand-50:  #FFF7ED;
-  /* Between 50 and 100: the redesign's active/selected tint. A touch warmer
-     than --brand-50, which stays where it is because the auth pages and the
-     flow-builder palette drawers are built on it. */
-  --brand-75:  #FFF3E8;
-  --brand-100: #FFEDD5;
-  --brand-200: #FED7AA;
-  --brand-300: #FDBA74;
-  --brand-400: #FB923C;
-  --brand-500: #F97316;
-  --brand-600: #EA580C;
-  --brand-700: #C2410C;
-  --brand-800: #9A3412;
-  --brand-900: #7C2D12;
-
-  /* Brand Tokens - BrightBean Green (the bean in the logo) — selection
-     controls (checkboxes, toggle switches), and from the redesign onwards the
-     product's "good" colour: healthy channels, live flows, completed steps.
-
-     The ramp gained both ends for that second job. --brand-green-500 is a
-     FILL: a dot, a toggle track, a tick's background. It is ~2.8:1 on white,
-     so it must never be text. Labels use --brand-green-700 (~5.4:1) on
-     --brand-green-50. */
-  --brand-green-50:  #F1F6E9;
-  --brand-green-100: #EFF2DC;
-  --brand-green-200: #DDE4B9;
-  --brand-green-500: #94A43F;
-  --brand-green-600: #7B8A33;
-  --brand-green-700: #5F6B27;
-
-  /* Brand Tokens - channel triplets. Needed wherever a colour is used at
-     partial alpha: CSS cannot extract the channels out of a hex custom
-     property, so rgba() needs them spelled out. Studio references
-     --primary-rgb from .btn-primary-tint but never defines it, so that
-     utility silently falls back to a literal and stops white-labelling. */
-  --brand-500-rgb:   249, 115, 22;
-  --error-500-rgb:   239, 68, 68;
-  --success-500-rgb: 148, 164, 63;  /* = --brand-green-500 */
-  --info-500-rgb:    59, 130, 246;
-  --warning-500-rgb: 234, 179, 8;
-  --accent-teal-rgb: 20, 184, 166;
-  /* Neutral scrim for hover washes and knob shadows — black, not a brand hue,
-     but tokenised so no literal colour survives outside this block. */
-  --scrim-rgb:       0, 0, 0;
-
-  /* Brand Tokens - messaging platforms. Their official marks, kept here in
-     Layer 1 because they are brand values a white-label deployment may need
-     to override, and because the "no hardcoded colours outside Layer 1" rule
-     applies to them too. Consumed by the .pi-* chips in Layer 3. */
-  --platform-telegram:  #26A5E4;
-  --platform-instagram: #E4405F;
-  --platform-messenger: #0084FF;
-  --platform-whatsapp:  #25D366;
-  --platform-sms:       #6366F1;
-  --platform-email:     #57534E;
-
-  --brand-font-display: Georgia, 'Times New Roman', serif;
-  --brand-font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --brand-font-mono: ui-monospace, SFMono-Regular, 'Cascadia Code', 'Consolas', monospace;
-
-  /* Semantic Tokens */
-  --primary:       var(--brand-500);
-  --primary-hover: var(--brand-600);
-  --primary-soft:  var(--brand-50);
-  --primary-muted: var(--brand-100);
-  --primary-ring:  var(--brand-200);
-  /* The redesign's active-nav / selected-card tint. Deliberately a token of
-     its own rather than a repoint of --primary-soft: that one also feeds
-     --flow-group-content-soft, so moving it would silently recolour the flow
-     builder's content drawer along with every nav row. */
-  --primary-tint:  var(--brand-75);
-  --primary-tint-border: #FBD3AF;
-  /* Studio's .btn-primary-tint reads var(--primary-rgb, 249, 115, 22) with no
-     definition anywhere, so the fallback always won and the tint stayed orange
-     after a rebrand. Defined here, it tracks the brand ramp like everything else. */
-  --primary-rgb:   var(--brand-500-rgb);
-
-  /* The colour roles (docs/design/HANDOFF.md §2.1). Orange is the signal for
-     ONE thing, the screen's primary action, and the only other place it may
-     appear is the focus ring. Everything that used to borrow it to say
-     "selected", "current" or "unread" says so in ink now: a second orange
-     control on a screen reads as a second call to action.
-
-     The CTA fills one step darker than --primary. White on --brand-500 is
-     2.8:1, white on --brand-600 is 3.6:1 — enough for the 14px semibold label
-     every primary button carries, and still unmistakably the brand.
-     apps/common/tests/test_colour_roles.py fails on any --primary or
-     --brand-* read outside the allowlisted rules, so a new orange control has
-     to be argued for there rather than slipping in. */
-  --cta:          var(--brand-600);
-  --cta-hover:    var(--brand-700);
-  --ink:          var(--neutral-900);
-  --selected-fill: var(--neutral-150);
-
-  /* Neutrals - warm stone */
-  --neutral-950: #171412;
-  --neutral-900: #1C1917;
-  --neutral-800: #292524;
-  --neutral-700: #44403C;
-  --neutral-600: #57534E;
-  --neutral-500: #78716C;
-  --neutral-400: #A8A29E;
-  --neutral-300: #D6D3D1;
-  --neutral-200: #E7E5E4;
-  /* Three steps the redesign added between 200 and 50. The hairline got
-     lighter and the card got bigger, which only reads as "calmer" if the
-     rule itself recedes — at #E7E5E4 a 16px card outline draws more attention
-     than what is inside it. */
-  --neutral-150: #EFEDE9;  /* hairline: card and panel outlines */
-  --neutral-125: #F4F2EE;  /* divider: rules *inside* a card */
-  --neutral-100: #F5F5F4;
-  --neutral-75:  #FBFAF8;  /* sunken: inset wells, tiles, done states */
-  --neutral-50:  #FAFAF9;
-
-  /* Surfaces */
-  --surface-0: #FFFFFF;
-  --surface-page: #F7F6F2;
-  --surface-1: var(--neutral-50);
-  --surface-2: var(--neutral-100);
-  --surface-3: var(--neutral-200);
-  --surface-sunken: var(--neutral-75);
-  --border:    var(--neutral-150);
-  --border-hover: var(--neutral-300);
-  /* Rules inside a card, one step lighter than the card's own outline. */
-  --divider:   var(--neutral-125);
-  /* Form controls keep the old, heavier hairline. A card outline can recede —
-     that is the whole point of lightening --border — but a field has to look
-     like somewhere you type, and at #EFEDE9 a 1.5px input outline stops
-     reading as an edge at all. A field you cannot find is a worse regression
-     than a heavy one.
-
-     Every 1.5px border in this file is a control: .form-input-styled,
-     .btn-outline, .btn-social, .auth-card's select and textarea,
-     .form-datetime, and the @layer base inputs inside .app-content. That
-     weight is the control signature here, so they all read this token — if you
-     add a control, use it, and if a 1.5px rule ever stops being a control,
-     move it back to --border. */
-  --border-strong: var(--neutral-200);
-
-  /* Text */
-  --text-primary:   var(--neutral-900);
-  --text-secondary: var(--neutral-600);
-  --text-tertiary:  var(--neutral-500);
-  --text-ghost:     var(--neutral-400);
-  --text-inverse:   #FFFFFF;
-
-  /* Illustrations */
-  --color-illustration-border: var(--neutral-200);
-  --color-illustration-card: #FFFFFF;
-  --color-illustration-element: var(--neutral-200);
-  --color-illustration-secondary-element: var(--neutral-100);
-  --color-illustration-accent: var(--brand-500);
-
-  /* Status */
-  /* Studio's quads are 50/500/700. Two extra steps are added: --warning-200
-     and --error-600, both of which Studio's component classes already
-     referenced through literal fallbacks. */
-  /* Success is the bean green, not a generic green. The redesign states
-     "good" in the logo's own colour — a healthy channel, a live flow, a
-     completed setup step — so these point at the --brand-green-* ramp rather
-     than carrying a second, unrelated green. --success-500 is a fill only
-     (see the note on that ramp); --success-700 is the text weight. */
-  --success-500: var(--brand-green-500);
-  --success-50:  var(--brand-green-50);
-  --success-700: var(--brand-green-700);
-  --warning-500: #EAB308; --warning-50: #FEFCE8; --warning-700: #A16207;
-  --warning-200: #FDE68A;
-  --error-500:   #EF4444; --error-50:   #FEF2F2; --error-700:   #B91C1C;
-  --error-600:   #DC2626;
-  --error-rgb:   var(--error-500-rgb);
-  --success-rgb: var(--success-500-rgb);
-  --info-rgb:    var(--info-500-rgb);
-  --warning-rgb: var(--warning-500-rgb);
-  --info-500:    #3B82F6; --info-50:    #EFF6FF; --info-700:    #1D4ED8;
-
-  /* Accent palette */
-  --accent-teal:    #14B8A6; --accent-teal-soft:    #F0FDFA;
-  --accent-sky:     #0EA5E9; --accent-sky-soft:     #F0F9FF;
-  --accent-rose:    #F43F5E; --accent-rose-soft:    #FFF1F2;
-  --accent-amber:   #F59E0B; --accent-amber-soft:   #FFFBEB;
-  --accent-indigo:  #6366F1; --accent-indigo-soft:  #EEF2FF;
-  --accent-emerald: #10B981; --accent-emerald-soft: #ECFDF5;
-
-  /* Flow-builder node groups (issue #10). Semantic, not brand: they name the
-     palette drawers apps/flows/schema/nodes.py registers, and every value
-     references a Layer-1 token so editing only the top block still recolours
-     the canvas. A group added later needs one pair here and one modifier
-     class below. */
-  --flow-group-content: var(--accent-sky);
-  --flow-group-content-soft: var(--accent-sky-soft);
-  --flow-group-logic:   var(--accent-indigo);
-  --flow-group-logic-soft: var(--accent-indigo-soft);
-  --flow-group-actions: var(--accent-teal);
-  --flow-group-actions-soft: var(--accent-teal-soft);
-  --flow-group-other:   var(--neutral-400);
-  --flow-group-other-soft: var(--surface-2);
-
-  /* Shadows */
-  --shadow-xs:  0 1px 2px rgba(23,20,18,0.05);
-  --shadow-sm:  0 1px 3px rgba(23,20,18,0.08), 0 1px 2px rgba(23,20,18,0.04);
-  --shadow-md:  0 4px 6px rgba(23,20,18,0.06), 0 2px 4px rgba(23,20,18,0.04);
-  --shadow-lg:  0 10px 15px rgba(23,20,18,0.08), 0 4px 6px rgba(23,20,18,0.04);
-  --shadow-xl:  0 20px 25px rgba(23,20,18,0.08), 0 8px 10px rgba(23,20,18,0.04);
-  --shadow-primary: 0 4px 14px rgba(var(--brand-500-rgb), 0.28);
-  /* The toast host floats over content and needs more lift than --shadow-xl. */
-  --shadow-toast: 0 12px 30px rgba(23, 20, 18, 0.32);
-
-  /* Radii */
-  --radius-sm:   0.25rem;
-  --radius-md:   0.375rem;
-  --radius-lg:   0.5rem;
-  --radius-control: 0.625rem;  /* 10 — inputs, selects, small buttons */
-  --radius-xl:   0.75rem;
-  --radius-tile: 0.875rem;     /* 14 — tiles and list cards inside a card */
-  --radius-2xl:  1rem;         /* 16 — the card */
-  --radius-full: 9999px;
-
-  /* Type scale.
-     Named --fs-* rather than --text-*, for two reasons. --text-primary and
-     friends already own the --text- prefix in this file and they are COLOURS,
-     so --text-lg beside --text-ghost would read as one family and is not. And
-     --text-* is Tailwind v4's @theme namespace for generating text-lg
-     utilities — harmless while this block is a plain :root, a trap the day
-     somebody converts it.
-
-     Additive: the ~60 existing literal rem sizes still work. New components
-     use these; old ones migrate when they are next touched. */
-  --fs-display: 1.75rem;    /* 28 — page title */
-  --fs-title:   1.0625rem;  /* 17 — section heading */
-  --fs-body-lg: 0.9375rem;  /* 15 — lede, form controls */
-  --fs-body:    0.8125rem;  /* 13 — body, meta */
-  --fs-sm:      0.75rem;    /* 12 — eyebrows, pills */
-  --fs-xs:      0.6875rem;  /* 11 — timestamps */
-  --fs-2xs:     0.625rem;   /* 10 — rail labels, node eyebrows */
-
-  /* Transitions */
-  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-fast:    150ms;
-  --dur-base:    200ms;
-  --dur-slow:    350ms;
-
-  /* Inline SVG chevrons. A data: URI cannot read a custom property or
-     currentColor, so the stroke colour has to be baked into the encoded
-     markup — keeping the whole value here means there is still exactly one
-     place to change it. %2378716C is --neutral-500. */
-  --chevron-neutral: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2378716C' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
-  --chevron-neutral-sm: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2378716C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-
-  /* Fonts */
-  --font-display: var(--brand-font-display);
-  --font-body:    var(--brand-font-body);
-  --font-mono:    var(--brand-font-mono);
-}
-
 /* Base */
 body {
   font-family: var(--font-body);
@@ -308,8 +51,8 @@ body {
 .auth-bg {
   background-color: var(--surface-1);
   background-image:
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(var(--brand-500-rgb), 0.08), transparent),
-    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(var(--accent-teal-rgb), 0.04), transparent);
+    radial-gradient(ellipse 80% 50% at 50% -20%, color-mix(in srgb, var(--brand-500) 8%, transparent), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 100%, color-mix(in srgb, var(--accent-teal) 4%, transparent), transparent);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -365,7 +108,7 @@ body {
   cursor: pointer;
   transition: background var(--dur-fast) ease;
 }
-.sidebar-ws-btn:hover { background: rgba(var(--scrim-rgb), 0.04); }
+.sidebar-ws-btn:hover { background: color-mix(in srgb, var(--scrim) 4%, transparent); }
 /* The way out of settings, in the switcher's slot. Quieter than the workspace
    name it stands in for — it is a door, not a title — and its mark is sized
    like the logo mark so the rows below line up the same in both modes. */
@@ -446,7 +189,7 @@ body {
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 .sidebar-menu-item:hover {
-  background: rgba(var(--scrim-rgb), 0.04);
+  background: color-mix(in srgb, var(--scrim) 4%, transparent);
   color: var(--text-primary);
 }
 /* Studio tints the current workspace with a neutral, not the brand, and it is
@@ -534,7 +277,7 @@ body {
   cursor: pointer;
   transition: background var(--dur-fast) ease;
 }
-.sidebar-menu-cta:hover { background: rgba(var(--scrim-rgb), 0.04); }
+.sidebar-menu-cta:hover { background: color-mix(in srgb, var(--scrim) 4%, transparent); }
 .sidebar-menu-section { border-top: 1px solid var(--divider); }
 .sidebar-menu-row {
   display: flex;
@@ -554,7 +297,7 @@ body {
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 .sidebar-menu-row:hover {
-  background: rgba(var(--scrim-rgb), 0.04);
+  background: color-mix(in srgb, var(--scrim) 4%, transparent);
   color: var(--text-primary);
 }
 /* The glyph stays quiet while the row's text takes the hover colour: it is
@@ -596,7 +339,7 @@ body {
   transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
 }
 .sidebar-nav-item:hover {
-  background: rgba(var(--scrim-rgb), 0.04);
+  background: color-mix(in srgb, var(--scrim) 4%, transparent);
   color: var(--text-primary);
 }
 .sidebar-nav-item.active {
@@ -653,7 +396,7 @@ body {
 .sidebar-section-label-wrap:hover .sidebar-section-action,
 .sidebar-section-action:focus-visible { opacity: 1; }
 .sidebar-section-action:hover {
-  background: rgba(var(--scrim-rgb), 0.06);
+  background: color-mix(in srgb, var(--scrim) 6%, transparent);
   color: var(--text-secondary);
 }
 
@@ -726,7 +469,7 @@ body {
   height: 10px;
   border-radius: 9999px;
   box-shadow: 0 0 0 1.5px var(--surface-0);
-  color: var(--text-inverse);
+  color: var(--text-on-fill);
 }
 .sidebar-connect-plus { background: var(--ink); }
 .sidebar-channel-flag {
@@ -758,7 +501,7 @@ body {
   cursor: pointer;
   transition: background var(--dur-fast) ease;
 }
-.sidebar-account:hover { background: rgba(var(--scrim-rgb), 0.04); }
+.sidebar-account:hover { background: color-mix(in srgb, var(--scrim) 4%, transparent); }
 .sidebar-account-name {
   font-size: var(--fs-body);
   font-weight: 600;
@@ -932,7 +675,7 @@ body {
      .sidebar-toggle's own display, this file being unlayered. */
   .sidebar-footer .sidebar-toggle { display: none; }
 }
-.sidebar-backdrop { background: rgba(var(--scrim-rgb), 0.3); }
+.sidebar-backdrop { background: color-mix(in srgb, var(--scrim) 30%, transparent); }
 
 /* --- The mobile top bar -------------------------------------------------- */
 .mobile-topbar {
@@ -1024,7 +767,7 @@ body {
   height: 30px;
   border-radius: var(--radius-md);
   background: var(--primary);
-  color: white;
+  color: var(--text-on-fill);
   font-size: 13px;
   font-weight: 700;
   display: flex;
@@ -1170,7 +913,12 @@ img.sidebar-logo-mark {
 }
 .btn-pill-primary {
   background: var(--cta);
-  color: var(--text-inverse);
+  /* --text-on-fill, not upstream's --text-inverse: --cta is a saturated
+     brand fill, and --text-inverse is documented (tokens.css) to flip with
+     an inverted *neutral* surface — on a fill it would turn dark the moment
+     dark mode inverts it. --text-on-fill stays white in every mode, which is
+     what a button needs. */
+  color: var(--text-on-fill);
   border: none;
   box-shadow: var(--shadow-primary);
 }
@@ -1244,7 +992,7 @@ img.sidebar-logo-mark {
 .avatar-sm { width: 32px; height: 32px; font-size: var(--fs-sm); }
 .avatar-xs { width: 20px; height: 20px; font-size: 9px; }
 .avatar-lg { width: 56px; height: 56px; font-size: 1.125rem; }
-.avatar-brand { background: var(--brand-green-500); color: var(--text-inverse); }
+.avatar-brand { background: var(--brand-green-500); color: var(--text-on-fill); }
 
 /* One empty state, instead of the four each list grew its own copy of. */
 .empty-state {
@@ -1449,7 +1197,7 @@ img.sidebar-logo-mark {
 }
 .btn-danger-soft:hover {
   background: var(--error-500) !important;
-  color: white !important;
+  color: var(--text-on-fill) !important;
 }
 
 .btn-danger-soft-bg {
@@ -1458,7 +1206,6 @@ img.sidebar-logo-mark {
 .btn-danger-soft-bg:hover {
   background: var(--error-50) !important;
 }
-
 
 
 .card-hover-lift {
@@ -1521,9 +1268,8 @@ img.sidebar-logo-mark {
   transition: background var(--dur-fast) ease;
 }
 .btn-danger-tint:hover {
-  background: rgba(var(--error-rgb), 0.08) !important;
+  background: color-mix(in srgb, var(--error-500) 8%, transparent) !important;
 }
-
 
 .input-focus {
   transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
@@ -1578,7 +1324,7 @@ img.sidebar-logo-mark {
   border-color: var(--error-500);
 }
 .form-input-styled.is-error:focus {
-  box-shadow: 0 0 0 3px rgba(var(--error-rgb), 0.15);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--error-500) 15%, transparent);
 }
 
 
@@ -1729,14 +1475,14 @@ img.sidebar-logo-mark {
   transition: all var(--dur-base) var(--ease-out);
   letter-spacing: 0.005em;
   background: var(--cta);
-  color: var(--text-inverse);
+  color: var(--text-on-fill);
   box-shadow: var(--shadow-primary);
   width: 100%;
 }
 .btn-brand:hover {
   background: var(--cta-hover);
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(var(--primary-rgb), 0.35);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--primary) 35%, transparent);
 }
 .btn-brand:active {
   transform: translateY(0);
@@ -1916,7 +1662,7 @@ img.sidebar-logo-mark {
   border-radius: var(--radius-full);
   cursor: pointer;
   background: var(--cta);
-  color: var(--text-inverse);
+  color: var(--text-on-fill);
   box-shadow: var(--shadow-primary);
   transition: all var(--dur-base) var(--ease-out);
 }
@@ -1969,7 +1715,7 @@ img.sidebar-logo-mark {
 /* Alert boxes */
 .alert-error {
   background: var(--error-50);
-  border: 1px solid rgba(var(--error-rgb), 0.2);
+  border: 1px solid color-mix(in srgb, var(--error-500) 20%, transparent);
   border-radius: var(--radius-lg);
   padding: 0.75rem 1rem;
   color: var(--error-700);
@@ -1979,7 +1725,7 @@ img.sidebar-logo-mark {
 
 .alert-success {
   background: var(--success-50);
-  border: 1px solid rgba(var(--success-rgb), 0.2);
+  border: 1px solid color-mix(in srgb, var(--success-500) 20%, transparent);
   border-radius: var(--radius-lg);
   padding: 0.75rem 1rem;
   color: var(--success-700);
@@ -1991,7 +1737,7 @@ img.sidebar-logo-mark {
    takes tone in {success, info, warn, error} — the fourth had nowhere to land. */
 .alert-warning {
   background: var(--warning-50);
-  border: 1px solid rgba(var(--warning-rgb), 0.2);
+  border: 1px solid color-mix(in srgb, var(--warning-500) 20%, transparent);
   border-radius: var(--radius-lg);
   padding: 0.75rem 1rem;
   color: var(--warning-700);
@@ -2000,7 +1746,7 @@ img.sidebar-logo-mark {
 }
 .alert-info {
   background: var(--info-50);
-  border: 1px solid rgba(var(--info-rgb), 0.2);
+  border: 1px solid color-mix(in srgb, var(--info-500) 20%, transparent);
   border-radius: var(--radius-lg);
   padding: 0.75rem 1rem;
   color: var(--info-700);
@@ -2174,14 +1920,51 @@ span.flatpickr-weekday {
 }
 
 /* Select with a custom chevron inset from the edge (the native arrow hugs
-   the right border). Pair with the usual border/padding utility classes. */
+   the right border). Pair with the usual border/padding utility classes.
+   <select> can't host generated content itself at a Baseline 2024 floor
+   (Customizable Select isn't there), so the chevron lives on a wrapper's
+   ::after instead, masked by the same SVG shape --chevron-neutral always
+   was — mask-image only reads a source's alpha, so the stroke colour baked
+   into that data-URI stopped mattering the moment it became a mask rather
+   than a background-image, and painting the shape with currentColor (via
+   `color: var(--text-tertiary)` below) is what lets it track dark mode
+   automatically once that token does, with no separate dark stroke to pick.
+
+   Wrap the <select> in `<span class="bb-select-wrap">` (`--full` if the
+   select should stretch to fill its row, matching .form-input-styled's own
+   width: 100% — plain wraps content-width, right for anything with an
+   explicit inline width or no width opinion of its own). */
+.bb-select-wrap {
+  position: relative;
+  display: inline-block;
+}
+.bb-select-wrap--full {
+  display: block;
+  width: 100%;
+}
+.bb-select-wrap::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  width: 1rem;
+  height: 1rem;
+  color: var(--text-tertiary);
+  background-color: currentColor;
+  -webkit-mask-image: var(--chevron-neutral);
+  mask-image: var(--chevron-neutral);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  pointer-events: none;
+}
 .bb-select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: var(--chevron-neutral);
-  background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  background-size: 1rem 1rem;
   padding-right: 2.5rem;
 }
 
@@ -2232,7 +2015,7 @@ span.flatpickr-weekday {
   height: 18px;
   border-radius: var(--radius-full);
   background: var(--surface-0);
-  box-shadow: 0 1px 2px rgba(var(--scrim-rgb), 0.2);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--scrim) 20%, transparent);
   transition: transform var(--dur-fast) ease;
 }
 .switch input:checked + .switch-track { background: var(--success-500); }
@@ -2276,10 +2059,39 @@ span.flatpickr-weekday {
   appearance: none;
   -webkit-appearance: none;
   white-space: nowrap;
+}
+/* Only a *native* <select class="bb-filter-select"> needs this wrapper —
+   the {% ui_select %} trigger button carrying the same class already paints
+   its own chevron as a real inline <svg style="color: var(--text-ghost)">,
+   which is how it got dark-mode-correct colour before this phase existed;
+   wrapping it too would just stack a second, now-redundant one behind it.
+   flex-shrink moved here from .bb-filter-select itself: whichever element
+   is the direct flex child is the one that has to carry it, and wrapping
+   makes that this span, not the <select> anymore. */
+.bb-filter-select-wrap {
+  position: relative;
+  display: inline-block;
   flex-shrink: 0;
-  background-image: var(--chevron-neutral-sm);
-  background-repeat: no-repeat;
-  background-position: right 8px center;
+}
+.bb-filter-select-wrap::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 6px;
+  color: var(--text-tertiary);
+  background-color: currentColor;
+  -webkit-mask-image: var(--chevron-neutral-sm);
+  mask-image: var(--chevron-neutral-sm);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  pointer-events: none;
 }
 .bb-filter-select.has-icon {
   padding-left: 28px;
@@ -2292,7 +2104,7 @@ span.flatpickr-weekday {
 .bb-filter-select:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(var(--primary-rgb), 0.15);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 15%, transparent);
 }
 .bb-filter-select.is-active {
   border-color: var(--ink);
@@ -2349,7 +2161,7 @@ span.flatpickr-weekday {
   justify-content: center;
   flex-shrink: 0;
   border-radius: var(--radius-sm);
-  color: var(--text-inverse);
+  color: var(--text-on-fill);
 }
 .pi-telegram  { background: var(--platform-telegram); }
 .pi-instagram { background: var(--platform-instagram); }
@@ -3227,7 +3039,7 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   animation: bb-modal-pop var(--dur-base) var(--ease-out);
 }
 .bb-modal-lg { width: min(36rem, calc(100vw - 32px)); }
-.bb-modal::backdrop { background: rgba(var(--scrim-rgb), 0.35); }
+.bb-modal::backdrop { background: color-mix(in srgb, var(--scrim) 35%, transparent); }
 .bb-modal[open]::backdrop { animation: bb-modal-scrim var(--dur-base) ease; }
 @keyframes bb-modal-scrim { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
@@ -3519,17 +3331,19 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   --xy-controls-button-color-hover: var(--text-primary);
   --xy-controls-box-shadow: var(--shadow-md);
   --xy-minimap-background-color: var(--surface-0);
-  --xy-minimap-mask-background-color: rgba(var(--scrim-rgb), 0.06);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--scrim) 6%, transparent);
   --xy-minimap-node-background-color: var(--border-hover);
   --xy-selection-background-color: var(--accent-sky-soft);
   --xy-selection-border: 1px dashed var(--accent-sky);
   --xy-attribution-background-color: transparent;
 
-  /* The group accent every .fb-node reads. Overridden per group below;
-     defaulted here so a node type in a drawer with no modifier class
-     still draws a visible accent rather than none. */
+  /* The group accent and eyebrow ink every .fb-node reads. Overridden per
+     group below; defaulted here so a node type in a drawer with no modifier
+     class still draws a visible accent, and its .fb-node-kind a real colour,
+     rather than none. */
   --flow-accent: var(--flow-group-other);
   --flow-accent-soft: var(--flow-group-other-soft);
+  --flow-ink: var(--flow-group-other-ink);
 }
 
 /* The mount div itself. It holds the whole island, so it is a flex
@@ -3728,7 +3542,7 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   padding: 0.0625rem 0.375rem;
   border-radius: var(--radius-full);
   background: var(--error-500);
-  color: #fff;
+  color: var(--text-on-fill);
   font-size: var(--fs-2xs);
   font-weight: 700;
   vertical-align: 0.05em;
@@ -3950,9 +3764,13 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
    width, padding, radius and border, which said "not a step" when what it
    needed to say is "the first thing that happens". Sharing the step card's
    chrome also means it cannot drift from it. */
+/* The "When…" eyebrow keeps the node's own text colour. Before the canvas
+   default above existed, --flow-ink was undefined here and the eyebrow fell
+   back to inheriting it; this says so on purpose instead of by accident. */
 .fb-node-trigger {
   --flow-accent: var(--brand-green-500);
   --flow-accent-soft: var(--brand-green-50);
+  --flow-ink: var(--text-primary);
   cursor: pointer;
 }
 
@@ -4011,7 +3829,7 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
   text-transform: uppercase;
   color: var(--text-ghost);
   padding-top: 0.875rem;
-  border-top: 1px solid var(--border-inner);
+  border-top: 1px solid var(--divider);
 }
 
 .fb-adder-group { margin-top: 0.75rem; }
@@ -4073,7 +3891,7 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
 }
 
 /* What separates the one irreversible control from everything above it. */
-.fb-step-rule { border: 0; border-top: 1px solid var(--border-inner); margin: 1.25rem 0 0.75rem; }
+.fb-step-rule { border: 0; border-top: 1px solid var(--divider); margin: 1.25rem 0 0.75rem; }
 
 /* ── Add a step ──────────────────────────────────────────────── */
 
@@ -4297,10 +4115,10 @@ button.stepper-step:disabled { cursor: not-allowed; opacity: 0.55; }
 /* --flow-accent is the dot; --flow-ink is the eyebrow's text, which needs a
    readable weight the dot colour does not have. The four pairs map onto the
    four phrases in schema/plain.ts: When, Then send, If they reply, Then do. */
-.fb-node-content { --flow-accent: var(--flow-group-content); --flow-accent-soft: var(--flow-group-content-soft); --flow-ink: var(--info-700); }
-.fb-node-logic   { --flow-accent: var(--flow-group-logic);   --flow-accent-soft: var(--flow-group-logic-soft);   --flow-ink: #3730A3; }
-.fb-node-actions { --flow-accent: var(--flow-group-actions); --flow-accent-soft: var(--flow-group-actions-soft); --flow-ink: #0F766E; }
-.fb-node-other   { --flow-accent: var(--flow-group-other);   --flow-accent-soft: var(--flow-group-other-soft);   --flow-ink: var(--text-tertiary); }
+.fb-node-content { --flow-accent: var(--flow-group-content); --flow-accent-soft: var(--flow-group-content-soft); --flow-ink: var(--flow-group-content-ink); }
+.fb-node-logic   { --flow-accent: var(--flow-group-logic);   --flow-accent-soft: var(--flow-group-logic-soft);   --flow-ink: var(--flow-group-logic-ink); }
+.fb-node-actions { --flow-accent: var(--flow-group-actions); --flow-accent-soft: var(--flow-group-actions-soft); --flow-ink: var(--flow-group-actions-ink); }
+.fb-node-other   { --flow-accent: var(--flow-group-other);   --flow-accent-soft: var(--flow-group-other-soft);   --flow-ink: var(--flow-group-other-ink); }
 
 /* A note is an annotation, not a step: no chrome, no handles. */
 .fb-node-note {
@@ -4966,8 +4784,8 @@ kbd {
    view tab, the other "this one is yours" state on the page. */
 .ib-bubble-out { background: var(--neutral-800); color: var(--text-inverse); }
 .ib-bubble-out .ib-chip {
-  border-color: rgba(255, 255, 255, 0.24);
-  background: rgba(255, 255, 255, 0.1);
+  border-color: color-mix(in srgb, var(--text-inverse) 24%, transparent);
+  background: color-mix(in srgb, var(--text-inverse) 10%, transparent);
   color: var(--text-inverse);
 }
 .ib-bubble-note {

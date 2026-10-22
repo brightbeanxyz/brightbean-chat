@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from django.db import transaction
+from django.utils.translation import gettext
 
 from apps.flows.models import Flow, Trigger, TriggerType
 from apps.flows.schema.issues import Issue
@@ -90,7 +91,9 @@ def create_trigger(
     """
     spec = spec_for(trigger_type)
     if spec is None:
-        raise TriggerValidationError([_issue(f"{trigger_type!r} is not a trigger type.", "type")])
+        raise TriggerValidationError(
+            [_issue(gettext("%(type)r is not a trigger type.") % {"type": trigger_type}, "type")]
+        )
     payload = config if config is not None else spec.default_config()
     _check(trigger_type, payload, connection)
 
@@ -168,7 +171,9 @@ def move_trigger(trigger: Trigger, *, direction: str) -> Trigger:
     from interleaving into an order neither asked for.
     """
     if direction not in {"up", "down"}:
-        raise TriggerValidationError([_issue(f"{direction!r} is not a direction.", "direction")])
+        raise TriggerValidationError(
+            [_issue(gettext("%(direction)r is not a direction.") % {"direction": direction}, "direction")]
+        )
 
     with transaction.atomic():
         ordered = list(workspace_triggers(trigger.workspace_id, lock=True))
@@ -269,15 +274,23 @@ def describe(trigger: Trigger) -> str:
     if trigger.type == TriggerType.KEYWORD:
         words = [str(item.get("text", "")) for item in config.get("keywords") or () if isinstance(item, dict)]
         if not words:
-            return "No keywords yet"
+            return gettext("No keywords yet")
         shown = ", ".join(words[:3])
-        return shown if len(words) <= 3 else f"{shown} and {len(words) - 3} more"
+        return (
+            shown
+            if len(words) <= 3
+            else gettext("%(shown)s and %(more)s more")
+            % {
+                "shown": shown,
+                "more": len(words) - 3,
+            }
+        )
     if trigger.type == TriggerType.REF_URL:
-        return f"Reference “{config.get('ref') or 'None'}”"
+        return gettext("Reference “%(ref)s”") % {"ref": config.get("ref") or "None"}
     if trigger.type == TriggerType.COMMENT:
         return _describe_comment(config)
     spec = spec_for(trigger.type)
-    return spec.description if spec is not None else ""
+    return str(spec.description) if spec is not None else ""
 
 
 def _describe_comment(config: dict[str, Any]) -> str:
@@ -289,21 +302,28 @@ def _describe_comment(config: dict[str, Any]) -> str:
     comment. Both consumers of describe() get it: the drawer row and the card on
     the canvas.
     """
-    scope = "specific posts" if config.get("post_scope") == "specific" else "any post"
+    scope = gettext("specific posts") if config.get("post_scope") == "specific" else gettext("any post")
     keywords = [str(word) for word in config.get("include_keywords") or () if str(word).strip()]
     if keywords:
         shown = ", ".join(keywords[:2])
-        more = f" and {len(keywords) - 2} more" if len(keywords) > 2 else ""
-        parts = [f"Comments on {scope} containing {shown}{more}"]
+        more = gettext(" and %(count)s more") % {"count": len(keywords) - 2} if len(keywords) > 2 else ""
+        parts = [
+            gettext("Comments on %(scope)s containing %(shown)s%(more)s")
+            % {
+                "scope": scope,
+                "shown": shown,
+                "more": more,
+            }
+        ]
     else:
-        parts = [f"Comments on {scope}"]
+        parts = [gettext("Comments on %(scope)s") % {"scope": scope}]
 
     public_reply = config.get("public_reply")
     mode = (public_reply or {}).get("mode") if isinstance(public_reply, dict) else None
     if mode and mode != "none":
-        parts.append("replies publicly")
+        parts.append(gettext("replies publicly"))
     if config.get("like_comment"):
-        parts.append("likes the comment")
+        parts.append(gettext("likes the comment"))
     return " · ".join(parts)
 
 
@@ -318,11 +338,21 @@ def _check(trigger_type: str, config: Any, connection: Any) -> None:
     spec = spec_for(trigger_type)
     if connection is not None and spec is not None:
         if not spec.bindable:
-            issues = [*issues, _issue(f"A {spec.label.lower()} trigger is not tied to a channel.", "connection")]
+            issues = [
+                *issues,
+                _issue(
+                    gettext("A %(label)s trigger is not tied to a channel.") % {"label": str(spec.label).lower()},
+                    "connection",
+                ),
+            ]
         elif connection.platform not in spec.platforms:
             issues = [
                 *issues,
-                _issue(f"{spec.label} triggers do not run on {connection.get_platform_display()}.", "connection"),
+                _issue(
+                    gettext("%(label)s triggers do not run on %(platform)s.")
+                    % {"label": spec.label, "platform": connection.get_platform_display()},
+                    "connection",
+                ),
             ]
     if issues:
         raise TriggerValidationError(list(issues))

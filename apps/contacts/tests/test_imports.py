@@ -191,6 +191,25 @@ class TestTheDryRun:
         assert run.error_count == 1
         assert run.created_count == 1
 
+    def test_a_row_error_is_translated_into_the_importers_own_language(self, tenancy):
+        """The worker has no request and so no locale of its own — it has to
+        borrow the importer's, or every row error is English regardless of who
+        ran the import and what they read."""
+        tenancy.owner.language = "ru"
+        tenancy.owner.save(update_fields=["language"])
+        run = make_run(
+            tenancy.workspace,
+            "email\nada@example.test\nnot-an-email\n",
+            mapping={"0": "system:email"},
+            created_by=tenancy.owner,
+        )
+        imports.enqueue(run, mode=imports.MODE_DRY_RUN)
+
+        drain(run, imports.MODE_DRY_RUN)
+
+        assert run.error_count == 1
+        assert run.errors[0]["message"] == "Это не адрес электронной почты."
+
     def test_it_learns_how_long_the_file_is(self, tenancy):
         run = make_run(tenancy.workspace, SIMPLE, mapping=MAPPING)
         imports.enqueue(run, mode=imports.MODE_DRY_RUN)

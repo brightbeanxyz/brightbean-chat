@@ -37,6 +37,10 @@ so announcing the host as well made a screen reader read every toast twice.
 Per-toast roles also get the politeness right — an error interrupts, a
 success waits — which a single aria-live on the container cannot express.
 {% endcomment %}
+{% load i18n %}
+{% translate "Dismiss" as dismiss_label %}
+{% translate "Something went wrong. Please try again." as generic_error_message %}
+{% translate "Request failed" as request_failed_title %}
 <div id="bb-toast-host"></div>
 <script nonce="{{ request.csp_nonce }}">
 (function () {
@@ -77,7 +81,7 @@ success waits — which a single aria-live on the container cannot express.
             '<span class="bb-toast-icon">' + svg(TONES[tone], 17) + '</span>' +
             '<div class="min-w-0"><div class="bb-toast-title"></div>' +
             (detail.body ? '<div class="bb-toast-body"></div>' : '') + '</div>' +
-            '<button type="button" class="bb-toast-dismiss" aria-label="Dismiss">' + svg(DISMISS_ICON, 14) + '</button>';
+            '<button type="button" class="bb-toast-dismiss" aria-label="{{ dismiss_label|escapejs }}">' + svg(DISMISS_ICON, 14) + '</button>';
 
         // Server-supplied text, via textContent only.
         el.querySelector('.bb-toast-title').textContent = detail.title;
@@ -111,7 +115,7 @@ success waits — which a single aria-live on the container cannot express.
             // boilerplate the user cannot act on, and under DEBUG the exception
             // and traceback from Django's technical 500 page. Neither belongs in
             // a toast. Studio renders whatever it gets.
-            message = 'Something went wrong. Please try again.';
+            message = '{{ generic_error_message|escapejs }}';
         }
 
         var inline = elt && elt.closest('[data-inline-error]');
@@ -122,7 +126,7 @@ success waits — which a single aria-live on the container cannot express.
             if (target) { target.textContent = message; return; }
         }
 
-        render({ tone: 'error', title: 'Request failed', body: message });
+        render({ tone: 'error', title: '{{ request_failed_title|escapejs }}', body: message });
     });
 })();
 </script>

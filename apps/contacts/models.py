@@ -50,24 +50,26 @@ from django.db import models
 from django.db.models.functions import Lower
 from django.db.models.signals import m2m_changed
 from django.dispatch import receiver
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 
 from apps.common.scoping import WorkspaceScopedModel
 from apps.contacts.errors import WorkspaceMismatchError
 
 
 class ContactStatus(models.TextChoices):
-    ACTIVE = "active", "Active"
-    DELETED = "deleted", "Deleted"
+    ACTIVE = "active", _("Active")
+    DELETED = "deleted", _("Deleted")
 
 
 class CustomFieldType(models.TextChoices):
     """The value types a custom field can hold (SPEC §5, SPEC §11.4)."""
 
-    TEXT = "text", "Text"
-    NUMBER = "number", "Number"
-    DATE = "date", "Date"
-    DATETIME = "datetime", "Date and time"
-    BOOLEAN = "boolean", "True or false"
+    TEXT = "text", _("Text")
+    NUMBER = "number", _("Number")
+    DATE = "date", _("Date")
+    DATETIME = "datetime", _("Date and time")
+    BOOLEAN = "boolean", _("True or false")
 
 
 #: Which column on ``CustomFieldValue`` holds a value of each field type.
@@ -345,11 +347,15 @@ class CustomFieldValue(ContactScopedModel):
         populated = [column for column in ALL_VALUE_COLUMNS if getattr(self, column) is not None]
         if len(populated) != 1:
             raise ValidationError(
-                f"A custom field value populates exactly one column; this row populates {len(populated)}."
+                gettext("A custom field value populates exactly one column; this row populates %(count)s.")
+                % {"count": len(populated)}
             )
         expected = self.field.value_column
         if populated[0] != expected:
-            raise ValidationError(f"A {self.field.get_type_display().lower()} field stores its value in {expected}.")
+            raise ValidationError(
+                gettext("A %(type)s field stores its value in %(column)s.")
+                % {"type": self.field.get_type_display().lower(), "column": expected}
+            )
 
 
 class Segment(WorkspaceScopedModel):
@@ -397,12 +403,12 @@ class ImportStatus(models.TextChoices):
     interrupting.
     """
 
-    UPLOADED = "uploaded", "Uploaded"
-    VALIDATING = "validating", "Checking"
-    VALIDATED = "validated", "Checked"
-    IMPORTING = "importing", "Importing"
-    DONE = "done", "Finished"
-    FAILED = "failed", "Failed"
+    UPLOADED = "uploaded", _("Uploaded")
+    VALIDATING = "validating", _("Checking")
+    VALIDATED = "validated", _("Checked")
+    IMPORTING = "importing", _("Importing")
+    DONE = "done", _("Finished")
+    FAILED = "failed", _("Failed")
 
 
 #: Statuses no worker will move on from. Read by the housekeeping prune.
@@ -418,9 +424,9 @@ class ImportDedupe(models.TextChoices):
     contact may genuinely be a second person at a shared inbox.
     """
 
-    UPDATE = "update", "Update the contact that is already there"
-    CREATE = "create", "Create a second contact anyway"
-    SKIP = "skip", "Skip the row"
+    UPDATE = "update", _("Update the contact that is already there")
+    CREATE = "create", _("Create a second contact anyway")
+    SKIP = "skip", _("Skip the row")
 
 
 def import_upload_to(instance: "ContactImport", filename: str) -> str:
@@ -559,18 +565,18 @@ class ContactImport(WorkspaceScopedModel):
 class ErasureStatus(models.TextChoices):
     """The lifecycle of one erasure request."""
 
-    PENDING = "pending", "Pending"
-    RUNNING = "running", "Running"
-    DONE = "done", "Done"
-    FAILED = "failed", "Failed"
+    PENDING = "pending", _("Pending")
+    RUNNING = "running", _("Running")
+    DONE = "done", _("Done")
+    FAILED = "failed", _("Failed")
 
 
 class ErasureSource(models.TextChoices):
     """Which surface asked for it. Part of the audit answer, not decoration."""
 
-    UI = "ui", "Contact page"
-    BULK = "bulk", "Bulk action"
-    API = "api", "Public API"
+    UI = "ui", _("Contact page")
+    BULK = "bulk", _("Bulk action")
+    API = "api", _("Public API")
 
 
 class ContactErasure(WorkspaceScopedModel):

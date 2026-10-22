@@ -29,6 +29,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.api.models import ApiKey
@@ -135,7 +136,9 @@ def issue_key(request: OrgRequest) -> HttpResponse:
         # Deliberately the same message for "not a workspace id" and "not a
         # workspace in your organization": the second would confirm the id names
         # something real somewhere else (SECURITY-BASELINE §1).
-        return render(request, "api/keys_list.html", _context(request, error="Choose a workspace."), status=400)
+        return render(
+            request, "api/keys_list.html", _context(request, error=gettext("Choose a workspace.")), status=400
+        )
 
     try:
         api_key = issue_api_key(
@@ -176,7 +179,7 @@ def revoke_key(request: OrgRequest, api_key_id: Any) -> HttpResponse:
         raise Http404("No such API key.")
 
     if revoke_api_key(api_key):
-        messages.success(request, f"Revoked “{api_key.name}”.")
+        messages.success(request, gettext("Revoked “%(name)s”.") % {"name": api_key.name})
     else:
-        messages.info(request, f"“{api_key.name}” was already revoked.")
+        messages.info(request, gettext("“%(name)s” was already revoked.") % {"name": api_key.name})
     return redirect(reverse("settings_org_api_keys"))

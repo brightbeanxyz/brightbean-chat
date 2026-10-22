@@ -4,7 +4,7 @@ The detail panel, swapped into #media-detail.
 Every mutation here returns a 204 with a `mediaChanged` event, so the grid
 refreshes itself and this panel does not have to know it exists.
 {% endcomment %}
-{% load media_library %}
+{% load media_library i18n %}
 <div class="media-card p-4">
   <h2 class="mb-2">{{ asset.title|default:asset.filename }}</h2>
 
@@ -14,14 +14,14 @@ refreshes itself and this panel does not have to know it exists.
   {% endif %}
 
   <dl class="text-xs space-y-1 mb-3">
-    <div><dt class="inline muted">Type</dt> <dd class="inline">{{ asset.get_kind_display }} · {{ asset.mime }}</dd></div>
-    <div><dt class="inline muted">Size</dt> <dd class="inline">{{ asset.size_display }}</dd></div>
+    <div><dt class="inline muted">{% translate "Type" %}</dt> <dd class="inline">{{ asset.get_kind_display }} · {{ asset.mime }}</dd></div>
+    <div><dt class="inline muted">{% translate "Size" %}</dt> <dd class="inline">{{ asset.size_display }}</dd></div>
     {% if asset.width %}
-      <div><dt class="inline muted">Dimensions</dt> <dd class="inline">{{ asset.width }} × {{ asset.height }}</dd></div>
+      <div><dt class="inline muted">{% translate "Dimensions" %}</dt> <dd class="inline">{{ asset.width }} × {{ asset.height }}</dd></div>
     {% endif %}
-    <div><dt class="inline muted">Uploaded</dt>
-      <dd class="inline">{{ asset.created_at|date:"j M Y" }}{% if asset.uploaded_by %} by {{ asset.uploaded_by.display_name }}{% endif %}</dd></div>
-    <div><dt class="inline muted">Media id</dt> <dd class="inline"><code>{{ asset.id }}</code></dd></div>
+    <div><dt class="inline muted">{% translate "Uploaded" %}</dt>
+      <dd class="inline">{{ asset.created_at|date:"j M Y" }}{% if asset.uploaded_by %} {% blocktranslate with name=asset.uploaded_by.display_name %}by {{ name }}{% endblocktranslate %}{% endif %}</dd></div>
+    <div><dt class="inline muted">{% translate "Media id" %}</dt> <dd class="inline"><code>{{ asset.id }}</code></dd></div>
   </dl>
 
   {% comment %}
@@ -40,32 +40,32 @@ refreshes itself and this panel does not have to know it exists.
     {% endcomment %}
     <form hx-post="{% url 'media:asset_edit' workspace_id=request.workspace.id asset_id=asset.id %}"
           hx-swap="none">
-      <label for="asset-title">Title</label>
+      <label for="asset-title">{% translate "Title" %}</label>
       <input type="text" id="asset-title" name="title" value="{{ asset.title }}" maxlength="255">
 
-      <label for="asset-alt" class="mt-2">Alt text</label>
+      <label for="asset-alt" class="mt-2">{% translate "Alt text" %}</label>
       <textarea id="asset-alt" name="alt_text" rows="2">{{ asset.alt_text }}</textarea>
-      <p class="text-xs muted mt-1">Described to people using a screen reader, and sent to platforms that support it.</p>
+      <p class="text-xs muted mt-1">{% translate "Described to people using a screen reader, and sent to platforms that support it." %}</p>
 
-      <button type="submit" class="mt-2">Save</button>
+      <button type="submit" class="mt-2">{% translate "Save" %}</button>
     </form>
 
     <form hx-post="{% url 'media:asset_move' workspace_id=request.workspace.id asset_id=asset.id %}"
           hx-swap="none">
-      <label for="asset-folder">Folder</label>
+      <label for="asset-folder">{% translate "Folder" %}</label>
       <select id="asset-folder" name="folder">
-        <option value="">No folder</option>
+        <option value="">{% translate "No folder" %}</option>
         {% for folder in folders %}
           <option value="{{ folder.id }}" {% if asset.folder_id == folder.id %}selected{% endif %}>{{ folder.name }}</option>
         {% endfor %}
       </select>
-      <button type="submit" class="mt-2">Move</button>
+      <button type="submit" class="mt-2">{% translate "Move" %}</button>
     </form>
 
     <form hx-post="{% url 'media:asset_delete' workspace_id=request.workspace.id asset_id=asset.id %}"
           hx-swap="none"
-          hx-confirm="Delete {{ asset.filename }}? Any flow or broadcast still referencing it will fail to send that block.">
-      <button type="submit" class="btn-danger-soft">Delete</button>
+          hx-confirm="{% blocktranslate with name=asset.filename %}Delete {{ name }}? Any flow or broadcast still referencing it will fail to send that block.{% endblocktranslate %}">
+      <button type="submit" class="btn-danger-soft">{% translate "Delete" %}</button>
     </form>
   {% endif %}
 </div>

@@ -30,6 +30,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import urlencode
+from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.filters import multi
@@ -135,8 +136,8 @@ def notification_list(request: RBACRequest) -> HttpResponse:
         # read as a second parameter.
         "filter_query": urlencode({"event_type": event_types, "read_state": read_state}, doseq=True),
         "filters": {"event_type": event_types},
-        "filter_groups": [{"key": "event_type", "label": "Type", "options": registered_choices()}],
-        "read_states": [("", "All"), ("unread", "Unread"), ("read", "Read")],
+        "filter_groups": [{"key": "event_type", "label": gettext("Type"), "options": registered_choices()}],
+        "read_states": [("", gettext("All")), ("unread", gettext("Unread")), ("read", gettext("Read"))],
         "page": page,
         "has_next": len(window) > PAGE_SIZE,
         "has_previous": page > 1,

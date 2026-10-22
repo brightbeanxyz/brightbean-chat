@@ -1,4 +1,4 @@
-{% load humanize common_extras %}{% comment %}
+{% load humanize common_extras i18n %}{% comment %}
 The flow list: the summary cards, then the rows in Live / Offline / Draft
 sections (HANDOFF §3). Rendered both inside list.html and on its own for every
 HTMX refresh — one renderer, so a filtered view and a post-mutation refresh can
@@ -27,9 +27,14 @@ is what scrolls and a scroll event never bubbles out of it.
 {% if summary_oob %}{% include "flows/_summary.html" with oob=True %}{% endif %}
 {% if not groups %}
 {% if query or filters.status or filters.folder %}
-{% include "components/empty_state.html" with icon="search" title="No flows match" body="Nothing matches these filters. Try a different word, or clear them." action_label="Clear filters" action_click="clearFilters()" %}
+{% translate "No flows match" as no_match_title %}
+{% translate "Nothing matches these filters. Try a different word, or clear them." as no_match_body %}
+{% translate "Clear filters" as clear_filters_label %}
+{% include "components/empty_state.html" with icon="search" title=no_match_title body=no_match_body action_label=clear_filters_label action_click="clearFilters()" %}
 {% else %}
-{% include "components/empty_state.html" with icon="flows" title="No flows here yet" body="Start from a template above, or create one from scratch." %}
+{% translate "No flows here yet" as no_flows_title %}
+{% translate "Start from a template above, or create one from scratch." as no_flows_body %}
+{% include "components/empty_state.html" with icon="flows" title=no_flows_title body=no_flows_body %}
 {% endif %}
 {% else %}
 {% for group in groups %}
@@ -67,13 +72,13 @@ is what scrolls and a scroll event never bubbles out of it.
                 {% for platform in flow.platforms %}
                 <span class="pi-chip {{ platform.key|platform_class }} w-4 h-4" title="{{ platform.label }}">{% include "partials/_platform_icon.html" with platform=platform.key size="sm" %}</span>
                 {% endfor %}
-                <span class="truncate{% if flow.platforms %} ml-0.5{% endif %}">{% if flow.folder %}{{ flow.folder }} · {% endif %}{{ flow.trigger_summary }} · edited {{ flow.updated_at|naturaltime }}</span>
+                <span class="truncate{% if flow.platforms %} ml-0.5{% endif %}">{% if flow.folder %}{{ flow.folder }} · {% endif %}{{ flow.trigger_summary }} · {% blocktranslate with when=flow.updated_at|naturaltime %}edited {{ when }}{% endblocktranslate %}</span>
             </div>
         </div>
 
-        <div class="text-right flex-shrink-0 hidden sm:block" title="Conversations it started in the last 7 days">
+        <div class="text-right flex-shrink-0 hidden sm:block" title="{% translate 'Conversations it started in the last 7 days' %}">
             <div class="list-row-figure">{{ flow.runs_recent|intcomma }}</div>
-            <div class="list-row-figure-label">runs, 7 days</div>
+            <div class="list-row-figure-label">{% translate "runs, 7 days" %}</div>
         </div>
 
         {% comment %}
@@ -108,11 +113,11 @@ is what scrolls and a scroll event never bubbles out of it.
 
         <a class="btn-pill-secondary btn-pill-sm flex-shrink-0"
            href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}">
-            {% if not can_edit %}View{% elif flow.status == "draft" %}Continue{% else %}Open{% endif %}
+            {% if not can_edit %}{% translate "View" %}{% elif flow.status == "draft" %}{% translate "Continue" %}{% else %}{% translate "Open" %}{% endif %}
         </a>
 
         <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)"
-                aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions">
+                aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{% translate 'More actions' %}">
             <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
         </button>
 
@@ -121,14 +126,14 @@ is what scrolls and a scroll event never bubbles out of it.
              class="row-menu-panel fixed z-50 w-[200px]" role="menu">
             {% if can_view_analytics %}
             <a class="row-menu-item" role="menuitem"
-               href="{% url 'analytics:flow_detail' workspace_id=request.workspace.id flow_id=flow.id %}">Stats</a>
+               href="{% url 'analytics:flow_detail' workspace_id=request.workspace.id flow_id=flow.id %}">{% translate "Stats" %}</a>
             {% endif %}
             {% if can_edit %}
             <button type="button" class="row-menu-item" role="menuitem"
-                    @click="renaming = true; menuOpen = false">Rename</button>
+                    @click="renaming = true; menuOpen = false">{% translate "Rename" %}</button>
             <button type="button" class="row-menu-item" role="menuitem"
                     hx-post="{% url 'flows:duplicate' workspace_id=request.workspace.id flow_id=flow.id %}"
-                    hx-swap="none" @click="menuOpen = false">Duplicate</button>
+                    hx-swap="none" @click="menuOpen = false">{% translate "Duplicate" %}</button>
             {% endif %}
             {% comment %}
               Both downloads stay inside `can_edit`, because both views require
@@ -145,18 +150,18 @@ is what scrolls and a scroll event never bubbles out of it.
             {% if can_edit %}
             <div class="row-menu-sep"></div>
             <a class="row-menu-item" role="menuitem"
-               href="{% url 'flows:export' workspace_id=request.workspace.id flow_id=flow.id %}">Download a copy</a>
+               href="{% url 'flows:export' workspace_id=request.workspace.id flow_id=flow.id %}">{% translate "Download a copy" %}</a>
             <a class="row-menu-item" role="menuitem"
-               href="{% url 'flows:export_bundle' workspace_id=request.workspace.id flow_id=flow.id %}">Download with everything it uses</a>
+               href="{% url 'flows:export_bundle' workspace_id=request.workspace.id flow_id=flow.id %}">{% translate "Download with everything it uses" %}</a>
             <div class="row-menu-sep"></div>
             {% if flow.status == "archived" %}
             <button type="button" class="row-menu-item" role="menuitem"
                     hx-post="{% url 'flows:restore' workspace_id=request.workspace.id flow_id=flow.id %}"
-                    hx-swap="none" @click="menuOpen = false">Restore</button>
+                    hx-swap="none" @click="menuOpen = false">{% translate "Restore" %}</button>
             {% else %}
             <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem"
                     hx-post="{% url 'flows:archive' workspace_id=request.workspace.id flow_id=flow.id %}"
-                    hx-swap="none" @click="menuOpen = false">Archive</button>
+                    hx-swap="none" @click="menuOpen = false">{% translate "Archive" %}</button>
             {% endif %}
             {% endif %}
         </div>
@@ -171,12 +176,13 @@ is what scrolls and a scroll event never bubbles out of it.
               hx-swap="none"
               @htmx:after-request="renaming = false">
             {% csrf_token %}
+            {% translate "Folder" as folder_placeholder %}
             <input type="text" name="name" value="{{ flow.name }}" maxlength="200" required
-                   class="form-input-styled" style="width: 14rem;" aria-label="Flow name">
+                   class="form-input-styled" style="width: 14rem;" aria-label="{% translate 'Flow name' %}">
             <input type="text" name="folder" value="{{ flow.folder }}" maxlength="200"
-                   class="form-input-styled" style="width: 10rem;" placeholder="Folder" aria-label="Folder">
-            <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
-            <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
+                   class="form-input-styled" style="width: 10rem;" placeholder="{{ folder_placeholder }}" aria-label="{{ folder_placeholder }}">
+            <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save" %}</button>
+            <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">{% translate "Cancel" %}</button>
         </form>
         {% endif %}
     </div>

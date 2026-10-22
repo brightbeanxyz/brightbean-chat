@@ -34,9 +34,7 @@ _WS_SETTINGS_LAYOUT = "workspace_settings"
 _WORKSPACE_STUBS: list[tuple[str, str, str, str, str, str]] = []
 
 # Not workspace-scoped, so login is the whole gate.
-_GLOBAL_STUBS: list[tuple[str, str, str, str, str]] = [
-    ("accounts/preferences/", "settings_preferences", "Preferences", "#31 follow-up", _SETTINGS_LAYOUT),
-]
+_GLOBAL_STUBS: list[tuple[str, str, str, str, str]] = []
 
 
 def _if_installed(app: str, *mounts: tuple[str, str]) -> list[URLResolver]:
@@ -80,6 +78,10 @@ def _ws_stub(route: str, name: str, section: str, issue: str, layout: str, permi
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # Django's built-in language switcher (POST language= + next=). Works for
+    # anonymous and authenticated requests alike, since LocaleMiddleware reads
+    # the session/cookie it writes — see config/settings/base.py's LANGUAGES.
+    path("i18n/", include("django.conf.urls.i18n")),
     # No trailing slash: SPEC §20 specifies /healthz, and probes are literal.
     path("healthz", views.healthz, name="healthz"),
     # The queue's HTTP drain, for hosts with no always-on worker process
@@ -94,6 +96,9 @@ urlpatterns = [
     # view rather than allauth's own. Both live at the same path, so reversing
     # `account_signup` still lands here.
     path("accounts/", include("apps.accounts.urls")),
+    # Replaces the old _GLOBAL_STUBS placeholder at this same path/name — the
+    # language switcher is the real page issue #31's follow-up was left for.
+    path("accounts/preferences/", account_views.account_preferences, name="settings_preferences"),
     *[_stub(*stub) for stub in _GLOBAL_STUBS],
     path("accounts/", include("allauth.urls")),
     # Org-scoped management. One org per user in v1, so no id in the URL.

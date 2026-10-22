@@ -27,12 +27,15 @@ Args:
   value: the string shown and copied.
   hint:  optional line underneath. Omit for none.
 {% endcomment %}
+{% load i18n %}
+{% translate "Copied" as copied_label %}
+{% translate "Copy" as copy_label %}
 <div>
   <div class="section-eyebrow mb-1.5">{{ label }}</div>
   <div class="cn-copy" x-data="{ copied: false }">
     <code class="cn-copy-value" x-ref="value">{{ value }}</code>
     <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="navigator.clipboard?.writeText($refs.value.textContent.trim())?.then(() => { copied = true; setTimeout(() => copied = false, 1600) })">
-      <span x-text="copied ? 'Copied' : 'Copy'">Copy</span>
+      <span x-text="copied ? '{{ copied_label|escapejs }}' : '{{ copy_label|escapejs }}'">{{ copy_label }}</span>
     </button>
   </div>
   {% if hint %}<p class="field-hint">{{ hint }}</p>{% endif %}

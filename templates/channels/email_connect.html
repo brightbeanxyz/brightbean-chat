@@ -1,5 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Connect an email sender. Same shape as telegram_connect.html — see the note
 there for why content_wrap is cleared and why the platform key is written once.
@@ -15,7 +15,7 @@ reason the Telegram page gives: these are live credentials and must not end up i
 the browser's saved form data. None of them is ever echoed back on a failed
 submit either — the view's `_echoed` names only non-secret fields.
 {% endcomment %}
-{% block title %}Connect email · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Connect email" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
@@ -25,11 +25,9 @@ submit either — the view's `_echoed` names only non-secret fields.
     <div class="flex items-start gap-4 mb-7">
         <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
         <div class="min-w-0">
-            <h1 class="page-title">Connect an email sender</h1>
+            <h1 class="page-title">{% translate "Connect an email sender" %}</h1>
             <p class="page-lede mt-1.5">
-                Email is outbound only. BrightBean Chat sends through your own provider: your SMTP
-                server, Resend, or Amazon SES. So the sending reputation, the domain and the bill
-                stay yours.
+                {% translate "Email is outbound only. BrightBean Chat sends through your own provider: your SMTP server, Resend, or Amazon SES. So the sending reputation, the domain and the bill stay yours." %}
             </p>
         </div>
     </div>
@@ -37,29 +35,25 @@ submit either — the view's `_echoed` names only non-secret fields.
     {% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-4">Before you start</h2>
+        <h2 class="section-title mb-4">{% translate "Before you start" %}</h2>
         <ol class="cn-steps" role="list">
             <li class="cn-step">
-                Set up SPF, DKIM and DMARC on the domain you are going to send from. All three, not
-                one: without them a meaningful share of what you send goes to spam, and Gmail and
-                Yahoo reject bulk mail from domains that lack them outright. Your provider publishes
-                the exact records. The full checklist is in docs/channels/email.md.
+                {% translate "Set up SPF, DKIM and DMARC on the domain you are going to send from. All three, not one: without them a meaningful share of what you send goes to spam, and Gmail and Yahoo reject bulk mail from domains that lack them outright. Your provider publishes the exact records. The full checklist is in docs/channels/email.md." %}
             </li>
             <li class="cn-step">
-                Have that provider's credentials to hand: an SMTP host and password, a Resend API
-                key, or an AWS access key and secret.
+                {% translate "Have that provider's credentials to hand: an SMTP host and password, a Resend API key, or an AWS access key and secret." %}
             </li>
         </ol>
     </section>
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-1">Which provider sends the mail</h2>
-        <p class="section-note mb-4">Pick one and the fields below change to match.</p>
+        <h2 class="section-title mb-1">{% translate "Which provider sends the mail" %}</h2>
+        <p class="section-note mb-4">{% translate "Pick one and the fields below change to match." %}</p>
         <div class="grid gap-3 sm:grid-cols-3">
             {% for value in providers %}
             <a class="tile cn-provider p-4{% if value == provider %} tile-selected{% endif %}" href="?provider={{ value }}"{% if value == provider %} aria-current="true"{% endif %}>
-                <span class="cn-provider-name">{% if value == "smtp" %}Your own SMTP server{% elif value == "resend" %}Resend{% else %}Amazon SES{% endif %}</span>
-                <span class="cn-provider-note">{% if value == "smtp" %}Any server you already run{% elif value == "resend" %}An API key from the dashboard{% else %}An IAM access key{% endif %}</span>
+                <span class="cn-provider-name">{% if value == "smtp" %}{% translate "Your own SMTP server" %}{% elif value == "resend" %}{% translate "Resend" %}{% else %}{% translate "Amazon SES" %}{% endif %}</span>
+                <span class="cn-provider-note">{% if value == "smtp" %}{% translate "Any server you already run" %}{% elif value == "resend" %}{% translate "An API key from the dashboard" %}{% else %}{% translate "An IAM access key" %}{% endif %}</span>
             </a>
             {% endfor %}
         </div>
@@ -69,50 +63,52 @@ submit either — the view's `_echoed` names only non-secret fields.
         {% csrf_token %}
         <input type="hidden" name="provider" value="{{ provider }}" />
 
-        <h2 class="section-title mb-4">Who it comes from</h2>
+        <h2 class="section-title mb-4">{% translate "Who it comes from" %}</h2>
         <div class="field">
-            <label class="field-label" for="from_address">From address</label>
+            <label class="field-label" for="from_address">{% translate "From address" %}</label>
             <input class="form-input-styled" type="email" id="from_address" name="from_address" value="{{ form.from_address }}" required>
-            <p class="field-hint">Its domain becomes this channel's identity, and only one workspace can claim a domain.</p>
+            <p class="field-hint">{% translate "Its domain becomes this channel's identity, and only one workspace can claim a domain." %}</p>
         </div>
         <div class="field">
-            <label class="field-label" for="from_name">From name</label>
+            <label class="field-label" for="from_name">{% translate "From name" %}</label>
             <input class="form-input-styled" type="text" id="from_name" name="from_name" value="{{ form.from_name }}" maxlength="200">
         </div>
         <div class="field">
-            <label class="field-label" for="display_name">Channel name</label>
+            <label class="field-label" for="display_name">{% translate "Channel name" %}</label>
             <input class="form-input-styled" type="text" id="display_name" name="display_name" value="{{ form.display_name }}" maxlength="200">
-            <p class="field-hint">What this channel is called in BrightBean Chat. Defaults to the domain.</p>
+            <p class="field-hint">{% translate "What this channel is called in BrightBean Chat. Defaults to the domain." %}</p>
         </div>
 
         {% if provider == "smtp" %}
         <div class="card-row pt-6 mt-6">
-            <h3 class="section-title mb-4">Your SMTP server</h3>
+            <h3 class="section-title mb-4">{% translate "Your SMTP server" %}</h3>
             <div class="field">
-                <label class="field-label" for="host">Host</label>
+                <label class="field-label" for="host">{% translate "Host" %}</label>
                 <input class="form-input-styled" type="text" id="host" name="host" value="{{ form.host }}" required spellcheck="false">
             </div>
             <div class="field">
-                <label class="field-label" for="port">Port</label>
+                <label class="field-label" for="port">{% translate "Port" %}</label>
                 <input class="form-input-styled" type="text" id="port" name="port" value="{{ form.port|default:'587' }}" inputmode="numeric" style="width: 8rem;">
             </div>
             <div class="field">
-                <label class="field-label" for="security">Encryption</label>
-                <select class="form-input-styled bb-select" id="security" name="security" style="width: 18rem;">
-                    <option value="starttls" {% if form.security == "starttls" or not form.security %}selected{% endif %}>STARTTLS (port 587)</option>
-                    <option value="ssl" {% if form.security == "ssl" %}selected{% endif %}>SSL/TLS (port 465)</option>
-                    <option value="none" {% if form.security == "none" %}selected{% endif %}>None</option>
+                <label class="field-label" for="security">{% translate "Encryption" %}</label>
+                <span class="bb-select-wrap" style="width: 18rem;">
+                <select class="form-input-styled bb-select" id="security" name="security">
+                    <option value="starttls" {% if form.security == "starttls" or not form.security %}selected{% endif %}>STARTTLS ({% translate "port" %} 587)</option>
+                    <option value="ssl" {% if form.security == "ssl" %}selected{% endif %}>SSL/TLS ({% translate "port" %} 465)</option>
+                    <option value="none" {% if form.security == "none" %}selected{% endif %}>{% translate "None" %}</option>
                 </select>
-                <p class="field-hint">Choose "none" only for a relay on your own private network.</p>
+                </span>
+                <p class="field-hint">{% blocktranslate %}Choose "none" only for a relay on your own private network.{% endblocktranslate %}</p>
             </div>
             <div class="field">
-                <label class="field-label" for="username">Username</label>
+                <label class="field-label" for="username">{% translate "Username" %}</label>
                 <input class="form-input-styled" type="text" id="username" name="username" value="{{ form.username }}" autocomplete="off" spellcheck="false">
             </div>
             <div class="field">
-                <label class="field-label" for="password">Password</label>
+                <label class="field-label" for="password">{% translate "Password" %}</label>
                 <input class="form-input-styled" type="password" id="password" name="password" autocomplete="off" spellcheck="false">
-                <p class="field-hint">Stored encrypted and never shown again.</p>
+                <p class="field-hint">{% translate "Stored encrypted and never shown again." %}</p>
             </div>
         </div>
 
@@ -120,17 +116,15 @@ submit either — the view's `_echoed` names only non-secret fields.
         <div class="card-row pt-6 mt-6">
             <h3 class="section-title mb-4">Resend</h3>
             <div class="field">
-                <label class="field-label" for="api_key">API key</label>
+                <label class="field-label" for="api_key">{% translate "API key" %}</label>
                 <input class="form-input-styled" type="password" id="api_key" name="api_key" autocomplete="off" spellcheck="false" required>
-                <p class="field-hint">From the Resend dashboard. Stored encrypted and never shown again.</p>
+                <p class="field-hint">{% translate "From the Resend dashboard. Stored encrypted and never shown again." %}</p>
             </div>
             <div class="field">
-                <label class="field-label" for="signing_secret">Webhook signing secret</label>
+                <label class="field-label" for="signing_secret">{% translate "Webhook signing secret" %}</label>
                 <input class="form-input-styled" type="password" id="signing_secret" name="signing_secret" autocomplete="off" spellcheck="false">
                 <p class="field-hint">
-                    Optional now, required for bounce handling. Create a webhook endpoint in Resend
-                    pointing at the URL this page shows after you connect, then paste the secret it
-                    gives you.
+                    {% translate "Optional now, required for bounce handling. Create a webhook endpoint in Resend pointing at the URL this page shows after you connect, then paste the secret it gives you." %}
                 </p>
             </div>
         </div>
@@ -139,56 +133,49 @@ submit either — the view's `_echoed` names only non-secret fields.
         <div class="card-row pt-6 mt-6">
             <h3 class="section-title mb-4">Amazon SES</h3>
             <div class="field">
-                <label class="field-label" for="access_key_id">Access key ID</label>
+                <label class="field-label" for="access_key_id">{% translate "Access key ID" %}</label>
                 <input class="form-input-styled" type="text" id="access_key_id" name="access_key_id" autocomplete="off" spellcheck="false" required>
             </div>
             <div class="field">
-                <label class="field-label" for="secret_access_key">Secret access key</label>
+                <label class="field-label" for="secret_access_key">{% translate "Secret access key" %}</label>
                 <input class="form-input-styled" type="password" id="secret_access_key" name="secret_access_key" autocomplete="off" spellcheck="false" required>
-                <p class="field-hint">Stored encrypted and never shown again.</p>
+                <p class="field-hint">{% translate "Stored encrypted and never shown again." %}</p>
             </div>
             <div class="field">
-                <label class="field-label" for="region">Region</label>
+                <label class="field-label" for="region">{% translate "Region" %}</label>
                 <input class="form-input-styled" type="text" id="region" name="region" value="{{ form.region }}" placeholder="eu-west-1" spellcheck="false" required style="width: 14rem;">
             </div>
             <div class="field">
-                <label class="field-label" for="topic_arn">Bounce topic ARN</label>
+                <label class="field-label" for="topic_arn">{% translate "Bounce topic ARN" %}</label>
                 <input class="form-input-styled" type="text" id="topic_arn" name="topic_arn" value="{{ form.topic_arn }}" placeholder="arn:aws:sns:eu-west-1:123456789012:bounces" spellcheck="false">
                 <p class="field-hint">
-                    Optional, and you can add it later on the channel's page. Bounce handling stays
-                    off until it is set, and then only this topic's notifications are accepted.
+                    {% translate "Optional, and you can add it later on the channel's page. Bounce handling stays off until it is set, and then only this topic's notifications are accepted." %}
                 </p>
             </div>
             <p class="field-hint">
-                The key needs <code>ses:GetAccount</code>, <code>ses:SendEmail</code> and
-                <code>ses:SendRawEmail</code>, plus <code>sns:ConfirmSubscription</code> if you want
-                bounce handling. See docs/channels/email.md.
+                {% blocktranslate %}The key needs <code>ses:GetAccount</code>, <code>ses:SendEmail</code> and <code>ses:SendRawEmail</code>, plus <code>sns:ConfirmSubscription</code> if you want bounce handling. See docs/channels/email.md.{% endblocktranslate %}
             </p>
         </div>
         {% endif %}
 
         <div class="form-actions">
-            <button type="submit" class="btn-pill-primary">Connect</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Connect" %}</button>
         </div>
     </form>
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-3">What happens next</h2>
+        <h2 class="section-title mb-3">{% translate "What happens next" %}</h2>
         <p class="section-note">
-            We check the credentials with your provider before saving anything. Once the channel
-            exists, its page shows the webhook URL to paste into Resend or to subscribe an SNS topic
-            to, and a button that sends a test email to your own address.
+            {% translate "We check the credentials with your provider before saving anything. Once the channel exists, its page shows the webhook URL to paste into Resend or to subscribe an SNS topic to, and a button that sends a test email to your own address." %}
         </p>
         <p class="field-hint">
-            Every email BrightBean Chat sends carries a <code>List-Unsubscribe</code> header and an
-            unsubscribe link in the footer. That is not configurable: it is what keeps the channel
-            compliant, and it is what the unsubscribe and suppression handling is built on.
+            {% blocktranslate %}Every email BrightBean Chat sends carries a <code>List-Unsubscribe</code> header and an unsubscribe link in the footer. That is not configurable: it is what keeps the channel compliant, and it is what the unsubscribe and suppression handling is built on.{% endblocktranslate %}
         </p>
     </section>
 
     <a class="cn-back" href="{{ list_url }}">
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-        Back to channels
+        {% translate "Back to channels" %}
     </a>
 </div>
 {% endwith %}

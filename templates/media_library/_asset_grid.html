@@ -6,7 +6,7 @@ The grid, and the only region any media interaction swaps.
 move re-renders the grid without the view needing to know anything about the
 page it is rendered on.
 {% endcomment %}
-{% load media_library %}
+{% load media_library i18n %}
 {% comment %}
   `@container`: the columns below size against THIS element rather than the
   viewport. The grid shares its row with a folder rail and a detail panel, and
@@ -50,13 +50,13 @@ page it is rendered on.
     </div>
 
     {% if page.has_other_pages %}
-      <nav class="mt-4 flex items-center gap-3 text-sm" aria-label="Pagination">
+      <nav class="mt-4 flex items-center gap-3 text-sm" aria-label="{% translate 'Pagination' %}">
         {% if page.has_previous %}
-          <a href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&kind={{ current_kind|urlencode }}&folder={{ current_folder|urlencode }}">Previous</a>
+          <a href="?page={{ page.previous_page_number }}&q={{ query|urlencode }}&kind={{ current_kind|urlencode }}&folder={{ current_folder|urlencode }}">{% translate "Previous" %}</a>
         {% endif %}
-        <span class="muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+        <span class="muted">{% blocktranslate with number=page.number total=page.paginator.num_pages %}Page {{ number }} of {{ total }}{% endblocktranslate %}</span>
         {% if page.has_next %}
-          <a href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&kind={{ current_kind|urlencode }}&folder={{ current_folder|urlencode }}">Next</a>
+          <a href="?page={{ page.next_page_number }}&q={{ query|urlencode }}&kind={{ current_kind|urlencode }}&folder={{ current_folder|urlencode }}">{% translate "Next" %}</a>
         {% endif %}
       </nav>
     {% endif %}
@@ -66,9 +66,9 @@ page it is rendered on.
       The last list in the product still hand-rolling its own empty state.
     {% endcomment %}
     <div class="empty-state">
-      <p class="empty-state-title">{% if query %}Nothing matches “{{ query }}”.{% else %}No media here yet.{% endif %}</p>
+      <p class="empty-state-title">{% if query %}{% blocktranslate %}Nothing matches “{{ query }}”.{% endblocktranslate %}{% else %}{% translate "No media here yet." %}{% endif %}</p>
       <p class="empty-state-body">
-        {% if query %}Try a shorter word, or clear the filter.{% else %}Drop a picture or a file above and it is ready to use in any flow, broadcast or email.{% endif %}
+        {% if query %}{% translate "Try a shorter word, or clear the filter." %}{% else %}{% translate "Drop a picture or a file above and it is ready to use in any flow, broadcast or email." %}{% endif %}
       </p>
     </div>
   {% endif %}

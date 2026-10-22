@@ -13,11 +13,12 @@ the field editor and the channel list beside it.
 Message text and platform usernames are attacker-controlled
 (SECURITY-BASELINE §2): escaped, never marked safe, and never used as a URL.
 {% endcomment %}
+{% load i18n %}
 <section class="crm-panel" id="contact-activity"
          hx-get="{% url 'contacts:activity' workspace_id=request.workspace.id contact_id=contact.id %}"
          hx-trigger="contactAutomationChanged from:body"
          hx-swap="outerHTML">
-  <h2>Activity</h2>
+  <h2>{% translate "Activity" %}</h2>
 
   {# ── Automation ──────────────────────────────────────────────── #}
   <div class="crm-automation">
@@ -31,12 +32,12 @@ Message text and platform usernames are attacker-controlled
         <form class="mb-0"
               hx-post="{% url 'contacts:stop_automation' workspace_id=request.workspace.id contact_id=contact.id %}"
               hx-swap="none"
-              hx-confirm="Stop this automation? The run is expired and its pending timers are cancelled.">
-          <button type="submit" class="btn-outline btn-inline btn-danger-soft">Stop automation</button>
+              hx-confirm="{% translate 'Stop this automation? The run is expired and its pending timers are cancelled.' %}">
+          <button type="submit" class="btn-outline btn-inline btn-danger-soft">{% translate "Stop automation" %}</button>
         </form>
       {% endif %}
     {% else %}
-      <span class="muted text-xs">No automation running.</span>
+      <span class="muted text-xs">{% translate "No automation running." %}</span>
     {% endif %}
   </div>
 
@@ -44,18 +45,18 @@ Message text and platform usernames are attacker-controlled
     <form class="crm-automation mb-0"
           hx-post="{% url 'contacts:start_flow' workspace_id=request.workspace.id contact_id=contact.id %}"
           hx-swap="none">
-      <label for="start-flow" class="sr-only">Flow</label>
+      <label for="start-flow" class="sr-only">{% translate "Flow" %}</label>
       <select id="start-flow" name="flow_id" class="w-56" required>
-        <option value="">Start a flow…</option>
+        <option value="">{% translate "Start a flow…" %}</option>
         {% for flow in startable_flows %}<option value="{{ flow.id }}">{{ flow.name }}</option>{% endfor %}
       </select>
-      <button type="submit">Start</button>
+      <button type="submit">{% translate "Start" %}</button>
       {% comment %}
         Only published flows are offered: start_flow raises for a draft, so a
         picker listing them would be a picker full of error messages. Draft runs
         are issue #12's "test on Telegram", a different affordance elsewhere.
       {% endcomment %}
-      <span class="muted text-xs">Starting a flow ends whatever this contact is already running.</span>
+      <span class="muted text-xs">{% translate "Starting a flow ends whatever this contact is already running." %}</span>
     </form>
 
     {% comment %}
@@ -71,45 +72,46 @@ Message text and platform usernames are attacker-controlled
           hx-swap="none">
       {% csrf_token %}
       <input type="hidden" name="ids" value="{{ contact.id }}">
-      <label for="enrol-sequence" class="sr-only">Sequence</label>
+      <label for="enrol-sequence" class="sr-only">{% translate "Sequence" %}</label>
       <select id="enrol-sequence" name="sequence_id" required>
         {% for sequence in sequences %}<option value="{{ sequence.value }}">{{ sequence.label }}</option>{% endfor %}
       </select>
-      <button type="submit" name="mode" value="subscribe">Enrol</button>
-      <button type="submit" name="mode" value="unsubscribe">Remove</button>
-      <span class="muted text-xs">Enrolling restarts the sequence at step 1.</span>
+      <button type="submit" name="mode" value="subscribe">{% translate "Enrol" %}</button>
+      <button type="submit" name="mode" value="unsubscribe">{% translate "Remove" %}</button>
+      <span class="muted text-xs">{% translate "Enrolling restarts the sequence at step 1." %}</span>
     </form>
     {% else %}
+    {% url 'campaigns:list' workspace_id=request.workspace.id as campaigns_url %}
     <p class="muted text-xs">
-      No sequences yet. <a href="{% url 'campaigns:list' workspace_id=request.workspace.id %}">create one</a>
-      to enrol this contact.
+      {% blocktranslate %}No sequences yet. <a href="{{ campaigns_url }}">create one</a>
+      to enrol this contact.{% endblocktranslate %}
     </p>
     {% endif %}
   {% endif %}
 
   {# ── Messages ────────────────────────────────────────────────── #}
-  <h3 class="mt-4">Recent messages</h3>
+  <h3 class="mt-4">{% translate "Recent messages" %}</h3>
   {% for row in recent_messages %}
     <div class="crm-msg {% if row.inbound %}crm-msg-in{% else %}crm-msg-out{% endif %}">
       <div class="crm-msg-meta">
-        <span>{% if row.inbound %}Received{% else %}Sent{% endif %}</span>
+        <span>{% if row.inbound %}{% translate "Received" %}{% else %}{% translate "Sent" %}{% endif %}</span>
         <span>{{ row.created_at }}</span>
-        {% if row.message.internal %}<span class="status-pill status-pill-disabled">Internal note</span>{% endif %}
+        {% if row.message.internal %}<span class="status-pill status-pill-disabled">{% translate "Internal note" %}</span>{% endif %}
         {% comment %}
           `inbox:list`, not `inbox` — apps/inbox/urls.py sets app_name, so the
           bare name does not resolve and this partial raised NoReverseMatch for
           any contact with at least one message.
         {% endcomment %}
-        <a href="{% url 'inbox:list' workspace_id=request.workspace.id %}">Open in inbox</a>
+        <a href="{% url 'inbox:list' workspace_id=request.workspace.id %}">{% translate "Open in inbox" %}</a>
       </div>
       <div class="crm-msg-body">
-        {% if row.text %}{{ row.text }}{% else %}<span class="muted">No text</span>{% endif %}
+        {% if row.text %}{{ row.text }}{% else %}<span class="muted">{% translate "No text" %}</span>{% endif %}
         {% if row.attachment_count %}
-          <span class="muted text-xs">· {{ row.attachment_count }} attachment{{ row.attachment_count|pluralize }}</span>
+          <span class="muted text-xs">· {% blocktranslate count count=row.attachment_count %}{{ count }} attachment{% plural %}{{ count }} attachments{% endblocktranslate %}</span>
         {% endif %}
       </div>
     </div>
   {% empty %}
-    <p class="muted text-xs">Nothing yet. Messages appear here as soon as this contact writes in.</p>
+    <p class="muted text-xs">{% translate "Nothing yet. Messages appear here as soon as this contact writes in." %}</p>
   {% endfor %}
 </section>

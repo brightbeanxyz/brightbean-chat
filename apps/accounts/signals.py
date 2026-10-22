@@ -2,6 +2,14 @@
 
 One receiver, on allauth's ``user_signed_up``. See
 :mod:`apps.accounts.services` for why there is no ``post_save`` receiver.
+
+The account's language preference has no signal of its own to wire up:
+``apps.accounts.middleware.LanguagePreferenceMiddleware`` reads
+``request.user.language`` fresh on every request instead of trying to carry it
+forward from login — this Django version has no session-based hook left for
+that (``LANGUAGE_SESSION_KEY`` is gone), and re-reading it is no more
+expensive than the query ``AuthenticationMiddleware`` already ran to produce
+``request.user``.
 """
 
 import logging

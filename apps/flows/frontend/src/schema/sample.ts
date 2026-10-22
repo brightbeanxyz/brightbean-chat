@@ -18,6 +18,7 @@
  * Nothing in this module is node-type-aware. It reads the schema, so a node type
  * registered by a later layer is placeable the moment `make schema` runs.
  */
+import i18n from "../i18n";
 import { configSchema } from "./artifact";
 import { newItemId } from "./ids";
 import {
@@ -94,31 +95,9 @@ export function placeholderFor(key: string, schema: JsonSchema): string {
   if (schema.pattern) {
     return stringForPattern(schema.pattern, key);
   }
-  const copy: Record<string, string> = {
-    text: "New message",
-    label: "Button",
-    question: "What is your answer?",
-    subject: "Subject",
-    html_body: "<p>Hello {{first_name}}</p>",
-    url: "https://example.com",
-    media_url: "https://example.com/file",
-    caption: "Caption",
-    title: "Title",
-    subtitle: "Subtitle",
-    image: "https://example.com/image.png",
-    tag: "tag",
-    field: "field",
-    value: "value",
-    sequence: "sequence",
-    member: "member",
-    name: "X-Example",
-    json_path: "$.result",
-    target: "field",
-    key: "field",
-    flow_id: "",
-    invalid_text: "That did not look right. Try again.",
-  };
-  const candidate = copy[key] ?? "Text";
+  const translationKey = `sample.placeholder.${key}`;
+  const rendered = i18n.t(translationKey);
+  const candidate = rendered === translationKey ? i18n.t("sample.placeholderFallback") : rendered;
   const max = schema.maxLength;
   const trimmed = max !== undefined && candidate.length > max ? candidate.slice(0, max) : candidate;
   // A minLength of 1 with an empty placeholder is the failure this module

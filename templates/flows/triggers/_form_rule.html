@@ -1,4 +1,4 @@
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 SPEC §10's rule trigger: an internal event, an optional id filter for the thing
 the event is about, and an optional §11.4 condition on the contact.
@@ -15,7 +15,7 @@ defined by the hosting page (flows/edit.html includes the script), because an
 htmx-swapped fragment cannot define an x-data factory for itself.
 {% endcomment %}
 <div x-data="{ event: '{{ config.event|default:"tag_added"|escapejs }}' }">
-    <label class="block text-xs font-medium mb-1" for="trigger-event" style="color: var(--text-primary);">Event</label>
+    <label class="block text-xs font-medium mb-1" for="trigger-event" style="color: var(--text-primary);">{% translate "Event" %}</label>
     <select id="trigger-event" name="event" class="form-input-styled" x-model="event">
         {% for value, label in rule_events %}
         <option value="{{ value }}" {% if config.event == value %}selected{% endif %}>{{ label }}</option>
@@ -23,37 +23,36 @@ htmx-swapped fragment cannot define an x-data factory for itself.
     </select>
 
     <div class="mt-3" x-show="event === 'tag_added' || event === 'tag_removed'" x-cloak>
-        <label class="block text-xs font-medium mb-1" for="trigger-tag" style="color: var(--text-primary);">Tag</label>
+        <label class="block text-xs font-medium mb-1" for="trigger-tag" style="color: var(--text-primary);">{% translate "Tag" %}</label>
         <select id="trigger-tag" name="tag_id" class="form-input-styled">
-            <option value="">Any tag</option>
+            <option value="">{% translate "Any tag" %}</option>
             {% for tag in filter_config.tags %}
             <option value="{{ tag.value }}" {% if config.tag_id == tag.value %}selected{% endif %}>{{ tag.label }}</option>
             {% endfor %}
         </select>
         <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-            Fires for the tag that changed. Adding a tag a contact already has changes nothing and fires nothing.
+            {% translate "Fires for the tag that changed. Adding a tag a contact already has changes nothing and fires nothing." %}
         </p>
     </div>
 
     <div class="mt-3" x-show="event === 'field_changed'" x-cloak>
-        <label class="block text-xs font-medium mb-1" for="trigger-field" style="color: var(--text-primary);">Field</label>
+        <label class="block text-xs font-medium mb-1" for="trigger-field" style="color: var(--text-primary);">{% translate "Field" %}</label>
         <select id="trigger-field" name="field_id" class="form-input-styled">
-            <option value="">Any field</option>
+            <option value="">{% translate "Any field" %}</option>
             {% for field in filter_config.fields %}
             <option value="{{ field.value }}" {% if config.field_id == field.value %}selected{% endif %}>{{ field.label }}</option>
             {% endfor %}
         </select>
         <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-            Use the conditions below to match the field's new value.
+            {% translate "Use the conditions below to match the field's new value." %}
         </p>
     </div>
 
-    <h4 class="text-xs font-medium mt-3 mb-1" style="color: var(--text-primary);">Only when the contact matches</h4>
+    <h4 class="text-xs font-medium mt-3 mb-1" style="color: var(--text-primary);">{% translate "Only when the contact matches" %}</h4>
     <div x-data="contactFilters({{ filter_config|json_attr }})">
         {% include "contacts/_filter_bar.html" with filter_embedded=True %}
     </div>
     <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-        Checked after the change, so a rule can ask what the contact looks like now.
-        Leave empty to fire for everyone. Each contact can start this flow at most once a minute.
+        {% translate "Checked after the change, so a rule can ask what the contact looks like now. Leave empty to fire for everyone. Each contact can start this flow at most once a minute." %}
     </p>
 </div>

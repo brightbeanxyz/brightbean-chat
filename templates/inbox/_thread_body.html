@@ -25,6 +25,7 @@ from our own origin, so media-src would in fact allow a player for it — the
 reason it stays an <img> is not the CSP but that nothing knows what the bytes
 are until they are sniffed at fetch time.
 {% endcomment %}
+{% load i18n %}
 
 {% comment %}
   The window this render used. The polled element hx-includes it, so the next
@@ -84,12 +85,12 @@ are until they are sniffed at fetch time.
       pause is live (apps/inbox/views.py folds it in), so the bar appears and
       disappears on time; it must not claim a precision the refresh cannot back.
     {% endcomment %}
-    <span>Automation paused until {{ paused_until|time:"H:i" }} · Flows will not reply to this contact</span>
+    <span>{% blocktranslate with time=paused_until|time:"H:i" %}Automation is paused until {{ time }}. Flows will not reply to this contact.{% endblocktranslate %}</span>
     {% if can_reply %}
       <form class="ml-auto" hx-post="{% url 'inbox:pause' workspace_id=request.workspace.id conversation_id=conversation.id %}" hx-swap="none">
         {% csrf_token %}
         <input type="hidden" name="action" value="resume">
-        <button type="submit" class="ib-banner-action">Resume automation</button>
+        <button type="submit" class="ib-banner-action">{% translate "Resume automation" %}</button>
       </form>
     {% endif %}
   </div>
@@ -113,9 +114,9 @@ are until they are sniffed at fetch time.
       <button type="button" class="btn-outline btn-inline"
               hx-get="{% url 'inbox:messages' workspace_id=request.workspace.id conversation_id=conversation.id %}?limit={{ next_limit }}"
               hx-target="#inbox-thread-body"
-              hx-swap="innerHTML">Load earlier messages</button>
+              hx-swap="innerHTML">{% translate "Load earlier messages" %}</button>
     {% else %}
-      <p class="text-xs" style="color: var(--text-tertiary);">Showing the most recent {{ limit }} messages.</p>
+      <p class="text-xs" style="color: var(--text-tertiary);">{% blocktranslate count limit=limit %}Showing the most recent {{ limit }} message.{% plural %}Showing the most recent {{ limit }} messages.{% endblocktranslate %}</p>
     {% endif %}
   </div>
 {% endif %}
@@ -190,16 +191,16 @@ are until they are sniffed at fetch time.
         day is the divider above, so the line only needs the time.
       {% endcomment %}
       <div class="ib-bubble-meta">
-        {% if item.is_note %}<span>Internal note: never sent</span>
+        {% if item.is_note %}<span>{% translate "Internal note: never sent" %}</span>
         {% elif item.is_inbound %}<span>{{ conversation.contact.display_name }}</span>
-        {% elif item.message.flow_name %}<span>Flow “{{ item.message.flow_name }}”</span>
-        {% elif item.message.source == "broadcast" %}<span>Broadcast</span>
-        {% elif item.message.source == "automation" %}<span>Automation</span>
-        {% elif item.message.source == "agent" %}<span>Team</span>{% endif %}
+        {% elif item.message.flow_name %}<span>{% blocktranslate with name=item.message.flow_name %}Flow “{{ name }}”{% endblocktranslate %}</span>
+        {% elif item.message.source == "broadcast" %}<span>{% translate "Broadcast" %}</span>
+        {% elif item.message.source == "automation" %}<span>{% translate "Automation" %}</span>
+        {% elif item.message.source == "agent" %}<span>{% translate "Team" %}</span>{% endif %}
         <span aria-hidden="true">·</span>
         <time datetime="{{ item.message.created_at|date:'c' }}" title="{{ item.message.created_at|date:'j M Y, H:i' }}">{{ item.message.created_at|date:"H:i" }}</time>
-        {% if item.button_id %}<span class="ib-chip">Pressed: {{ item.button_id }}</span>{% endif %}
-        {% if item.ref %}<span class="ib-chip">Ref: {{ item.ref }}</span>{% endif %}
+        {% if item.button_id %}<span class="ib-chip">{% blocktranslate with id=item.button_id %}Pressed: {{ id }}{% endblocktranslate %}</span>{% endif %}
+        {% if item.ref %}<span class="ib-chip">{% blocktranslate with ref=item.ref %}Ref: {{ ref }}{% endblocktranslate %}</span>{% endif %}
         {% if not item.is_inbound and not item.is_note %}
           {% comment %}
             Ticks read off the status rather than being computed here.
@@ -207,11 +208,11 @@ are until they are sniffed at fetch time.
             DELIVERY_PROGRESS, so what is stored is already the furthest rung
             reached.
           {% endcomment %}
-          {% if item.message.status == "read" %}<span class="ib-tick ib-tick-read" title="Read">✓✓</span>
-          {% elif item.message.status == "delivered" %}<span class="ib-tick" title="Delivered">✓✓</span>
-          {% elif item.message.status == "sent" %}<span class="ib-tick" title="Sent">✓</span>
-          {% elif item.message.status == "failed" %}<span class="ib-tick ib-tick-failed" title="Failed">!</span>
-          {% else %}<span class="ib-tick" title="Queued">…</span>{% endif %}
+          {% if item.message.status == "read" %}<span class="ib-tick ib-tick-read" title="{% translate 'Read' %}">✓✓</span>
+          {% elif item.message.status == "delivered" %}<span class="ib-tick" title="{% translate 'Delivered' %}">✓✓</span>
+          {% elif item.message.status == "sent" %}<span class="ib-tick" title="{% translate 'Sent' %}">✓</span>
+          {% elif item.message.status == "failed" %}<span class="ib-tick ib-tick-failed" title="{% translate 'Failed' %}">!</span>
+          {% else %}<span class="ib-tick" title="{% translate 'Queued' %}">…</span>{% endif %}
         {% endif %}
       </div>
 
@@ -229,14 +230,14 @@ are until they are sniffed at fetch time.
                 deliberate second attempt possible.
               {% endcomment %}
               <input type="hidden" name="token" value="{{ retry_token }}">
-              <button type="submit" class="btn-link btn-inline">Try again</button>
+              <button type="submit" class="btn-link btn-inline">{% translate "Try again" %}</button>
             </form>
           {% endif %}
         </div>
       {% endif %}
     </li>
   {% empty %}
-    <li class="ib-empty">No messages yet.</li>
+    <li class="ib-empty">{% translate "No messages yet." %}</li>
   {% endfor %}
 </ol>
 </div>

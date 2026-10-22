@@ -25,6 +25,7 @@ lives in the other enum; see ``_TERMINAL_CODES`` below.
 import uuid
 from typing import Any
 
+from django.utils import translation
 from ninja import Router, Status
 
 from apps.api.errors import ApiError
@@ -95,8 +96,13 @@ def send_message(request: ApiRequest, payload: MessageSend) -> Status[dict[str, 
 
     reason = (message.error or "").split(":", 1)[0]
     if message.status == MessageStatus.FAILED and reason in _TERMINAL_CODES:
+        # SPEC §17: `message` is a stable, English log line, unlike the same
+        # sentence shown in the inbox — force English regardless of the
+        # caller's active request locale rather than translating it.
+        with translation.override("en"):
+            api_message = str(describe(message.error))
         raise ApiError(
-            describe(message.error),
+            api_message,
             code=_TERMINAL_CODES[reason],
             status=422,
             reason=reason,

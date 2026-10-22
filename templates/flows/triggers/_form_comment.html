@@ -1,4 +1,4 @@
-{% load common_extras %}{% comment %}
+{% load common_extras i18n %}{% comment %}
 A comment trigger. Everything here is platform-agnostic: L4-A shipped the config,
 the matcher and the once-per-commenter guard, and each adapter registers what its
 own API can do (apps/flows/triggers/comments.py). Nothing below names a platform.
@@ -23,44 +23,44 @@ Two things are driven by that registry rather than by markup:
          $refs.postScope.value = 'specific';
        }
      }">
-<label class="block text-xs font-medium mb-1" for="trigger-post-scope" style="color: var(--text-primary);">Posts</label>
+<label class="block text-xs font-medium mb-1" for="trigger-post-scope" style="color: var(--text-primary);">{% translate "Posts" %}</label>
 <select id="trigger-post-scope" name="post_scope" class="form-input-styled mb-2" x-ref="postScope">
-    <option value="all" {% if config.post_scope != "specific" %}selected{% endif %}>Any post</option>
-    <option value="specific" {% if config.post_scope == "specific" %}selected{% endif %}>Only these posts</option>
+    <option value="all" {% if config.post_scope != "specific" %}selected{% endif %}>{% translate "Any post" %}</option>
+    <option value="specific" {% if config.post_scope == "specific" %}selected{% endif %}>{% translate "Only these posts" %}</option>
 </select>
 <textarea name="post_ids" rows="2" class="form-input-styled mb-2" x-ref="postIds"
-          placeholder="One post id per line">{{ config.post_ids|lines }}</textarea>
+          placeholder="{% translate 'One post id per line' %}">{{ config.post_ids|lines }}</textarea>
 {% if post_pickers %}
 <div class="flex flex-wrap items-center gap-2 mb-1">
     {% for picker in post_pickers %}
     <button type="button" class="btn-pill-secondary btn-pill-sm"
             hx-get="{{ picker.url }}"
             hx-target="#trigger-post-picker"
-            hx-swap="innerHTML">Choose from {{ picker.label }}</button>
+            hx-swap="innerHTML">{% blocktranslate with label=picker.label %}Choose from {{ label }}{% endblocktranslate %}</button>
     {% endfor %}
 </div>
 <div id="trigger-post-picker" class="mb-3"></div>
 {% endif %}
 
-<label class="block text-xs font-medium mb-1" for="trigger-include" style="color: var(--text-primary);">Only when the comment contains</label>
+<label class="block text-xs font-medium mb-1" for="trigger-include" style="color: var(--text-primary);">{% translate "Only when the comment contains" %}</label>
 <textarea id="trigger-include" name="include_keywords" rows="2" class="form-input-styled mb-3"
-          placeholder="One word or phrase per line. Blank matches every comment.">{{ config.include_keywords|lines }}</textarea>
+          placeholder="{% translate 'One word or phrase per line. Blank matches every comment.' %}">{{ config.include_keywords|lines }}</textarea>
 
-<label class="block text-xs font-medium mb-1" for="trigger-exclude" style="color: var(--text-primary);">Never when it contains</label>
+<label class="block text-xs font-medium mb-1" for="trigger-exclude" style="color: var(--text-primary);">{% translate "Never when it contains" %}</label>
 <textarea id="trigger-exclude" name="exclude_keywords" rows="2" class="form-input-styled mb-3">{{ config.exclude_keywords|lines }}</textarea>
 
 <label class="flex items-center gap-2 text-xs mb-1.5" style="color: var(--text-primary);">
     <input type="checkbox" name="top_level_only" {% if config.top_level_only %}checked{% endif %}>
-    Ignore replies to other comments
+    {% translate "Ignore replies to other comments" %}
 </label>
 <label class="flex items-center gap-2 text-xs mb-1.5" style="color: var(--text-primary);">
     <input type="checkbox" name="once_per_contact_per_post" {% if config.once_per_contact_per_post %}checked{% endif %}>
-    Only reply once per person per post
+    {% translate "Only reply once per person per post" %}
 </label>
 {% if like_supported %}
 <label class="flex items-center gap-2 text-xs mb-3" style="color: var(--text-primary);">
     <input type="checkbox" name="like_comment" {% if config.like_comment %}checked{% endif %}>
-    Like the comment
+    {% translate "Like the comment" %}
 </label>
 {% elif config.like_comment %}
 {% comment %}
@@ -72,16 +72,15 @@ can honour it is a fact that changes when an adapter ships.
 <input type="hidden" name="like_comment" value="1">
 {% endif %}
 
-<label class="block text-xs font-medium mb-1" for="trigger-public-reply" style="color: var(--text-primary);">Public reply</label>
+<label class="block text-xs font-medium mb-1" for="trigger-public-reply" style="color: var(--text-primary);">{% translate "Public reply" %}</label>
 <select id="trigger-public-reply" name="public_reply_mode" class="form-input-styled mb-2">
-    <option value="none" {% if config.public_reply.mode == "none" %}selected{% endif %}>None</option>
-    <option value="static" {% if config.public_reply.mode == "static" %}selected{% endif %}>Always this text</option>
-    <option value="random" {% if config.public_reply.mode == "random" %}selected{% endif %}>One of these, at random</option>
+    <option value="none" {% if config.public_reply.mode == "none" %}selected{% endif %}>{% translate "None" %}</option>
+    <option value="static" {% if config.public_reply.mode == "static" %}selected{% endif %}>{% translate "Always this text" %}</option>
+    <option value="random" {% if config.public_reply.mode == "random" %}selected{% endif %}>{% translate "One of these, at random" %}</option>
 </select>
 <textarea name="public_reply_texts" rows="2" class="form-input-styled"
-          placeholder="One reply per line">{{ config.public_reply.texts|lines }}</textarea>
+          placeholder="{% translate 'One reply per line' %}">{{ config.public_reply.texts|lines }}</textarea>
 <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-    The public reply goes out first; the flow's first message follows as a private
-    reply, once per comment and within seven days of it.
+    {% translate "The public reply goes out first; the flow's first message follows as a private reply, once per comment and within seven days of it." %}
 </p>
 </div>

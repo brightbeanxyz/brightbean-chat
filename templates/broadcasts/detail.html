@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load i18n %}
 {% comment %}
 A broadcast's detail page (SPEC §13.2: "live counters from stats json").
 
@@ -29,10 +30,10 @@ them.
         </p>
     </div>
     <div class="flex items-center gap-2">
-        <a class="btn-outline btn-inline" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">All broadcasts</a>
+        <a class="btn-outline btn-inline" href="{% url 'broadcasts:list' workspace_id=request.workspace.id %}">{% translate "All broadcasts" %}</a>
         <form hx-post="{% url 'broadcasts:duplicate' workspace_id=request.workspace.id broadcast_id=broadcast.id %}" hx-swap="none">
             {% csrf_token %}
-            <button type="submit" class="btn-outline btn-inline">Duplicate</button>
+            <button type="submit" class="btn-outline btn-inline">{% translate "Duplicate" %}</button>
         </form>
     </div>
 </div>
@@ -50,8 +51,8 @@ them.
 
 <div class="bc-panel mt-4">
     <div class="bc-panel-head">
-        <span class="bc-panel-title">Recipients</span>
-        <span class="bc-hint">Who was skipped, and why.</span>
+        <span class="bc-panel-title">{% translate "Recipients" %}</span>
+        <span class="bc-hint">{% translate "Who was skipped, and why." %}</span>
     </div>
     <div id="broadcast-recipients"
          hx-get="{% url 'broadcasts:recipients' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
@@ -80,13 +81,13 @@ flow builder's overlay shows.
 {% endcomment %}
 <div class="bc-panel">
     <div class="bc-panel-head">
-        <span class="bc-panel-title">Clicks</span>
-        <span class="bc-hint">Links pressed in this message. Refresh to update.</span>
+        <span class="bc-panel-title">{% translate "Clicks" %}</span>
+        <span class="bc-hint">{% translate "Links pressed in this message. Refresh to update." %}</span>
     </div>
     <div class="bc-tiles">
         <div class="bc-tile">
             <div class="bc-tile-figure">{{ clicked }}</div>
-            <div class="bc-tile-label">Clicked</div>
+            <div class="bc-tile-label">{% translate "Clicked" %}</div>
         </div>
     </div>
 </div>
@@ -94,26 +95,26 @@ flow builder's overlay shows.
 {% if deliverability %}
 <div class="bc-panel">
     <div class="bc-panel-head">
-        <span class="bc-panel-title">{{ deliverability.connection.display_name }} deliverability</span>
-        <span class="bc-hint">Last 30 days, every message on this channel.</span>
+        <span class="bc-panel-title">{% blocktranslate with name=deliverability.connection.display_name %}{{ name }} deliverability{% endblocktranslate %}</span>
+        <span class="bc-hint">{% translate "Last 30 days, every message on this channel." %}</span>
     </div>
     <div class="bc-tiles">
         <div class="bc-tile">
             <div class="bc-tile-figure">{{ deliverability.total }}</div>
-            <div class="bc-tile-label">Messages</div>
+            <div class="bc-tile-label">{% translate "Messages" %}</div>
         </div>
         <div class="bc-tile">
             <div class="bc-tile-figure">{{ deliverability.sent }}</div>
-            <div class="bc-tile-label">Reached provider</div>
+            <div class="bc-tile-label">{% translate "Reached provider" %}</div>
         </div>
         <div class="bc-tile">
             <div class="bc-tile-figure">{{ deliverability.failed }}</div>
-            <div class="bc-tile-label">Failed</div>
+            <div class="bc-tile-label">{% translate "Failed" %}</div>
         </div>
         <div class="bc-tile">
             {# Blank rather than 0%: a rate with no denominator is not a rate. #}
-            <div class="bc-tile-figure">{% if deliverability.delivery_rate is not None %}{{ deliverability.delivery_rate }}%{% else %}N/A{% endif %}</div>
-            <div class="bc-tile-label">Delivered</div>
+            <div class="bc-tile-figure">{% if deliverability.delivery_rate is not None %}{{ deliverability.delivery_rate }}%{% else %}—{% endif %}</div>
+            <div class="bc-tile-label">{% translate "Delivered" %}</div>
         </div>
     </div>
 </div>

@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 One template, in the compact shape. The tile IS the submit button: picking a
 template is an act that creates a FlowImport row, so it posts rather than
 linking.
@@ -25,7 +25,7 @@ channel is connected, none of which fit a tile this size.
           nothing to anyone not already fluent in the palette.
         {% endcomment %}
         <span class="block text-xs leading-relaxed mt-1" style="color: var(--text-tertiary);">
-            {{ template.steps }} step{{ template.steps|pluralize }} · {{ template.platform_label }}
+            {% blocktranslate count count=template.steps with platform=template.platform_label %}{{ count }} step · {{ platform }}{% plural %}{{ count }} steps · {{ platform }}{% endblocktranslate %}
         </span>
         <span class="flex gap-1 mt-3" aria-hidden="true">
             {% for platform in template.platforms %}

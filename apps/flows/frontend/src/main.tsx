@@ -17,6 +17,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { BuilderFailure, ErrorBoundary } from "./ErrorBoundary";
 import { readEnv } from "./env";
+import { setBuilderLocale } from "./i18n";
 
 import "@xyflow/react/dist/style.css";
 
@@ -26,6 +27,7 @@ if (mount) {
   const root = createRoot(mount);
   try {
     const env = readEnv(mount);
+    setBuilderLocale(env.locale);
     root.render(
       <StrictMode>
         <ErrorBoundary>

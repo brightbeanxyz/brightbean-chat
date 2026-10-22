@@ -41,6 +41,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 from apps.common.encryption import EncryptedJSONField, EncryptedTextField, hmac_digest
 from apps.common.models import BaseModel
@@ -99,9 +100,9 @@ class ConnectionStatus(models.TextChoices):
     the value exists so Layer 4 does not have to migrate for it.
     """
 
-    ACTIVE = "active", "Active"
-    NEEDS_REAUTH = "needs_reauth", "Needs reconnection"
-    DISABLED = "disabled", "Disabled"
+    ACTIVE = "active", _("Active")
+    NEEDS_REAUTH = "needs_reauth", _("Needs reconnection")
+    DISABLED = "disabled", _("Disabled")
 
 
 class WebhookEventStatus(models.TextChoices):
@@ -548,9 +549,9 @@ class WhatsAppTemplateCategory(models.TextChoices):
     its own rules Meta enforces at submission.
     """
 
-    MARKETING = "marketing", "Marketing"
-    UTILITY = "utility", "Utility"
-    AUTHENTICATION = "authentication", "Authentication"
+    MARKETING = "marketing", _("Marketing")
+    UTILITY = "utility", _("Utility")
+    AUTHENTICATION = "authentication", _("Authentication")
 
 
 class WhatsAppTemplateStatus(models.TextChoices):
@@ -562,10 +563,10 @@ class WhatsAppTemplateStatus(models.TextChoices):
     (:mod:`apps.channels.whatsapp_templates`).
     """
 
-    DRAFT = "draft", "Draft"
-    PENDING = "pending", "In review"
-    APPROVED = "approved", "Approved"
-    REJECTED = "rejected", "Rejected"
+    DRAFT = "draft", _("Draft")
+    PENDING = "pending", _("In review")
+    APPROVED = "approved", _("Approved")
+    REJECTED = "rejected", _("Rejected")
 
 
 class WhatsAppTemplate(WorkspaceScopedModel):

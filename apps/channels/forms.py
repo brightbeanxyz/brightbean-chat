@@ -10,6 +10,7 @@ guessing at six different shapes and would have to be replaced six times.
 from typing import Any
 
 from django import forms
+from django.utils.translation import gettext_lazy as _
 
 from apps.channels.models import ChannelConnection
 from apps.channels.registry import connect_route_for
@@ -19,12 +20,16 @@ from apps.common.platforms import Platform
 #: race to another workspace. One wording, so the two paths are indistinguishable
 #: to the operator — and so neither can drift into naming the workspace that
 #: holds the account (SECURITY-BASELINE §1).
-DUPLICATE_ACCOUNT_ERROR = "That account is already connected to this deployment. Disconnect it there first."
+#:
+#: gettext_lazy: this module loads once at import, before any request. Both
+#: constants are forced to str where they are used (.format() / add_error()),
+#: which is where the translation lookup actually happens.
+DUPLICATE_ACCOUNT_ERROR = _("That account is already connected to this deployment. Disconnect it there first.")
 
 #: Shown when someone picks a platform that has a real connect flow. Naming the
 #: flow matters: the operator is one click from the thing that works, and the
 #: row this form would have made is one that can never send.
-GUIDED_SETUP_ERROR = "{label} has a guided setup that collects its credentials. Use that instead of this form."
+GUIDED_SETUP_ERROR = _("{label} has a guided setup that collects its credentials. Use that instead of this form.")
 
 
 class ChannelConnectionForm(forms.ModelForm):
@@ -39,12 +44,14 @@ class ChannelConnectionForm(forms.ModelForm):
         model = ChannelConnection
         fields = ["platform", "display_name", "external_id"]
         labels = {
-            "display_name": "Name",
-            "external_id": "Account identifier",
+            "display_name": _("Name"),
+            "external_id": _("Account identifier"),
         }
         help_texts = {
-            "display_name": "How this channel appears in the inbox and the flow builder.",
-            "external_id": "The platform's own id for the account: bot id, page id, phone number id, or sending domain.",
+            "display_name": _("How this channel appears in the inbox and the flow builder."),
+            "external_id": _(
+                "The platform's own id for the account: bot id, page id, phone number id, or sending domain."
+            ),
         }
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:

@@ -28,6 +28,7 @@ from functools import partial
 from typing import Any
 
 from django.db import transaction
+from django.utils import translation
 
 from apps.notifications import action_urls, events, queue
 from apps.notifications.mail import send_delivery
@@ -107,24 +108,45 @@ def notify(
     if not recipients:
         return []
 
-    title, body = events.render(event, context)
-    title = _fit_title(title)
-    payload = _payload(workspace, event, context)
+    # One render per distinct language among the recipients, not one per
+    # recipient (notify() can fan out to every admin in a workspace) and not
+    # one for all of them either — the registry's title/body/email_subject
+    # strings are gettext_lazy (apps.notifications.events), so which language a
+    # render comes out in depends on what is active() when events.render()
+    # forces them to str. Grouped here, rather than inline in the loop below,
+    # so recipient order — the one thing this function's docstring promises —
+    # survives the grouping.
+    copy_by_language: dict[str, tuple[str, str, str]] = {}
+    rendered: list[tuple[Any, str, str, str]] = []
+    for recipient in recipients:
+        lang = recipient.language
+        if lang not in copy_by_language:
+            with translation.override(lang or None):
+                title, body = events.render(event, context)
+                email_subject = _render_email_subject(event, context)
+            copy_by_language[lang] = (_fit_title(title), body, email_subject)
+        rendered.append((recipient, *copy_by_language[lang]))
 
-    notifications = [
-        Notification.objects.create(
-            user=recipient,
-            event_type=event.key,
-            title=title,
-            body=body,
-            # A deep copy per row. The rows serialize independently either way,
-            # which is what makes sharing one dict silently wrong: every
-            # returned instance would alias it, so mutating one caller-side
-            # would appear to change rows that were never written.
-            payload=copy.deepcopy(payload),
+    base_payload = _payload(workspace, event, context)
+
+    notifications = []
+    for recipient, title, body, email_subject in rendered:
+        # A deep copy per row. The rows serialize independently either way,
+        # which is what makes sharing one dict silently wrong: every returned
+        # instance would alias it, so mutating one caller-side would appear to
+        # change rows that were never written.
+        row_payload = copy.deepcopy(base_payload)
+        if email_subject:
+            row_payload["email_subject"] = email_subject
+        notifications.append(
+            Notification.objects.create(
+                user=recipient,
+                event_type=event.key,
+                title=title,
+                body=body,
+                payload=row_payload,
+            )
         )
-        for recipient in recipients
-    ]
 
     if event.emails_by_default:
         _dispatch_emails(workspace, notifications)
@@ -197,15 +219,31 @@ def _payload(workspace: Any, event: events.NotificationEvent, context: dict[str,
     payload["workspace_name"] = getattr(workspace, "name", "")
     payload["icon"] = event.icon
     payload["tone"] = event.tone
-    if event.email_subject:
-        # An event may want a subject line that differs from the in-app title
-        # ("Your flow stopped" reads oddly in an inbox). It is a copy template
-        # like the others, so it is filled from the same context.
-        payload["email_subject"] = events.render(
-            events.NotificationEvent(key=event.key, label=event.label, icon=event.icon, title=event.email_subject),
-            context,
-        )[0]
+    # email_subject is filled by _render_email_subject() instead, per recipient
+    # — not here, where one shared payload would render it in a single
+    # language for every recipient the way title/body used to.
     return payload
+
+
+def _render_email_subject(event: events.NotificationEvent, context: dict[str, Any]) -> str:
+    """The email subject line, or ``""`` when the event has none of its own.
+
+    An event may want a subject that differs from the in-app title ("Your flow
+    stopped" reads oddly in an inbox). It is a copy template like title/body,
+    filled from the same context — ``events.render()`` just has no slot for a
+    third template, so this borrows it with a throwaway ``NotificationEvent``
+    wrapping ``email_subject`` as that event's title.
+
+    A function of its own, rather than inline in ``_payload()``, so ``notify()``
+    can call it inside the same ``translation.override()`` it already renders
+    title/body under, per recipient language.
+    """
+    if not event.email_subject:
+        return ""
+    return events.render(
+        events.NotificationEvent(key=event.key, label=event.label, icon=event.icon, title=event.email_subject),
+        context,
+    )[0]
 
 
 #: How deep to walk a context value before giving up on it. Deeper than any

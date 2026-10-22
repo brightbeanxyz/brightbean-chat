@@ -1,4 +1,5 @@
 {% extends "layouts/settings.html" %}
+{% load i18n %}
 {% comment %}
 The team, in the shape contacts/tag_list.html established — but three lists on
 one page rather than one, so each gets its own .section-title over its own card.
@@ -12,65 +13,70 @@ sitting in every row. A dropdown that silently posts on change, on a control tha
 can demote the person reading it, is not a thing to leave lying in a list.
 {% endcomment %}
 {% load common_extras %}
-{% block title %}Team members · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Team members" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
     <div class="page-header">
         <div class="page-header-text">
-            <h1 class="page-title">Team members</h1>
+            <h1 class="page-title">{% translate "Team members" %}</h1>
             <p class="page-lede">
-                Everybody in this organization, what they can do across it, and which workspaces they
-                can reach.
+                {% translate "Everybody in this organization, what they can do across it, and which workspaces they can reach." %}
             </p>
         </div>
         {% if can_invite %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('invite-member')">{% include "partials/_nav_icon.html" with name="users" icon_size=16 %} Invite someone</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('invite-member')">{% include "partials/_nav_icon.html" with name="users" icon_size=16 %} {% translate "Invite someone" %}</button>
         {% endif %}
     </div>
 
     {% if can_invite %}
-    {% modal "invite-member" title="Invite someone" size="lg" %}
+    {% translate "Invite someone" as invite_someone_title %}
+    {% modal "invite-member" title=invite_someone_title size="lg" %}
     <form method="post" action="{% url 'members:invite' %}">
         {% csrf_token %}
         <div class="bb-modal-body">
         <div class="field">
-            <label class="field-label" for="invite-email">Email</label>
+            <label class="field-label" for="invite-email">{% translate "Email" %}</label>
             <input class="form-input-styled" id="invite-email" type="email" name="email" required autofocus placeholder="name@company.com">
         </div>
         <div class="field">
-            <label class="field-label" for="invite-role">Organization role</label>
+            <label class="field-label" for="invite-role">{% translate "Organization role" %}</label>
+            <span class="bb-select-wrap" style="width: 14rem;">
             <select class="form-input-styled bb-select" id="invite-role" name="org_role">
                 {% for value, label in org_role_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
             </select>
+            </span>
         </div>
         <div class="field">
-            <span class="field-label">Workspace access</span>
+            <span class="field-label">{% translate "Workspace access" %}</span>
             {% for workspace in workspaces %}
             <div class="flex flex-wrap items-center justify-between gap-3 py-2">
                 <label class="field-check field-check-inline" for="ws-{{ workspace.id }}">
                     <input class="bb-checkbox" id="ws-{{ workspace.id }}" type="checkbox" name="ws_{{ workspace.id }}" value="1">
                     <span class="field-check-body"><span class="field-label">{{ workspace.name }}</span></span>
                 </label>
-                <select class="form-input-styled bb-select" name="ws_role_{{ workspace.id }}" aria-label="Role in {{ workspace.name }}" style="width: 12rem;">
+                {% blocktranslate asvar role_in_ws_label with name=workspace.name %}Role in {{ name }}{% endblocktranslate %}
+                <span class="bb-select-wrap" style="width: 12rem;">
+                <select class="form-input-styled bb-select" name="ws_role_{{ workspace.id }}" aria-label="{{ role_in_ws_label }}">
                     {% for value, label in workspace_roles %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
                 </select>
+                </span>
             </div>
             {% empty %}
-            <p class="section-note">You cannot manage members in any workspace yet.</p>
+            <p class="section-note">{% translate "You cannot manage members in any workspace yet." %}</p>
             {% endfor %}
         </div>
         </div>
         <div class="bb-modal-actions">
-            <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-            <button type="submit" class="btn-pill-primary">Send invitation</button>
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Send invitation" %}</button>
         </div>
     </form>
     {% endmodal %}
     {% endif %}
 
-    <h2 class="section-title mb-3">Members</h2>
+    <h2 class="section-title mb-3">{% translate "Members" %}</h2>
     {% if rows %}
     <div class="card overflow-hidden mb-8">
         {% for row in rows %}
@@ -85,14 +91,15 @@ can demote the person reading it, is not a thing to leave lying in a list.
                 <div class="list-row-meta truncate">{{ row.membership.user.email }}</div>
             </div>
 
-            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'members:manage_workspaces' membership_id=row.membership.id %}">Manage access</a>
+            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'members:manage_workspaces' membership_id=row.membership.id %}">{% translate "Manage access" %}</a>
 
             {% if is_admin and row.can_manage %}
-            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ row.membership.user.display_name }}">
+            {% blocktranslate asvar member_actions_label with name=row.membership.user.display_name %}More actions for {{ name }}{% endblocktranslate %}
+            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ member_actions_label }}">
                 <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
             </button>
             <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
-                <button type="button" class="row-menu-item" role="menuitem" @click="changing = true; menuOpen = false">Change role…</button>
+                <button type="button" class="row-menu-item" role="menuitem" @click="changing = true; menuOpen = false">{% translate "Change role…" %}</button>
                 <div class="row-menu-sep"></div>
                 {% comment %}
                   Asked first (HANDOFF §2.4): they lose access at once, and only
@@ -102,18 +109,20 @@ can demote the person reading it, is not a thing to leave lying in a list.
                 <form method="post" action="{% url 'members:remove' membership_id=row.membership.id %}"
                       @submit="if (!window.confirm('Remove {{ row.membership.user.display_name|escapejs }} from the organization? They lose access straight away.')) $event.preventDefault()">
                     {% csrf_token %}
-                    <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">Remove from organization</button>
+                    <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">{% translate "Remove from organization" %}</button>
                 </form>
             </div>
 
             <form x-show="changing" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" method="post" action="{% url 'members:update_role' membership_id=row.membership.id %}">
                 {% csrf_token %}
-                <label class="sr-only" for="role-{{ row.membership.id }}">Organization role</label>
-                <select class="form-input-styled bb-select" id="role-{{ row.membership.id }}" name="org_role" style="width: 14rem;">
+                <label class="sr-only" for="role-{{ row.membership.id }}">{% translate "Organization role" %}</label>
+                <span class="bb-select-wrap" style="width: 14rem;">
+                <select class="form-input-styled bb-select" id="role-{{ row.membership.id }}" name="org_role">
                     {% for value, label in org_role_choices %}<option value="{{ value }}" {% if row.membership.org_role == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
                 </select>
-                <button type="submit" class="btn-pill-secondary btn-pill-sm">Update</button>
-                <button type="button" class="btn-pill-secondary btn-pill-sm" @click="changing = false">Cancel</button>
+                </span>
+                <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Update" %}</button>
+                <button type="button" class="btn-pill-secondary btn-pill-sm" @click="changing = false">{% translate "Cancel" %}</button>
             </form>
             {% endif %}
         </div>
@@ -121,12 +130,12 @@ can demote the person reading it, is not a thing to leave lying in a list.
     </div>
     {% else %}
     <div class="empty-state mb-8">
-        <p class="empty-state-title">Nobody here yet</p>
-        <p class="empty-state-body">Invite the people who answer messages with you.</p>
+        <p class="empty-state-title">{% translate "Nobody here yet" %}</p>
+        <p class="empty-state-body">{% translate "Invite the people who answer messages with you." %}</p>
     </div>
     {% endif %}
 
-    <h2 class="section-title mb-3">Pending invitations</h2>
+    <h2 class="section-title mb-3">{% translate "Pending invitations" %}</h2>
     {% if invitations %}
     <div class="card overflow-hidden">
         {% for invite in invitations %}
@@ -137,16 +146,16 @@ can demote the person reading it, is not a thing to leave lying in a list.
                     <span class="list-row-title truncate">{{ invite.email }}</span>
                     <span class="status-pill">{{ invite.get_org_role_display }}</span>
                 </div>
-                <div class="list-row-meta">Expires {{ invite.expires_at }}</div>
+                <div class="list-row-meta">{% blocktranslate with expires_at=invite.expires_at %}Expires {{ expires_at }}{% endblocktranslate %}</div>
             </div>
             {% if is_admin %}
             <form method="post" action="{% url 'members:resend_invite' invitation_id=invite.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn-pill-secondary btn-pill-sm">Resend</button>
+                <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Resend" %}</button>
             </form>
             <form method="post" action="{% url 'members:revoke_invite' invitation_id=invite.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn-danger-link ml-1">Revoke</button>
+                <button type="submit" class="btn-danger-link ml-1">{% translate "Revoke" %}</button>
             </form>
             {% endif %}
         </div>
@@ -154,8 +163,8 @@ can demote the person reading it, is not a thing to leave lying in a list.
     </div>
     {% else %}
     <div class="empty-state">
-        <p class="empty-state-title">No pending invitations</p>
-        <p class="empty-state-body">Invitations you send appear here until they are accepted.</p>
+        <p class="empty-state-title">{% translate "No pending invitations" %}</p>
+        <p class="empty-state-body">{% translate "Invitations you send appear here until they are accepted." %}</p>
     </div>
     {% endif %}
 </div>

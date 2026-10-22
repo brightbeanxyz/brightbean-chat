@@ -1,4 +1,4 @@
-{% load tz %}{% comment %}
+{% load i18n tz %}{% comment %}
 Step 4 — when (SPEC §13.1: "schedule now/later, flatpickr, workspace timezone").
 
 The picker writes a naive local value and the server interprets it in
@@ -19,31 +19,31 @@ opinion that could disagree.
       hx-target="#broadcast-wizard"
       hx-swap="innerHTML">
     {% csrf_token %}
-    <h2 class="wizard-title">When should it go out?</h2>
-    <p class="wizard-lede">Times are in {{ request.workspace.effective_timezone }}. Nothing is sent until you confirm on the next step.</p>
+    <h2 class="wizard-title">{% translate "When should it go out?" %}</h2>
+    <p class="wizard-lede">{% blocktranslate with tz=request.workspace.effective_timezone %}Times are in {{ tz }}. Nothing is sent until you confirm on the next step.{% endblocktranslate %}</p>
 
     <fieldset class="option-cards">
-        <legend class="sr-only">When</legend>
+        <legend class="sr-only">{% translate "When" %}</legend>
         <label class="option-card">
             <input type="radio" name="when" value="now" x-model="when">
             <span class="option-card-body">
-                <span class="option-card-title">Send now</span>
-                <span class="option-card-text">As soon as you confirm it</span>
+                <span class="option-card-title">{% translate "Send now" %}</span>
+                <span class="option-card-text">{% translate "As soon as you confirm it" %}</span>
             </span>
             <span class="option-card-radio" aria-hidden="true"></span>
         </label>
         <label class="option-card">
             <input type="radio" name="when" value="later" x-model="when">
             <span class="option-card-body">
-                <span class="option-card-title">Schedule for later</span>
-                <span class="option-card-text">Pick a date and time</span>
+                <span class="option-card-title">{% translate "Schedule for later" %}</span>
+                <span class="option-card-text">{% translate "Pick a date and time" %}</span>
             </span>
             <span class="option-card-radio" aria-hidden="true"></span>
         </label>
     </fieldset>
 
     <div class="field mt-4" x-show="when === 'later'" x-cloak>
-        <label for="scheduled-at" class="field-label">Send at</label>
+        <label for="scheduled-at" class="field-label">{% translate "Send at" %}</label>
         <input id="scheduled-at" type="text" name="scheduled_at" class="form-datetime" style="width: 16rem;"
                placeholder="YYYY-MM-DD HH:MM" value="{% if broadcast.scheduled_at %}{{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:'Y-m-d H:i' }}{% endif %}"
                x-init="$nextTick(() => {
@@ -53,11 +53,11 @@ opinion that could disagree.
     </div>
 
     <p class="wizard-hint mt-4">
-        A scheduled broadcast can be cancelled up to the moment it starts, and while it is sending.
+        {% translate "A scheduled broadcast can be cancelled up to the moment it starts, and while it is sending." %}
     </p>
 
     <div class="wizard-actions">
         {% include "broadcasts/_step_back.html" %}
-        <button type="submit" class="btn-pill-primary">Continue</button>
+        <button type="submit" class="btn-pill-primary">{% translate "Continue" %}</button>
     </div>
 </form>

@@ -44,6 +44,8 @@ from typing import Any
 
 from django.conf import settings
 from django.db import models
+from django.utils.functional import Promise
+from django.utils.translation import gettext_lazy as _
 
 from apps.common.scoping import WorkspaceScopedModel
 
@@ -65,11 +67,11 @@ class BroadcastStatus(models.TextChoices):
     never re-opened: the messages are gone.
     """
 
-    DRAFT = "draft", "Draft"
-    SCHEDULED = "scheduled", "Scheduled"
-    SENDING = "sending", "Sending"
-    SENT = "sent", "Sent"
-    CANCELLED = "cancelled", "Cancelled"
+    DRAFT = "draft", _("Draft")
+    SCHEDULED = "scheduled", _("Scheduled")
+    SENDING = "sending", _("Sending")
+    SENT = "sent", _("Sent")
+    CANCELLED = "cancelled", _("Cancelled")
 
 
 #: Statuses from which a broadcast still has work in the queue, and therefore the
@@ -87,11 +89,11 @@ class RecipientStatus(models.TextChoices):
     separately from a provider error.
     """
 
-    PENDING = "pending", "Pending"
-    SENT = "sent", "Sent"
-    FAILED = "failed", "Failed"
-    SKIPPED = "skipped", "Skipped"
-    CANCELLED = "cancelled", "Cancelled"
+    PENDING = "pending", _("Pending")
+    SENT = "sent", _("Sent")
+    FAILED = "failed", _("Failed")
+    SKIPPED = "skipped", _("Skipped")
+    CANCELLED = "cancelled", _("Cancelled")
 
 
 #: Statuses a recipient never leaves. Everything else is still owed a send, which
@@ -277,7 +279,7 @@ class BroadcastRecipient(WorkspaceScopedModel):
         return f"{self.contact_id} ({self.status})"
 
     @property
-    def reason_label(self) -> str:
+    def reason_label(self) -> str | Promise:
         """The sentence for this row's code, looked up rather than stored.
 
         ``apps.messaging.codes.describe`` is the registered copy the inbox

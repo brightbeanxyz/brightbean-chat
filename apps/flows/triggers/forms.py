@@ -12,6 +12,8 @@ get a schema error about it.
 
 from typing import Any
 
+from django.utils.translation import gettext
+
 from apps.flows.triggers.registry import spec_for
 from apps.flows.triggers.schema import MAX_KEYWORDS
 from apps.flows.triggers.types import TriggerType
@@ -95,7 +97,7 @@ def _keywords(post: Any) -> list[dict[str, str]]:
     texts = post.getlist("keyword_text")
     modes = post.getlist("keyword_mode")
     if len(texts) != len(modes):
-        raise KeywordMismatchError("Each keyword needs a matching mode.")
+        raise KeywordMismatchError(gettext("Each keyword needs a matching mode."))
 
     seen: set[str] = set()
     keywords: list[dict[str, str]] = []

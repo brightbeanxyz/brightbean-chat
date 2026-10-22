@@ -44,6 +44,8 @@ displayed and used as defaults, never as authority.
 import json
 from typing import Any
 
+from django.utils.translation import gettext
+
 from apps.flows.portability.refs import (
     KIND_COMMENT_POSTS,
     KIND_CUSTOM_FIELD,
@@ -251,9 +253,15 @@ def parse(raw: bytes | str) -> tuple[dict[str, Any] | None, list[Issue]]:
     """
     size = len(raw.encode("utf-8") if isinstance(raw, str) else raw)
     if size > MAX_DOCUMENT_BYTES:
-        return None, [_issue(f"The file is {size} bytes; the limit is {MAX_DOCUMENT_BYTES} bytes.", "document")]
+        return None, [
+            _issue(
+                gettext("The file is %(size)s bytes; the limit is %(max)s bytes.")
+                % {"size": size, "max": MAX_DOCUMENT_BYTES},
+                "document",
+            )
+        ]
     if not size:
-        return None, [_issue("The file is empty.", "document")]
+        return None, [_issue(gettext("The file is empty."), "document")]
 
     try:
         payload = json.loads(raw)
@@ -261,15 +269,20 @@ def parse(raw: bytes | str) -> tuple[dict[str, Any] | None, list[Issue]]:
         # RecursionError is belt and braces: CPython's parser handles deeper
         # nesting than the depth cap allows, so in practice the cap catches
         # those first — but a parser that gives up must not be a 500.
-        return None, [_issue("The file is not valid JSON.", "document")]
+        return None, [_issue(gettext("The file is not valid JSON."), "document")]
 
     if not isinstance(payload, dict):
-        return None, [_issue("A flow template must be a JSON object.", "document")]
+        return None, [_issue(gettext("A flow template must be a JSON object."), "document")]
 
     if json_depth(payload, limit=MAX_DOCUMENT_DEPTH) > MAX_DOCUMENT_DEPTH:
-        return None, [_issue(f"The file nests deeper than the limit of {MAX_DOCUMENT_DEPTH} levels.", "document")]
+        return None, [
+            _issue(
+                gettext("The file nests deeper than the limit of %(max)s levels.") % {"max": MAX_DOCUMENT_DEPTH},
+                "document",
+            )
+        ]
     if _contains_nul(payload):
-        return None, [_issue("The file contains a null character, which cannot be stored.", "document")]
+        return None, [_issue(gettext("The file contains a null character, which cannot be stored."), "document")]
     return payload, []
 
 
@@ -320,7 +333,7 @@ def validate_envelope(document: Any) -> list[Issue]:
     the one that describes the actual problem.
     """
     if not isinstance(document, dict):
-        return [_issue("A flow template must be a JSON object.", "document")]
+        return [_issue(gettext("A flow template must be a JSON object."), "document")]
 
     issues = validate_instance(document_schema(), document, path="")
     if issues:
@@ -332,10 +345,15 @@ def validate_envelope(document: Any) -> list[Issue]:
     keys = [flow["key"] for flow in document["flows"]]
     duplicates = sorted({key for key in keys if keys.count(key) > 1})
     for key in duplicates:
-        issues.append(_issue(f"Two flows share the key {key!r}.", "flows"))
+        issues.append(_issue(gettext("Two flows share the key %(key)r.") % {"key": key}, "flows"))
 
     if document["entry"] not in keys:
-        issues.append(_issue(f"entry names {document['entry']!r}, which is not a flow in this file.", "entry"))
+        issues.append(
+            _issue(
+                gettext("entry names %(entry)r, which is not a flow in this file.") % {"entry": document["entry"]},
+                "entry",
+            )
+        )
 
     return issues
 

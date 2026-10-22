@@ -8,6 +8,8 @@
  */
 import type { ReactNode } from "react";
 
+import i18n from "../i18n";
+import { variantLabel } from "../inspector/copy";
 import { configSchema } from "../schema/artifact";
 import { deref, isTaggedUnion, typesOf } from "../schema/resolve";
 import type { JsonSchema, Picklists } from "../schema/types";
@@ -38,7 +40,7 @@ function Pills({ items, quick = false }: { items: string[]; quick?: boolean }) {
     <div className="flex flex-wrap gap-1 mt-1">
       {shown.map((label, index) => (
         <span key={index} className={quick ? "fb-pill fb-pill-quick" : "fb-pill"}>
-          {label || "Untitled"}
+          {label || i18n.t("previews.untitled")}
         </span>
       ))}
       {items.length > shown.length ? <span className="fb-pill">+{items.length - shown.length}</span> : null}
@@ -65,7 +67,7 @@ function SendMessagePreview({ config }: PreviewProps) {
           {blocks.length > 1 ? ` +${blocks.length - 1}` : ""}
         </Empty>
       ) : (
-        <Empty>Nothing to send yet</Empty>
+        <Empty>{i18n.t("previews.sendMessage.nothingToSend")}</Empty>
       )}
       <Pills items={list(isRecord(config) ? config["buttons"] : undefined).map((b) => String(b["label"] ?? ""))} />
       <Pills
@@ -79,11 +81,14 @@ function SendMessagePreview({ config }: PreviewProps) {
 /**
  * How to word one operator on a card.
  *
- * Only the symbols, which do not read as words. Everything else is derived from
- * the operator itself — `has_not` reads "has not", `not_in` reads "not in" —
- * so an operator apps/contacts/conditions.py adds later renders sensibly
- * without an entry here. The schema decides which operators exist; this only
- * decides how one looks.
+ * Only the symbols, which do not read as words and so have no place in
+ * `enumLabels`. Everything else goes through the same `variantLabel` table
+ * the condition-rule editor uses (`inspector/copy.ts`) — the operator on the
+ * preview and the operator in the dropdown are the same fact, and a table
+ * this bundle already has to translate that fact into is the one both
+ * should read from, not a second one that only ever gets the English word.
+ * An operator apps/contacts/conditions.py adds later, with no entry in
+ * either table, still falls through to a humanised form.
  */
 const OPERATOR_SYMBOLS: Record<string, string> = {
   "!=": "\u2260",
@@ -93,14 +98,16 @@ const OPERATOR_SYMBOLS: Record<string, string> = {
 
 export function operatorCopy(op: unknown): string {
   const key = String(op ?? "");
-  return OPERATOR_SYMBOLS[key] ?? key.replace(/_/g, " ");
+  return OPERATOR_SYMBOLS[key] ?? variantLabel(key);
 }
 
 function ConditionPreview({ config }: PreviewProps) {
   const rules = list(isRecord(config) ? config["rules"] : undefined);
-  const match = isRecord(config) && config["match"] === "any" ? "Any of" : "All of";
+  const match = i18n.t(
+    isRecord(config) && config["match"] === "any" ? "previews.condition.anyOf" : "previews.condition.allOf",
+  );
   if (rules.length === 0) {
-    return <Empty>Nothing to check yet</Empty>;
+    return <Empty>{i18n.t("previews.condition.nothingToCheck")}</Empty>;
   }
   return (
     <>
@@ -113,7 +120,7 @@ function ConditionPreview({ config }: PreviewProps) {
           </li>
         ))}
       </ul>
-      {rules.length > 2 ? <Empty>+{rules.length - 2} more</Empty> : null}
+      {rules.length > 2 ? <Empty>{i18n.t("previews.condition.more", { count: rules.length - 2 })}</Empty> : null}
     </>
   );
 }
@@ -122,7 +129,7 @@ function RandomizerPreview({ config }: PreviewProps) {
   const paths = list(isRecord(config) ? config["paths"] : undefined);
   const total = paths.reduce((sum, path) => sum + (typeof path["weight"] === "number" ? path["weight"] : 0), 0);
   if (paths.length === 0) {
-    return <Empty>No paths to split down yet</Empty>;
+    return <Empty>{i18n.t("previews.randomizer.noPaths")}</Empty>;
   }
   return (
     <>
@@ -138,35 +145,28 @@ function RandomizerPreview({ config }: PreviewProps) {
         ))}
       </div>
       <Pills items={paths.map((path) => `${path["weight"] ?? 0}%`)} />
-      {total !== 100 ? <Empty>Weights total {total}%</Empty> : null}
+      {total !== 100 ? <Empty>{i18n.t("previews.randomizer.weightsTotal", { total })}</Empty> : null}
     </>
   );
 }
 
-const VERB_COPY: Record<string, string> = {
-  add_tag: "Add tag",
-  remove_tag: "Remove tag",
-  set_field: "Set field",
-  clear_field: "Clear field",
-  subscribe_sequence: "Subscribe",
-  unsubscribe_sequence: "Unsubscribe",
-  open_conversation: "Open conversation",
-  close_conversation: "Close conversation",
-  assign_conversation: "Assign",
-  notify_members: "Notify",
-};
+function verbCopy(verb: string): string {
+  const key = `previews.action.verb.${verb}`;
+  const rendered = i18n.t(key);
+  return rendered === key ? verb : rendered;
+}
 
 function ActionPreview({ config }: PreviewProps) {
   const actions = list(isRecord(config) ? config["actions"] : undefined);
   if (actions.length === 0) {
-    return <Empty>Nothing to do yet</Empty>;
+    return <Empty>{i18n.t("previews.action.nothingToDo")}</Empty>;
   }
   return (
     <Pills
       items={actions.map((action) => {
         const verb = String(action["verb"] ?? "");
         const subject = action["tag"] ?? action["field"] ?? action["sequence"] ?? action["member"] ?? "";
-        return `${VERB_COPY[verb] ?? verb}${subject ? ` ${subject}` : ""}`;
+        return `${verbCopy(verb)}${subject ? ` ${subject}` : ""}`;
       })}
     />
   );
@@ -174,26 +174,30 @@ function ActionPreview({ config }: PreviewProps) {
 
 function SmartDelayPreview({ config }: PreviewProps) {
   if (!isRecord(config)) {
-    return <Empty>Nothing set yet</Empty>;
+    return <Empty>{i18n.t("previews.nothingSet")}</Empty>;
   }
   if (config["mode"] === "date" && isRecord(config["date"])) {
     const date = config["date"];
-    return <p>Wait until {String(date["field"] ?? date["datetime"] ?? "a date")}</p>;
+    const value = String(date["field"] ?? date["datetime"] ?? i18n.t("previews.smartDelay.aDate"));
+    return <p>{i18n.t("previews.smartDelay.waitUntil", { value })}</p>;
   }
   if (isRecord(config["duration"])) {
     const duration = config["duration"];
     return (
       <p>
-        Wait {String(duration["value"] ?? "?")} {String(duration["unit"] ?? "")}
+        {i18n.t("previews.smartDelay.wait", {
+          value: String(duration["value"] ?? "?"),
+          unit: String(duration["unit"] ?? ""),
+        })}
       </p>
     );
   }
-  return <Empty>Nothing set yet</Empty>;
+  return <Empty>{i18n.t("previews.nothingSet")}</Empty>;
 }
 
 function DataCollectionPreview({ config }: PreviewProps) {
   if (!isRecord(config)) {
-    return <Empty>Nothing set yet</Empty>;
+    return <Empty>{i18n.t("previews.nothingSet")}</Empty>;
   }
   const target = isRecord(config["target"]) ? String(config["target"]["key"] ?? "") : "";
   return (
@@ -206,7 +210,7 @@ function DataCollectionPreview({ config }: PreviewProps) {
 
 function ExternalRequestPreview({ config }: PreviewProps) {
   if (!isRecord(config)) {
-    return <Empty>Nothing set yet</Empty>;
+    return <Empty>{i18n.t("previews.nothingSet")}</Empty>;
   }
   const url = String(config["url"] ?? "");
   let shown = url;
@@ -228,15 +232,23 @@ function StartFlowPreview({ config, picklists }: PreviewProps) {
   const id = isRecord(config) ? String(config["flow_id"] ?? "") : "";
   const target = picklists.flows.find((flow) => flow.id === id);
   if (!id) {
-    return <Empty>No flow picked yet</Empty>;
+    return <Empty>{i18n.t("previews.startFlow.noFlowPicked")}</Empty>;
   }
-  return target ? <p>{target.label}</p> : <Empty>Unknown flow ({truncate(id, 20)})</Empty>;
+  return target ? (
+    <p>{target.label}</p>
+  ) : (
+    <Empty>{i18n.t("previews.startFlow.unknownFlow", { id: truncate(id, 20) })}</Empty>
+  );
 }
 
 function TextFieldPreview(key: string) {
   return function Preview({ config }: PreviewProps) {
     const value = isRecord(config) ? config[key] : undefined;
-    return typeof value === "string" && value ? <p>{truncate(value)}</p> : <Empty>Empty</Empty>;
+    return typeof value === "string" && value ? (
+      <p>{truncate(value)}</p>
+    ) : (
+      <Empty>{i18n.t("previews.textField.empty")}</Empty>
+    );
   };
 }
 
@@ -248,11 +260,11 @@ function TextFieldPreview(key: string) {
 export function DefaultPreview({ config, type }: PreviewProps & { type: string }) {
   const schema = deref(configSchema(type));
   if (!isRecord(config)) {
-    return <Empty>Nothing set yet</Empty>;
+    return <Empty>{i18n.t("previews.nothingSet")}</Empty>;
   }
   if (isTaggedUnion(schema)) {
     const tag = schema?.discriminator ? config[schema.discriminator.propertyName] : undefined;
-    return tag ? <span className="fb-pill">{String(tag)}</span> : <Empty>Nothing set yet</Empty>;
+    return tag ? <span className="fb-pill">{String(tag)}</span> : <Empty>{i18n.t("previews.nothingSet")}</Empty>;
   }
 
   const scalar = (property: JsonSchema | undefined) => {
@@ -265,7 +277,7 @@ export function DefaultPreview({ config, type }: PreviewProps & { type: string }
     .slice(0, 3)
     .map((key) => `${key}: ${String(config[key] ?? "")}`);
 
-  return shown.length > 0 ? <Pills items={shown} /> : <Empty>Ready</Empty>;
+  return shown.length > 0 ? <Pills items={shown} /> : <Empty>{i18n.t("previews.default.ready")}</Empty>;
 }
 
 const PREVIEWS: Record<string, (props: PreviewProps) => ReactNode> = {

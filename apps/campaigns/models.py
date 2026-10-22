@@ -34,6 +34,8 @@ stumbles over by accident.
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.functions import Lower
+from django.utils.translation import gettext, ngettext
+from django.utils.translation import gettext_lazy as _
 
 from apps.common.scoping import WorkspaceScopedModel
 from apps.contacts.models import ContactScopedModel
@@ -59,9 +61,9 @@ class SequenceStatus(models.TextChoices):
     a drip campaign they are editing.
     """
 
-    DRAFT = "draft", "Draft"
-    ACTIVE = "active", "Active"
-    ARCHIVED = "archived", "Archived"
+    DRAFT = "draft", _("Draft")
+    ACTIVE = "active", _("Active")
+    ARCHIVED = "archived", _("Archived")
 
 
 class DelayUnit(models.TextChoices):
@@ -72,9 +74,9 @@ class DelayUnit(models.TextChoices):
     mean two conversions.
     """
 
-    MINUTES = "minutes", "Minutes"
-    HOURS = "hours", "Hours"
-    DAYS = "days", "Days"
+    MINUTES = "minutes", _("Minutes")
+    HOURS = "hours", _("Hours")
+    DAYS = "days", _("Days")
 
 
 #: A step's window, with sending allowed at any time. The shape is SPEC §11.5's
@@ -143,9 +145,16 @@ class SequenceStep(WorkspaceScopedModel):
         anyone ever set to one. Built here rather than in the template so the
         summary and anything else that words a delay agree.
         """
-        singular = {DelayUnit.MINUTES: "minute", DelayUnit.HOURS: "hour", DelayUnit.DAYS: "day"}
-        unit = singular.get(DelayUnit(self.delay_unit), str(self.delay_unit))
-        return f"{self.delay_value} {unit}" if self.delay_value == 1 else f"{self.delay_value} {unit}s"
+        unit = DelayUnit(self.delay_unit)
+        if unit == DelayUnit.MINUTES:
+            template = ngettext("%(value)s minute", "%(value)s minutes", self.delay_value)
+        elif unit == DelayUnit.HOURS:
+            template = ngettext("%(value)s hour", "%(value)s hours", self.delay_value)
+        elif unit == DelayUnit.DAYS:
+            template = ngettext("%(value)s day", "%(value)s days", self.delay_value)
+        else:
+            template = "%(value)s " + str(self.delay_unit)
+        return template % {"value": self.delay_value}
 
     def clean(self) -> None:
         """Refuse a step whose flow or sequence belongs to another tenant.
@@ -160,7 +169,9 @@ class SequenceStep(WorkspaceScopedModel):
         for name in ("sequence", "flow"):
             peer = getattr(self, f"{name}_id", None)
             if peer is not None and getattr(self, name).workspace_id != self.workspace_id:
-                raise ValidationError({name: f"That {name} belongs to a different workspace than the step."})
+                raise ValidationError(
+                    {name: gettext("That %(name)s belongs to a different workspace than the step.") % {"name": name}}
+                )
 
     @property
     def window(self) -> dict:
@@ -172,9 +183,9 @@ class SequenceStep(WorkspaceScopedModel):
 class EnrollmentStatus(models.TextChoices):
     """SPEC §5's ``sequence_enrollment.status``."""
 
-    ACTIVE = "active", "Active"
-    COMPLETED = "completed", "Completed"
-    UNSUBSCRIBED = "unsubscribed", "Unsubscribed"
+    ACTIVE = "active", _("Active")
+    COMPLETED = "completed", _("Completed")
+    UNSUBSCRIBED = "unsubscribed", _("Unsubscribed")
 
 
 class SequenceEnrollment(ContactScopedModel):

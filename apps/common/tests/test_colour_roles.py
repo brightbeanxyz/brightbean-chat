@@ -20,6 +20,12 @@ from pathlib import Path
 
 REPO = Path(__file__).parents[3]
 STYLES = REPO / "apps" / "theme" / "static_src" / "src" / "styles.css"
+#: Layer 1/2 tokens (including --cta) live here, not in styles.css — this
+#: fork keeps Layer 3 component rules separate from the brand/semantic
+#: tokens they read, for the dark-mode light-dark() derivation
+#: (docs/themes-roadmap.md). Upstream keeps all three layers in one file;
+#: this split is this fork's own, not a merge artefact.
+TOKENS = REPO / "apps" / "theme" / "static_src" / "src" / "tokens.css"
 
 # Every token that resolves to the brand orange. --brand-green-* is the bean
 # green and --brand-font-* a typeface, so both are excluded; --cta is the
@@ -142,9 +148,10 @@ def test_the_primary_button_fills_with_the_contrast_safe_orange():
     """White on --brand-500 is 2.8:1; on --brand-600 it is 3.6:1. The button
     reads --cta, and --cta is the darker step."""
     css = STYLES.read_text()
-    root = css[css.index(":root {") : css.index("}", css.index(":root {"))]
+    tokens = TOKENS.read_text()
+    root = tokens[tokens.index(":root {") : tokens.index("}", tokens.index(":root {"))]
 
-    assert "--cta:          var(--brand-600);" in root
+    assert re.search(r"--cta:\s*var\(--brand-600\);", root)
     assert any(prelude == ".btn-pill-primary" and "var(--cta)" in body for prelude, body in _rules(css)), (
         ".btn-pill-primary no longer fills with --cta"
     )

@@ -1,6 +1,7 @@
 {% extends "layouts/settings.html" %}
-{% block title %}Workspace access · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title">Workspace access for {{ membership.user.display_name }}</h1>{% endblock %}
+{% load i18n %}
+{% block title %}{% translate "Workspace access" %} · BrightBean Chat{% endblock %}
+{% block page_header %}<h1 class="page-title">{% blocktranslate with name=membership.user.display_name %}Workspace access for {{ name }}{% endblocktranslate %}</h1>{% endblock %}
 
 {% block content %}
   {% comment %}
@@ -16,17 +17,18 @@
           <input type="checkbox" name="ws_{{ row.workspace.id }}" value="1" {% if row.selected %}checked{% endif %} />
           {{ row.workspace.name }}
         </label>
-        <select name="ws_role_{{ row.workspace.id }}" aria-label="Role in {{ row.workspace.name }}">
+        {% blocktranslate asvar role_in_ws_label with name=row.workspace.name %}Role in {{ name }}{% endblocktranslate %}
+        <select name="ws_role_{{ row.workspace.id }}" aria-label="{{ role_in_ws_label }}">
           {% for value, label in workspace_roles %}
             <option value="{{ value }}" {% if row.role == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </p>
     {% empty %}
-      <p class="muted">You cannot manage members in any workspace.</p>
+      <p class="muted">{% translate "You cannot manage members in any workspace." %}</p>
     {% endfor %}
-    <button type="submit" class="btn-pill-primary btn-pill-sm">Save access</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save access" %}</button>
   </form>
 
-  <p><a href="{% url 'members:list' %}">Back to team members</a></p>
+  <p><a href="{% url 'members:list' %}">{% translate "Back to team members" %}</a></p>
 {% endblock %}

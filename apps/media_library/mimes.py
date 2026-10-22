@@ -24,6 +24,8 @@ import contextlib
 from typing import Any, BinaryIO
 
 from django.db import models
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 
 __all__ = [
     "ALLOWED_MIMES",
@@ -43,10 +45,10 @@ HEAD_BYTES = 64
 class MediaKind(models.TextChoices):
     """The four block types SPEC §11.1 lets a ``send_message`` carry."""
 
-    IMAGE = "image", "Image"
-    AUDIO = "audio", "Audio"
-    VIDEO = "video", "Video"
-    FILE = "file", "File"
+    IMAGE = "image", _("Image")
+    AUDIO = "audio", _("Audio")
+    VIDEO = "video", _("Video")
+    FILE = "file", _("File")
 
 
 #: mime -> (kind, canonical extension). The extension is used for the
@@ -149,11 +151,11 @@ def _looks_like_markup(head: bytes) -> str | None:
     """
     stripped = head.lstrip(b"\xef\xbb\xbf \t\r\n").lower()
     if b"<svg" in head[:HEAD_BYTES].lower():
-        return "SVG images are not accepted: they are documents that can carry script."
+        return gettext("SVG images are not accepted: they are documents that can carry script.")
     if stripped.startswith((b"<!doctype html", b"<html", b"<head", b"<script")):
-        return "HTML is not accepted, whatever the file is named."
+        return gettext("HTML is not accepted, whatever the file is named.")
     if stripped.startswith((b"<?xml", b"<")):
-        return "Markup documents are not accepted."
+        return gettext("Markup documents are not accepted.")
     return None
 
 
@@ -167,7 +169,7 @@ def sniff(file_obj: BinaryIO | Any) -> str:
     """
     head = _read_head(file_obj)
     if not head:
-        raise UnsupportedMediaError("The file is empty or could not be read.")
+        raise UnsupportedMediaError(gettext("The file is empty or could not be read."))
 
     if head.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
@@ -188,7 +190,7 @@ def sniff(file_obj: BinaryIO | Any) -> str:
         # DocType string, which sits a few dozen bytes in.
         if b"webm" in head:
             return "video/webm"
-        raise UnsupportedMediaError("Matroska (.mkv) video is not accepted; convert it to MP4 or WebM.")
+        raise UnsupportedMediaError(gettext("Matroska (.mkv) video is not accepted; convert it to MP4 or WebM."))
     # ``len(head) >= 2`` before indexing: every other branch here uses slicing
     # or startswith, which are safe on a short buffer, but a bare ``head[1]``
     # raises IndexError on a one-byte file — and a one-byte file whose only byte
@@ -198,13 +200,13 @@ def sniff(file_obj: BinaryIO | Any) -> str:
     if head.startswith(b"%PDF-"):
         return "application/pdf"
     if head.startswith(b"PK\x03\x04"):
-        raise UnsupportedMediaError("Zip-based files (including .docx, .xlsx and .zip) are not accepted.")
+        raise UnsupportedMediaError(gettext("Zip-based files (including .docx, .xlsx and .zip) are not accepted."))
 
     markup = _looks_like_markup(head)
     if markup:
         raise UnsupportedMediaError(markup)
 
-    raise UnsupportedMediaError("Unrecognised file type. Accepted: images, audio, video and PDF.")
+    raise UnsupportedMediaError(gettext("Unrecognised file type. Accepted: images, audio, video and PDF."))
 
 
 def accepted_upload_types() -> str:

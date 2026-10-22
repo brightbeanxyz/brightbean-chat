@@ -36,6 +36,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import F
 from django.utils import timezone
+from django.utils.translation import gettext
 
 from apps.campaigns.errors import CampaignsError, SequenceNotRunnableError, WorkspaceMismatchError
 from apps.campaigns.events import EVENT_SEQUENCE_SUBSCRIBED, EVENT_SEQUENCE_UNSUBSCRIBED, emit
@@ -129,9 +130,9 @@ def set_status(sequence: Sequence, *, status: str) -> Sequence:
     to edit it must not silently unsubscribe its subscribers.
     """
     if status not in SequenceStatus.values:
-        raise CampaignsError("That is not a sequence status.")
+        raise CampaignsError(gettext("That is not a sequence status."))
     if status == SequenceStatus.ACTIVE and not sequence.steps.exists():
-        raise SequenceNotRunnableError("Add at least one step before activating this sequence.")
+        raise SequenceNotRunnableError(gettext("Add at least one step before activating this sequence."))
     if status == SequenceStatus.ACTIVE and sequence.status != SequenceStatus.ACTIVE:
         # Only the transition INTO active spends a slot; re-saving a live
         # sequence must not be refused because it is already counted.
@@ -183,10 +184,10 @@ def add_step(
     ``int`` here would push that parse out to every caller.
     """
     if flow.workspace_id != sequence.workspace_id:
-        raise WorkspaceMismatchError("That flow belongs to a different workspace than the sequence.")
+        raise WorkspaceMismatchError(gettext("That flow belongs to a different workspace than the sequence."))
     count = sequence.steps.count()
     if count >= MAX_STEPS:
-        raise CampaignsError(f"A sequence may have at most {MAX_STEPS} steps.")
+        raise CampaignsError(gettext("A sequence may have at most %(max)s steps.") % {"max": MAX_STEPS})
     step = SequenceStep(
         workspace_id=sequence.workspace_id,
         sequence=sequence,
@@ -218,7 +219,7 @@ def update_step(
     """Edit one step in place. Enrollments already past it are unaffected."""
     if flow is not None:
         if flow.workspace_id != step.workspace_id:
-            raise WorkspaceMismatchError("That flow belongs to a different workspace than the sequence.")
+            raise WorkspaceMismatchError(gettext("That flow belongs to a different workspace than the sequence."))
         step.flow = flow
     if delay_unit is not None:
         step.delay_unit = delay_unit
@@ -252,7 +253,7 @@ def _already_enrolled() -> Iterator[None]:
         with transaction.atomic():
             yield
     except IntegrityError as exc:
-        raise CampaignsError("That contact was subscribed by somebody else just now.") from exc
+        raise CampaignsError(gettext("That contact was subscribed by somebody else just now.")) from exc
 
 
 @contextmanager
@@ -262,7 +263,7 @@ def _crowded_position() -> Iterator[None]:
         with transaction.atomic():
             yield
     except IntegrityError as exc:
-        raise CampaignsError("Somebody else changed this sequence's steps just now. Try again.") from exc
+        raise CampaignsError(gettext("Somebody else changed this sequence's steps just now. Try again.")) from exc
 
 
 @transaction.atomic
@@ -310,7 +311,7 @@ def move_step(step: SequenceStep, *, direction: str) -> SequenceStep:
     visible to them; what this guarantees is that nobody is skipped.
     """
     if direction not in {"up", "down"}:
-        raise CampaignsError("A step moves up or down.")
+        raise CampaignsError(gettext("A step moves up or down."))
     offset = -1 if direction == "up" else 1
     neighbour = (
         SequenceStep.objects.for_workspace(step.workspace_id)
@@ -357,14 +358,16 @@ def subscribe(sequence: Sequence, contact: Any, *, source: str = "manual") -> Se
     database already holds against the enrollment's own creation.
     """
     if contact.workspace_id != sequence.workspace_id:
-        raise WorkspaceMismatchError("That contact belongs to a different workspace than the sequence.")
+        raise WorkspaceMismatchError(gettext("That contact belongs to a different workspace than the sequence."))
     if sequence.status != SequenceStatus.ACTIVE:
         # Active only, which is what `set_status` and the model both already
         # said. Refusing merely the archived case let somebody be enrolled in a
         # half-built draft: their steps would start running against whatever
         # rungs existed at the time, and the rest of the campaign would be
         # written underneath them.
-        raise SequenceNotRunnableError(f"“{sequence.name}” is not active, so it cannot take new subscribers.")
+        raise SequenceNotRunnableError(
+            gettext("“%(name)s” is not active, so it cannot take new subscribers.") % {"name": sequence.name}
+        )
 
     _retire_active(sequence, contact)
 
@@ -478,15 +481,17 @@ def _retire(enrollment: SequenceEnrollment) -> None:
 
 def _clean_delay(value: Any, unit: Any) -> int:
     if unit not in DelayUnit.values:
-        raise CampaignsError("Pick minutes, hours or days.")
+        raise CampaignsError(gettext("Pick minutes, hours or days."))
     try:
         number = int(value)
     except (TypeError, ValueError) as exc:
-        raise CampaignsError("The delay must be a whole number.") from exc
+        raise CampaignsError(gettext("The delay must be a whole number.")) from exc
     if number < 0:
-        raise CampaignsError("The delay cannot be negative.")
+        raise CampaignsError(gettext("The delay cannot be negative."))
     if number > MAX_DELAY[unit]:
-        raise CampaignsError(f"That delay is too long (at most {MAX_DELAY[unit]} {unit}).")
+        raise CampaignsError(
+            gettext("That delay is too long (at most %(max)s %(unit)s).") % {"max": MAX_DELAY[unit], "unit": unit}
+        )
     return number
 
 

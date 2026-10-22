@@ -21,7 +21,17 @@ from django.core.signals import setting_changed
 from django.dispatch import receiver
 from django.http import HttpRequest
 from django.urls import NoReverseMatch, get_urlconf, reverse
-from django.utils.functional import SimpleLazyObject
+from django.utils.functional import Promise, SimpleLazyObject
+from django.utils.translation import gettext_lazy as _
+
+#: A nav label: first-party text, plain or gettext_lazy. mypy's django-stubs
+#: types gettext_lazy()'s return as a private, str-like proxy rather than
+#: `str` itself; `Promise` is its public base and the widest type that import
+#: is willing to name. Every consumer here only ever renders or compares the
+#: label (Django templates and `==` both handle a lazy proxy natively), so the
+#: wider type costs nothing — unlike apps.notifications.events's CopyText,
+#: nothing here needs `str`-only methods like `.format_map()`.
+NavLabel = str | Promise
 
 # Resolved URLs, keyed by (urlconf, route name).
 #
@@ -89,7 +99,7 @@ class NavItem:
     """
 
     key: str
-    label: str
+    label: NavLabel
     icon: str
     url_name: str
     url_names: frozenset[str] = frozenset()
@@ -219,18 +229,18 @@ class NavGroup:
     A tuple turns that mistake into an immediate AttributeError.
     """
 
-    label: str
+    label: NavLabel
     items: tuple[NavItem, ...] = ()
 
 
 SETTINGS_NAV: list[NavGroup] = [
     NavGroup(
-        label="Workspace",
+        label=_("Workspace"),
         items=(
             NavItem(
                 key="ws_general",
                 permission="manage_workspace_settings",
-                label="General",
+                label=_("General"),
                 icon="settings",
                 url_name="workspaces:settings",
                 workspace_scoped=True,
@@ -238,7 +248,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="ws_channels",
                 permission="manage_channels",
-                label="Channels",
+                label=_("Channels"),
                 icon="channels",
                 url_name="channels:list",
                 # The six guided connect flows are in here too, or the whole
@@ -274,7 +284,7 @@ SETTINGS_NAV: list[NavGroup] = [
             # the workspace may browse what is in it.
             NavItem(
                 key="media",
-                label="Library",
+                label=_("Library"),
                 icon="image",
                 url_name="media:library",
                 url_names=frozenset({"media:library", "media:asset_detail"}),
@@ -294,7 +304,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="ws_tags",
                 permission="manage_crm",
-                label="Tags",
+                label=_("Tags"),
                 icon="tag",
                 url_name="contacts:tag_list",
                 workspace_scoped=True,
@@ -302,7 +312,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="ws_labels",
                 permission="reply_in_inbox",
-                label="Labels",
+                label=_("Labels"),
                 icon="tag",
                 url_name="inbox:label_settings",
                 workspace_scoped=True,
@@ -310,7 +320,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="ws_inbox_rules",
                 permission="manage_workspace_settings",
-                label="Inbox rules",
+                label=_("Inbox rules"),
                 icon="flows",
                 url_name="inbox:rule_settings",
                 workspace_scoped=True,
@@ -322,7 +332,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="ws_fields",
                 permission="manage_crm",
-                label="Fields",
+                label=_("Fields"),
                 icon="fields",
                 url_name="contacts:field_list",
                 workspace_scoped=True,
@@ -330,7 +340,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="ws_email_tracking",
                 permission="manage_workspace_settings",
-                label="Email tracking",
+                label=_("Email tracking"),
                 icon="analytics",
                 url_name="analytics:tracking_settings",
                 workspace_scoped=True,
@@ -342,7 +352,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="ws_webhooks",
                 permission="manage_workspace_settings",
-                label="Webhooks",
+                label=_("Webhooks"),
                 icon="channels",
                 url_name="api_webhooks:list",
                 url_names=frozenset({"api_webhooks:list", "api_webhooks:detail"}),
@@ -351,28 +361,28 @@ SETTINGS_NAV: list[NavGroup] = [
         ),
     ),
     NavGroup(
-        label="Organisation",
+        label=_("Organisation"),
         items=(
             NavItem(
                 key="org_general",
-                label="General",
+                label=_("General"),
                 icon="building",
                 url_name="organizations:settings",
                 org_role="member",
             ),
             NavItem(
                 key="org_workspaces",
-                label="Workspaces",
+                label=_("Workspaces"),
                 icon="grid",
                 url_name="organizations:workspaces",
                 org_role="member",
             ),
             NavItem(
-                key="org_members", label="People & roles", icon="users", url_name="members:list", org_role="member"
+                key="org_members", label=_("People & roles"), icon="users", url_name="members:list", org_role="member"
             ),
             NavItem(
                 key="org_billing",
-                label="Plan & billing",
+                label=_("Plan & billing"),
                 icon="billing",
                 url_name="organizations:billing",
                 org_role="member",
@@ -380,7 +390,7 @@ SETTINGS_NAV: list[NavGroup] = [
             NavItem(
                 key="org_api_keys",
                 org_role="admin",
-                label="Developers",
+                label=_("Developers"),
                 icon="key",
                 url_name="settings_org_api_keys",
                 # The issuance response is its own page, so the row has to stay
@@ -392,15 +402,13 @@ SETTINGS_NAV: list[NavGroup] = [
             # row is where the account menu's "Organization Settings" lands —
             # so the group that opens is the group it belongs to. Ungated like
             # the Library row above: every viewer has a profile.
-            #
-            # "Notifications" used to sit beside it, pointing at the placeholder
-            # in config/urls.py's _GLOBAL_STUBS. A settings row whose whole
-            # content is "Preferences is not built yet. Lands with issue #31
-            # follow-up." is a dead end with an issue number on it — worse than
-            # no row at all. The route stays (it is a real endpoint, and tests
-            # walk it); what is gone is the promise in the nav. Put the row back
-            # in the same commit as the page.
-            NavItem(key="profile", label="Profile", icon="user", url_name="accounts:settings"),
+            NavItem(key="profile", label=_("Profile"), icon="user", url_name="accounts:settings"),
+            # Preferences used to sit beside it, pointing at the placeholder in
+            # config/urls.py's _GLOBAL_STUBS — see this file's history for why
+            # it was pulled. The route is real now (the language picker,
+            # apps.accounts.views.account_preferences), so the row goes back in
+            # the same commit as the page, per that old comment's own rule.
+            NavItem(key="preferences", label=_("Language"), icon="globe", url_name="settings_preferences"),
         ),
     ),
 ]
@@ -424,14 +432,14 @@ MAIN_NAV: list[NavGroup] = [
         items=(
             NavItem(
                 key="dashboard",
-                label="Home",
+                label=_("Home"),
                 icon="home",
                 url_name="workspaces:dashboard",
                 workspace_scoped=True,
             ),
             NavItem(
                 key="inbox",
-                label="Inbox",
+                label=_("Inbox"),
                 icon="inbox",
                 # An open thread is the same section to a reader, so the row
                 # stays lit on a deep link into one (issue #14).
@@ -444,7 +452,7 @@ MAIN_NAV: list[NavGroup] = [
             # stays lit while either half of "automations" is open.
             NavItem(
                 key="flows",
-                label="Flows",
+                label=_("Flows"),
                 icon="flows",
                 url_name="flows:list",
                 url_names=frozenset(
@@ -454,7 +462,7 @@ MAIN_NAV: list[NavGroup] = [
             ),
             NavItem(
                 key="broadcasts",
-                label="Broadcasts",
+                label=_("Broadcasts"),
                 icon="broadcasts",
                 url_name="broadcasts:list",
                 url_names=frozenset({"broadcasts:list", "broadcasts:detail", "broadcasts:compose"}),
@@ -462,7 +470,7 @@ MAIN_NAV: list[NavGroup] = [
             ),
             NavItem(
                 key="contacts",
-                label="Contacts",
+                label=_("Contacts"),
                 icon="contacts",
                 url_name="contacts:list",
                 url_names=frozenset(
@@ -476,7 +484,7 @@ MAIN_NAV: list[NavGroup] = [
             # assume a fixed number of rows.
             NavItem(
                 key="analytics",
-                label="Insights",
+                label=_("Insights"),
                 icon="analytics",
                 url_name="analytics:overview",
                 url_names=frozenset({"analytics:overview", "analytics:flow_detail"}),
@@ -494,7 +502,7 @@ MAIN_NAV: list[NavGroup] = [
             # exactly when a channel_needs_reauth alert matters most.
             NavItem(
                 key="notifications",
-                label="Notifications",
+                label=_("Notifications"),
                 icon="bell",
                 url_name="notifications:list",
                 url_names=frozenset({"notifications:list"}),
@@ -515,7 +523,7 @@ FLOWS_TABS: list[NavGroup] = [
         items=(
             NavItem(
                 key="tab_flows",
-                label="Flows",
+                label=_("Flows"),
                 icon="flows",
                 url_name="flows:list",
                 url_names=frozenset({"flows:list", "flows:edit"}),
@@ -523,7 +531,7 @@ FLOWS_TABS: list[NavGroup] = [
             ),
             NavItem(
                 key="tab_sequences",
-                label="Sequences",
+                label=_("Sequences"),
                 icon="sequences",
                 url_name="campaigns:list",
                 url_names=frozenset({"campaigns:list", "campaigns:detail"}),
@@ -531,7 +539,7 @@ FLOWS_TABS: list[NavGroup] = [
             ),
             NavItem(
                 key="tab_templates",
-                label="Templates",
+                label=_("Templates"),
                 icon="grid",
                 url_name="flows:template_gallery",
                 # Unlike its two neighbours, the page behind this tab is gated:

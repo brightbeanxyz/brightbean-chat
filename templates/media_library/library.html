@@ -24,9 +24,9 @@ Studio keeps this page's `.ml-*` rules in a per-page <style> block. They are
 design-system classes, so they live in apps/theme/static_src/src/styles.css as
 `.media-*` where the picker surfaces Layer 3 and Layer 6 mount can reach them.
 {% endcomment %}
-{% load media_library common_extras %}
+{% load media_library common_extras i18n %}
 
-{% block title %}Media · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Media" %} · BrightBean Chat{% endblock %}
 
 {% comment %}
   layouts/settings.html wraps its pages in a card for the seventeen-odd
@@ -38,15 +38,15 @@ design-system classes, so they live in apps/theme/static_src/src/styles.css as
 {% block page_header %}
   <div class="flex items-start justify-between gap-4 mb-4">
     <div>
-      <h1 class="page-title">Library</h1>
-      <p class="muted">Upload a picture or a file once, then use it in any flow, broadcast or email.</p>
+      <h1 class="page-title">{% translate "Library" %}</h1>
+      <p class="muted">{% translate "Upload a picture or a file once, then use it in any flow, broadcast or email." %}</p>
     </div>
     <div class="w-48 flex-shrink-0">
       <div class="media-quota-bar" role="img"
-           aria-label="{{ used_bytes|filesizeformat }} of {{ quota_bytes|filesizeformat }} used">
+           aria-label="{% blocktranslate with used=used_bytes|filesizeformat quota=quota_bytes|filesizeformat %}{{ used }} of {{ quota }} used{% endblocktranslate %}">
         <div class="media-quota-fill" style="width: {% widthratio used_bytes quota_bytes 100 %}%"></div>
       </div>
-      <p class="mt-1 text-xs muted">{{ used_bytes|filesizeformat }} of {{ quota_bytes|filesizeformat }}</p>
+      <p class="mt-1 text-xs muted">{% blocktranslate with used=used_bytes|filesizeformat quota=quota_bytes|filesizeformat %}{{ used }} of {{ quota }}{% endblocktranslate %}</p>
     </div>
   </div>
 {% endblock %}
@@ -63,31 +63,32 @@ design-system classes, so they live in apps/theme/static_src/src/styles.css as
 
   {# ── Folder rail ─────────────────────────────────────────────── #}
   <aside class="xl:w-56 flex-shrink-0">
-    <h2 class="section-eyebrow mb-2">Folders</h2>
+    <h2 class="section-eyebrow mb-2">{% translate "Folders" %}</h2>
     {% include "media_library/_folder_rail.html" %}
 
     {% if can_manage %}
-      <button type="button" class="btn-pill-secondary btn-pill-sm mt-3" @click="$modal('new-folder')">New folder</button>
+      <button type="button" class="btn-pill-secondary btn-pill-sm mt-3" @click="$modal('new-folder')">{% translate "New folder" %}</button>
       {% comment %}
         Closes only on `mediaChanged`, the success path's event. A rejected name
         (a duplicate, say) answers 400, so the dialog stays open with the name
         still in the box for the user to correct.
       {% endcomment %}
-      {% modal "new-folder" title="New folder" close_on="mediaChanged" %}
+      {% translate "New folder" as new_folder_title %}
+      {% modal "new-folder" title=new_folder_title close_on="mediaChanged" %}
       <form hx-post="{% url 'media:folder_create' workspace_id=request.workspace.id %}" hx-swap="none">
         <div class="bb-modal-body">
           <div class="field">
-            <label class="field-label" for="new-folder-name">What is the folder called?</label>
-            <input class="form-input-styled" type="text" id="new-folder-name" name="name" placeholder="Brand assets" maxlength="255" required autofocus>
+            <label class="field-label" for="new-folder-name">{% translate "What is the folder called?" %}</label>
+            <input class="form-input-styled" type="text" id="new-folder-name" name="name" placeholder="{% translate 'Brand assets' %}" maxlength="255" required autofocus>
             {% if current_folder and current_folder != 'root' %}
               <input type="hidden" name="parent" value="{{ current_folder }}">
-              <span class="field-hint">It goes inside the folder you have open.</span>
+              <span class="field-hint">{% translate "It goes inside the folder you have open." %}</span>
             {% endif %}
           </div>
         </div>
         <div class="bb-modal-actions">
-          <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-          <button type="submit" class="btn-pill-primary">Create folder</button>
+          <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+          <button type="submit" class="btn-pill-primary">{% translate "Create folder" %}</button>
         </div>
       </form>
       {% endmodal %}
@@ -103,15 +104,15 @@ design-system classes, so they live in apps/theme/static_src/src/styles.css as
             hx-target="#media-grid"
             hx-swap="outerHTML"
             hx-trigger="input changed delay:300ms, submit">
-        <label for="media-search" class="sr-only">Search media</label>
+        <label for="media-search" class="sr-only">{% translate "Search media" %}</label>
         <input class="form-input-styled" type="search" id="media-search" name="q" value="{{ query }}"
-               placeholder="Search filenames, titles and alt text">
+               placeholder="{% translate 'Search filenames, titles and alt text' %}">
         <input type="hidden" name="folder" value="{{ current_folder }}">
         <input type="hidden" name="kind" value="{{ current_kind }}">
       </form>
 
       <a class="media-pill {% if not current_kind %}is-active{% endif %}"
-         href="?{% if current_folder %}folder={{ current_folder|urlencode }}&{% endif %}q={{ query|urlencode }}">All</a>
+         href="?{% if current_folder %}folder={{ current_folder|urlencode }}&{% endif %}q={{ query|urlencode }}">{% translate "All" %}</a>
       {% for value, label in kinds %}
         <a class="media-pill {% if current_kind == value %}is-active{% endif %}"
            href="?kind={{ value }}{% if current_folder %}&folder={{ current_folder|urlencode }}{% endif %}&q={{ query|urlencode }}">{{ label }}</a>
@@ -147,11 +148,11 @@ design-system classes, so they live in apps/theme/static_src/src/styles.css as
         <input type="file" name="files" id="media-files" multiple
                accept="{{ accepted_types }}" class="sr-only" x-ref="input">
         <p class="text-sm">
-          Drop files here, or
-          <label for="media-files" class="btn-link" style="display:inline; cursor:pointer;">choose them</label>.
+          {% blocktranslate %}Drop files here, or
+          <label for="media-files" class="btn-link" style="display:inline; cursor:pointer;">choose them</label>.{% endblocktranslate %}
         </p>
         <p class="text-xs muted mt-1">
-          Pictures, audio, video and PDFs. We check what is actually inside the file, so renaming one to get it past does not work.
+          {% translate "Pictures, audio, video and PDFs. We check what is actually inside the file, so renaming one to get it past does not work." %}
         </p>
       </form>
     {% endif %}

@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 
 __all__ = ["REQUIREMENT_KIND_HELP", "REQUIREMENT_KIND_LABELS", "card_contexts"]
 
@@ -23,20 +24,20 @@ __all__ = ["REQUIREMENT_KIND_HELP", "REQUIREMENT_KIND_LABELS", "card_contexts"]
 #: What each requirement kind is called, everywhere it is named. Shared by the
 #: cards and by the import review page's sections, so the same thing cannot be
 #: called two different names one page apart.
-REQUIREMENT_KIND_LABELS: dict[str, str] = {
-    "tag": "Tags",
-    "custom_field": "Custom fields",
-    "sequence": "Sequences",
-    "segment": "Segments",
-    "member": "Members",
-    "flow": "Other flows",
-    "media": "Media",
-    "platform": "Channels",
-    "request_header": "Request headers",
-    "whatsapp_template": "WhatsApp templates",
-    "link_handle": "Ref link handles",
-    "from_override": "Email sender addresses",
-    "comment_posts": "Comment trigger posts",
+REQUIREMENT_KIND_LABELS: dict[str, Any] = {
+    "tag": _("Tags"),
+    "custom_field": _("Custom fields"),
+    "sequence": _("Sequences"),
+    "segment": _("Segments"),
+    "member": _("Members"),
+    "flow": _("Other flows"),
+    "media": _("Media"),
+    "platform": _("Channels"),
+    "request_header": _("Request headers"),
+    "whatsapp_template": _("WhatsApp templates"),
+    "link_handle": _("Ref link handles"),
+    "from_override": _("Email sender addresses"),
+    "comment_posts": _("Comment trigger posts"),
 }
 
 
@@ -44,20 +45,20 @@ REQUIREMENT_KIND_LABELS: dict[str, str] = {
 #: labels deliberately: the two are keyed by the same requirement kinds, and a
 #: new kind that got one and not the other would render a bare slug as a heading
 #: or a heading with nothing under it.
-REQUIREMENT_KIND_HELP: dict[str, str] = {
-    "tag": ("Create these tags or match them to tags you already use."),
-    "custom_field": ("Create these fields or match them to existing ones. Field types cannot be changed later."),
-    "sequence": ("New sequences arrive empty. Add their messages after importing."),
-    "segment": "Choose an existing saved contact filter.",
-    "member": "Choose who gets assigned or notified. Defaults to you.",
-    "flow": "Choose the flows this one hands over to.",
-    "media": "Pick an image or file from your library, or paste a link to use instead.",
-    "platform": ("Choose an account for each trigger. Every account may include other supported channels."),
-    "request_header": "Add your own headers. The export removed any secrets.",
-    "whatsapp_template": "Make sure these approved templates exist in your WhatsApp account.",
-    "link_handle": "The public @handle a link was built from was stripped when the file was made.",
-    "from_override": "The sending address was stripped when the file was made.",
-    "comment_posts": ("Enter the posts to watch. Blank means no posts, so the trigger will not run."),
+REQUIREMENT_KIND_HELP: dict[str, Any] = {
+    "tag": _("Create these tags or match them to tags you already use."),
+    "custom_field": _("Create these fields or match them to existing ones. Field types cannot be changed later."),
+    "sequence": _("New sequences arrive empty. Add their messages after importing."),
+    "segment": _("Choose an existing saved contact filter."),
+    "member": _("Choose who gets assigned or notified. Defaults to you."),
+    "flow": _("Choose the flows this one hands over to."),
+    "media": _("Pick an image or file from your library, or paste a link to use instead."),
+    "platform": _("Choose an account for each trigger. Every account may include other supported channels."),
+    "request_header": _("Add your own headers. The export removed any secrets."),
+    "whatsapp_template": _("Make sure these approved templates exist in your WhatsApp account."),
+    "link_handle": _("The public @handle a link was built from was stripped when the file was made."),
+    "from_override": _("The sending address was stripped when the file was made."),
+    "comment_posts": _("Enter the posts to watch. Blank means no posts, so the trigger will not run."),
 }
 
 
@@ -105,7 +106,7 @@ def _card_context(workspace_id: Any, card: Any, connected: frozenset[str]) -> di
 
     def trigger_label(trigger_type: str) -> str:
         spec = spec_for(trigger_type)
-        return spec.label if spec is not None else trigger_type
+        return str(spec.label) if spec is not None else trigger_type
 
     return {
         "card": card,

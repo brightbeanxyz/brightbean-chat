@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The body of a "coming soon" stub, shared by both branches of base.html so the
 signed-in and signed-out versions cannot drift.
 {% endcomment %}
@@ -11,7 +11,7 @@ signed-in and signed-out versions cannot drift.
   useful in a bug report and genuinely meaningless to the person reading the
   page, who wants to know whether to wait or to go and do something else.
 {% endcomment %}
-<p class="text-sm font-medium mb-1" style="color: var(--text-primary);">{{ section }} is not ready yet</p>
+<p class="text-sm font-medium mb-1" style="color: var(--text-primary);">{% blocktranslate %}{{ section }} is not ready yet{% endblocktranslate %}</p>
 <p class="text-xs" data-issue="{{ issue }}" style="color: var(--text-tertiary);">
-    It is being built. Everything else in settings works as normal.
+    {% translate "It is being built. Everything else in settings works as normal." %}
 </p>

@@ -35,6 +35,7 @@ from django.db import transaction
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.translation import gettext
 
 from apps.members.models import Invitation, OrgMembership, WorkspaceMembership
 from apps.members.roles import ORG_ROLE_LEVEL, WORKSPACE_ROLE_LEVEL, OrgRole, WorkspaceRole, permissions_for_role
@@ -138,8 +139,10 @@ def _assert_may_manage_org_membership(caller_level: int, target_role: str, verb:
     if may_manage_org_membership(caller_level, target_role):
         return
     if caller_level < ORG_ROLE_LEVEL.get(target_role, 0):
-        raise MembershipError(f"You cannot {verb} a member whose role is higher than your own.")
-    raise MembershipError(f"Only organization owners can {verb} an organization admin.")
+        raise MembershipError(
+            gettext("You cannot %(verb)s a member whose role is higher than your own.") % {"verb": verb}
+        )
+    raise MembershipError(gettext("Only organization owners can %(verb)s an organization admin.") % {"verb": verb})
 
 
 def _normalise_assignments(org: Any, assignments: Any) -> list[WorkspaceAssignment]:
@@ -152,9 +155,9 @@ def _normalise_assignments(org: Any, assignments: Any) -> list[WorkspaceAssignme
         workspace_id = str(entry.get("workspace_id") or "")
         role = str(entry.get("role") or "")
         if workspace_id not in workspace_ids:
-            raise MembershipError("That workspace does not belong to your organization.")
+            raise MembershipError(gettext("That workspace does not belong to your organization."))
         if role not in WORKSPACE_ROLE_LEVEL:
-            raise MembershipError(f"Unknown workspace role: {role!r}.")
+            raise MembershipError(gettext("Unknown workspace role: %(role)r.") % {"role": role})
         cleaned.append(WorkspaceAssignment(workspace_id=workspace_id, role=role))
     return cleaned
 
@@ -163,9 +166,9 @@ def _assert_may_grant(authority: dict[str, int], assignments: list[WorkspaceAssi
     for assignment in assignments:
         level = authority.get(assignment.workspace_id, 0)
         if level == 0:
-            raise MembershipError("You cannot manage members in that workspace.")
+            raise MembershipError(gettext("You cannot manage members in that workspace."))
         if WORKSPACE_ROLE_LEVEL[assignment.role] > level:
-            raise MembershipError("You cannot grant a workspace role higher than your own in that workspace.")
+            raise MembershipError(gettext("You cannot grant a workspace role higher than your own in that workspace."))
 
 
 def _assert_not_last_workspace_admin(workspace_id: Any, *, excluding: Any) -> None:
@@ -181,7 +184,7 @@ def _assert_not_last_workspace_admin(workspace_id: Any, *, excluding: Any) -> No
         .exists()
     )
     if not remaining:
-        raise MembershipError("Cannot remove the last admin of a workspace. Promote someone else first.")
+        raise MembershipError(gettext("Cannot remove the last admin of a workspace. Promote someone else first."))
 
 
 # ---------------------------------------------------------------------------
@@ -201,30 +204,30 @@ def create_invitation(
     """Invite ``email`` into ``org``. Raises ``MembershipError`` on any rule."""
     email = (email or "").strip().lower()
     if not email:
-        raise MembershipError("An email address is required.")
+        raise MembershipError(gettext("An email address is required."))
     # Seats are counted as accepted members plus live invitations, so this is
     # checked at creation rather than only at acceptance: otherwise an
     # organization at its limit sends ten invitations, every one of them passes,
     # and who gets the seat is decided by who clicks first.
 
     if OrgMembership.objects.filter(organization=org, user__email__iexact=email).exists():
-        raise MembershipError("This person is already a member of your organization.")
+        raise MembershipError(gettext("This person is already a member of your organization."))
 
     existing = Invitation.objects.for_org(org.pk).filter(email=email, accepted_at__isnull=True).first()
     if existing and not existing.is_expired:
-        raise MembershipError("An invitation is already pending for this address. You can resend it instead.")
+        raise MembershipError(gettext("An invitation is already pending for this address. You can resend it instead."))
 
     if org_role == OrgRole.OWNER:
-        raise MembershipError("Cannot invite someone as an organization owner.")
+        raise MembershipError(gettext("Cannot invite someone as an organization owner."))
 
     requested_level = ORG_ROLE_LEVEL.get(org_role, 0)
     if requested_level == 0:
-        raise MembershipError(f"Unknown org role: {org_role!r}.")
+        raise MembershipError(gettext("Unknown org role: %(role)r.") % {"role": org_role})
 
     effective_inviter = inviter or invited_by
     inviter_level = org_level(effective_inviter, org)
     if requested_level >= ORG_ROLE_LEVEL[OrgRole.ADMIN] and requested_level >= inviter_level:
-        raise MembershipError("Only organization owners can invite someone as an admin.")
+        raise MembershipError(gettext("Only organization owners can invite someone as an admin."))
 
     assignments = _normalise_assignments(org, workspace_assignments)
     if inviter_level < ORG_ROLE_LEVEL[OrgRole.ADMIN] and not assignments:
@@ -232,7 +235,7 @@ def create_invitation(
         # workspace*; their authority is the workspace, so an invitation that
         # names none would be adding someone to the organization on no
         # authority at all.
-        raise MembershipError("Choose at least one workspace to invite this person into.")
+        raise MembershipError(gettext("Choose at least one workspace to invite this person into."))
     _assert_may_grant(workspace_authority_map(effective_inviter, org), assignments)
 
     invitation = Invitation(
@@ -282,15 +285,15 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
     """
     locked = Invitation.objects.select_for_update().filter(pk=invitation.pk).select_related("organization").first()
     if locked is None:
-        raise MembershipError("This invitation is no longer available.")
+        raise MembershipError(gettext("This invitation is no longer available."))
     invitation = locked
 
     if invitation.is_accepted:
-        raise MembershipError("This invitation has already been accepted.")
+        raise MembershipError(gettext("This invitation has already been accepted."))
     if invitation.is_expired:
-        raise MembershipError("This invitation has expired.")
+        raise MembershipError(gettext("This invitation has expired."))
     if require_email_match and (user.email or "").strip().lower() != invitation.email.strip().lower():
-        raise MembershipError("This invitation was sent to a different email address.")
+        raise MembershipError(gettext("This invitation was sent to a different email address."))
     # Not redundant with the check in create_invitation. An invitation issued
     # while the organization was on the paid plan can be accepted after a
     # downgrade, and this route is reached unauthenticated — so the person who
@@ -306,9 +309,12 @@ def accept_invitation(invitation: Invitation, user: Any, *, require_email_match:
     other = OrgMembership.objects.filter(user=user).exclude(organization=invitation.organization).first()
     if other is not None:
         raise MembershipError(
-            f"This account already belongs to {other.organization.name}. "
-            "BrightBean Chat supports one organization per account, so leave that one first "
-            "or accept this invitation from a different account."
+            gettext(
+                "This account already belongs to %(org_name)s. "
+                "BrightBean Chat supports one organization per account, so leave that one first "
+                "or accept this invitation from a different account."
+            )
+            % {"org_name": other.organization.name}
         )
 
     OrgMembership.objects.get_or_create(
@@ -368,7 +374,7 @@ def resend_invitation(invitation: Invitation) -> Invitation:
     "resend" also a repair for a leaked or stale invite.
     """
     if invitation.is_accepted:
-        raise MembershipError("Cannot resend an already accepted invitation.")
+        raise MembershipError(gettext("Cannot resend an already accepted invitation."))
     token = invitation.issue_token()
     invitation.expires_at = timezone.now() + timedelta(days=INVITE_EXPIRY_DAYS)
     invitation.save(update_fields=["token_digest", "expires_at", "updated_at"])
@@ -379,7 +385,7 @@ def resend_invitation(invitation: Invitation) -> Invitation:
 def revoke_invitation(invitation: Invitation) -> Invitation:
     """Revoke by expiring, so there is only one expiry rule to understand."""
     if invitation.is_accepted:
-        raise MembershipError("Cannot revoke an already accepted invitation.")
+        raise MembershipError(gettext("Cannot revoke an already accepted invitation."))
     invitation.expires_at = timezone.now()
     invitation.save(update_fields=["expires_at", "updated_at"])
     return invitation
@@ -407,7 +413,12 @@ def send_invite_email(invitation: Invitation, token: str) -> None:
     }
     try:
         message = EmailMultiAlternatives(
-            subject=f"You have been invited to {invitation.organization.name} on BrightBean Chat",
+            # gettext(), not gettext_lazy: this runs at call time inside the
+            # inviting admin's request, not at module import, so the currently
+            # active language is already the right one to render in — see
+            # apps.notifications.events for where lazy is needed instead.
+            subject=gettext("You have been invited to %(org_name)s on BrightBean Chat")
+            % {"org_name": invitation.organization.name},
             body=render_to_string("members/email/invite.txt", context),
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[invitation.email],
@@ -429,7 +440,7 @@ def send_invite_email(invitation: Invitation, token: str) -> None:
 def remove_member(org: Any, membership: OrgMembership, removed_by: Any) -> None:
     """Remove a member from the org and every workspace in it."""
     if membership.user_id == removed_by.pk:
-        raise MembershipError("You cannot remove yourself from the organization.")
+        raise MembershipError(gettext("You cannot remove yourself from the organization."))
 
     # Integrity before authority, deliberately. Only an owner outranks an owner,
     # and an owner removing the *last* owner can only be removing themselves —
@@ -441,9 +452,9 @@ def remove_member(org: Any, membership: OrgMembership, removed_by: Any) -> None:
     if membership.org_role == OrgRole.OWNER:
         owners = OrgMembership.objects.filter(organization=org, org_role=OrgRole.OWNER).exclude(pk=membership.pk)
         if not owners.exists():
-            raise MembershipError("Cannot remove the last organization owner.")
+            raise MembershipError(gettext("Cannot remove the last organization owner."))
 
-    _assert_may_manage_org_membership(org_level(removed_by, org), membership.org_role, "remove")
+    _assert_may_manage_org_membership(org_level(removed_by, org), membership.org_role, gettext("remove"))
 
     with transaction.atomic():
         workspace_ids = list(Workspace.objects.for_org(org.pk).values_list("id", flat=True))
@@ -464,22 +475,22 @@ def remove_member(org: Any, membership: OrgMembership, removed_by: Any) -> None:
 def update_member_org_role(org: Any, membership: OrgMembership, new_role: str, *, caller: Any = None) -> OrgMembership:
     """Change someone's org role, within the caller's authority."""
     if new_role == OrgRole.OWNER:
-        raise MembershipError("Cannot promote to owner. Transfer ownership instead.")
+        raise MembershipError(gettext("Cannot promote to owner. Transfer ownership instead."))
 
     new_level = ORG_ROLE_LEVEL.get(new_role, 0)
     if new_level == 0:
-        raise MembershipError(f"Unknown org role: {new_role!r}.")
+        raise MembershipError(gettext("Unknown org role: %(role)r.") % {"role": new_role})
 
     if caller is not None:
         caller_level = org_level(caller, org)
-        _assert_may_manage_org_membership(caller_level, membership.org_role, "change")
+        _assert_may_manage_org_membership(caller_level, membership.org_role, gettext("change"))
         if new_level >= ORG_ROLE_LEVEL[OrgRole.ADMIN] and new_level >= caller_level:
-            raise MembershipError("Only organization owners can promote someone to admin.")
+            raise MembershipError(gettext("Only organization owners can promote someone to admin."))
 
     if membership.org_role == OrgRole.OWNER:
         owners = OrgMembership.objects.filter(organization=org, org_role=OrgRole.OWNER).exclude(pk=membership.pk)
         if not owners.exists():
-            raise MembershipError("Cannot change the role of the last organization owner.")
+            raise MembershipError(gettext("Cannot change the role of the last organization owner."))
 
     membership.org_role = new_role
     membership.save(update_fields=["org_role", "updated_at"])
@@ -519,7 +530,9 @@ def update_workspace_assignments(org: Any, user: Any, assignments: Any, *, invit
             level = authority.get(workspace_id, 0)
             changing = workspace_id not in desired or desired[workspace_id] != membership.workspace_role
             if changing and (level == 0 or existing_level > level):
-                raise MembershipError("You cannot modify a workspace membership whose role is higher than your own.")
+                raise MembershipError(
+                    gettext("You cannot modify a workspace membership whose role is higher than your own.")
+                )
 
     for workspace_id, membership in current.items():
         if workspace_id in desired and desired[workspace_id] == membership.workspace_role:

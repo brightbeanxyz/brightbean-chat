@@ -187,6 +187,14 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     # allauth requires this immediately after AuthenticationMiddleware.
     "allauth.account.middleware.AccountMiddleware",
+    # Reads request.user (LanguagePreferenceMiddleware) or resolves the
+    # language cookie / Accept-Language (LocaleMiddleware) — both need
+    # AuthenticationMiddleware to have already run, and Locale needs to run
+    # after Language so it sees what that one wrote to request.COOKIES. No URL
+    # prefix (see LANGUAGES above) — this app has a public API and
+    # unauthenticated webhook routes that must never carry one.
+    "apps.accounts.middleware.LanguagePreferenceMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     # Reads request.user, so it has to come after authentication. Resolves the
     # workspace named by the URL and 404s the ones the user cannot reach.
     "apps.members.middleware.RBACMiddleware",
@@ -208,6 +216,10 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                # Supplies LANGUAGES / LANGUAGE_CODE / LANGUAGE_BIDI to every
+                # template — used by the Preferences language picker and by
+                # base.html's <html lang="">.
+                "django.template.context_processors.i18n",
                 "apps.accounts.context_processors.auth_providers",
                 # Supplies the sidebar navigation with its `active` flag already
                 # computed — the single active-state convention the whole UI
@@ -549,10 +561,37 @@ def _platform_credentials_from_env() -> dict[str, dict[str, str]]:
 PLATFORM_CREDENTIALS_FROM_ENV = _platform_credentials_from_env()
 
 # Internationalization
-LANGUAGE_CODE = "en-us"
+LANGUAGE_CODE = "en"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
+
+# The languages a user can pick in Settings -> Preferences
+# (apps.accounts.views.account_preferences) and that `make i18n-extract`
+# builds .po files for. Not URL-prefixed: see LocaleMiddleware and
+# LanguagePreferenceMiddleware below — this app has a public API and
+# unauthenticated webhook routes that must never carry a locale prefix, so
+# language is resolved from the cookie (and, for a signed-in user, the account
+# itself) instead of `i18n_patterns()`.
+#
+# "en", not "en-us": Django's own LANG_INFO has no "en-us" entry, so
+# get_language_info("en-us") silently falls back to "en" and returns
+# code="en" — the preferences <select>'s English <option value> and its
+# "selected" comparison against request.user.language then used two
+# different spellings of the same language and never matched.
+LANGUAGES = [
+    ("en", "English"),
+    ("ru", "Русский"),
+    ("ky", "Кыргызча"),
+]
+LOCALE_PATHS = [BASE_DIR / "locale"]
+
+# What <html> renders for anyone without a stored preference: anonymous pages,
+# the bare-Context 500 page, and users who left Preferences on "Default". Slugs
+# from apps.common.themes; apps.common.checks rejects a theme that is not
+# registered or a mode it has no tokens for.
+THEME_DEFAULT = "brightbean"
+COLOR_MODE_DEFAULT = "light"
 
 # Static files
 STATIC_URL = "/static/"

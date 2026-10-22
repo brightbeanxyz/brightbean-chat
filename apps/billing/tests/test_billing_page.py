@@ -76,6 +76,25 @@ class TestSelfHosted:
         assert "Contacts reached this month" in text
         assert "Channels connected" in text
 
+    def test_the_usage_labels_are_translated(self, client_for: Any, tenancy: Any, settings: Any) -> None:
+        """_usage_rows() builds its labels at request time, not import time —
+        gettext(), not gettext_lazy — so a plain, never-wrapped string here
+        would be the easiest of the two to miss.
+
+        conftest.py's _reset_active_language deactivates whatever this
+        request's login activates once the test ends, so the "ru" set below
+        cannot leak into whatever test runs next in this process.
+        """
+        settings.STRIPE_ENABLED = False
+        tenancy.owner.language = "ru"
+        tenancy.owner.save(update_fields=["language"])
+
+        text = body(client_for(tenancy.owner).get(URL))
+
+        assert "Contacts reached this month" not in text
+        assert "Контакты, с которыми связались в этом месяце" in text
+        assert "Подключено каналов" in text
+
     def test_no_usage_figure_claims_a_limit(self, client_for: Any, tenancy: Any, settings: Any) -> None:
         """ "3 of 25" on a box with no limits would be a lie told in a number."""
         settings.STRIPE_ENABLED = False
@@ -338,6 +357,23 @@ class TestThePricing:
     def test_the_paid_plan_is_named_pro_chat(self, client_for: Any, tenancy: Any) -> None:
         assert "Pro Chat" in body(client_for(tenancy.owner).get(URL))
 
+    def test_the_plan_comparison_is_translated(self, client_for: Any, tenancy: Any) -> None:
+        """PLAN_COPY's taglines and feature bullets are gettext_lazy, built at
+        import time — the module-level-copy pattern the rest of the billing
+        page already follows, not the request-time gettext() usage_rows uses.
+        See test_the_usage_labels_are_translated for why "ru" set below does
+        not leak into the next test.
+        """
+        tenancy.owner.language = "ru"
+        tenancy.owner.save(update_fields=["language"])
+
+        text = body(client_for(tenancy.owner).get(URL))
+
+        assert "Enough to prove it works." not in text
+        assert "Достаточно, чтобы убедиться, что это работает." in text
+        assert "Безлимитные контакты" in text
+        assert "Сэкономьте 20%" in text
+
     def test_the_saving_claim_matches_the_two_prices(self) -> None:
         """The one number on this page that is *derived* rather than chosen.
 
@@ -362,7 +398,7 @@ class TestThePricing:
 
         yearly = int(PAID_PRICES["yearly"].amount.lstrip("$"))
 
-        assert f"${yearly * 12}" in PAID_PRICES["yearly"].note
+        assert f"${yearly * 12}" in str(PAID_PRICES["yearly"].note)
 
     def test_the_prices_are_display_copy_and_never_reach_stripe(self) -> None:
         """The amounts here are quoted to a reader; Stripe charges whatever the

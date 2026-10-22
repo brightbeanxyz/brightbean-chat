@@ -55,6 +55,7 @@ from typing import Any
 from django.conf import settings
 from django.db import transaction
 from django.urls import NoReverseMatch, reverse
+from django.utils.translation import gettext, ngettext
 
 from apps.billing.plans import LIMITS_BY_PLAN, UNLIMITED, Limits, PlanKey
 
@@ -341,7 +342,8 @@ def check_can_add_channel(organization: Any) -> None:
     if limit is None or count_channels(organization) < limit:
         return
     _refuse(
-        f"Your plan connects {limit} channels. Upgrade to connect more, or disable one you are not using.",
+        gettext("Your plan connects %(limit)s channels. Upgrade to connect more, or disable one you are not using.")
+        % {"limit": limit},
         "plan_channels",
     )
 
@@ -352,7 +354,8 @@ def check_can_activate_automation(organization: Any) -> None:
     if limit is None or count_active_automations(organization) < limit:
         return
     _refuse(
-        f"Your plan runs {limit} automations at once. Upgrade, or switch one off to free up a slot.",
+        gettext("Your plan runs %(limit)s automations at once. Upgrade, or switch one off to free up a slot.")
+        % {"limit": limit},
         "plan_automations",
     )
 
@@ -363,7 +366,12 @@ def check_can_add_seat(organization: Any, *, excluding_invitation: Any = None) -
     if limit is None or count_seats(organization, excluding_invitation=excluding_invitation) < limit:
         return
     _refuse(
-        f"Your plan includes {limit} user{'' if limit == 1 else 's'}. Upgrade to add more.",
+        ngettext(
+            "Your plan includes %(limit)s user. Upgrade to add more.",
+            "Your plan includes %(limit)s users. Upgrade to add more.",
+            limit,
+        )
+        % {"limit": limit},
         "plan_seats",
     )
 
@@ -374,7 +382,12 @@ def check_can_add_workspace(organization: Any) -> None:
     if limit is None or count_workspaces(organization) < limit:
         return
     _refuse(
-        f"Your plan includes {limit} workspace{'' if limit == 1 else 's'}. Upgrade to add more.",
+        ngettext(
+            "Your plan includes %(limit)s workspace. Upgrade to add more.",
+            "Your plan includes %(limit)s workspaces. Upgrade to add more.",
+            limit,
+        )
+        % {"limit": limit},
         "plan_workspaces",
     )
 
@@ -390,7 +403,7 @@ def check_api_access(organization: Any) -> None:
     """
     if limits_for(organization).api_access:
         return
-    _refuse("The public API is available on the paid plan.", "plan_api")
+    _refuse(gettext("The public API is available on the paid plan."), "plan_api")
 
 
 # --- The read model the billing page renders ----------------------------------

@@ -26,6 +26,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { useCallback, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import { groupOf, nodeSpec } from "../schema/artifact";
 import type { Position } from "../schema/types";
@@ -328,23 +329,24 @@ export function Canvas() {
  * whole flow is in view. Clicking it fits the flow to the pane.
  */
 function ZoomControl() {
+  const { t } = useTranslation();
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const { zoom } = useViewport();
   return (
-    <div className="fb-zoom" role="group" aria-label="Zoom">
-      <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => void zoomIn({ duration: 160 })}>
+    <div className="fb-zoom" role="group" aria-label={t("canvas.zoomGroupLabel")}>
+      <button type="button" aria-label={t("canvas.zoomIn")} title={t("canvas.zoomIn")} onClick={() => void zoomIn({ duration: 160 })}>
         +
       </button>
       <button
         type="button"
         className="fb-zoom-level"
-        title="Fit the whole flow"
-        aria-label={`Zoom ${Math.round(zoom * 100)}%. Fit the whole flow`}
+        title={t("canvas.fitWholeFlow")}
+        aria-label={t("canvas.zoomLevelLabel", { percent: Math.round(zoom * 100), fit: t("canvas.fitWholeFlow") })}
         onClick={() => void fitView({ duration: 220, padding: 0.2, maxZoom: 1 })}
       >
         {Math.round(zoom * 100)}%
       </button>
-      <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => void zoomOut({ duration: 160 })}>
+      <button type="button" aria-label={t("canvas.zoomOut")} title={t("canvas.zoomOut")} onClick={() => void zoomOut({ duration: 160 })}>
         −
       </button>
     </div>

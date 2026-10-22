@@ -32,6 +32,8 @@ already uses for the same verdict.
 import logging
 from typing import Any
 
+from django.utils.functional import Promise
+
 from apps.inbox.codes import EMPTY_BODY, describe_inbox_failure
 from apps.inbox.notifications import EVENT_REMINDER, EVENT_SCHEDULED_REPLY_FAILED
 from apps.inbox.services import REMINDER, SCHEDULED_REPLY
@@ -157,7 +159,7 @@ def _is_current(row: Any, action: ScheduledAction) -> bool:
     return row.status == DeferredStatus.PENDING and row.action_id == action.pk
 
 
-def _fail(reply: Any, code: str, reason: str, *, message: Any = None) -> None:
+def _fail(reply: Any, code: str, reason: str | Promise, *, message: Any = None) -> None:
     """Record a scheduled reply that did not go out, and say so out loud.
 
     "Never a silent drop" is the acceptance criterion, and it has two halves: the

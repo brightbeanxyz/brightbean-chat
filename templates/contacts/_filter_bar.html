@@ -25,25 +25,26 @@ carried by this GET form without a second hidden input shadowing it. A native
 select is what actually fits, and it keeps keyboard and screen-reader behaviour
 for free.
 {% endcomment %}
+{% load i18n %}
 <div class="crm-filters" x-cloak>
 
   <div class="crm-filters-head">
-    <label for="filter-match" class="sr-only">Match</label>
+    <label for="filter-match" class="sr-only">{% translate "Match" %}</label>
     <select id="filter-match" class="w-40" x-model="match" @change="touch()">
-      <option value="all">Match all rules</option>
-      <option value="any">Match any rule</option>
+      <option value="all">{% translate "Match all rules" %}</option>
+      <option value="any">{% translate "Match any rule" %}</option>
     </select>
-    <button type="button" @click="addRule()">Add rule</button>
+    <button type="button" @click="addRule()">{% translate "Add rule" %}</button>
     <template x-if="rules.length">
-      <button type="button" @click="clearRules()">Clear</button>
+      <button type="button" @click="clearRules()">{% translate "Clear" %}</button>
     </template>
-    <span class="muted text-xs" x-show="!rules.length">No filter: showing everyone.</span>
+    <span class="muted text-xs" x-show="!rules.length">{% translate "No filter: showing everyone." %}</span>
   </div>
 
   <template x-for="(rule, index) in rules" :key="index">
     <div class="crm-rule">
       {# What kind of thing this rule looks at #}
-      <label class="sr-only" :for="`rule-source-${index}`">Look at</label>
+      <label class="sr-only" :for="`rule-source-${index}`">{% translate "Look at" %}</label>
       <select :id="`rule-source-${index}`" class="w-40" x-model="rule.source" @change="onSourceChange(rule)">
         <template x-for="source in config.sources" :key="source.name">
           <option :value="source.name" :disabled="!source.evaluable"
@@ -52,16 +53,16 @@ for free.
       </select>
 
       {# Key: whichever picker this source's key kind calls for #}
-      <label class="sr-only" :for="`rule-key-${index}`">Which one</label>
+      <label class="sr-only" :for="`rule-key-${index}`">{% translate "Which one" %}</label>
       <select :id="`rule-key-${index}`" class="w-52" x-model="rule.key" @change="onKeyChange(rule)">
-        <option value="">Choose…</option>
+        <option value="">{% translate "Choose…" %}</option>
         <template x-for="option in keyOptions(rule)" :key="option.value">
           <option :value="option.value" x-text="option.label"></option>
         </template>
       </select>
 
       {# How to compare it — "is", "contains", "has a value" #}
-      <label class="sr-only" :for="`rule-op-${index}`">Condition</label>
+      <label class="sr-only" :for="`rule-op-${index}`">{% translate "Condition" %}</label>
       <select :id="`rule-op-${index}`" class="w-44" x-model="rule.op" @change="touch()">
         <template x-for="op in opOptions(rule)" :key="op">
           <option :value="op" x-text="opLabel(op)"></option>
@@ -75,13 +76,13 @@ for free.
       {% endcomment %}
       <template x-if="takesValue(rule)">
         <div class="crm-rule-value">
-          <label class="sr-only" :for="`rule-value-${index}`">Value</label>
+          <label class="sr-only" :for="`rule-value-${index}`">{% translate "Value" %}</label>
 
           <template x-if="valueType(rule) === 'boolean'">
             <select :id="`rule-value-${index}`" class="w-32" x-model="rule.value" @change="touch()">
               {# Not "true"/"false": these sit in a sentence a person reads. #}
-              <option value="true">Yes</option>
-              <option value="false">No</option>
+              <option value="true">{% translate "Yes" %}</option>
+              <option value="false">{% translate "No" %}</option>
             </select>
           </template>
 
@@ -93,8 +94,8 @@ for free.
           <template x-if="isDate(rule)">
             <div class="flex items-center gap-2">
               <select class="w-36" x-model="rule.mode" @change="touch()">
-                <option value="on">on a date</option>
-                <option value="relative">a number of days away</option>
+                <option value="on">{% translate "on a date" %}</option>
+                <option value="relative">{% translate "a number of days away" %}</option>
               </select>
               <template x-if="rule.mode !== 'relative'">
                 {% comment %}
@@ -110,7 +111,7 @@ for free.
                        :max="config.vocabulary.limits.maxRelativeOffset"
                        :min="-config.vocabulary.limits.maxRelativeOffset"
                        x-model="rule.offset" @input.debounce.300ms="touch()"
-                       title="Negative is days ago, positive is days from now">
+                       title="{% translate 'Negative is days ago, positive is days from now' %}">
               </template>
             </div>
           </template>
@@ -123,8 +124,9 @@ for free.
         </div>
       </template>
 
+      {% translate "Remove rule" as remove_rule_label %}
       <button type="button" class="crm-rule-remove" @click="removeRule(index)"
-              :aria-label="`Remove rule ${index + 1}`">&times;</button>
+              :aria-label="`{{ remove_rule_label|escapejs }} ${index + 1}`">&times;</button>
     </div>
   </template>
 
@@ -136,7 +138,7 @@ for free.
       own Save button. The hidden input above is what both surfaces actually
       need; this button belongs only to the page that submits nothing else.
     {% endcomment %}
-    {% if not filter_embedded %}<button type="submit" class="btn-pill-secondary btn-pill-sm">Apply filter</button>{% endif %}
+    {% if not filter_embedded %}<button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Apply filter" %}</button>{% endif %}
 
     {% if can_manage_crm %}
       {% comment %}
@@ -153,20 +155,23 @@ for free.
       {% endcomment %}
       <span class="crm-filters-save" x-show="rules.length">
         {% if filter_config.segmentId %}
+          {% blocktranslate asvar update_segment_label with name=query.segment.name %}Update “{{ name }}”{% endblocktranslate %}
           <button type="button" class="btn-outline btn-inline"
-                  @click="$refs.updateSegment.requestSubmit()">Update “{{ query.segment.name }}”</button>
+                  @click="$refs.updateSegment.requestSubmit()">{{ update_segment_label }}</button>
         {% endif %}
         <button type="button" class="btn-outline btn-inline"
-                @click="$modal('save-segment')">Save as segment</button>
+                @click="$modal('save-segment')">{% translate "Save as segment" %}</button>
       </span>
 
       {% if filter_config.segmentId %}
         <button type="button" class="btn-outline btn-inline btn-danger-soft"
-                @click="$refs.deleteSegment.requestSubmit()">Delete segment</button>
+                @click="$refs.deleteSegment.requestSubmit()">{% translate "Delete segment" %}</button>
       {% endif %}
     {% endif %}
 
+    {% translate "of" as of_word %}
+    {% translate "rules" as rules_word %}
     <span class="muted text-xs" x-show="rules.length"
-          x-text="`${rules.length} of ${config.vocabulary.limits.maxRules} rules`"></span>
+          x-text="`${rules.length} {{ of_word|escapejs }} ${config.vocabulary.limits.maxRules} {{ rules_word|escapejs }}`"></span>
   </div>
 </div>

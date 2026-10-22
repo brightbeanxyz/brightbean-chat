@@ -26,6 +26,7 @@ from typing import Any
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
 from django.urls import NoReverseMatch, reverse
+from django.utils.translation import gettext
 from django.views.decorators.http import require_POST
 
 from apps.channels import preview
@@ -194,14 +195,15 @@ def _unsupported(wanted: tuple[str, ...]) -> dict[str, Any]:
     property of the channel, not something the reader has configured wrongly.
     """
     labels = dict(Platform.choices)
-    named = ", ".join(str(labels.get(platform, platform)) for platform in wanted) or "this flow's channel"
+    named = ", ".join(str(labels.get(platform, platform)) for platform in wanted) or gettext("this flow's channel")
     return {
         "ok": False,
         "reason": "unsupported_platform",
-        "message": (
-            f"There is no live test on {named}. Testing works by sending you a link that opens a real "
+        "message": gettext(
+            "There is no live test on %(named)s. Testing works by sending you a link that opens a real "
             "chat, and only Telegram, Messenger and Instagram carry one back."
-        ),
+        )
+        % {"named": named},
     }
 
 
@@ -213,16 +215,18 @@ def _no_connection(workspace_id: str, testable: list[str], problem: str) -> dict
         return {
             "ok": False,
             "reason": "no_username",
-            "message": (
-                f"That {named} connection has no usable public name, so there is nothing to link to. "
+            "message": gettext(
+                "That %(named)s connection has no usable public name, so there is nothing to link to. "
                 "Reconnect it through the guided setup so its name comes from the platform."
-            ),
+            )
+            % {"named": named},
             "settings_url": _connect_url(workspace_id, platform),
         }
     return {
         "ok": False,
         "reason": "no_connection",
-        "message": f"Connect {named} first. Testing runs the draft in a real chat with it.",
+        "message": gettext("Connect %(named)s first. Testing runs the draft in a real chat with it.")
+        % {"named": named},
         "settings_url": _connect_url(workspace_id, platform),
     }
 

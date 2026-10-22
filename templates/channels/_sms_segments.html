@@ -6,18 +6,17 @@ builder and into L6-B's broadcast composer, and both own their own chrome.
 Everything here is escaped by Django's autoescaping as usual. The only value
 derived from what the author typed is a count.
 {% endcomment %}
+{% load i18n %}
 <span class="muted" data-sms-segments>
-  {{ count.characters }} character{{ count.characters|pluralize }} ·
+  {% blocktranslate count counter=count.characters %}{{ counter }} character{% plural %}{{ counter }} characters{% endblocktranslate %} ·
   {{ count.encoding }} ·
-  <strong>{{ count.segments }} segment{{ count.segments|pluralize }}</strong>
-  ({{ count.remaining }} left in this one)
+  <strong>{% blocktranslate count counter=count.segments %}{{ counter }} segment{% plural %}{{ counter }} segments{% endblocktranslate %}</strong>
+  {% blocktranslate with remaining=count.remaining %}({{ remaining }} left in this one){% endblocktranslate %}
   {% if estimated_cost is not None %}
-    · about {{ estimated_cost|floatformat:4 }} per recipient
+    · {% blocktranslate with cost=estimated_cost|floatformat:4 %}about {{ cost }} per recipient{% endblocktranslate %}
   {% endif %}
   {% if count.encoding == "UCS-2" %}
     <br />
-    A character outside the GSM-7 alphabet (a curly quote or an emoji, often
-    pasted in) re-encodes the whole message and drops the segment from 160
-    characters to 70.
+    {% translate "A character outside the GSM-7 alphabet (a curly quote or an emoji, often pasted in) re-encodes the whole message and drops the segment from 160 characters to 70." %}
   {% endif %}
 </span>

@@ -1,4 +1,4 @@
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Step 3 — the message (SPEC §13.1, ROADMAP line 43).
 
@@ -45,14 +45,14 @@ script tag out of its own comment for its extractor.
     {% if composer.templates %}
     <div class="bc-panel">
       <div class="bc-panel-head">
-        <span class="bc-panel-title">What kind of message?</span>
+        <span class="bc-panel-title">{% translate "What kind of message?" %}</span>
       </div>
       <div class="bc-row">
-        <label><input type="radio" value="message" x-model="mode"> Compose a message</label>
-        <label><input type="radio" value="template" x-model="mode"> Use an approved template</label>
+        <label><input type="radio" value="message" x-model="mode"> {% translate "Compose a message" %}</label>
+        <label><input type="radio" value="template" x-model="mode"> {% translate "Use an approved template" %}</label>
       </div>
       <p class="bc-hint mt-1">
-        Outside the {{ composer.window_hours }}-hour messaging window this channel accepts approved templates only.
+        {% blocktranslate with hours=composer.window_hours %}Outside the {{ hours }}-hour messaging window this channel accepts approved templates only.{% endblocktranslate %}
       </p>
     </div>
     {% endif %}
@@ -60,7 +60,7 @@ script tag out of its own comment for its extractor.
     {# ── Composed message ─────────────────────────────────────── #}
     <div class="bc-panel" x-show="mode === 'message'">
       <div class="bc-panel-head">
-        <span class="bc-panel-title">Message</span>
+        <span class="bc-panel-title">{% translate "Message" %}</span>
         {% if composer.counts_segments %}
         {% comment %}
           SPEC §6.6's segment-count preview, served by L5-D's own endpoint —
@@ -79,12 +79,13 @@ script tag out of its own comment for its extractor.
         {% endif %}
       </div>
 
+      {% translate "Remove block" as remove_block_label %}
       <template x-for="(block, index) in blocks" :key="index">
         <div class="bc-block">
           <div class="bc-block-head">
             <span class="bc-block-kind" x-text="block.type"></span>
             <button type="button" class="bc-remove" @click="blocks.splice(index, 1)"
-                    :aria-label="`Remove block ${index + 1}`">&times;</button>
+                    :aria-label="`{{ remove_block_label|escapejs }} ${index + 1}`">&times;</button>
           </div>
 
           <template x-if="block.type === 'text'">
@@ -92,7 +93,7 @@ script tag out of its own comment for its extractor.
                       :maxlength="config.max_text_len"
                       x-model="block.text"
                       @input.debounce.300ms="announceText()"
-                      placeholder="What do you want to say?"></textarea>
+                      placeholder="{% translate 'What do you want to say?' %}"></textarea>
           </template>
 
           {% comment %}
@@ -108,23 +109,23 @@ script tag out of its own comment for its extractor.
           {% endcomment %}
           <template x-if="block.type !== 'text' && block.type !== 'card'">
             <div class="bc-row">
-              <label class="sr-only" :for="`block-media-${index}`">Media library id or URL</label>
+              <label class="sr-only" :for="`block-media-${index}`">{% translate "Media library id or URL" %}</label>
               <input :id="`block-media-${index}`" type="text" class="form-input-styled" style="width: 22rem;"
-                     x-model="block.media" placeholder="Media library id, or https://…">
+                     x-model="block.media" placeholder="{% translate 'Media library id, or https://…' %}">
               <input type="text" class="form-input-styled" style="width: 16rem;"
-                     x-model="block.caption" placeholder="Caption (optional)">
+                     x-model="block.caption" placeholder="{% translate 'Caption (optional)' %}">
             </div>
           </template>
 
           <template x-if="block.type === 'card'">
             <div>
               <div class="bc-row">
-                <input type="text" class="form-input-styled" style="width: 18rem;" x-model="block.title" placeholder="Card title" maxlength="200">
-                <input type="text" class="form-input-styled" style="width: 18rem;" x-model="block.subtitle" placeholder="Subtitle" maxlength="400">
+                <input type="text" class="form-input-styled" style="width: 18rem;" x-model="block.title" placeholder="{% translate 'Card title' %}" maxlength="200">
+                <input type="text" class="form-input-styled" style="width: 18rem;" x-model="block.subtitle" placeholder="{% translate 'Subtitle' %}" maxlength="400">
               </div>
               <div class="bc-row">
                 <input type="text" class="form-input-styled" style="width: 22rem;" x-model="block.image"
-                       placeholder="Image: media library id, or https://…">
+                       placeholder="{% translate 'Image: media library id, or https://…' %}">
               </div>
             </div>
           </template>
@@ -132,12 +133,13 @@ script tag out of its own comment for its extractor.
       </template>
 
       <div class="bc-actions">
-        <button type="button" class="btn-outline btn-inline" @click="addBlock('text')">Add text</button>
+        <button type="button" class="btn-outline btn-inline" @click="addBlock('text')">{% translate "Add text" %}</button>
+        {% translate "Add" as add_word %}
         <template x-for="kind in config.blocks" :key="kind">
           <button type="button" class="btn-outline btn-inline" @click="addBlock(kind)"
-                  x-text="`Add ${kind}`"></button>
+                  x-text="`{{ add_word|escapejs }} ${kind}`"></button>
         </template>
-        <a class="btn-link" href="{% url 'media:library' workspace_id=request.workspace.id %}" target="_blank" rel="noopener">Open media library</a>
+        <a class="btn-link" href="{% url 'media:library' workspace_id=request.workspace.id %}" target="_blank" rel="noopener">{% translate "Open media library" %}</a>
       </div>
     </div>
 
@@ -151,44 +153,50 @@ script tag out of its own comment for its extractor.
     {% endcomment %}
     <div class="bc-panel" x-show="mode === 'message' && config.allows_buttons">
       <div class="bc-panel-head">
-        <span class="bc-panel-title">Buttons</span>
-        <span class="bc-hint">A reply button parks the contact in a waiting run until they answer.</span>
+        <span class="bc-panel-title">{% translate "Buttons" %}</span>
+        <span class="bc-hint">{% translate "A reply button parks the contact in a waiting run until they answer." %}</span>
       </div>
 
+      {% translate "Remove button" as remove_button_label %}
       <template x-for="(button, index) in buttons" :key="index">
         <div class="bc-row">
-          <input type="text" class="form-input-styled" style="width: 12rem;" x-model="button.label" placeholder="Label" maxlength="80">
+          <input type="text" class="form-input-styled" style="width: 12rem;" x-model="button.label" placeholder="{% translate 'Label' %}" maxlength="80">
+          <span class="bb-filter-select-wrap">
           <select class="bb-filter-select" x-model="button.action">
-            <option value="postback">Reply</option>
-            <option value="url" x-show="config.allows_url_buttons">Open a link</option>
+            <option value="postback">{% translate "Reply" %}</option>
+            <option value="url" x-show="config.allows_url_buttons">{% translate "Open a link" %}</option>
           </select>
+          </span>
           <input type="url" class="form-input-styled" style="width: 18rem;" x-model="button.url"
                  x-show="button.action === 'url'" placeholder="https://">
           <button type="button" class="bc-remove" @click="buttons.splice(index, 1)"
-                  :aria-label="`Remove button ${index + 1}`">&times;</button>
+                  :aria-label="`{{ remove_button_label|escapejs }} ${index + 1}`">&times;</button>
         </div>
       </template>
 
+      {% translate "of" as of_word %}
       <div class="bc-actions">
         <button type="button" class="btn-outline btn-inline"
                 :disabled="buttons.length >= config.max_buttons"
-                @click="addButton()">Add button</button>
-        <span class="bc-hint" x-text="`${buttons.length} of ${config.max_buttons}`"></span>
+                @click="addButton()">{% translate "Add button" %}</button>
+        <span class="bc-hint" x-text="`${buttons.length} {{ of_word|escapejs }} ${config.max_buttons}`"></span>
       </div>
     </div>
 
     {# ── Approved template ────────────────────────────────────── #}
     <div class="bc-panel" x-show="mode === 'template'">
       <div class="bc-panel-head">
-        <span class="bc-panel-title">Approved template</span>
+        <span class="bc-panel-title">{% translate "Approved template" %}</span>
         <span class="bc-hint" x-show="costHint" x-text="costHint"></span>
       </div>
+      <span class="bb-filter-select-wrap">
       <select class="bb-filter-select" x-model="templateId">
-        <option value="">Choose a template…</option>
+        <option value="">{% translate "Choose a template…" %}</option>
         <template x-for="template in config.templates" :key="template.id">
           <option :value="template.id" x-text="`${template.name} · ${template.language} · ${template.category}`"></option>
         </template>
       </select>
+      </span>
 
       <template x-if="selectedTemplate">
         <div class="mt-3">
@@ -209,15 +217,17 @@ script tag out of its own comment for its extractor.
     {% if composer.tag_choices %}
     <div class="bc-panel">
       <div class="bc-panel-head">
-        <span class="bc-panel-title">Message tag</span>
-        <span class="bc-hint">Required for contacts outside the {{ composer.window_hours }}-hour window.</span>
+        <span class="bc-panel-title">{% translate "Message tag" %}</span>
+        <span class="bc-hint">{% blocktranslate with hours=composer.window_hours %}Required for contacts outside the {{ hours }}-hour window.{% endblocktranslate %}</span>
       </div>
+      <span class="bb-filter-select-wrap">
       <select class="bb-filter-select" x-model="tag">
-        <option value="">No tag: in-window contacts only</option>
+        <option value="">{% translate "No tag: in-window contacts only" %}</option>
         {% for choice in composer.tag_choices %}
         <option value="{{ choice }}">{{ choice }}</option>
         {% endfor %}
       </select>
+      </span>
       {% comment %}
         Meta's own allowed-use text, carried from the PlatformPolicy row and
         displayed verbatim (SPEC §6.4). Paraphrasing a compliance obligation is
@@ -236,35 +246,39 @@ script tag out of its own comment for its extractor.
       the picture is a library id or a link here, and fetching it to draw a
       thumbnail is the detail page's job, not a keystroke's.
     {% endcomment %}
-    <div class="bc-preview-chat" aria-label="Preview" role="group">
-      <p class="side-panel-title">Preview</p>
+    {% translate "Your message…" as your_message_placeholder %}
+    {% translate "Card title" as preview_card_title_word %}
+    {% translate "Button" as preview_button_word %}
+    {% translate "Choose a template…" as choose_template_word %}
+    <div class="bc-preview-chat" aria-label="{% translate 'Preview' %}" role="group">
+      <p class="side-panel-title">{% translate "Preview" %}</p>
       <div class="chat-thread">
         <template x-if="mode === 'message'">
           <div class="flex flex-col gap-1.5 items-start">
             <template x-for="(block, index) in blocks" :key="index">
               <div class="chat-bubble chat-bubble-out">
-                <template x-if="block.type === 'text'"><span class="whitespace-pre-wrap" x-text="block.text || 'Your message…'"></span></template>
-                <template x-if="block.type === 'card'"><span><strong x-text="block.title || 'Card title'"></strong><br><span x-text="block.subtitle"></span></span></template>
+                <template x-if="block.type === 'text'"><span class="whitespace-pre-wrap" x-text="block.text || '{{ your_message_placeholder|escapejs }}'"></span></template>
+                <template x-if="block.type === 'card'"><span><strong x-text="block.title || '{{ preview_card_title_word|escapejs }}'"></strong><br><span x-text="block.subtitle"></span></span></template>
                 <template x-if="block.type !== 'text' && block.type !== 'card'"><span x-text="'[' + block.type + '] ' + (block.caption || '')"></span></template>
               </div>
             </template>
-            <template x-if="!blocks.length"><div class="chat-bubble chat-bubble-out" style="opacity: .6;">Your message…</div></template>
+            <template x-if="!blocks.length"><div class="chat-bubble chat-bubble-out" style="opacity: .6;">{% translate "Your message…" %}</div></template>
             <div class="flex flex-wrap gap-1.5" x-show="buttons.length">
               <template x-for="(button, index) in buttons" :key="index">
-                <span class="chat-button" x-text="button.label || 'Button'"></span>
+                <span class="chat-button" x-text="button.label || '{{ preview_button_word|escapejs }}'"></span>
               </template>
             </div>
           </div>
         </template>
         <template x-if="mode === 'template'">
-          <div class="chat-bubble chat-bubble-out whitespace-pre-wrap" x-text="selectedTemplate ? selectedTemplate.body : 'Choose a template…'"></div>
+          <div class="chat-bubble chat-bubble-out whitespace-pre-wrap" x-text="selectedTemplate ? selectedTemplate.body : '{{ choose_template_word|escapejs }}'"></div>
         </template>
       </div>
     </div>
 
     <div class="wizard-actions">
       {% include "broadcasts/_step_back.html" %}
-      <button type="submit" class="btn-pill-primary">Continue</button>
+      <button type="submit" class="btn-pill-primary">{% translate "Continue" %}</button>
     </div>
   </form>
 </div>

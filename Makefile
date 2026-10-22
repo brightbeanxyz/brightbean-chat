@@ -1,4 +1,5 @@
-.PHONY: help setup frontend schema css-watch js-watch server worker migrate migrations test test-cov lint format typecheck audit \
+.PHONY: help setup lock frontend schema css-watch js-watch server worker migrate migrations i18n-extract i18n-compile \
+        test test-cov lint format typecheck audit \
         docker-up docker-down docker-build docker-logs \
         prod-secrets prod-up prod-down prod-logs prod-migrate smoke
 
@@ -11,6 +12,7 @@ setup: ## Initial project setup (copy env, install deps, build CSS, migrate)
 	@test -f .env || cp .env.example .env
 	pip install -r requirements/dev.txt
 	$(MAKE) frontend
+	$(MAKE) i18n-compile
 	python manage.py migrate
 	@echo ""
 	@echo "Setup complete. Run 'python manage.py createsuperuser' to create an admin account."
@@ -63,6 +65,14 @@ migrate: ## Run database migrations
 migrations: ## Create new migrations
 	python manage.py makemigrations
 
+# Internationalization
+
+i18n-extract: ## Pull new/changed strings into locale/*/LC_MESSAGES/django.po
+	django-admin makemessages -l ru -l ky --ignore=node_modules --ignore=static/js/vendor --ignore=frontend
+
+i18n-compile: ## Compile .po files to .mo for runtime use
+	python manage.py compilemessages
+
 # Code quality
 
 # -n auto is opted into here rather than in pyproject's addopts, so that a bare
@@ -70,10 +80,15 @@ migrations: ## Create new migrations
 # one-file run lands entirely on one worker anyway, so parallelism there buys
 # nothing and costs a test-database build per idle worker. Drop the -n to debug
 # a suspected cross-worker race.
-test: ## Run tests (parallel; drop -n to debug a cross-worker race)
+#
+# i18n-compile first: .mo is gitignored, so a fresh checkout has none, and
+# Django reads .mo at runtime — falling back to English with no error when a
+# catalog is missing, silent everywhere except a test that asserts translated
+# text (Copilot review, PR #1).
+test: i18n-compile ## Run tests (parallel; drop -n to debug a cross-worker race)
 	pytest -n auto
 
-test-cov: ## Run tests with coverage
+test-cov: i18n-compile ## Run tests with coverage
 # COVERAGE_CORE=sysmon: coverage on CPython 3.12's sys.monitoring rather than the
 # trace callback. Same numbers, and it cuts the instrumentation cost of the full
 # suite from ~81% to ~10%. Matches the CI invocation.

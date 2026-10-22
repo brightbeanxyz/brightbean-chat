@@ -13,21 +13,22 @@ thread carries the failure, not only the notification a logged-out agent may
 never see; `reason` is apps.messaging.codes.describe's sentence for a machine
 code, never a provider's own text.
 {% endcomment %}
+{% load i18n %}
 {% if pending_reminders or pending_replies or failed_replies %}
   <ul class="ib-deferred">
     {% for reminder in pending_reminders %}
       <li class="ib-deferred-item">
-        <span class="ib-chip">Reminder</span>
+        <span class="ib-chip">{% translate "Reminder" %}</span>
         <span>
-          {% if reminder.is_mine %}You{% else %}{{ reminder.who }}{% endif %}
-          {{ reminder.due_in }} from now{% if reminder.note %} · {{ reminder.note }}{% endif %}
+          {% if reminder.is_mine %}{% translate "You" %}{% else %}{{ reminder.who }}{% endif %}
+          {% blocktranslate with due_in=reminder.due_in %}{{ due_in }} from now{% endblocktranslate %}{% if reminder.note %} · {{ reminder.note }}{% endif %}
         </span>
         {% if can_reply %}
           <form class="ml-auto"
                 hx-post="{% url 'inbox:cancel_reminder' workspace_id=request.workspace.id conversation_id=conversation.id reminder_id=reminder.id %}"
                 hx-swap="none">
             {% csrf_token %}
-            <button type="submit" class="btn-link btn-inline">Cancel</button>
+            <button type="submit" class="btn-link btn-inline">{% translate "Cancel" %}</button>
           </form>
         {% endif %}
       </li>
@@ -35,14 +36,14 @@ code, never a provider's own text.
 
     {% for reply in pending_replies %}
       <li class="ib-deferred-item">
-        <span class="ib-chip">Scheduled</span>
-        <span>Sending {{ reply.due_in }} from now · {{ reply.preview }}</span>
+        <span class="ib-chip">{% translate "Scheduled" %}</span>
+        <span>{% blocktranslate with due_in=reply.due_in preview=reply.preview %}Sending {{ due_in }} from now · {{ preview }}{% endblocktranslate %}</span>
         {% if can_reply %}
           <form class="ml-auto"
                 hx-post="{% url 'inbox:cancel_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id scheduled_reply_id=reply.id %}"
                 hx-swap="none">
             {% csrf_token %}
-            <button type="submit" class="btn-link btn-inline">Cancel</button>
+            <button type="submit" class="btn-link btn-inline">{% translate "Cancel" %}</button>
           </form>
         {% endif %}
       </li>
@@ -50,14 +51,14 @@ code, never a provider's own text.
 
     {% for reply in failed_replies %}
       <li class="ib-deferred-item ib-deferred-failed">
-        <span class="ib-chip">Not sent</span>
+        <span class="ib-chip">{% translate "Not sent" %}</span>
         <span>{{ reply.reason }} · {{ reply.preview }}</span>
         {% if can_reply %}
           <form class="ml-auto"
                 hx-post="{% url 'inbox:cancel_scheduled_reply' workspace_id=request.workspace.id conversation_id=conversation.id scheduled_reply_id=reply.id %}"
                 hx-swap="none">
             {% csrf_token %}
-            <button type="submit" class="btn-link btn-inline">Dismiss</button>
+            <button type="submit" class="btn-link btn-inline">{% translate "Dismiss" %}</button>
           </form>
         {% endif %}
       </li>

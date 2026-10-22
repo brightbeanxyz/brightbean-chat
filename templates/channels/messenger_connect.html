@@ -1,5 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Connect a Facebook page. Same shape as telegram_connect.html — see the note
 there for why content_wrap is cleared and why the platform key is written once.
@@ -12,7 +12,7 @@ error, because that one IS the answer to an action.
 Restyled only. The env var names and Meta's own UI labels are what somebody
 follows along with in another tab, so they stay on the page.
 {% endcomment %}
-{% block title %}Connect Facebook Messenger · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Connect Facebook Messenger" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
@@ -22,11 +22,9 @@ follows along with in another tab, so they stay on the page.
     <div class="flex items-start gap-4 mb-7">
         <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
         <div class="min-w-0">
-            <h1 class="page-title">Connect a Facebook page</h1>
+            <h1 class="page-title">{% translate "Connect a Facebook page" %}</h1>
             <p class="page-lede mt-1.5">
-                Messenger connects through Facebook Login for Business. You sign in to Facebook,
-                choose which page to connect, and we store that page's access token encrypted. It is
-                never shown again.
+                {% translate "Messenger connects through Facebook Login for Business. You sign in to Facebook, choose which page to connect, and we store that page's access token encrypted. It is never shown again." %}
             </p>
         </div>
     </div>
@@ -34,62 +32,54 @@ follows along with in another tab, so they stay on the page.
     {% if not configured %}<div class="alert-warning">{{ not_configured_message }}</div>{% endif %}
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-4">Before you start</h2>
+        <h2 class="section-title mb-4">{% translate "Before you start" %}</h2>
         <ol class="cn-steps" role="list">
             <li class="cn-step">
-                Create a Meta app of type <strong>Business</strong> and add the
-                <strong>Messenger</strong> and <strong>Facebook Login for Business</strong> products
-                to it.
+                {% blocktranslate %}Create a Meta app of type <strong>Business</strong> and add the <strong>Messenger</strong> and <strong>Facebook Login for Business</strong> products to it.{% endblocktranslate %}
             </li>
             <li class="cn-step">
-                Add this exact redirect URI to Facebook Login for Business →
-                <em>Valid OAuth Redirect URIs</em>.
-                <div class="mt-2.5">{% include "partials/_copy_field.html" with label="Valid OAuth Redirect URI" value=callback_url only %}</div>
+                {% blocktranslate %}Add this exact redirect URI to Facebook Login for Business → <em>Valid OAuth Redirect URIs</em>.{% endblocktranslate %}
+                <div class="mt-2.5">{% translate "Valid OAuth Redirect URI" as oauth_uri_label %}{% include "partials/_copy_field.html" with label=oauth_uri_label value=callback_url only %}</div>
             </li>
             <li class="cn-step">
-                Set the app's ID and secret on this deployment as
-                <code>PLATFORM_MESSENGER_CLIENT_ID</code> and
-                <code>PLATFORM_MESSENGER_CLIENT_SECRET</code>.
+                {% blocktranslate %}Set the app's ID and secret on this deployment as <code>PLATFORM_MESSENGER_CLIENT_ID</code> and <code>PLATFORM_MESSENGER_CLIENT_SECRET</code>.{% endblocktranslate %}
             </li>
             <li class="cn-step">
-                Set <code>PLATFORM_MESSENGER_VERIFY_TOKEN</code> and paste the same value into the
-                Messenger webhook's <em>Verify token</em> field.
+                {% blocktranslate %}Set <code>PLATFORM_MESSENGER_VERIFY_TOKEN</code> and paste the same value into the Messenger webhook's <em>Verify token</em> field.{% endblocktranslate %}
             </li>
         </ol>
     </section>
 
     <form class="card p-6 mb-5" method="post">
         {% csrf_token %}
-        <h2 class="section-title mb-1">Choose the page</h2>
+        <h2 class="section-title mb-1">{% translate "Choose the page" %}</h2>
         <p class="section-note mb-5">
-            You will be sent to Facebook to sign in and pick which page to connect.
+            {% translate "You will be sent to Facebook to sign in and pick which page to connect." %}
         </p>
-        <button type="submit" class="btn-pill-primary" {% if not configured %}disabled{% endif %}>{% include "partials/_platform_icon.html" with platform=platform_key size="sm" only %} Continue with Facebook</button>
+        <button type="submit" class="btn-pill-primary" {% if not configured %}disabled{% endif %}>{% include "partials/_platform_icon.html" with platform=platform_key size="sm" only %} {% translate "Continue with Facebook" %}</button>
     </form>
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-3">What happens next</h2>
-        <div class="section-eyebrow mb-1.5">What we ask Facebook for</div>
+        <h2 class="section-title mb-3">{% translate "What happens next" %}</h2>
+        <div class="section-eyebrow mb-1.5">{% translate "What we ask Facebook for" %}</div>
         <ul class="flex flex-wrap gap-1.5 mb-4">
             {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
         </ul>
-        <div class="section-eyebrow mb-1.5">Webhook fields we subscribe the page to</div>
+        <div class="section-eyebrow mb-1.5">{% translate "Webhook fields we subscribe the page to" %}</div>
         <p class="section-note mb-2">
-            Once you pick a page we subscribe it to these and configure its Get Started button, so
-            the welcome trigger can fire.
+            {% translate "Once you pick a page we subscribe it to these and configure its Get Started button, so the welcome trigger can fire." %}
         </p>
         <ul class="flex flex-wrap gap-1.5">
             {% for field in subscribed_fields %}<li><code>{{ field }}</code></li>{% endfor %}
         </ul>
         <p class="field-hint">
-            To serve pages other than your own app's test page, Meta requires App Review and
-            Business Verification. Full setup notes are in docs/channels/messenger.md.
+            {% translate "To serve pages other than your own app's test page, Meta requires App Review and Business Verification. Full setup notes are in docs/channels/messenger.md." %}
         </p>
     </section>
 
     <a class="cn-back" href="{{ list_url }}">
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-        Back to channels
+        {% translate "Back to channels" %}
     </a>
 </div>
 {% endwith %}

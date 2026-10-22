@@ -29,6 +29,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.analytics import selectors
@@ -212,5 +213,5 @@ def update_tracking_settings(request: WorkspaceRequest, workspace_id: str) -> Ht
             "open_pixel": bool(request.POST.get("open_pixel")),
         },
     )
-    messages.success(request, "Email tracking settings saved.")
+    messages.success(request, gettext("Email tracking settings saved."))
     return redirect(reverse("analytics:tracking_settings", kwargs={"workspace_id": workspace_id}))

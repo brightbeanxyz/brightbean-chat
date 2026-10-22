@@ -128,7 +128,7 @@ class TestComplianceRefusals:
             response = agent_client.post(url_for("send", conversation_id=conversation.pk), {"body": "hello"})
 
         assert response.status_code == 204
-        assert describe(Denial.OPTED_OUT.value) in response.headers["HX-Trigger"]
+        assert str(describe(Denial.OPTED_OUT.value)) in response.headers["HX-Trigger"]
         assert adapter.sends == []
 
     def test_the_failed_row_carries_the_explanation_into_the_thread(
@@ -146,7 +146,7 @@ class TestComplianceRefusals:
         message = _messages(conversation).get()
         assert message.status == MessageStatus.FAILED
         assert message.error == Denial.OPTED_OUT.value
-        assert describe(Denial.OPTED_OUT.value) in body
+        assert str(describe(Denial.OPTED_OUT.value)) in body
         # The stored value is a machine code and stays out of the page.
         assert "opted_out" not in body
 
@@ -157,7 +157,7 @@ class TestComplianceRefusals:
         than offering a send box that cannot work."""
         body = agent_client.get(url_for("messages", conversation_id=conversation.pk)).content.decode()
 
-        assert describe(Denial.NO_IDENTITY.value) in body
+        assert str(describe(Denial.NO_IDENTITY.value)) in body
 
     def test_the_notice_reflects_a_reopened_window(
         self, agent_client: Any, url_for: Any, conversation: Conversation, identity: Any

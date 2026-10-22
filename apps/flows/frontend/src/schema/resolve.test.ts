@@ -140,6 +140,15 @@ describe("operator copy", () => {
       expect(rendered).not.toContain("_");
     }
   });
+
+  it("reads from the same table the condition-rule editor's dropdown uses", () => {
+    // Pinned to the actual enumLabels wording, not just "truthy, no
+    // underscore" — a `key.replace(/_/g, " ")` fallback would pass the test
+    // above (`"has not"` has no underscore) while quietly disagreeing with
+    // what inspector/copy.ts's SelectField shows for the same operator.
+    expect(operatorCopy("has_not")).toBe("does not have");
+    expect(operatorCopy("not_in")).toBe("is not one of");
+  });
 });
 
 describe("scalar branches of an untagged union", () => {

@@ -1,0 +1,202 @@
+name: Publish image
+
+# Pushes the production image to ghcr.io/zireklab/brightbean-chat, which the
+# Zirek stack pulls. Only after CI has passed on main: `needs` cannot reach
+# across workflows, so this listens for CI's completion instead of rebuilding
+# the gate here.
+#
+# Tags:
+#   sha-<7>  immutable; the ONLY tag a deployment should pin
+#   main     moving; for a manual `docker pull`, never for a deployment
+#   vX.Y.Z   on a pushed git tag v*
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# One global group, not scoped to github.ref: a workflow_run-triggered publish
+# (ref refs/heads/main) and a v*-tag-triggered publish (ref refs/tags/vX.Y.Z)
+# would otherwise sit in different groups and could build/push the same
+# sha-<short> tag at the same time. `queue: max` (default is "single") keeps
+# every triggered run pending instead of GitHub Actions' default: a newer
+# pending run cancels an older one outright, which would silently drop a
+# commit's image if three or more merges land within one build's runtime.
+# queue: max is incompatible with cancel-in-progress: true, which is why that
+# stays false. Confirmed against GitHub's current concurrency docs.
+#
+# The queue does not by itself guarantee execution follows commit order
+# (GitHub orders by when each run started waiting, not by commit time) — that
+# is what "Confirm this commit is still the tip of main" below is for.
+concurrency:
+  group: publish
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and push
+    # workflow_run also fires for failed runs and for CI on pull requests;
+    # neither may publish.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolve the commit being published
+        id: rev
+        # Under workflow_run, github.sha is the default branch's HEAD at the
+        # time this run started, not the commit CI just passed — a later merge
+        # would get the earlier commit's tag. head_sha is the one CI tested.
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "short=${SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.rev.outputs.sha }}
+          persist-credentials: false
+
+      - name: Confirm this commit is still the tip of main
+        id: freshness
+        # The concurrency queue orders runs by wait time, not commit time, so
+        # it does not by itself guarantee this. If two merges land close
+        # together and the older one's CI happens to finish (and so trigger
+        # this job) after the newer one's, an unconditional `main` move would
+        # regress it to the older image. Only gates the `main` tag below —
+        # sha-<short> still publishes unconditionally, since a historical
+        # commit still deserves its own immutable tag.
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)
+          if [ "$current" = "${{ steps.rev.outputs.sha }}" ]; then
+            echo "is_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main has moved to $current since this run started; not moving the main tag"
+            echo "is_head=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU
+        # arm64 alongside amd64: the Zirek dev host is an arm64 Mac.
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Skip the build if this commit is already published
+        id: exists
+        # sha-<short> is documented as immutable, so treat "the tag already
+        # exists" as done, not as work to redo: a rerun, a manual dispatch, or
+        # a v* tag pushed after the merge already built it would otherwise
+        # silently overwrite it. That overwrite is not even guaranteed to
+        # reproduce the same image for the same commit — the Dockerfile's
+        # `apt-get install gettext` resolves to whatever build apt currently
+        # serves. imagetools (not `docker manifest`) because the pushed tag is
+        # a multi-arch manifest list.
+        #
+        # A nonzero exit is not by itself "absent": auth failures, a GHCR
+        # outage, rate limiting and timeouts all exit nonzero too, and
+        # treating those the same as "absent" would proceed to rebuild and
+        # could overwrite a real tag once the registry recovers mid-build.
+        # Only a confirmed "not found" — verified against a real 404 and
+        # against a real network failure, whose messages do not overlap —
+        # means safe to proceed; anything else fails the job instead of
+        # guessing.
+        run: |
+          if out=$(docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:sha-${{ steps.rev.outputs.short }}" 2>&1); then
+            echo "::notice::sha-${{ steps.rev.outputs.short }} is already published; skipping the build"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          elif grep -q "not found" <<< "$out"; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::could not confirm sha-${{ steps.rev.outputs.short }} is unpublished: $out"
+            exit 1
+          fi
+
+      - name: Image metadata
+        id: meta
+        # Always computed, even when the build below is skipped: the tag list
+        # is what "Alias the existing image" replays onto an already-built
+        # sha-<short> (e.g. a v* tag pushed after the merge already published
+        # it — that run must still create the vX.Y.Z tag).
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # metadata-action's default flavor (latest=auto) adds an undocumented
+          # fourth tag — `latest` — the first time a v* tag builds, which is
+          # exactly the moving tag AGENTS.md §7 says not to use for a
+          # production-critical service without an explicit reason.
+          flavor: |
+            latest=false
+          # Default context (workflow) derives org.opencontainers.image.revision
+          # from the GitHub Actions context SHA (github.sha), not from the
+          # checked-out commit — the same github.sha the "Resolve" step above
+          # already works around because it is the wrong commit under
+          # workflow_run. Left alone, the label embedded in the image would
+          # name a different commit than the one actually built. Confirmed
+          # against metadata-action's own docs (context: git is the only other
+          # option, and it's documented as what overrides ref/sha — implying
+          # workflow context does not); labels: is the documented way to
+          # override one auto-generated label without losing the rest.
+          labels: |
+            org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
+          # type=raw rather than type=sha: the latter reads github.sha, which
+          # is the wrong commit under workflow_run (see "Resolve" above).
+          tags: |
+            type=raw,value=sha-${{ steps.rev.outputs.short }}
+            type=raw,value=main,enable=${{ github.event_name == 'workflow_run' && steps.freshness.outputs.is_head == 'true' }}
+            type=semver,pattern=v{{version}}
+
+      - name: Build and push
+        if: steps.exists.outputs.found != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Reads CI's amd64 cache; writes its own scope in min mode, so the
+          # arm64 layers do not evict the caches CI depends on (one 10GB
+          # quota per repository, LRU).
+          cache-from: |
+            type=gha
+            type=gha,scope=publish
+          cache-to: type=gha,scope=publish
+
+      - name: Alias the existing image under this event's other tags
+        if: steps.exists.outputs.found == 'true'
+        # Reaching here means sha-<short> already exists but nothing rebuilt,
+        # so `main`/`vX.Y.Z` above still need to point at it — otherwise a v*
+        # tag pushed after the merge already published its commit would never
+        # get its version tag, and a workflow_run that lands after a tag push
+        # already built the commit would never move `main`. imagetools copies
+        # the existing multi-arch manifest under each additional tag without a
+        # rebuild, so every tag for one commit stays byte-identical.
+        env:
+          SHA_TAG: ghcr.io/${{ github.repository }}:sha-${{ steps.rev.outputs.short }}
+        run: |
+          while IFS= read -r t; do
+            [ -n "$t" ] && [ "$t" != "$SHA_TAG" ] || continue
+            docker buildx imagetools create --tag "$t" "$SHA_TAG"
+          done <<< "${{ steps.meta.outputs.tags }}"

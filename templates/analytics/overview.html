@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load i18n %}
 {% comment %}
 The analytics landing page (SPEC §18).
 
@@ -11,14 +12,14 @@ flow list already answers "what exists"; this page answers "what has been
 running", and a page of zeroes answers neither.
 {% endcomment %}
 
-{% block title %}Insights · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Insights" %} · BrightBean Chat{% endblock %}
 
 {% block page_header %}
 <div class="page-header max-w-[1060px]">
     <div class="page-header-text">
-        <h1 class="page-title">Insights</h1>
+        <h1 class="page-title">{% translate "Insights" %}</h1>
         <p class="page-lede">
-            How each flow did, step by step, and how each connected account is delivering.
+            {% translate "How each flow did, step by step, and how each connected account is delivering." %}
         </p>
     </div>
     <div class="page-header-actions">{% include "analytics/_range.html" %}</div>
@@ -41,19 +42,19 @@ running", and a page of zeroes answers neither.
 
 <div class="an-panel" style="margin-top: 0;">
     <div class="an-panel-head">
-        <span class="an-panel-title">Flows</span>
-        <span class="an-hint">Counted when the message actually leaves, not when the step runs.</span>
+        <span class="an-panel-title">{% translate "Flows" %}</span>
+        <span class="an-hint">{% translate "Counted when the message actually leaves, not when the step runs." %}</span>
     </div>
     {% if flow_rows %}
     <div style="overflow-x: auto;">
         <table class="an-table">
             <thead>
                 <tr>
-                    <th scope="col">Flow</th>
-                    <th scope="col" class="an-num">Sent</th>
-                    <th scope="col" class="an-num">Delivered</th>
-                    <th scope="col" class="an-num">Failed</th>
-                    <th scope="col" class="an-num">Clicked</th>
+                    <th scope="col">{% translate "Flow" %}</th>
+                    <th scope="col" class="an-num">{% translate "Sent" %}</th>
+                    <th scope="col" class="an-num">{% translate "Delivered" %}</th>
+                    <th scope="col" class="an-num">{% translate "Failed" %}</th>
+                    <th scope="col" class="an-num">{% translate "Clicked" %}</th>
                 </tr>
             </thead>
             <tbody>
@@ -73,26 +74,26 @@ running", and a page of zeroes answers neither.
         </table>
     </div>
     {% else %}
-    <p class="an-hint">No flow has sent anything in this range.</p>
+    <p class="an-hint">{% translate "No flow has sent anything in this range." %}</p>
     {% endif %}
 </div>
 
 <div class="an-panel">
     <div class="an-panel-head">
-        <span class="an-panel-title">Deliverability</span>
-        <span class="an-hint">Every outbound message on each connection, including agent replies and API sends.</span>
+        <span class="an-panel-title">{% translate "Deliverability" %}</span>
+        <span class="an-hint">{% translate "Every outbound message on each connection, including agent replies and API sends." %}</span>
     </div>
     {% if connections %}
     <div style="overflow-x: auto;">
         <table class="an-table">
             <thead>
                 <tr>
-                    <th scope="col">Connection</th>
-                    <th scope="col" class="an-num">Messages</th>
-                    <th scope="col" class="an-num">Sent</th>
-                    <th scope="col" class="an-num">Delivered</th>
-                    <th scope="col" class="an-num">Failed</th>
-                    <th scope="col" class="an-num">Delivery rate</th>
+                    <th scope="col">{% translate "Connection" %}</th>
+                    <th scope="col" class="an-num">{% translate "Messages" %}</th>
+                    <th scope="col" class="an-num">{% translate "Sent" %}</th>
+                    <th scope="col" class="an-num">{% translate "Delivered" %}</th>
+                    <th scope="col" class="an-num">{% translate "Failed" %}</th>
+                    <th scope="col" class="an-num">{% translate "Delivery rate" %}</th>
                 </tr>
             </thead>
             <tbody>
@@ -120,7 +121,7 @@ running", and a page of zeroes answers neither.
         </table>
     </div>
     {% else %}
-    <p class="an-hint">Nothing has been sent from this workspace in this range.</p>
+    <p class="an-hint">{% translate "Nothing has been sent from this workspace in this range." %}</p>
     {% endif %}
 </div>
 </div>

@@ -10,6 +10,8 @@ nobody can act on from their inbox does not earn an email — and the answer to
 one click from the bell and several from a mailbox.
 """
 
+from django.utils.translation import gettext_lazy as _
+
 from apps.notifications.events import NotificationEvent, register_event
 
 __all__ = ["EVENT_BROADCAST_FINISHED", "register"]
@@ -27,11 +29,16 @@ def register() -> None:
     register_event(
         NotificationEvent(
             key=EVENT_BROADCAST_FINISHED,
-            label="Broadcast finished",
+            label=_("Broadcast finished"),
             icon="broadcasts",
             tone="success",
-            title='Broadcast "{broadcast_name}" finished',
-            body="{sent} sent, {failed} failed, {skipped} skipped.",
+            # Matches apps.notifications.events's own broadcast_finished exactly
+            # (register_event() is a no-op for an identical re-registration) —
+            # kept in sync there too, gettext_lazy included, so whichever
+            # module's AppConfig.ready() imports first still wins with the
+            # translatable copy.
+            title=_('Broadcast "{broadcast_name}" finished'),
+            body=_("{sent} sent, {failed} failed, {skipped} skipped."),
             required_context=("broadcast_name",),
             emails_by_default=False,
         )

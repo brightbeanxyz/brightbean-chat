@@ -20,6 +20,7 @@ arrows stay visible because they are the drag handle's keyboard twin, and
 hiding a keyboard path behind a menu is not the same trade as hiding a
 twice-a-year action.
 {% endcomment %}
+{% load i18n %}
 <div id="inbox-rule-rows"
      hx-get="{% url 'inbox:rule_rows' workspace_id=request.workspace.id %}"
      hx-trigger="inboxRulesChanged from:body"
@@ -34,15 +35,15 @@ twice-a-year action.
         <div class="ib-rule-body">
           <div class="flex items-center gap-2.5">
             <span class="list-row-title truncate">{{ rule.name }}</span>
-            {% if not rule.enabled %}<span class="status-pill status-pill-disabled">Disabled</span>{% endif %}
+            {% if not rule.enabled %}<span class="status-pill status-pill-disabled">{% translate "Disabled" %}</span>{% endif %}
           </div>
           <ul class="ib-rule-clauses">
             {% for clause in rule.conditions %}<li>{{ clause }}</li>{% endfor %}
-            {% if not rule.conditions %}<li class="muted">No conditions</li>{% endif %}
+            {% if not rule.conditions %}<li class="muted">{% translate "No conditions" %}</li>{% endif %}
           </ul>
           <ul class="ib-rule-actions">
             {% for action in rule.actions %}<li>{{ action }}</li>{% endfor %}
-            {% if not rule.actions %}<li class="muted">No actions</li>{% endif %}
+            {% if not rule.actions %}<li class="muted">{% translate "No actions" %}</li>{% endif %}
           </ul>
         </div>
         <div class="ib-rule-controls">
@@ -52,16 +53,20 @@ twice-a-year action.
             hidden inputs before submitting, so a browser with no JS still posts
             the current order unchanged rather than a mangled one.
           {% endcomment %}
-          <button type="button" class="btn-icon-round" data-rule-move="up" aria-label="Move {{ rule.name }} earlier">↑</button>
-          <button type="button" class="btn-icon-round" data-rule-move="down" aria-label="Move {{ rule.name }} later">↓</button>
-          <button type="button" class="btn-pill-secondary btn-pill-sm" hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}?rule={{ rule.id }}" hx-target="#inbox-rule-editor">Edit</button>
-          <button type="button" class="btn-icon-round" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ rule.name }}">
+          {% blocktranslate asvar move_earlier_label with name=rule.name %}Move {{ name }} earlier{% endblocktranslate %}
+          {% blocktranslate asvar move_later_label with name=rule.name %}Move {{ name }} later{% endblocktranslate %}
+          <button type="button" class="btn-icon-round" data-rule-move="up" aria-label="{{ move_earlier_label }}">↑</button>
+          <button type="button" class="btn-icon-round" data-rule-move="down" aria-label="{{ move_later_label }}">↓</button>
+          <button type="button" class="btn-pill-secondary btn-pill-sm" hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}?rule={{ rule.id }}" hx-target="#inbox-rule-editor">{% translate "Edit" %}</button>
+          {% blocktranslate asvar rule_more_actions with name=rule.name %}More actions for {{ name }}{% endblocktranslate %}
+          <button type="button" class="btn-icon-round" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ rule_more_actions }}">
             <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
           </button>
           <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
-            <button type="button" class="row-menu-item" role="menuitem" hx-post="{% url 'inbox:rule_toggle' workspace_id=request.workspace.id rule_id=rule.id %}" @click="menuOpen = false">{% if rule.enabled %}Disable this rule{% else %}Enable this rule{% endif %}</button>
+            <button type="button" class="row-menu-item" role="menuitem" hx-post="{% url 'inbox:rule_toggle' workspace_id=request.workspace.id rule_id=rule.id %}" @click="menuOpen = false">{% if rule.enabled %}{% translate "Disable this rule" %}{% else %}{% translate "Enable this rule" %}{% endif %}</button>
             <div class="row-menu-sep"></div>
-            <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'inbox:rule_delete' workspace_id=request.workspace.id rule_id=rule.id %}" hx-confirm="Delete “{{ rule.name }}”? Conversations it has already labelled keep their labels." @click="menuOpen = false">Delete</button>
+            {% blocktranslate asvar rule_delete_confirm with name=rule.name %}Delete “{{ name }}”? Conversations it has already labelled keep their labels.{% endblocktranslate %}
+            <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'inbox:rule_delete' workspace_id=request.workspace.id rule_id=rule.id %}" hx-confirm="{{ rule_delete_confirm }}" @click="menuOpen = false">{% translate "Delete" %}</button>
           </div>
         </div>
       </li>
@@ -70,12 +75,12 @@ twice-a-year action.
   </form>
   {% else %}
   <div class="empty-state">
-    <p class="empty-state-title">No rules yet</p>
+    <p class="empty-state-title">{% translate "No rules yet" %}</p>
     <p class="empty-state-body">
-      A rule reads an inbound message and files, assigns or closes the conversation it belongs to,
-      before any flow replies.
+      {% blocktranslate %}A rule reads an inbound message and files, assigns or closes the conversation it belongs to,
+      before any flow replies.{% endblocktranslate %}
     </p>
-    <button type="button" class="btn-pill-secondary mt-4" hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}" hx-target="#inbox-rule-editor">New rule</button>
+    <button type="button" class="btn-pill-secondary mt-4" hx-get="{% url 'inbox:rule_form' workspace_id=request.workspace.id %}" hx-target="#inbox-rule-editor">{% translate "New rule" %}</button>
   </div>
   {% endif %}
 </div>

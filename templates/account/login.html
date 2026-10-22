@@ -1,11 +1,13 @@
 {% extends "base.html" %}
-{% load socialaccount %}
+{% load i18n socialaccount %}
 
-{% block title %}Sign in · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Sign in" %} · BrightBean Chat{% endblock %}
 
 {% block auth_content %}
 <div class="auth-card">
-  {% include "partials/_auth_brand.html" with heading="Sign in" subheading="Welcome back to BrightBean Chat." %}
+  {% translate "Sign in" as login_heading %}
+  {% translate "Welcome back to BrightBean Chat." as login_subheading %}
+  {% include "partials/_auth_brand.html" with heading=login_heading subheading=login_subheading %}
 
   {% comment %}
   The provider button is a POST form, not a link: SOCIALACCOUNT_LOGIN_ON_GET is
@@ -22,21 +24,22 @@
         {% if redirect_field_value %}
           <input type="hidden" name="{{ redirect_field_name }}" value="{{ redirect_field_value }}" />
         {% endif %}
-        <button type="submit" class="btn-social">Continue with {{ provider.name }}</button>
+        <button type="submit" class="btn-social">{% blocktranslate with provider_name=provider.name %}Continue with {{ provider_name }}{% endblocktranslate %}</button>
       </form>
     {% endfor %}
-    <div class="divider-text my-5">or</div>
+    <div class="divider-text my-5">{% translate "or" %}</div>
   {% endif %}
 
   <form method="post" action="{% url 'account_login' %}">
     {% csrf_token %}
     {% include "partials/_auth_form_fields.html" %}
     {{ redirect_field }}
-    <button type="submit" class="btn-brand mt-1">Sign in</button>
+    <button type="submit" class="btn-brand mt-1">{% translate "Sign in" %}</button>
   </form>
 
+  {% url 'account_signup' as signup_url %}
   <p class="text-center text-sm mt-5" style="color: var(--text-secondary);">
-    No account yet? <a href="{% url 'account_signup' %}" class="font-semibold underline underline-offset-2" style="color: var(--text-primary);">Create one</a>.
+    {% blocktranslate %}No account yet? <a href="{{ signup_url }}" class="font-semibold underline underline-offset-2" style="color: var(--text-primary);">Create one</a>.{% endblocktranslate %}
   </p>
 </div>
 {% endblock %}

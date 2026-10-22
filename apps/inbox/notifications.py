@@ -13,6 +13,8 @@ a no-op for an identical re-registration, so an autoreloaded ``ready()`` is
 harmless.
 """
 
+from django.utils.translation import gettext_lazy as _
+
 from apps.notifications.events import NotificationEvent, register_event
 
 __all__ = ["EVENT_REMINDER", "EVENT_SCHEDULED_REPLY_FAILED"]
@@ -27,10 +29,13 @@ EVENT_SCHEDULED_REPLY_FAILED = "scheduled_reply_failed"
 register_event(
     NotificationEvent(
         key=EVENT_SCHEDULED_REPLY_FAILED,
-        label="Scheduled reply failed",
+        label=_("Scheduled reply failed"),
         icon="inbox",
         tone="error",
-        title="Scheduled reply to {contact_name} was not sent",
+        title=_("Scheduled reply to {contact_name} was not sent"),
+        # No _() on body: "{reason}" is pure interpolation, no English prose to
+        # translate — see apps.notifications.events's inbox_reminder for the
+        # same call.
         body="{reason}",
         # This one **does** earn an email, unlike the reminder beside it. The
         # test ``apps/notifications/events.py`` sets is "can the recipient act on
@@ -38,7 +43,7 @@ register_event(
         # is a single event about a message the agent believed had gone out
         # hours ago. Finding out at their next login is finding out too late.
         emails_by_default=True,
-        email_subject="A scheduled reply was not sent",
+        email_subject=_("A scheduled reply was not sent"),
         # Without the reason the notification says a send failed and nothing
         # about why, which is the sentence-with-a-hole this field exists to stop.
         required_context=("reason",),

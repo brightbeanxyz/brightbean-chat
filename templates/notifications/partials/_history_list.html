@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The history page's rows, swapped in by the filter controls.
 
 Args: notifications, page, has_next, has_previous, selected_* (for the pager's
@@ -36,7 +36,7 @@ gets re-rendered, so the value is always the one just served.
             <p class="text-[12px] leading-relaxed mt-0.5" style="color: var(--text-secondary);">{{ n.body }}</p>
             {% endif %}
             <p class="text-[11px] mt-1 tabular-nums" style="color: var(--text-ghost);">
-                {{ n.created_at|timesince }} ago
+                {% blocktranslate with since=n.created_at|timesince %}{{ since }} ago{% endblocktranslate %}
                 {% if n.payload.workspace_name %} · {{ n.payload.workspace_name }}{% endif %}
             </p>
         </div>
@@ -50,7 +50,7 @@ gets re-rendered, so the value is always the one just served.
                 hx-post="{% url 'notifications:mark_read' n.id %}"
                 hx-swap="none"
                 class="btn-text-hover-primary flex-shrink-0 self-start text-[11px] font-semibold cursor-pointer"
-                style="color: var(--text-primary);">Mark read</button>
+                style="color: var(--text-primary);">{% translate "Mark read" %}</button>
         {% endif %}
     </li>
     {% endfor %}
@@ -61,12 +61,12 @@ gets re-rendered, so the value is always the one just served.
     {% if has_previous %}
     <button type="button" class="btn-outline btn-inline text-xs"
             hx-get="{% url 'notifications:list' %}?page={{ page|add:'-1' }}&{{ filter_query }}"
-            hx-target="#notification-history" hx-swap="innerHTML">Newer</button>
+            hx-target="#notification-history" hx-swap="innerHTML">{% translate "Newer" %}</button>
     {% else %}<span></span>{% endif %}
     {% if has_next %}
     <button type="button" class="btn-outline btn-inline text-xs"
             hx-get="{% url 'notifications:list' %}?page={{ page|add:'1' }}&{{ filter_query }}"
-            hx-target="#notification-history" hx-swap="innerHTML">Older</button>
+            hx-target="#notification-history" hx-swap="innerHTML">{% translate "Older" %}</button>
     {% else %}<span></span>{% endif %}
 </div>
 {% endif %}
@@ -77,9 +77,9 @@ gets re-rendered, so the value is always the one just served.
          style="background: var(--surface-2); color: var(--text-ghost);">
         {% include "partials/_nav_icon.html" with name="bell" %}
     </div>
-    <p class="text-sm font-medium" style="color: var(--text-primary);">Nothing here</p>
+    <p class="text-sm font-medium" style="color: var(--text-primary);">{% translate "Nothing here" %}</p>
     <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-        {% if selected_event_types or selected_read_state %}No notifications match this filter.{% else %}Notifications about your flows, channels and broadcasts will appear here.{% endif %}
+        {% if selected_event_types or selected_read_state %}{% translate "No notifications match this filter." %}{% else %}{% translate "Notifications about your flows, channels and broadcasts will appear here." %}{% endif %}
     </p>
 </div>
 {% endif %}

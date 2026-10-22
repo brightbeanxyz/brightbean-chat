@@ -24,6 +24,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from django.utils.translation import gettext, ngettext
+
 from apps.flows.capabilities import capabilities_for
 from apps.flows.schema.envelope import validate_document
 from apps.flows.schema.handles import parse_handle
@@ -125,7 +127,7 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
             issues.append(
                 Issue(
                     code="dangling_edge",
-                    message=(
+                    message=gettext(
                         "A connection points at a step that is not in this flow any more. "
                         "Delete the connection and draw it again."
                     ),
@@ -139,7 +141,7 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
                 issues.append(
                     Issue(
                         code="note_node_connected",
-                        message=(
+                        message=gettext(
                             "A note is connected to something. Notes are there for you to read and "
                             "take no part in what the flow does, so delete the connection."
                         ),
@@ -153,7 +155,7 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
             issues.append(
                 Issue(
                     code="terminal_node_has_outgoing_edge",
-                    message=(
+                    message=gettext(
                         "This step ends the flow, so nothing joined after it can ever run. "
                         "Delete the connection leaving it."
                     ),
@@ -167,7 +169,7 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
             issues.append(
                 Issue(
                     code="malformed_handle",
-                    message=(
+                    message=gettext(
                         "A connection leaves this step by a path that does not exist. Delete it and draw it again."
                     ),
                     edge_id=edge_id,
@@ -181,7 +183,7 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
             issues.append(
                 Issue(
                     code="handle_not_available",
-                    message=(
+                    message=gettext(
                         "A connection leaves this step by a path it no longer has, usually because "
                         "the button or the option it followed was removed. Delete the connection "
                         "and draw it again."
@@ -197,7 +199,7 @@ def _check_edges(edges: list[dict[str, Any]], specs: dict[str, NodeSpec], config
             issues.append(
                 Issue(
                     code="duplicate_handle_edge",
-                    message=(
+                    message=gettext(
                         "Two connections leave this step the same way, and only one of them will be "
                         "followed. Delete the one you do not want."
                     ),
@@ -278,10 +280,11 @@ def _check_reply_ids(nodes: list[dict[str, Any]]) -> list[Issue]:
         issues.extend(
             Issue(
                 code="duplicate_reply_id",
-                message=(
-                    f"A button and a quick reply on this step are both called {reply_id!r}. A reply "
-                    f"only carries the name, so the flow cannot tell which one was tapped. Rename one."
-                ),
+                message=gettext(
+                    "A button and a quick reply on this step are both called %(reply_id)r. A reply "
+                    "only carries the name, so the flow cannot tell which one was tapped. Rename one."
+                )
+                % {"reply_id": reply_id},
                 node_id=node.get("id"),
                 path="quick_replies",
             )
@@ -326,7 +329,7 @@ def _check_entry_nodes(routable: list[str], entries: list[str]) -> list[Issue]:
         return [
             Issue(
                 code="no_entry_node",
-                message="This flow has no steps yet, so there is nothing to run. Add one.",
+                message=gettext("This flow has no steps yet, so there is nothing to run. Add one."),
             )
         ]
 
@@ -334,7 +337,7 @@ def _check_entry_nodes(routable: list[str], entries: list[str]) -> list[Issue]:
         return [
             Issue(
                 code="no_entry_node",
-                message=(
+                message=gettext(
                     "Every step follows another one, so there is nowhere for the flow to begin. "
                     "One step has to have nothing pointing into it: find the connection that loops "
                     "back to the step you want first, and delete it."
@@ -346,13 +349,17 @@ def _check_entry_nodes(routable: list[str], entries: list[str]) -> list[Issue]:
         # Issue below carries `node_id`, so the builder's rail flags each of
         # these steps and jumps to it on click, which is the same information
         # without asking anybody to match `n7` to a card.
+        message = ngettext(
+            "%(count)s step has nothing pointing into it, so it is not clear where this flow begins. "
+            "Exactly one may. Join the others up, or delete them.",
+            "%(count)s steps have nothing pointing into them, so it is not clear where this flow begins. "
+            "Exactly one may. Join the others up, or delete them.",
+            len(entries),
+        ) % {"count": len(entries)}
         return [
             Issue(
                 code="multiple_entry_nodes",
-                message=(
-                    f"{len(entries)} steps have nothing pointing into them, so it is not clear where "
-                    f"this flow begins. Exactly one may. Join the others up, or delete them."
-                ),
+                message=message,
                 node_id=node_id,
             )
             for node_id in sorted(entries)
@@ -392,7 +399,7 @@ def _unreachable_warnings(
     return [
         Issue(
             code="unreachable_node",
-            message="Nothing leads to this step, so it will never run. Join it up, or delete it.",
+            message=gettext("Nothing leads to this step, so it will never run. Join it up, or delete it."),
             node_id=node_id,
         )
         for node_id in sorted(routable - seen)
@@ -426,7 +433,8 @@ def _capability_warnings(nodes: list[dict[str, Any]], platforms: Sequence[str]) 
                 issues.append(
                     _warn(
                         "no_connection_for_node",
-                        f"This step sends over {required}, and no {required} account is connected here.",
+                        gettext("This step sends over %(platform)s, and no %(platform)s account is connected here.")
+                        % {"platform": required},
                         node,
                     )
                 )
@@ -451,7 +459,8 @@ def _send_message_warnings(
         if isinstance(block_type, str) and block_type != "text" and not capabilities.supports_block(block_type):
             yield _warn(
                 "capability_unsupported",
-                f"{platform} cannot show {block_type} properly. It will be sent in a simpler form.",
+                gettext("%(platform)s cannot show %(block_type)s properly. It will be sent in a simpler form.")
+                % {"platform": platform, "block_type": block_type},
                 node,
                 f"config.blocks[{index}]",
             )
@@ -459,7 +468,8 @@ def _send_message_warnings(
         if isinstance(text, str) and len(text) > capabilities.max_text_len:
             yield _warn(
                 "capability_limit_exceeded",
-                f"{platform} cuts messages off at {capabilities.max_text_len} characters and this one is {len(text)}.",
+                gettext("%(platform)s cuts messages off at %(limit)s characters and this one is %(length)s.")
+                % {"platform": platform, "limit": capabilities.max_text_len, "length": len(text)},
                 node,
                 f"config.blocks[{index}].text",
             )
@@ -470,15 +480,18 @@ def _send_message_warnings(
         # because the buttons took the only control set the message has.
         yield _warn(
             "capability_unsupported",
-            f"{platform} shows buttons or quick replies, not both. The quick replies will "
-            "arrive as a numbered list at the end of the message instead.",
+            gettext(
+                "%(platform)s shows buttons or quick replies, not both. The quick replies will "
+                "arrive as a numbered list at the end of the message instead."
+            )
+            % {"platform": platform},
             node,
             "config.quick_replies",
         )
 
     for key, supported, ceiling, label in (
-        ("buttons", capabilities.buttons, capabilities.max_buttons, "buttons"),
-        ("quick_replies", capabilities.quick_replies, capabilities.max_quick_replies, "quick replies"),
+        ("buttons", capabilities.buttons, capabilities.max_buttons, gettext("buttons")),
+        ("quick_replies", capabilities.quick_replies, capabilities.max_quick_replies, gettext("quick replies")),
     ):
         items = config.get(key) or []
         if not items:
@@ -486,14 +499,18 @@ def _send_message_warnings(
         if not supported:
             yield _warn(
                 "capability_unsupported",
-                f"{platform} does not support {label}. They will be added to the end of the message as text instead.",
+                gettext(
+                    "%(platform)s does not support %(label)s. They will be added to the end of the message as text instead."
+                )
+                % {"platform": platform, "label": label},
                 node,
                 f"config.{key}",
             )
         elif len(items) > ceiling:
             yield _warn(
                 "capability_limit_exceeded",
-                f"{platform} allows {ceiling} {label} and this step has {len(items)}.",
+                gettext("%(platform)s allows %(ceiling)s %(label)s and this step has %(count)s.")
+                % {"platform": platform, "ceiling": ceiling, "label": label, "count": len(items)},
                 node,
                 f"config.{key}",
             )
@@ -503,7 +520,8 @@ def _send_message_warnings(
             if isinstance(button, dict) and button.get("action") == "url":
                 yield _warn(
                     "capability_unsupported",
-                    f"{platform} has no link buttons; the URL is appended to the text instead.",
+                    gettext("%(platform)s has no link buttons; the URL is appended to the text instead.")
+                    % {"platform": platform},
                     node,
                     f"config.buttons[{index}]",
                 )

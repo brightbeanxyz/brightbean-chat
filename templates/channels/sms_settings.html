@@ -1,84 +1,73 @@
 {% extends "layouts/workspace_settings.html" %}
-{% block title %}SMS settings · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title mb-4">SMS settings</h1>{% endblock %}
+{% load i18n %}
+{% block title %}{% translate "SMS settings" %} · BrightBean Chat{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">{% translate "SMS settings" %}</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
-    The wording of the replies carriers require you to send, and a couple of
-    hints for the composer. The replies themselves are not optional and cannot
-    be switched off here. Leaving a box empty uses the default wording rather
-    than sending nothing.
+    {% translate "The wording of the replies carriers require you to send, and a couple of hints for the composer. The replies themselves are not optional and cannot be switched off here. Leaving a box empty uses the default wording rather than sending nothing." %}
   </p>
 
-  <h2>Keywords</h2>
+  <h2>{% translate "Keywords" %}</h2>
   <p class="muted">
-    These are handled before anything else and cannot be intercepted by a flow.
-    Matching is case-insensitive on the whole message, so "stop" unsubscribes and
-    "stop by tomorrow" does not.
+    {% blocktranslate %}These are handled before anything else and cannot be intercepted by a flow. Matching is case-insensitive on the whole message, so "stop" unsubscribes and "stop by tomorrow" does not.{% endblocktranslate %}
   </p>
   <ul>
-    <li><strong>Unsubscribe:</strong> {% for word in keywords.opt_out %}<code>{{ word|upper }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</li>
-    <li><strong>Help:</strong> {% for word in keywords.help %}<code>{{ word|upper }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</li>
-    <li><strong>Resubscribe:</strong> {% for word in keywords.opt_in %}<code>{{ word|upper }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</li>
+    <li><strong>{% translate "Unsubscribe:" %}</strong> {% for word in keywords.opt_out %}<code>{{ word|upper }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</li>
+    <li><strong>{% translate "Help:" %}</strong> {% for word in keywords.help %}<code>{{ word|upper }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</li>
+    <li><strong>{% translate "Resubscribe:" %}</strong> {% for word in keywords.opt_in %}<code>{{ word|upper }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</li>
   </ul>
 
   <form method="post" action="{{ update_url }}">
     {% csrf_token %}
 
-    <h2>Replies</h2>
+    <h2>{% translate "Replies" %}</h2>
     <p>
-      <label for="opt_out_confirmation">Unsubscribe confirmation</label><br />
+      <label for="opt_out_confirmation">{% translate "Unsubscribe confirmation" %}</label><br />
       <textarea id="opt_out_confirmation" name="opt_out_confirmation" rows="2" maxlength="1600">{{ settings_row.opt_out_confirmation }}</textarea><br />
-      <span class="muted">Sent once when a contact texts STOP. Default: “{{ default_opt_out_text }}”</span>
+      <span class="muted">{% blocktranslate with default=default_opt_out_text %}Sent once when a contact texts STOP. Default: “{{ default }}”{% endblocktranslate %}</span>
     </p>
     <p>
-      <label for="help_text_body">Help reply</label><br />
+      <label for="help_text_body">{% translate "Help reply" %}</label><br />
       <textarea id="help_text_body" name="help_text_body" rows="2" maxlength="1600">{{ settings_row.help_text_body }}</textarea><br />
       <span class="muted">
-        Sent when a contact texts HELP, even after they have unsubscribed.
-        Should name your business and say how to opt out. Default:
-        “{{ default_help_text }}”
+        {% blocktranslate with default=default_help_text %}Sent when a contact texts HELP, even after they have unsubscribed. Should name your business and say how to opt out. Default: “{{ default }}”{% endblocktranslate %}
       </span>
     </p>
     <p>
-      <label for="opt_in_confirmation">Resubscribe confirmation</label><br />
+      <label for="opt_in_confirmation">{% translate "Resubscribe confirmation" %}</label><br />
       <textarea id="opt_in_confirmation" name="opt_in_confirmation" rows="2" maxlength="1600">{{ settings_row.opt_in_confirmation }}</textarea><br />
-      <span class="muted">Sent when a contact texts START. Default: “{{ default_opt_in_text }}”</span>
+      <span class="muted">{% blocktranslate with default=default_opt_in_text %}Sent when a contact texts START. Default: “{{ default }}”{% endblocktranslate %}</span>
     </p>
 
-    <h2>Cost hint</h2>
+    <h2>{% translate "Cost hint" %}</h2>
     <p>
-      <label for="per_segment_cost">Price per segment</label><br />
+      <label for="per_segment_cost">{% translate "Price per segment" %}</label><br />
       <input type="text" id="per_segment_cost" name="per_segment_cost" inputmode="decimal"
              value="{{ settings_row.per_segment_cost|default_if_none:'' }}" />
       <span class="muted">
-        Used only to estimate what a broadcast will cost. BrightBean Chat never
-        meters or bills anything. Your Twilio invoice is the real number, and
-        prices differ per destination.
+        {% translate "Used only to estimate what a broadcast will cost. BrightBean Chat never meters or bills anything. Your Twilio invoice is the real number, and prices differ per destination." %}
       </span>
     </p>
 
-    <h2>A2P 10DLC checklist</h2>
+    <h2>{% translate "A2P 10DLC checklist" %}</h2>
     <p class="muted">
-      US carriers require application-to-person traffic on a 10-digit long code
-      to be registered. All of it happens in the Twilio console; nothing on this
-      page performs or verifies registration, and these boxes are your own record
-      that it is done.
+      {% translate "US carriers require application-to-person traffic on a 10-digit long code to be registered. All of it happens in the Twilio console; nothing on this page performs or verifies registration, and these boxes are your own record that it is done." %}
     </p>
     <p>
       <label>
         <input type="checkbox" name="a2p_brand_registered" {% if settings_row.a2p_brand_registered %}checked{% endif %} />
-        Brand registered in Twilio
+        {% translate "Brand registered in Twilio" %}
       </label>
     </p>
     <p>
       <label>
         <input type="checkbox" name="a2p_campaign_approved" {% if settings_row.a2p_campaign_approved %}checked{% endif %} />
-        Campaign approved and the number linked to it
+        {% translate "Campaign approved and the number linked to it" %}
       </label>
     </p>
 
-    <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save" %}</button>
   </form>
 
   {% comment %}
@@ -88,18 +77,17 @@
   would submit the whole page when someone pressed Enter in it. hx-post rather
   than hx-get keeps draft message text out of URLs and access logs.
   {% endcomment %}
-  <h2>Segment preview</h2>
+  <h2>{% translate "Segment preview" %}</h2>
   <p class="muted">
-    Try a message here to see what it will cost to send. The same counter runs in
-    the Send SMS panel and in the broadcast composer.
+    {% translate "Try a message here to see what it will cost to send. The same counter runs in the Send SMS panel and in the broadcast composer." %}
   </p>
   <p>
-    <label for="segment_preview">Message</label><br />
+    <label for="segment_preview">{% translate "Message" %}</label><br />
     <textarea id="segment_preview" name="text" rows="2" maxlength="1600"
               hx-post="{{ preview_url }}" hx-trigger="keyup changed delay:400ms"
               hx-params="text" hx-target="#segment-preview-output"></textarea><br />
     <span id="segment-preview-output"></span>
   </p>
 
-  <p><a href="{{ list_url }}">Back to channels</a></p>
+  <p><a href="{{ list_url }}">{% translate "Back to channels" %}</a></p>
 {% endblock %}

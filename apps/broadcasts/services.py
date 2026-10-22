@@ -57,6 +57,7 @@ from django.db import transaction
 from django.db.models import Count
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.translation import gettext
 
 from apps.broadcasts import events as broadcast_events
 from apps.broadcasts.models import (
@@ -69,6 +70,7 @@ from apps.broadcasts.models import (
 from apps.broadcasts.notifications import EVENT_BROADCAST_FINISHED
 from apps.channels import policy as channel_policy
 from apps.channels import whatsapp_templates
+from apps.channels.models import ChannelConnection, ConnectionStatus
 from apps.contacts import conditions
 from apps.flows import services as flow_services
 from apps.flows.models import Flow, FlowStatus, FlowVersion
@@ -152,7 +154,7 @@ def create_broadcast(*, workspace: Any, name: str, connection: Any, user: Any = 
     and which policy the audience preview is computed against.
     """
     if not _may_broadcast(connection):
-        raise BroadcastError("This channel does not allow broadcasts.")
+        raise BroadcastError(gettext("This channel does not allow broadcasts."))
     broadcast = Broadcast(workspace=workspace, name=name.strip()[:200], channel_connection=connection, created_by=user)
     broadcast.save()
     return broadcast
@@ -173,7 +175,7 @@ def set_channel(broadcast: Broadcast, connection: Any) -> Broadcast:
     """
     _require_draft(broadcast)
     if not _may_broadcast(connection):
-        raise BroadcastError("This channel does not allow broadcasts.")
+        raise BroadcastError(gettext("This channel does not allow broadcasts."))
     broadcast.channel_connection = connection
     broadcast.message_tag = ""
     broadcast.whatsapp_template = None
@@ -198,7 +200,7 @@ def set_audience(broadcast: Broadcast, *, filter_json: Any, segment: Any = None)
         # nobody, and the condition engine cannot compile one. "Everyone" has a
         # spelling — ``{"match": "all", "rules": []}`` — and choosing it is an
         # act the composer makes somebody perform, count in hand.
-        raise BroadcastError("Add at least one rule, or pick a saved segment.")
+        raise BroadcastError(gettext("Add at least one rule, or pick a saved segment."))
     try:
         conditions.validate(broadcast.workspace_id, filter_json)
     except conditions.ConditionError as exc:
@@ -246,7 +248,7 @@ def save_content(broadcast: Broadcast, config: dict[str, Any], *, user: Any = No
         if flow is None:
             flow = flow_services.create_flow(
                 workspace=broadcast.workspace,
-                name=f"Broadcast: {broadcast.name}"[:200],
+                name=(gettext("Broadcast: %(name)s") % {"name": broadcast.name})[:200],
                 folder=BROADCAST_FOLDER,
                 user=user,
             )
@@ -265,7 +267,7 @@ def _first_error(result: Any) -> str:
         message = getattr(issue, "message", "")
         if message:
             return str(message)
-    return "That message cannot be sent as written."
+    return gettext("That message cannot be sent as written.")
 
 
 def save_template(broadcast: Broadcast, template: Any, variables: dict[str, str]) -> Broadcast:
@@ -284,7 +286,7 @@ def save_template(broadcast: Broadcast, template: Any, variables: dict[str, str]
     # offers approved ones, but the endpoint takes a template id and a
     # hand-crafted POST is not obliged to pick from the list.
     if whatsapp_templates.sendable(template.pk, broadcast.channel_connection) is None:
-        raise BroadcastError("That template is not approved for use on this channel.")
+        raise BroadcastError(gettext("That template is not approved for use on this channel."))
 
     # Exactly the slots this template declares — no more, no fewer.
     #
@@ -303,7 +305,7 @@ def save_template(broadcast: Broadcast, template: Any, variables: dict[str, str]
     supplied = {str(k): str(v) for k, v in (variables or {}).items()}
     missing = [slot for slot in declared if not supplied.get(slot, "").strip()]
     if missing:
-        raise BroadcastError(f"This template needs a value for {', '.join(missing)}.")
+        raise BroadcastError(gettext("This template needs a value for %(slots)s.") % {"slots": ", ".join(missing)})
     values = {slot: supplied[slot] for slot in declared}
 
     with transaction.atomic():
@@ -328,7 +330,7 @@ def set_tag(broadcast: Broadcast, tag: str) -> Broadcast:
     outside = channel_policy.policy_for(broadcast.platform).outside_window
     allowed = outside.tags if isinstance(outside, channel_policy.NeedsTag) else ()
     if tag and tag not in allowed:
-        raise BroadcastError("That message tag is not one this channel accepts.")
+        raise BroadcastError(gettext("That message tag is not one this channel accepts."))
     broadcast.message_tag = tag
     broadcast.save(update_fields=["message_tag", "updated_at"])
     return broadcast
@@ -355,10 +357,15 @@ def duplicate_broadcast(broadcast: Broadcast, *, user: Any = None) -> Broadcast:
     Never inherits a status, a schedule or any counters: sending is an act, and a
     copy that arrived already scheduled would send itself.
     """
+    # Trim the name, not the composed string: slicing after the concatenation
+    # drops the suffix entirely for a name at the field limit — see
+    # apps.flows.services.duplicate_flow, which handles the same trim the same way.
+    suffix = gettext(" (copy)")
+    limit = Broadcast._meta.get_field("name").max_length or 200
     with transaction.atomic():
         copy = Broadcast(
             workspace=broadcast.workspace,
-            name=f"{broadcast.name[:193]} (copy)",
+            name=f"{broadcast.name[: limit - len(suffix)]}{suffix}",
             channel_connection=broadcast.channel_connection,
             target_filter_json=broadcast.target_filter_json,
             segment=broadcast.segment,
@@ -421,7 +428,7 @@ def delete_broadcast(broadcast: Broadcast) -> None:
     of what was sent.
     """
     if broadcast.is_live:
-        raise BroadcastError("Cancel this broadcast before deleting it.")
+        raise BroadcastError(gettext("Cancel this broadcast before deleting it."))
     # Read the status before the delete: `is_live` is False for both a draft that
     # never ran and a broadcast that finished, and only the first may cascade.
     never_ran = broadcast.status == BroadcastStatus.DRAFT
@@ -458,12 +465,13 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
     from apps.broadcasts import audience as audience_module
 
     if broadcast.status != BroadcastStatus.DRAFT:
-        raise BroadcastError("Only a draft can be scheduled.")
+        raise BroadcastError(gettext("Only a draft can be scheduled."))
     if broadcast.flow_id is None and broadcast.whatsapp_template_id is None:
-        raise BroadcastError("Add a message before sending.")
+        raise BroadcastError(gettext("Add a message before sending."))
     if not broadcast.target_filter_json:
         # Reachable through the API, where nothing walks the wizard's steps.
-        raise BroadcastError("Choose who this broadcast goes to.")
+        raise BroadcastError(gettext("Choose who this broadcast goes to."))
+    _require_eligible_connection(broadcast)
     _require_sendable_template(broadcast)
 
     # Before the audience is counted, not after: the numbers this gate refuses
@@ -474,7 +482,7 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
 
     counts = audience_module.preview(broadcast)
     if counts.total == 0:
-        raise BroadcastError("Nobody matches this audience.")
+        raise BroadcastError(gettext("Nobody matches this audience."))
 
     # Before the generic refusal, deliberately. When the whole audience is
     # outside the window, "nobody can be messaged" and "this needs a message tag"
@@ -483,7 +491,7 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
     _refuse_window_gaps(broadcast, counts)
 
     if counts.eligible == 0:
-        raise BroadcastError("Nobody in this audience can be messaged on this channel right now.")
+        raise BroadcastError(gettext("Nobody in this audience can be messaged on this channel right now."))
 
     # The organization's monthly contact allowance, refused here rather than one
     # message at a time. `send_outbound` is the backstop that cannot be
@@ -497,7 +505,7 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
     with transaction.atomic():
         locked = Broadcast.objects.for_workspace(broadcast.workspace_id).select_for_update().get(pk=broadcast.pk)
         if locked.status != BroadcastStatus.DRAFT:
-            raise BroadcastError("This broadcast is already on its way.")
+            raise BroadcastError(gettext("This broadcast is already on its way."))
         locked.flow_version = _pin_version(locked)
         locked.scheduled_at = when
         locked.status = BroadcastStatus.SCHEDULED
@@ -519,6 +527,25 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
     return broadcast
 
 
+def _require_eligible_connection(broadcast: Broadcast) -> None:
+    """Refuse a connection that stopped being broadcastable since it was picked.
+
+    The composer only offers ``composer.broadcastable_connections`` (not
+    disabled, and the platform's own policy still allows a broadcast), but a
+    broadcast schedules now and sends later: an admin can disable the
+    connection, or Instagram's window can close with no way to reopen it,
+    anywhere in the gap between the operator choosing it and pressing send.
+    Same reasoning as :func:`_require_sendable_template` — refuse here, once,
+    rather than fanning out against a connection nobody can send on.
+    """
+    connection = ChannelConnection.objects.for_workspace(broadcast.workspace_id).get(pk=broadcast.channel_connection_id)
+    if (
+        connection.status == ConnectionStatus.DISABLED
+        or not channel_policy.policy_for(connection.platform).broadcast_allowed
+    ):
+        raise BroadcastError(gettext("This channel can no longer be used for broadcasts. Choose another one."))
+
+
 def _require_sendable_template(broadcast: Broadcast) -> None:
     """Refuse once, now, rather than discovering it ten thousand times at send.
 
@@ -536,7 +563,9 @@ def _require_sendable_template(broadcast: Broadcast) -> None:
     if broadcast.whatsapp_template_id is None:
         return
     if whatsapp_templates.sendable(broadcast.whatsapp_template_id, broadcast.channel_connection) is None:
-        raise BroadcastError("That template is no longer approved on this channel. Pick another one before sending.")
+        raise BroadcastError(
+            gettext("That template is no longer approved on this channel. Pick another one before sending.")
+        )
 
 
 def _refuse_window_gaps(broadcast: Broadcast, counts: Any) -> None:
@@ -551,15 +580,18 @@ def _refuse_window_gaps(broadcast: Broadcast, counts: Any) -> None:
     if needs_tag:
         outside = channel_policy.policy_for(broadcast.platform).outside_window
         text = outside.allowed_use_text if isinstance(outside, channel_policy.NeedsTag) else ""
-        raise BroadcastError(
-            f"{needs_tag} of these contacts are outside the messaging window, so this send needs a "
-            f"non-promotional message tag. {text}".strip()
-        )
+        sentence = gettext(
+            "%(count)s of these contacts are outside the messaging window, so this send needs a "
+            "non-promotional message tag."
+        ) % {"count": needs_tag}
+        raise BroadcastError(f"{sentence} {text}".strip())
     needs_template = counts.needs(Denial.NEEDS_TEMPLATE.value)
     if needs_template:
         raise BroadcastError(
-            f"{needs_template} of these contacts are outside the messaging window, so this send needs "
-            f"an approved template."
+            gettext(
+                "%(count)s of these contacts are outside the messaging window, so this send needs an approved template."
+            )
+            % {"count": needs_template}
         )
 
 
@@ -595,7 +627,7 @@ def _pin_version(broadcast: Broadcast) -> FlowVersion | None:
 
 def _require_draft(broadcast: Broadcast) -> None:
     if broadcast.status != BroadcastStatus.DRAFT:
-        raise BroadcastError("This broadcast has already been sent or scheduled.")
+        raise BroadcastError(gettext("This broadcast has already been sent or scheduled."))
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +657,7 @@ def cancel_broadcast(broadcast: Broadcast) -> Broadcast:
     with transaction.atomic():
         locked = Broadcast.objects.for_workspace(broadcast.workspace_id).select_for_update().get(pk=broadcast.pk)
         if locked.status not in LIVE_STATUSES:
-            raise BroadcastError("Only a scheduled or sending broadcast can be cancelled.")
+            raise BroadcastError(gettext("Only a scheduled or sending broadcast can be cancelled."))
 
         locked.status = BroadcastStatus.CANCELLED
         locked.finished_at = timezone.now()
@@ -1013,6 +1045,9 @@ def _refuse_over_plan(broadcast: Broadcast, counts: Any) -> None:
     if counts.eligible <= remaining:
         return
     raise BroadcastError(
-        f"This broadcast reaches {counts.eligible} people and your plan has room for {remaining} more "
-        f"this month. Upgrade to send it."
+        gettext(
+            "This broadcast reaches %(eligible)s people and your plan has room for %(remaining)s more "
+            "this month. Upgrade to send it."
+        )
+        % {"eligible": counts.eligible, "remaining": remaining}
     )

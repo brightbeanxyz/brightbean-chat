@@ -1,19 +1,19 @@
 {% extends "layouts/settings.html" %}
-{% load static %}
-{% block title %}Plan &amp; billing · BrightBean Chat{% endblock %}
+{% load i18n static %}
+{% block title %}{% translate "Plan & billing" %} · BrightBean Chat{% endblock %}
 {% block page_header %}{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
-  <h1 class="page-title">Plan &amp; billing</h1>
-  <p class="page-lede mt-1.5 mb-6">What this organization is on, and what it is using.</p>
+  <h1 class="page-title">{% translate "Plan & billing" %}</h1>
+  <p class="page-lede mt-1.5 mb-6">{% translate "What this organization is on, and what it is using." %}</p>
 
   {% if checkout_state == "cancelled" %}
-    <div class="alert-info mb-4">Checkout was cancelled. No charge was made.</div>
+    <div class="alert-info mb-4">{% translate "Checkout was cancelled. No charge was made." %}</div>
   {% elif checkout_state == "activating" %}
     <div class="alert-info mb-4">
-      Activating your subscription. Refresh in a few seconds.
+      {% translate "Activating your subscription. Refresh in a few seconds." %}
     </div>
   {% endif %}
 
@@ -29,7 +29,7 @@
               <span class="plan-card-name">{{ card.name }}</span>
             </span>
             {% if card.key == plan %}
-              <span class="status-pill status-pill-active"><span class="status-pill-dot"></span>Current plan</span>
+              <span class="status-pill status-pill-active"><span class="status-pill-dot"></span>{% translate "Current plan" %}</span>
             {% endif %}
           </div>
           <p class="plan-card-tagline">{{ card.tagline }}</p>
@@ -66,7 +66,7 @@
               {% endcomment %}
               <form method="post" action="{% url 'billing:portal' %}">
                 {% csrf_token %}
-                <button type="submit" class="btn-pill-secondary">Manage billing</button>
+                <button type="submit" class="btn-pill-secondary">{% translate "Manage billing" %}</button>
               </form>
             </div>
           {% elif card.key == "paid" and card.key != plan and can_manage %}
@@ -89,14 +89,14 @@
               <form method="post" action="{% url 'billing:checkout' %}">
                 {% csrf_token %}
                 <fieldset class="plan-pricing">
-                  <legend class="sr-only">Billing interval</legend>
+                  <legend class="sr-only">{% translate "Billing interval" %}</legend>
                   <input type="radio" name="interval" id="interval-monthly-{{ card.key }}" value="monthly" checked />
                   <input type="radio" name="interval" id="interval-yearly-{{ card.key }}" value="yearly" />
 
                   <div class="plan-interval">
-                    <label for="interval-monthly-{{ card.key }}">Monthly</label>
+                    <label for="interval-monthly-{{ card.key }}">{% translate "Monthly" %}</label>
                     <label for="interval-yearly-{{ card.key }}">
-                      Yearly <span class="plan-save">{{ yearly_saving }}</span>
+                      {% translate "Yearly" %} <span class="plan-save">{{ yearly_saving }}</span>
                     </label>
                   </div>
 
@@ -108,7 +108,7 @@
                     </p>
                   {% endfor %}
                 </fieldset>
-                <button type="submit" class="btn-pill-primary w-full">Subscribe</button>
+                <button type="submit" class="btn-pill-primary w-full">{% translate "Subscribe" %}</button>
               </form>
             </div>
           {% endif %}
@@ -123,16 +123,16 @@
     </div>
 
     {% if renews_on %}
-      <p class="mb-4 text-sm" style="color: var(--text-secondary);">Renews on {{ renews_on|date:"j F Y" }}.</p>
+      <p class="mb-4 text-sm" style="color: var(--text-secondary);">{% blocktranslate with renewal_date=renews_on|date:"j F Y" %}Renews on {{ renewal_date }}.{% endblocktranslate %}</p>
     {% elif cancels_on %}
       <p class="mb-4 text-sm" style="color: var(--text-secondary);">
-            Your plan ends on {{ cancels_on|date:"j F Y" }}. Your work stays here.
+        {% blocktranslate with end_date=cancels_on|date:"j F Y" %}Your plan ends on {{ end_date }}. Your work stays here.{% endblocktranslate %}
       </p>
     {% endif %}
 
     {% if not can_manage %}
       <p class="mb-4 text-sm" style="color: var(--text-tertiary);">
-        Only organization admins can change the plan.
+        {% translate "Only organization admins can change the plan." %}
       </p>
     {% endif %}
   {% else %}
@@ -143,23 +143,22 @@
       promise in docs/SPEC.md §1.1 actually forbids.
     {% endcomment %}
     <div class="card p-6 mb-4">
-      <h2 class="section-title mb-3">Self-hosted</h2>
+      <h2 class="section-title mb-3">{% translate "Self-hosted" %}</h2>
       <p>
-        Every feature is available, with no limits and nothing counted. There is no plan to be on and no
-        payment provider to configure.
+        {% translate "Every feature is available, with no limits and nothing counted. There is no plan to be on and no payment provider to configure." %}
       </p>
     </div>
   {% endif %}
 
   <div class="card p-6">
-    <h2 class="section-title mb-3">Usage</h2>
+    <h2 class="section-title mb-3">{% translate "Usage" %}</h2>
     <table class="plan-usage">
       {% for row in usage_rows %}
         <tr class="{% if row.at_limit %}plan-usage-at{% elif row.near_limit %}plan-usage-near{% endif %}">
           <td class="plan-usage-icon">{% include "partials/_nav_icon.html" with name=row.icon %}</td>
           <td>{{ row.label }}</td>
           <td class="plan-usage-figure">
-            {% if row.limit is None %}{{ row.used }}{% else %}{{ row.used }} of {{ row.limit }}{% endif %}
+            {% if row.limit is None %}{{ row.used }}{% else %}{% blocktranslate with used=row.used limit=row.limit %}{{ used }} of {{ limit }}{% endblocktranslate %}{% endif %}
           </td>
         </tr>
       {% endfor %}

@@ -26,8 +26,9 @@
  */
 import { Handle, Position as HandlePosition } from "@xyflow/react";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
-import { TRIGGER_PHRASE } from "../schema/plain";
+import { triggerPhrase } from "../schema/plain";
 import { useBuilder, useBuilderStore } from "../store/context";
 
 /** The id the synthetic node and its edge are addressed by, and its React Flow type. */
@@ -35,6 +36,7 @@ export const TRIGGER_NODE_ID = "__trigger__";
 export const TRIGGER_CARD_TYPE = TRIGGER_NODE_ID;
 
 function TriggerCardInner() {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const triggers = useBuilder((state) => state.triggers);
   const selected = useBuilder((state) => state.triggerSelected);
@@ -52,7 +54,7 @@ function TriggerCardInner() {
       <div className="fb-node-header">
         <span className="fb-node-kind">
           <span className="fb-node-dot" aria-hidden="true" />
-          {TRIGGER_PHRASE}
+          {triggerPhrase()}
         </span>
       </div>
 
@@ -61,20 +63,18 @@ function TriggerCardInner() {
           `plain` is the whole thing — "When someone sends “quote”" — and it is
           the same sentence the flow list shows. */}
       <div className="fb-node-title">
-        {triggers.length === 0 ? "Nothing starts this flow yet" : triggers[0]?.plain}
+        {triggers.length === 0 ? t("triggerCard.empty") : triggers[0]?.plain}
       </div>
 
       <div className="fb-node-body">
         {triggers.length === 0 ? (
-          <span className="fb-empty">Click to choose what starts it.</span>
+          <span className="fb-empty">{t("triggerCard.emptyHint")}</span>
         ) : (
           <>
             {triggers.length > 1 ? (
-              <span className="fb-empty">
-                and {triggers.length - 1} other way{triggers.length === 2 ? "" : "s"} in
-              </span>
+              <span className="fb-empty">{t("triggerCard.otherWays", { count: triggers.length - 1 })}</span>
             ) : null}
-            {off ? <span className="fb-node-warn">Switched off, so nothing reaches this flow</span> : null}
+            {off ? <span className="fb-node-warn">{t("triggerCard.switchedOff")}</span> : null}
           </>
         )}
       </div>

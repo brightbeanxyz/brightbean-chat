@@ -1,4 +1,4 @@
-{% load common_extras %}{% comment %}
+{% load common_extras i18n %}{% comment %}
 One template, as both the gallery and the flows empty state show it. Everything
 here is text from the validated document or from TEMPLATE_COPY — no |safe, no
 mark_safe, matching the rule the review page states: a template's message bodies
@@ -25,7 +25,7 @@ inside Alpine's evaluator on every card, on every render of the core Flows page.
             <span class="pi-chip {{ platform.key|platform_class }} w-4 h-4 flex-shrink-0">{% include "partials/_platform_icon.html" with platform=platform.key size="sm" %}</span>
             <span class="truncate">{{ platform.label }}</span>
             {% empty %}
-            <span class="truncate">Any channel</span>
+            <span class="truncate">{% translate "Any channel" %}</span>
             {% endfor %}
         </span>
         {% if entry.triggers %}<span class="tpl-tag">{{ entry.triggers.0 }}</span>{% endif %}
@@ -47,14 +47,14 @@ inside Alpine's evaluator on every card, on every render of the core Flows page.
     Only the missing ones are listed: a connected channel is already named in
     the card's head, and repeating it as a chip was noise.
     {% endcomment %}
-    <div class="flex flex-wrap items-center gap-1.5 empty:hidden">{% for platform in entry.platforms %}{% if not platform.connected %}<span class="status-pill status-pill-warning">Needs {{ platform.label }}</span>{% endif %}{% endfor %}{% for need in entry.needs %}<span class="status-pill">Needs {{ need|lower }}</span>{% endfor %}{% if entry.card.calls_out %}<span class="status-pill" title="This template contains a step that sends a request to another service.">Calls out to the internet</span>{% endif %}</div>
+    {% translate "This template contains a step that sends a request to another service." as calls_out_hint %}
+    <div class="flex flex-wrap items-center gap-1.5 empty:hidden">{% for platform in entry.platforms %}{% if not platform.connected %}<span class="status-pill status-pill-warning">{% blocktranslate with label=platform.label %}Needs {{ label }}{% endblocktranslate %}</span>{% endif %}{% endfor %}{% for need in entry.needs %}<span class="status-pill">{% blocktranslate with need=need|lower %}Needs {{ need }}{% endblocktranslate %}</span>{% endfor %}{% if entry.card.calls_out %}<span class="status-pill" title="{{ calls_out_hint }}">{% translate "Calls out to the internet" %}</span>{% endif %}</div>
     {% comment %}
       "Calls out to the internet": installing a template only ever touches your
       own workspace — except for this. An external_request node sends whatever
       the flow gathered to a third party, which is worth knowing before the
       install, not after.
     {% endcomment %}
-
     {% comment %}
       One secondary button per card. Every card used to carry the orange one,
       which on a grid of twenty made the page a wall of calls to action; the
@@ -62,7 +62,7 @@ inside Alpine's evaluator on every card, on every render of the core Flows page.
     {% endcomment %}
     <form method="post" action="{{ entry.start_url }}" class="mt-auto flex items-center justify-between gap-3 pt-1">
         {% csrf_token %}
-        <span class="text-[12px]" style="color: var(--text-tertiary);">{{ entry.card.step_count }} step{{ entry.card.step_count|pluralize }}{% if not entry.triggers %} · started by another flow{% endif %}</span>
-        <button type="submit" class="btn-pill-secondary btn-pill-sm">Use template</button>
+        <span class="text-[12px]" style="color: var(--text-tertiary);">{% blocktranslate count count=entry.card.step_count %}{{ count }} step{% plural %}{{ count }} steps{% endblocktranslate %}{% if not entry.triggers %} · {% translate "started by another flow" %}{% endif %}</span>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Use template" %}</button>
     </form>
 </article>

@@ -1,5 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Channels, as cards rather than as a table.
 
@@ -21,21 +21,21 @@ every row made the page look like a configuration dump. They live on the
 connection's own page now, which is where somebody pasting one into a console
 is already standing. (The redesign's fifth principle: no ids in the UI.)
 {% endcomment %}
-{% block title %}Channels · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Channels" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
     <div class="page-header">
         <div class="page-header-text">
-            <h1 class="page-title">Channels</h1>
+            <h1 class="page-title">{% translate "Channels" %}</h1>
             <p class="page-lede">
-                Each channel is one bot, page, number or sending address. Messages arrive and go out through it.
+                {% translate "Each channel is one bot, page, number or sending address. Messages arrive and go out through it." %}
             </p>
         </div>
         <div class="page-header-actions">
             <a class="btn-pill-primary" href="{% url 'channels:create' workspace_id=request.workspace.id %}">
-                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} Connect a channel
+                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} {% translate "Connect a channel" %}
             </a>
         </div>
     </div>
@@ -48,15 +48,15 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
         </span>
         <div class="flex-1 min-w-0">
             <div class="text-sm font-semibold" style="color: var(--error-700);">
-                {{ row.connection.display_name }} stopped receiving messages
+                {% blocktranslate with name=row.connection.display_name %}{{ name }} stopped receiving messages{% endblocktranslate %}
             </div>
             <div class="text-[13px]" style="color: var(--error-700);">
-                {{ row.label }} revoked the connection. Reconnect to start receiving again.
+                {% blocktranslate with label=row.label %}{{ label }} revoked the connection. Reconnect to start receiving again.{% endblocktranslate %}
             </div>
         </div>
         <a class="btn-pill-sm flex-shrink-0 inline-flex items-center rounded-full font-semibold"
-           style="background: var(--error-700); color: var(--text-inverse); padding: 0 18px; height: 36px;"
-           href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}">Reconnect</a>
+           style="background: var(--error-700); color: var(--text-on-fill); padding: 0 18px; height: 36px;"
+           href="{% url 'channels:detail' workspace_id=request.workspace.id connection_id=row.connection.id %}">{% translate "Reconnect" %}</a>
     </div>
     {% endfor %}
 
@@ -73,7 +73,8 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                     <div class="text-[13px]" style="color: var(--text-tertiary);">{{ row.label }}</div>
                 </div>
                 {% if row.settings_url %}
-                <a class="btn-icon-round flex-shrink-0" href="{{ row.settings_url }}" aria-label="Settings for {{ row.connection.display_name }}">
+                {% blocktranslate asvar settings_for_label with name=row.connection.display_name %}Settings for {{ name }}{% endblocktranslate %}
+                <a class="btn-icon-round flex-shrink-0" href="{{ row.settings_url }}" aria-label="{{ settings_for_label }}">
                     {% include "partials/_nav_icon.html" with name="settings" icon_size=16 %}
                 </a>
                 {% endif %}
@@ -85,8 +86,7 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
 
             {% if not row.adapter_ready %}
             <p class="text-xs mt-2" style="color: var(--text-ghost);">
-                Guided setup for {{ row.label }} is still on the way. The connection holds its
-                webhook URL and secret, and starts working when the adapter ships.
+                {% blocktranslate with label=row.label %}Guided setup for {{ label }} is still on the way. The connection holds its webhook URL and secret, and starts working when the adapter ships.{% endblocktranslate %}
             </p>
             {% endif %}
 
@@ -96,10 +96,10 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                     {% csrf_token %}
                     {% if row.connection.status == "disabled" %}
                     <input type="hidden" name="status" value="active">
-                    <button type="submit" class="btn-pill-secondary btn-pill-sm">Turn on</button>
+                    <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Turn on" %}</button>
                     {% else %}
                     <input type="hidden" name="status" value="disabled">
-                    <button type="submit" class="btn-pill-secondary btn-pill-sm">Turn off</button>
+                    <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Turn off" %}</button>
                     {% endif %}
                 </form>
                 {% comment %}
@@ -113,17 +113,17 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                       @submit="if (!window.confirm('Disconnect {{ row.connection.display_name|escapejs }}? This cannot be undone. Turning it off keeps everything instead.')) $event.preventDefault()"
                       action="{% url 'channels:delete' workspace_id=request.workspace.id connection_id=row.connection.id %}">
                     {% csrf_token %}
-                    <button type="submit" class="btn-danger-link">Disconnect</button>
+                    <button type="submit" class="btn-danger-link">{% translate "Disconnect" %}</button>
                 </form>
             </div>
         </div>
         {% empty %}
         <div class="empty-state md:col-span-2">
-            <p class="empty-state-title">No channels connected yet</p>
+            <p class="empty-state-title">{% translate "No channels connected yet" %}</p>
             <p class="empty-state-body">
-                Connect the first one and messages start arriving in your inbox.
+                {% translate "Connect the first one and messages start arriving in your inbox." %}
             </p>
-            <a class="btn-pill-secondary btn-pill-sm mt-4" href="{% url 'channels:create' workspace_id=request.workspace.id %}">Connect a channel</a>
+            <a class="btn-pill-secondary btn-pill-sm mt-4" href="{% url 'channels:create' workspace_id=request.workspace.id %}">{% translate "Connect a channel" %}</a>
         </div>
         {% endfor %}
 
@@ -135,16 +135,16 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                 <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
             </span>
             <span>
-                <span class="block text-[15px] font-bold" style="color: var(--text-primary);">Add another channel</span>
-                <span class="block text-[13px]" style="color: var(--text-tertiary);">WhatsApp, Messenger or email</span>
+                <span class="block text-[15px] font-bold" style="color: var(--text-primary);">{% translate "Add another channel" %}</span>
+                <span class="block text-[13px]" style="color: var(--text-tertiary);">{% translate "WhatsApp, Messenger or email" %}</span>
             </span>
         </a>
         {% endif %}
     </div>
 
-    <h2 class="section-title">Available to connect</h2>
+    <h2 class="section-title">{% translate "Available to connect" %}</h2>
     <p class="text-sm mt-1 mb-4" style="color: var(--text-tertiary);">
-        Each one takes a few minutes and we walk you through it.
+        {% translate "Each one takes a few minutes and we walk you through it." %}
     </p>
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {% for platform in platforms %}
@@ -159,9 +159,9 @@ is already standing. (The redesign's fifth principle: no ids in the UI.)
                 {% endif %}
             </span>
             {% if platform.connect_url %}
-            <a class="text-[13px] font-semibold flex-shrink-0 underline underline-offset-2" style="color: var(--text-primary);" href="{{ platform.connect_url }}">Set up</a>
+            <a class="text-[13px] font-semibold flex-shrink-0 underline underline-offset-2" style="color: var(--text-primary);" href="{{ platform.connect_url }}">{% translate "Set up" %}</a>
             {% else %}
-            <span class="text-[13px] flex-shrink-0" style="color: var(--text-ghost);">Soon</span>
+            <span class="text-[13px] flex-shrink-0" style="color: var(--text-ghost);">{% translate "Soon" %}</span>
             {% endif %}
         </div>
         {% endfor %}

@@ -1,4 +1,4 @@
-{% load tz %}{% comment %}
+{% load i18n tz %}{% comment %}
 One step of the composer, the stepper that navigates between them, and the
 summary panel beside them (HANDOFF §3, Broadcasts).
 
@@ -15,7 +15,7 @@ parameter. The four includes are spelled out for the same reason.
   `step_labels` rather than the raw names: the fourth step is stored as
   "content" and read as "Message".
 {% endcomment %}
-<ol class="stepper mb-6" aria-label="Composer steps">
+<ol class="stepper mb-6" aria-label="{% translate 'Composer steps' %}">
     {% for row in step_rows %}
     {% if not forloop.first %}<li class="stepper-link{% if row.done %} is-done{% endif %}" aria-hidden="true"></li>{% endif %}
     <li>
@@ -28,7 +28,7 @@ parameter. The four includes are spelled out for the same reason.
         <span class="stepper-index">
             {% if row.done and not row.current %}
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-            <span class="sr-only">Done:</span>
+            <span class="sr-only">{% translate "Done:" %}</span>
             {% else %}{{ row.index }}{% endif %}
         </span>
         <span class="stepper-label">{{ row.label }}</span>
@@ -58,25 +58,25 @@ parameter. The four includes are spelled out for the same reason.
   is enforced again, server-side, by schedule_broadcast at the moment of
   sending — and each has a word beside its mark, never colour alone.
 {% endcomment %}
-<aside class="wizard-aside" aria-label="Summary">
+<aside class="wizard-aside" aria-label="{% translate 'Summary' %}">
     <div class="side-panel">
-        <p class="side-panel-title">Summary</p>
+        <p class="side-panel-title">{% translate "Summary" %}</p>
         <dl class="summary-list">
-            <dt>Channel</dt>
+            <dt>{% translate "Channel" %}</dt>
             <dd>{{ broadcast.channel_connection.display_name|default:"—" }}</dd>
-            <dt>Audience</dt>
-            <dd>{% if summary_preview %}{% if broadcast.segment %}{{ broadcast.segment.name }} · {% endif %}{{ summary_preview.eligible }} will receive it{% else %}—{% endif %}</dd>
-            <dt>Send</dt>
-            <dd>{% if broadcast.scheduled_at %}{{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:"j M, H:i" }}{% elif broadcast.send_time_chosen %}Now{% else %}—{% endif %}</dd>
+            <dt>{% translate "Audience" %}</dt>
+            <dd>{% if summary_preview %}{% if broadcast.segment %}{{ broadcast.segment.name }} · {% endif %}{% blocktranslate with count=summary_preview.eligible %}{{ count }} will receive it{% endblocktranslate %}{% else %}—{% endif %}</dd>
+            <dt>{% translate "Send" %}</dt>
+            <dd>{% if broadcast.scheduled_at %}{{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:"j M, H:i" }}{% elif broadcast.send_time_chosen %}{% translate "Now" %}{% else %}—{% endif %}</dd>
         </dl>
     </div>
     <div class="side-panel">
-        <p class="side-panel-title">Compliance checks</p>
+        <p class="side-panel-title">{% translate "Compliance checks" %}</p>
         <ul class="check-list">
             {% for check in checks %}
             <li class="check-item {% if check.ok %}is-ok{% else %}is-todo{% endif %}">
                 <span class="check-mark" aria-hidden="true">{% if check.ok %}✓{% else %}!{% endif %}</span>
-                <span><span class="sr-only">{% if check.ok %}Done:{% else %}Not yet:{% endif %}</span> {{ check.label }}</span>
+                <span><span class="sr-only">{% if check.ok %}{% translate "Done:" %}{% else %}{% translate "Not yet:" %}{% endif %}</span> {{ check.label }}</span>
             </li>
             {% endfor %}
         </ul>
@@ -84,11 +84,11 @@ parameter. The four includes are spelled out for the same reason.
     <form class="mt-4 pt-4" style="border-top: 1px solid var(--divider);"
           hx-post="{% url 'broadcasts:delete' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
           hx-swap="none"
-          hx-confirm="Delete this draft? Nothing has been sent, and this cannot be undone."
+          hx-confirm="{% translate 'Delete this draft? Nothing has been sent, and this cannot be undone.' %}"
           @htmx:after-request="if (event.detail.successful) window.location = '{% url 'broadcasts:list' workspace_id=request.workspace.id %}'"
           x-data>
         {% csrf_token %}
-        <button type="submit" class="btn-danger-link">Delete draft</button>
+        <button type="submit" class="btn-danger-link">{% translate "Delete draft" %}</button>
     </form>
 </aside>
 </div>

@@ -1,4 +1,5 @@
 {% extends "layouts/settings.html" %}
+{% load i18n %}
 {% comment %}
 API keys, in the shape contacts/tag_list.html established.
 
@@ -11,43 +12,45 @@ No named action on a row: the only thing you can do to a key is revoke it, and a
 destructive action is the one thing that must not be the row's obvious button.
 {% endcomment %}
 {% load common_extras %}
-{% block title %}API keys · BrightBean Chat{% endblock %}
+{% block title %}{% translate "API keys" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
     <div class="page-header">
         <div class="page-header-text">
-            <h1 class="page-title">API keys</h1>
+            <h1 class="page-title">{% translate "API keys" %}</h1>
             <p class="page-lede">
-                A key authenticates calls to the <a href="{% url 'api_docs' %}">public API</a> as one
-                workspace. Keys are organization-level because they span every workspace in the
-                organization, but each key acts inside exactly one.
+                {% url 'api_docs' as api_docs_url %}
+                {% blocktranslate %}A key authenticates calls to the <a href="{{ api_docs_url }}">public API</a> as one workspace. Keys are organization-level because they span every workspace in the organization, but each key acts inside exactly one.{% endblocktranslate %}
             </p>
         </div>
         {% if workspaces %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('issue-key')">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} Issue a key</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('issue-key')">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} {% translate "Issue a key" %}</button>
         {% endif %}
     </div>
 
     {% if workspaces %}
-    {% modal "issue-key" title="Issue a key" open=error size="lg" %}
+    {% translate "Issue a key" as issue_key_title %}
+    {% modal "issue-key" title=issue_key_title open=error size="lg" %}
     <form method="post" action="{% url 'api_keys_issue' %}">
         {% csrf_token %}
         <div class="bb-modal-body">
         {% if error %}<div class="alert-error mb-5">{{ error }}</div>{% endif %}
         <div class="field">
-            <label class="field-label" for="key-name">Name</label>
+            <label class="field-label" for="key-name">{% translate "Name" %}</label>
             <input class="form-input-styled" id="key-name" type="text" name="name" maxlength="100" required autofocus placeholder="Zapier scenario" value="{{ submitted_name }}">
         </div>
         <div class="field">
-            <label class="field-label" for="key-workspace">Workspace</label>
+            <label class="field-label" for="key-workspace">{% translate "Workspace" %}</label>
+            <span class="bb-select-wrap" style="width: 20rem;">
             <select class="form-input-styled bb-select" id="key-workspace" name="workspace" required>
                 {% for workspace in workspaces %}<option value="{{ workspace.id }}" {% if workspace.id|stringformat:'s' == submitted_workspace %}selected{% endif %}>{{ workspace.name }}</option>{% endfor %}
             </select>
+            </span>
         </div>
         <div class="field">
-            <span class="field-label">Scopes</span>
+            <span class="field-label">{% translate "Scopes" %}</span>
             {% for value, label in scope_choices %}
             <label class="field-check" for="scope-{{ value }}">
                 <input class="bb-checkbox" id="scope-{{ value }}" type="checkbox" name="scopes" value="{{ value }}" {% if value in submitted_scopes %}checked{% endif %}>
@@ -55,15 +58,13 @@ destructive action is the one thing that must not be the row's obvious button.
             </label>
             {% endfor %}
             <p class="section-note">
-                <strong>Read</strong> lists contacts, tags, fields and flows. <strong>Write</strong>
-                adds creating and updating contacts, tagging, setting field values, starting flows
-                and sending messages. No scope grants channel, member or key management.
+                {% blocktranslate %}<strong>Read</strong> lists contacts, tags, fields and flows. <strong>Write</strong> adds creating and updating contacts, tagging, setting field values, starting flows and sending messages. No scope grants channel, member or key management.{% endblocktranslate %}
             </p>
         </div>
         </div>
         <div class="bb-modal-actions">
-            <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-            <button type="submit" class="btn-pill-primary">Issue key</button>
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Issue key" %}</button>
         </div>
     </form>
     {% endmodal %}
@@ -74,13 +75,11 @@ destructive action is the one thing that must not be the row's obvious button.
     the difference between a fixable state and an empty dropdown.
     {% endcomment %}
     <div class="alert-info mb-5">
-        You are an organization admin, but you do not hold the <code>manage_api_keys</code>
-        permission in any workspace, so there is nowhere to issue a key. A workspace admin can grant
-        it.
+        {% blocktranslate %}You are an organization admin, but you do not hold the <code>manage_api_keys</code> permission in any workspace, so there is nowhere to issue a key. A workspace admin can grant it.{% endblocktranslate %}
     </div>
     {% endif %}
 
-    <h2 class="section-title mb-3">Existing keys</h2>
+    <h2 class="section-title mb-3">{% translate "Existing keys" %}</h2>
     {% if rows %}
     <div class="card overflow-hidden">
         {% for row in rows %}
@@ -90,7 +89,7 @@ destructive action is the one thing that must not be the row's obvious button.
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2.5">
                     <span class="list-row-title truncate">{{ row.key.name }}</span>
-                    {% if row.key.is_active %}<span class="status-pill status-pill-active">Active</span>{% else %}<span class="status-pill status-pill-disabled">Revoked</span>{% endif %}
+                    {% if row.key.is_active %}<span class="status-pill status-pill-active">{% translate "Active" %}</span>{% else %}<span class="status-pill status-pill-disabled">{% translate "Revoked" %}</span>{% endif %}
                 </div>
                 {% comment %}
                 The prefix, never the key. Nothing can render the value again —
@@ -98,12 +97,13 @@ destructive action is the one thing that must not be the row's obvious button.
                 {% endcomment %}
                 <div class="list-row-meta">
                     {{ row.workspace.name }} · <code>{{ row.key.display_handle }}</code> · {{ row.scopes }} ·
-                    {% if row.key.is_active %}last used {{ row.key.last_used_at|default:"never" }}{% else %}revoked {{ row.key.revoked_at }}{% endif %}
+                    {% if row.key.is_active %}{% if row.key.last_used_at %}{% blocktranslate with last_used=row.key.last_used_at %}last used {{ last_used }}{% endblocktranslate %}{% else %}{% translate "never used" %}{% endif %}{% else %}{% blocktranslate with revoked_at=row.key.revoked_at %}revoked {{ revoked_at }}{% endblocktranslate %}{% endif %}
                 </div>
             </div>
 
             {% if row.key.is_active %}
-            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ row.key.name }}">
+            {% blocktranslate asvar key_actions_label with name=row.key.name %}More actions for {{ name }}{% endblocktranslate %}
+            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ key_actions_label }}">
                 <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
             </button>
             <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
@@ -114,7 +114,7 @@ destructive action is the one thing that must not be the row's obvious button.
                 <form method="post" action="{% url 'api_keys_revoke' api_key_id=row.key.id %}"
                       @submit="if (!window.confirm('Revoke {{ row.key.name|escapejs }}? Anything using it stops working straight away, and it cannot be turned back on.')) $event.preventDefault()">
                     {% csrf_token %}
-                    <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">Revoke this key</button>
+                    <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">{% translate "Revoke this key" %}</button>
                 </form>
             </div>
             {% endif %}
@@ -123,9 +123,9 @@ destructive action is the one thing that must not be the row's obvious button.
     </div>
     {% else %}
     <div class="empty-state">
-        <p class="empty-state-title">No keys yet</p>
+        <p class="empty-state-title">{% translate "No keys yet" %}</p>
         <p class="empty-state-body">
-      Let Zapier, scripts, or your own backend access this workspace.
+            {% translate "Let Zapier, scripts, or your own backend access this workspace." %}
         </p>
     </div>
     {% endif %}

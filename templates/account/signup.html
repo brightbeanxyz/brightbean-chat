@@ -1,15 +1,16 @@
 {% extends "base.html" %}
-{% load socialaccount %}
+{% load i18n socialaccount %}
 
-{% block title %}Create your account · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Create your account" %} · BrightBean Chat{% endblock %}
 
 {% block auth_content %}
 <div class="auth-card">
-  {% include "partials/_auth_brand.html" with heading="Create your account" %}
+  {% translate "Create your account" as signup_heading %}
+  {% include "partials/_auth_brand.html" with heading=signup_heading %}
 
   {% if invited_email_locked %}
     <div class="alert-info mb-4">
-      You were invited to join an organization. Signing up here adds you to it.
+      {% translate "You were invited to join an organization. Signing up here adds you to it." %}
     </div>
   {% endif %}
 
@@ -19,10 +20,10 @@
       {% provider_login_url provider process="login" as provider_url %}
       <form method="post" action="{{ provider_url }}">
         {% csrf_token %}
-        <button type="submit" class="btn-social">Continue with {{ provider.name }}</button>
+        <button type="submit" class="btn-social">{% blocktranslate with provider_name=provider.name %}Continue with {{ provider_name }}{% endblocktranslate %}</button>
       </form>
     {% endfor %}
-    <div class="divider-text my-5">or</div>
+    <div class="divider-text my-5">{% translate "or" %}</div>
   {% endif %}
 
   <form method="post" action="{% url 'account_signup' %}">
@@ -49,11 +50,12 @@
       </div>
     {% endfor %}
     {{ redirect_field }}
-    <button type="submit" class="btn-brand mt-1">Create account</button>
+    <button type="submit" class="btn-brand mt-1">{% translate "Create account" %}</button>
   </form>
 
+  {% url 'account_login' as login_url %}
   <p class="text-center text-sm mt-5" style="color: var(--text-secondary);">
-    Already have an account? <a href="{% url 'account_login' %}" class="font-semibold underline underline-offset-2" style="color: var(--text-primary);">Sign in</a>.
+    {% blocktranslate %}Already have an account? <a href="{{ login_url }}" class="font-semibold underline underline-offset-2" style="color: var(--text-primary);">Sign in</a>.{% endblocktranslate %}
   </p>
 </div>
 {% endblock %}

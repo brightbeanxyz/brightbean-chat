@@ -20,6 +20,8 @@ from decimal import Decimal
 from typing import Any
 
 from django import forms
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 
 from apps.channels.models import (
     ChannelConnection,
@@ -55,21 +57,21 @@ class WhatsAppConnectForm(forms.Form):
     """
 
     waba_id = forms.CharField(
-        label="WhatsApp Business Account ID",
+        label=_("WhatsApp Business Account ID"),
         max_length=64,
-        help_text="From Business Manager → WhatsApp Accounts. Digits only.",
+        help_text=_("From Business Manager → WhatsApp Accounts. Digits only."),
     )
     phone_number_id = forms.CharField(
-        label="Phone number ID",
+        label=_("Phone number ID"),
         max_length=64,
-        help_text="The API id of the number, not the number itself.",
+        help_text=_("The API id of the number, not the number itself."),
     )
     access_token = forms.CharField(
-        label="Permanent access token",
+        label=_("Permanent access token"),
         # A password widget, and autocomplete off: this value is a live
         # credential and must not end up in the browser's saved form data.
         widget=forms.PasswordInput(render_value=False, attrs={"autocomplete": "off", "spellcheck": "false"}),
-        help_text="A system user token with whatsapp_business_messaging and whatsapp_business_management.",
+        help_text=_("A system user token with whatsapp_business_messaging and whatsapp_business_management."),
     )
 
     def clean_waba_id(self) -> str:
@@ -81,13 +83,13 @@ class WhatsAppConnectForm(forms.Form):
     def _digits(self, field: str) -> str:
         value = (self.cleaned_data.get(field) or "").strip()
         if not value.isdigit():
-            raise forms.ValidationError("This is a numeric id from Business Manager.")
+            raise forms.ValidationError(_("This is a numeric id from Business Manager."))
         return value
 
     def clean_access_token(self) -> str:
         value = (self.cleaned_data.get("access_token") or "").strip()
         if not value:
-            raise forms.ValidationError("Paste the system user token.")
+            raise forms.ValidationError(_("Paste the system user token."))
         return value
 
 
@@ -102,38 +104,38 @@ class WhatsAppTemplateForm(forms.ModelForm):
     """
 
     header_text = forms.CharField(
-        label="Header",
+        label=_("Header"),
         required=False,
         max_length=MAX_HEADER_CHARS,
-        help_text=f"Optional, up to {MAX_HEADER_CHARS} characters. May contain {{{{1}}}}.",
+        help_text=_("Optional, up to %(max)s characters. May contain {{1}}.") % {"max": MAX_HEADER_CHARS},
     )
     body_text = forms.CharField(
-        label="Body",
+        label=_("Body"),
         widget=forms.Textarea(attrs={"rows": 5}),
         max_length=MAX_BODY_CHARS,
-        help_text=f"Up to {MAX_BODY_CHARS} characters. Use {{{{1}}}}, {{{{2}}}} … for variables.",
+        help_text=_("Up to %(max)s characters. Use {{1}}, {{2}} … for variables.") % {"max": MAX_BODY_CHARS},
     )
     footer_text = forms.CharField(
-        label="Footer",
+        label=_("Footer"),
         required=False,
         max_length=MAX_FOOTER_CHARS,
-        help_text=f"Optional, up to {MAX_FOOTER_CHARS} characters. No variables allowed here.",
+        help_text=_("Optional, up to %(max)s characters. No variables allowed here.") % {"max": MAX_FOOTER_CHARS},
     )
-    url_button_text = forms.CharField(label="Link button label", required=False, max_length=MAX_BUTTON_TEXT_CHARS)
+    url_button_text = forms.CharField(label=_("Link button label"), required=False, max_length=MAX_BUTTON_TEXT_CHARS)
     url_button_url = forms.URLField(
-        label="Link button URL",
+        label=_("Link button URL"),
         required=False,
         assume_scheme="https",
-        help_text="May end in a variable, e.g. https://example.com/orders/{{1}}.",
+        help_text=_("May end in a variable, e.g. https://example.com/orders/{{1}}."),
     )
 
     class Meta:
         model = WhatsAppTemplate
         fields = ["channel_connection", "name", "language", "category"]
-        labels = {"channel_connection": "WhatsApp number", "name": "Template name"}
+        labels = {"channel_connection": _("WhatsApp number"), "name": _("Template name")}
         help_texts = {
-            "name": "Lowercase letters, digits and underscores. Meta shows this name in its review queue.",
-            "language": "Meta's language code, e.g. en_US.",
+            "name": _("Lowercase letters, digits and underscores. Meta shows this name in its review queue."),
+            "language": _("Meta's language code, e.g. en_US."),
         }
 
     def __init__(self, *args: Any, workspace: Any = None, **kwargs: Any) -> None:
@@ -151,8 +153,11 @@ class WhatsAppTemplateForm(forms.ModelForm):
             else ChannelConnection.objects.none()
         )
         for index in range(QUICK_REPLY_SLOTS):
+            # gettext(), not the module-level gettext_lazy above: this runs per
+            # form instantiation, inside a request, so the active language is
+            # already correct.
             self.fields[f"quick_reply_{index}"] = forms.CharField(
-                label=f"Quick reply {index + 1}",
+                label=gettext("Quick reply %(number)s") % {"number": index + 1},
                 required=False,
                 max_length=MAX_BUTTON_TEXT_CHARS,
             )
@@ -195,7 +200,7 @@ class WhatsAppTemplateForm(forms.ModelForm):
         """
         value = (self.cleaned_data.get("footer_text") or "").strip()
         if value and _SLOT_RE.search(value):
-            raise forms.ValidationError("A footer cannot contain variables. Move it into the body.")
+            raise forms.ValidationError(_("A footer cannot contain variables. Move it into the body."))
         return value
 
     def clean_name(self) -> str:
@@ -203,7 +208,7 @@ class WhatsAppTemplateForm(forms.ModelForm):
 
         name = (self.cleaned_data.get("name") or "").strip().lower()
         if not re.match(TEMPLATE_NAME_PATTERN, name):
-            raise forms.ValidationError("Use lowercase letters, digits and underscores only.")
+            raise forms.ValidationError(_("Use lowercase letters, digits and underscores only."))
         return name
 
     def clean(self) -> dict[str, Any]:
@@ -214,7 +219,7 @@ class WhatsAppTemplateForm(forms.ModelForm):
         text = cleaned.get("url_button_text") or ""
         url = cleaned.get("url_button_url") or ""
         if bool(text) != bool(url):
-            raise forms.ValidationError("A link button needs both a label and a URL.")
+            raise forms.ValidationError(_("A link button needs both a label and a URL."))
         return cleaned
 
     def body_structure(self) -> dict[str, Any]:
@@ -262,15 +267,15 @@ class WhatsAppCostHintForm(forms.ModelForm):
         model = WhatsAppCostHint
         fields = ["currency", "marketing", "utility", "authentication"]
         labels = {
-            "marketing": "Marketing, per message",
-            "utility": "Utility, per message",
-            "authentication": "Authentication, per message",
+            "marketing": _("Marketing, per message"),
+            "utility": _("Utility, per message"),
+            "authentication": _("Authentication, per message"),
         }
 
     def clean_currency(self) -> str:
         value = (self.cleaned_data.get("currency") or "").strip().upper()
         if len(value) != 3 or not value.isalpha():
-            raise forms.ValidationError("Use a three-letter ISO 4217 code, e.g. USD.")
+            raise forms.ValidationError(_("Use a three-letter ISO 4217 code, e.g. USD."))
         return value
 
     def _clean_amount(self, field: str) -> Decimal:
@@ -278,7 +283,7 @@ class WhatsAppCostHintForm(forms.ModelForm):
         if value is None:
             return Decimal("0")
         if value < 0:
-            raise forms.ValidationError("A price cannot be negative.")
+            raise forms.ValidationError(_("A price cannot be negative."))
         return value
 
     def clean_marketing(self) -> Decimal:

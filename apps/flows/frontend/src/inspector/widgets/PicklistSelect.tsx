@@ -11,20 +11,18 @@
  * Flows and members are different — those are ids, and inventing one produces a
  * reference to nothing. Those stay closed lists.
  */
+import i18n from "../../i18n";
 import type { Picklists } from "../../schema/types";
 import { FieldShell, fieldId, type FieldProps } from "../fields";
 import { useField } from "../FieldContext";
 
 type ListKey = keyof Picklists;
 
-const EMPTY_COPY: Partial<Record<ListKey, string>> = {
-  tags: "Tags arrive with the contacts app. Type a name to use it now.",
-  custom_fields: "Custom fields arrive with the contacts app. Type a name to use it now.",
-  sequences: "Sequences arrive with the sequences app. Type a name to use it now.",
-  flows: "This workspace has no other flows yet.",
-  members: "No workspace members to choose from.",
-  connections: "No channels are connected yet.",
-};
+function emptyCopy(list: ListKey): string | undefined {
+  const key = `picklist.empty.${list}`;
+  const rendered = i18n.t(key);
+  return rendered === key ? undefined : rendered;
+}
 
 export function picklistSelect(list: ListKey, { creatable }: { creatable: boolean }) {
   return function PicklistSelect(props: FieldProps) {
@@ -54,21 +52,22 @@ export function picklistSelect(list: ListKey, { creatable }: { creatable: boolea
               </option>
             ))}
           </datalist>
-          {options.length === 0 ? <p className="fb-field-help">{EMPTY_COPY[list]}</p> : null}
+          {options.length === 0 ? <p className="fb-field-help">{emptyCopy(list)}</p> : null}
         </FieldShell>
       );
     }
 
     return (
       <FieldShell {...props}>
-        <select
-          id={fieldId(path)}
-          className="bb-select"
-          value={current}
-          disabled={readOnly}
-          onChange={(event) => set(path, event.target.value, `pick:${path.join(".")}`)}
-        >
-          <option value="">Choose…</option>
+        <span className="bb-select-wrap">
+          <select
+            id={fieldId(path)}
+            className="bb-select"
+            value={current}
+            disabled={readOnly}
+            onChange={(event) => set(path, event.target.value, `pick:${path.join(".")}`)}
+          >
+          <option value="">{i18n.t("inspector.choose")}</option>
           {options.map((option) => (
             <option key={option.id} value={option.id}>
               {option.label}
@@ -83,9 +82,10 @@ export function picklistSelect(list: ListKey, { creatable }: { creatable: boolea
               "flow_id (no longer available)", and an id tells the reader
               nothing they can act on. What they need to know is that this one
               points at something gone, and to pick again. */}
-          {current && !known ? <option value={current}>Whatever this pointed at has gone</option> : null}
-        </select>
-        {options.length === 0 ? <p className="fb-field-help">{EMPTY_COPY[list]}</p> : null}
+          {current && !known ? <option value={current}>{i18n.t("picklist.gone")}</option> : null}
+          </select>
+        </span>
+        {options.length === 0 ? <p className="fb-field-help">{emptyCopy(list)}</p> : null}
       </FieldShell>
     );
   };
@@ -113,7 +113,9 @@ export function MemberMultiSelect(props: FieldProps) {
 
   return (
     <FieldShell {...props}>
-      {picklists.members.length === 0 ? <p className="fb-field-help">No workspace members to choose from.</p> : null}
+      {picklists.members.length === 0 ? (
+        <p className="fb-field-help">{i18n.t("picklist.empty.members")}</p>
+      ) : null}
       {picklists.members.map((member) => (
         <label key={member.id} className="flex items-center gap-2 text-xs mb-1">
           <input
@@ -129,7 +131,7 @@ export function MemberMultiSelect(props: FieldProps) {
       {orphaned.map((id) => (
         <label key={id} className="flex items-center gap-2 text-xs mb-1">
           <input type="checkbox" className="bb-checkbox" checked disabled={readOnly} onChange={() => toggle(id)} />
-          <span className="fb-empty">{id} (no longer a member)</span>
+          <span className="fb-empty">{i18n.t("picklist.noMemberRow", { id })}</span>
         </label>
       ))}
     </FieldShell>

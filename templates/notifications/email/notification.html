@@ -1,4 +1,4 @@
-{% load static %}{% comment %}
+{% load i18n static %}{% comment %}
 Ported from BrightBean Studio's notifications/email/notification.html.
 
 Table layout and inline styles are not a stylistic choice: Outlook's Word
@@ -18,8 +18,8 @@ also needs an absolute URL, because an email has no origin to resolve
 front of the static path. alt is empty on purpose: the cell to its right
 already renders the wordmark as live text, so a described image would be
 read out twice, and a blocked image degrades to that text alone.
-{% endcomment %}<!DOCTYPE html>
-<html lang="en">
+{% endcomment %}{% get_current_language as LANGUAGE_CODE %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -55,12 +55,12 @@ read out twice, and a blocked image degrades to that text alone.
         <p style="margin:0 0 20px;font-size:15px;color:#57534E;line-height:1.65;">{{ notification.body }}</p>
         {% endif %}
         {% if notification.payload.workspace_name %}
-        <p style="margin:0 0 20px;font-size:13px;color:#A8A29E;">Workspace: {{ notification.payload.workspace_name }}</p>
+        <p style="margin:0 0 20px;font-size:13px;color:#A8A29E;">{% blocktranslate with workspace_name=notification.payload.workspace_name %}Workspace: {{ workspace_name }}{% endblocktranslate %}</p>
         {% endif %}
         <table role="presentation" cellpadding="0" cellspacing="0" border="0">
           <tr>
             <td style="border-radius:9999px;background-color:#F97316;text-align:center;">
-              <a href="{{ action_url }}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 24px;color:#FFFFFF;font-size:13px;font-weight:600;text-decoration:none;border-radius:9999px;">View it</a>
+              <a href="{{ action_url }}" target="_blank" rel="noopener" style="display:inline-block;padding:10px 24px;color:#FFFFFF;font-size:13px;font-weight:600;text-decoration:none;border-radius:9999px;">{% translate "View it" %}</a>
             </td>
           </tr>
         </table>
@@ -70,8 +70,8 @@ read out twice, and a blocked image degrades to that text alone.
     <tr>
       <td style="padding:20px 32px 28px;border-top:1px solid #F5F5F4;">
         <p style="margin:0;font-size:12px;color:#A8A29E;line-height:1.5;">
-          You are receiving this because notification emails are on for your account.
-          <a href="{{ settings_url }}" style="color:#F97316;text-decoration:underline;">Turn them off</a>.
+          {% blocktranslate %}You are receiving this because notification emails are on for your account.
+          <a href="{{ settings_url }}" style="color:#F97316;text-decoration:underline;">Turn them off</a>.{% endblocktranslate %}
         </p>
       </td>
     </tr>

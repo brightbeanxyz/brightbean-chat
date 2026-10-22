@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load static %}
+{% load static i18n %}
 {% comment %}
 One flow's stats page (SPEC §18: "Flow detail page renders totals and per-node
 overlay in the builder" — the overlay is the builder's; this is the page).
@@ -21,14 +21,14 @@ this issue), so nothing here reaches a CDN.
     <div>
         <h1 class="page-title">{{ flow.name }}</h1>
         <p class="text-sm" style="color: var(--text-secondary);">
-            Counters for the last {{ days }} days.
+            {% blocktranslate count count=days %}Counters for the last {{ count }} day.{% plural %}Counters for the last {{ count }} days.{% endblocktranslate %}
             <span class="status-pill status-pill-{{ flow.status }}">{{ flow.get_status_display }}</span>
         </p>
     </div>
     <div class="flex items-center gap-2">
         {% include "analytics/_range.html" %}
-        <a class="btn-outline btn-inline" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}?days={{ days }}">All analytics</a>
-        <a class="btn-outline btn-inline" href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}">Open in builder</a>
+        <a class="btn-outline btn-inline" href="{% url 'analytics:overview' workspace_id=request.workspace.id %}?days={{ days }}">{% translate "All analytics" %}</a>
+        <a class="btn-outline btn-inline" href="{% url 'flows:edit' workspace_id=request.workspace.id flow_id=flow.id %}">{% translate "Open in builder" %}</a>
     </div>
 </div>
 {% endblock %}
@@ -38,29 +38,29 @@ this issue), so nothing here reaches a CDN.
 
 <div class="an-panel">
     <div class="an-panel-head">
-        <span class="an-panel-title">Trend</span>
-        <span class="an-hint">One point per UTC day. Preview runs are not counted.</span>
+        <span class="an-panel-title">{% translate "Trend" %}</span>
+        <span class="an-hint">{% translate "One point per UTC day. Preview runs are not counted." %}</span>
     </div>
-    <div class="an-chart"><canvas id="flow-trend" role="img" aria-label="Daily sends, deliveries, failures and clicks"></canvas></div>
+    <div class="an-chart"><canvas id="flow-trend" role="img" aria-label="{% translate 'Daily sends, deliveries, failures and clicks' %}"></canvas></div>
 </div>
 
 <div class="an-panel">
     <div class="an-panel-head">
-        <span class="an-panel-title">Steps</span>
-        <span class="an-hint">A step you deleted keeps its numbers. Those messages still went out.</span>
+        <span class="an-panel-title">{% translate "Steps" %}</span>
+        <span class="an-hint">{% translate "A step you deleted keeps its numbers. Those messages still went out." %}</span>
     </div>
     {% if node_rows %}
     <div style="overflow-x: auto;">
         <table class="an-table">
             <thead>
                 <tr>
-                    <th scope="col">Step</th>
-                    <th scope="col" class="an-num">Sent</th>
-                    <th scope="col" class="an-num">Delivered</th>
-                    <th scope="col" class="an-num">Failed</th>
-                    <th scope="col" class="an-num">Clicked</th>
+                    <th scope="col">{% translate "Step" %}</th>
+                    <th scope="col" class="an-num">{% translate "Sent" %}</th>
+                    <th scope="col" class="an-num">{% translate "Delivered" %}</th>
+                    <th scope="col" class="an-num">{% translate "Failed" %}</th>
+                    <th scope="col" class="an-num">{% translate "Clicked" %}</th>
                     {# Clicks per send, not a click-through rate — it can exceed 100%. #}
-                    <th scope="col" class="an-num">Clicks/send</th>
+                    <th scope="col" class="an-num">{% translate "Clicks/send" %}</th>
                 </tr>
             </thead>
             <tbody>
@@ -81,7 +81,7 @@ this issue), so nothing here reaches a CDN.
         </table>
     </div>
     {% else %}
-    <p class="an-hint">This flow has not sent anything in this range.</p>
+    <p class="an-hint">{% translate "This flow has not sent anything in this range." %}</p>
     {% endif %}
 </div>
 
@@ -90,23 +90,40 @@ this issue), so nothing here reaches a CDN.
 
 {% block extra_js %}
 <script src="{% static 'js/vendor/chart.umd.min.js' %}"></script>
+{% translate "Sent" as chart_label_sent %}
+{% translate "Delivered" as chart_label_delivered %}
+{% translate "Failed" as chart_label_failed %}
+{% translate "Clicked" as chart_label_clicked %}
 <script nonce="{{ request.csp_nonce }}">
   (function () {
     var payload = JSON.parse(document.getElementById("flow-trend-data").textContent);
     var canvas = document.getElementById("flow-trend");
     if (!canvas || typeof Chart === "undefined") { return; }
     // Read the theme's own tokens rather than hard-coding hexes: the palette is
-    // defined once in apps/theme/static_src/src/styles.css and a chart that ignored
+    // defined once in apps/theme/static_src/src/tokens.css and a chart that ignored
     // it would be the one element on the page that does not follow the theme.
-    var style = getComputedStyle(document.documentElement);
-    var token = function (name, fallback) { return (style.getPropertyValue(name) || fallback).trim(); };
+    // No hex fallbacks: tests/test_theme_tokens.py proves every name below is
+    // defined, and a fallback would only be a second copy of the palette to drift.
+    //
+    // Resolved through a hidden probe element, not getPropertyValue: a custom
+    // property's computed value is its own literal text (from Phase 2c on,
+    // "light-dark(#a, #b)"), never resolved to a real colour except where a
+    // real CSS property consumes it — setting probe.style.color to a var()
+    // reference, then reading getComputedStyle(probe).color, is where that happens.
+    var probe = document.createElement("span");
+    probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;";
+    document.body.appendChild(probe);
+    var token = function (name) {
+      probe.style.color = "var(" + name + ")";
+      return getComputedStyle(probe).color;
+    };
     var lines = [
-      { key: "sent", label: "Sent", color: token("--primary", "#F97316") },
-      { key: "delivered", label: "Delivered", color: token("--success-700", "#5F6B27") },
-      { key: "failed", label: "Failed", color: token("--error-700", "#B91C1C") },
-      { key: "clicked", label: "Clicked", color: token("--text-secondary", "#57534E") }
+      { key: "sent", label: "{{ chart_label_sent|escapejs }}", tokenName: "--primary", color: token("--primary") },
+      { key: "delivered", label: "{{ chart_label_delivered|escapejs }}", tokenName: "--success-700", color: token("--success-700") },
+      { key: "failed", label: "{{ chart_label_failed|escapejs }}", tokenName: "--error-700", color: token("--error-700") },
+      { key: "clicked", label: "{{ chart_label_clicked|escapejs }}", tokenName: "--text-secondary", color: token("--text-secondary") }
     ];
-    new Chart(canvas, {
+    var chart = new Chart(canvas, {
       type: "line",
       data: {
         labels: payload.labels,
@@ -132,6 +149,20 @@ this issue), so nothing here reaches a CDN.
           y: { beginAtZero: true, ticks: { precision: 0 } }
         }
       }
+    });
+
+    // *system* mode resolves color-scheme from the OS live, with no reload —
+    // a chart built once at load would otherwise go stale the instant the OS
+    // flips. Explicit light/dark mode needs no listener: color-scheme there
+    // comes from data-color-mode, not the OS, and nothing changes without a
+    // navigation, which already rebuilds the whole page.
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+      chart.data.datasets.forEach(function (dataset, i) {
+        var color = token(lines[i].tokenName);
+        dataset.borderColor = color;
+        dataset.backgroundColor = color;
+      });
+      chart.update();
     });
   })();
 </script>

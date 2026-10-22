@@ -24,6 +24,7 @@
  * closing the drawer updates this without a reload.
  */
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ApiError } from "../api/client";
 import { setTriggerEnabled } from "../api/flows";
@@ -35,6 +36,7 @@ function openDrawer() {
 }
 
 export function TriggerSection() {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const triggers = useBuilder((state) => state.triggers);
   const canEdit = useBuilder((state) => state.env.canEdit);
@@ -50,8 +52,8 @@ export function TriggerSection() {
     } catch (error) {
       showToast({
         tone: "error",
-        title: "Not changed",
-        body: error instanceof ApiError ? error.message : "The trigger could not be switched.",
+        title: t("triggerSection.notChanged"),
+        body: error instanceof ApiError ? error.message : t("triggerSection.triggerNotSwitched"),
       });
     } finally {
       setBusy(null);
@@ -66,14 +68,14 @@ export function TriggerSection() {
     // Highlighted when the canvas card is selected, the same way a step's row
     // highlights — so clicking either one shows you which is which.
     <section className={selected ? "fb-trigger-section is-selected" : "fb-trigger-section"}>
-      <h2 className="fb-trigger-heading">When it runs</h2>
+      <h2 className="fb-trigger-heading">{t("triggerSection.heading")}</h2>
 
       {triggers.length === 0 ? (
         <>
-          <p className="fb-trigger-empty">Nothing starts this flow yet, so it will not run.</p>
+          <p className="fb-trigger-empty">{t("triggerSection.emptyLong")}</p>
           {canEdit ? (
             <button type="button" className="btn-pill-secondary btn-pill-sm mt-2.5" onClick={openDrawer}>
-              Choose what starts it
+              {t("triggerSection.chooseWhatStartsIt")}
             </button>
           ) : null}
         </>
@@ -84,15 +86,18 @@ export function TriggerSection() {
               <li key={trigger.id} className={trigger.enabled ? "fb-trigger-row" : "fb-trigger-row is-off"}>
                 <span className="min-w-0 flex-1">
                   <span className="fb-trigger-name block">{trigger.type_label}</span>
-                  {!trigger.enabled ? <span className="fb-trigger-off">Switched off</span> : null}
+                  {!trigger.enabled ? <span className="fb-trigger-off">{t("triggerSection.switchedOff")}</span> : null}
                   <span className="fb-trigger-detail block">{trigger.summary}</span>
                 </span>
                 {canEdit && env.triggerEnabledUrl ? (
-                  <label className="switch mt-0.5" title={trigger.enabled ? "Switch off" : "Switch on"}>
+                  <label
+                    className="switch mt-0.5"
+                    title={trigger.enabled ? t("triggerSection.switchOff") : t("triggerSection.switchOn")}
+                  >
                     <input
                       type="checkbox"
                       role="switch"
-                      aria-label={`${trigger.type_label} is on`}
+                      aria-label={t("triggerSection.isOn", { name: trigger.type_label })}
                       checked={trigger.enabled}
                       disabled={busy !== null}
                       onChange={(event) => void flip(trigger.id, event.target.checked)}
@@ -106,19 +111,15 @@ export function TriggerSection() {
           {status === "offline" ? (
             // The list above still reads as "this is what starts it", and for
             // an offline flow none of it does — the toolbar pill is easy to miss.
-            <p className="fb-trigger-empty mt-2">
-              This flow is offline, so none of these start it. They will again once it is set live.
-            </p>
+            <p className="fb-trigger-empty mt-2">{t("triggerSection.offlineNote")}</p>
           ) : enabled.length === 0 ? (
             <p className="fb-trigger-empty mt-2">
-              {published
-                ? "This flow is published, but every trigger is off. It will not start until one is turned on."
-                : "Every trigger is off, so nothing reaches this flow yet."}
+              {published ? t("triggerSection.publishedAllOff") : t("triggerSection.allSwitchedOff")}
             </p>
           ) : null}
           {canEdit ? (
             <button type="button" className="fb-link-button mt-1" onClick={openDrawer}>
-              Manage triggers
+              {t("triggerSection.manageTriggers")}
             </button>
           ) : null}
         </>

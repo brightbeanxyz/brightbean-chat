@@ -20,6 +20,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.api.delivery import send_test_event
@@ -111,7 +112,7 @@ def webhook_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse
             "webhook": webhook,
             "plaintext": webhook.secret,
             "back_url": _detail_url(workspace_id, webhook.pk),
-            "heading": "Endpoint created",
+            "heading": gettext("Endpoint created"),
         },
     )
 
@@ -162,7 +163,7 @@ def webhook_update(request: WorkspaceRequest, workspace_id: str, webhook_id: str
     except ApiKeysError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, "Endpoint updated.")
+        messages.success(request, gettext("Endpoint updated."))
     return redirect(_detail_url(workspace_id, webhook.pk))
 
 
@@ -185,7 +186,7 @@ def webhook_rotate_secret(request: WorkspaceRequest, workspace_id: str, webhook_
             "webhook": webhook,
             "plaintext": plaintext,
             "back_url": _detail_url(workspace_id, webhook.pk),
-            "heading": "New signing secret",
+            "heading": gettext("New signing secret"),
         },
     )
 
@@ -202,9 +203,11 @@ def webhook_test(request: WorkspaceRequest, workspace_id: str, webhook_id: str) 
     webhook = _webhook_or_404(request, webhook_id)
     delivery = send_test_event(webhook)
     if delivery.succeeded:
-        messages.success(request, f"Test delivered. The endpoint answered {delivery.response_code}.")
+        messages.success(
+            request, gettext("Test delivered. The endpoint answered %(code)s.") % {"code": delivery.response_code}
+        )
     else:
-        messages.error(request, f"Test failed: {delivery.error or delivery.status}.")
+        messages.error(request, gettext("Test failed: %(reason)s.") % {"reason": delivery.error or delivery.status})
     return redirect(_detail_url(workspace_id, webhook.pk))
 
 
@@ -216,5 +219,5 @@ def webhook_delete(request: WorkspaceRequest, workspace_id: str, webhook_id: str
     webhook = _webhook_or_404(request, webhook_id)
     url = webhook.url
     webhook.delete()
-    messages.success(request, f"Deleted {url}.")
+    messages.success(request, gettext("Deleted %(url)s.") % {"url": url})
     return redirect(_list_url(workspace_id))

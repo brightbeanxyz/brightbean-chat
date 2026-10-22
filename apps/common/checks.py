@@ -227,3 +227,32 @@ def check_platform_env_slugs(app_configs: Any = None, **kwargs: Any) -> list[Che
             id="common.E005",
         )
     ]
+
+
+@register(Tags.compatibility)
+def check_themes(app_configs: Any = None, **kwargs: Any) -> list[CheckMessage]:
+    """The instance defaults name a registered theme and a mode it supports.
+
+    ``apps.common.themes.resolve`` never raises and quietly falls back instead,
+    which is right for a user's stale choice and wrong for a configuration
+    mistake: every anonymous page would render something other than what the
+    operator set, and nothing would say so. This is where it gets said.
+
+    The registry itself needs no check here: ``Theme.__post_init__`` rejects a
+    malformed entry at import and ``themes._registry`` keys each theme by its
+    own slug.
+    """
+    from apps.common.themes import COLOR_MODES, THEMES
+
+    theme = THEMES.get(settings.THEME_DEFAULT)
+    mode = settings.COLOR_MODE_DEFAULT
+    if theme is None:
+        problem = f"THEME_DEFAULT {settings.THEME_DEFAULT!r} is not a registered theme ({', '.join(THEMES)})."
+    elif mode not in COLOR_MODES:
+        problem = f"COLOR_MODE_DEFAULT {mode!r} is not a colour mode ({', '.join(COLOR_MODES)})."
+    elif mode not in theme.modes:
+        problem = f"COLOR_MODE_DEFAULT {mode!r} is not supported by theme {theme.slug!r} ({', '.join(theme.modes)})."
+    else:
+        return []
+
+    return [Error(problem, hint="See apps/common/themes.py for the registry.", id="common.E007")]

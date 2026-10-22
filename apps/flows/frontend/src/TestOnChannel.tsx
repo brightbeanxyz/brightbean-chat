@@ -18,6 +18,7 @@
  * would be a link that no longer works.
  */
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ApiError } from "./api/client";
 import { requestPreviewLink, type PreviewLink } from "./api/flows";
@@ -31,6 +32,7 @@ type State =
   | { kind: "error"; message: string };
 
 export function TestOnChannel() {
+  const { t } = useTranslation();
   const env = useBuilder((state) => state.env);
   const [state, setState] = useState<State>({ kind: "idle" });
 
@@ -46,8 +48,7 @@ export function TestOnChannel() {
     } catch (error) {
       setState({
         kind: "error",
-        message:
-          error instanceof ApiError ? error.message : "The test link could not be created. Try again.",
+        message: error instanceof ApiError ? error.message : t("testOnChannel.linkFailed"),
       });
     }
   };
@@ -60,7 +61,7 @@ export function TestOnChannel() {
         disabled={state.kind === "loading"}
         onClick={() => void press()}
       >
-        {state.kind === "loading" ? "Preparing…" : "Test this flow"}
+        {state.kind === "loading" ? t("testOnChannel.preparing") : t("testOnChannel.testThisFlow")}
       </button>
 
       {state.kind === "ready" ? (
@@ -73,7 +74,7 @@ export function TestOnChannel() {
           // window.opener.
           rel="noopener noreferrer"
         >
-          Open {state.link.account} on {state.link.platform_label} →
+          {t("testOnChannel.openOn", { account: state.link.account, platform: state.link.platform_label })}
         </a>
       ) : null}
 
@@ -94,7 +95,7 @@ export function TestOnChannel() {
           {state.settingsUrl ? (
             <>
               {" "}
-              <a href={state.settingsUrl}>Connect one</a>
+              <a href={state.settingsUrl}>{t("testOnChannel.connectOne")}</a>
             </>
           ) : null}
         </span>

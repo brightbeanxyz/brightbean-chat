@@ -7,21 +7,20 @@ thing you do once should not be as loud as the list you came to read. The
 header button and the empty state's both open it with $modal — see
 partials/_modal_behaviours.html for why by id rather than through a flag here.
 {% endcomment %}
-{% load common_extras %}
-{% block title %}Tags · BrightBean Chat{% endblock %}
+{% load common_extras i18n %}
+{% block title %}{% translate "Tags" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
     <div class="page-header">
         <div class="page-header-text">
-            <h1 class="page-title">Tags</h1>
+            <h1 class="page-title">{% translate "Tags" %}</h1>
             <p class="page-lede">
-                A tag labels a person. Flows add and remove them, segments filter on them, and
-                deleting one takes it off every contact carrying it.
+                {% translate "A tag labels a person. Flows add and remove them, segments filter on them, and deleting one takes it off every contact carrying it." %}
             </p>
         </div>
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-tag')">{% include "partials/_nav_icon.html" with name="tag" icon_size=16 %} New tag</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-tag')">{% include "partials/_nav_icon.html" with name="tag" icon_size=16 %} {% translate "New tag" %}</button>
     </div>
 
     {% comment %}
@@ -29,17 +28,18 @@ partials/_modal_behaviours.html for why by id rather than through a flag here.
       htmx request from one hidden input, and refuses to attach it to a
       cross-origin one.
     {% endcomment %}
-    {% modal "new-tag" title="New tag" close_on="tagsChanged" %}
+    {% translate "New tag" as new_tag_title %}
+    {% modal "new-tag" title=new_tag_title close_on="tagsChanged" %}
     <form hx-post="{% url 'contacts:tag_create' workspace_id=request.workspace.id %}">
         <div class="bb-modal-body">
             <div class="field">
-                <label class="field-label" for="new-tag-name">What is the tag called?</label>
+                <label class="field-label" for="new-tag-name">{% translate "What is the tag called?" %}</label>
                 <input class="form-input-styled" id="new-tag-name" type="text" name="name" maxlength="100" required autofocus placeholder="VIP">
             </div>
         </div>
         <div class="bb-modal-actions">
-            <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-            <button type="submit" class="btn-pill-primary">Create tag</button>
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Create tag" %}</button>
         </div>
     </form>
     {% endmodal %}

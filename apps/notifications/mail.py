@@ -21,7 +21,7 @@ from django.conf import settings
 from django.core.mail import BadHeaderError, EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.utils import timezone
+from django.utils import timezone, translation
 
 from apps.notifications import action_urls
 from apps.notifications.action_urls import app_url
@@ -93,13 +93,21 @@ def send_delivery(delivery: NotificationDelivery) -> bool:
     }
 
     try:
-        message = EmailMultiAlternatives(
-            subject=_subject(notification),
-            body=render_to_string("notifications/email/notification.txt", context),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[recipient.email],
-        )
-        message.attach_alternative(render_to_string("notifications/email/notification.html", context), "text/html")
+        # notification.title/.body were already rendered in the recipient's
+        # language by apps.notifications.engine.notify() (they're plain str by
+        # the time they hit the database). The templates below carry their own
+        # {% translate %} chrome ("View it", the footer...), which is resolved
+        # at render time — so it needs the same override, here where the
+        # recipient is known, rather than whatever language sent the request
+        # that triggered this delivery.
+        with translation.override(recipient.language or None):
+            message = EmailMultiAlternatives(
+                subject=_subject(notification),
+                body=render_to_string("notifications/email/notification.txt", context),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[recipient.email],
+            )
+            message.attach_alternative(render_to_string("notifications/email/notification.html", context), "text/html")
         message.send()
     except (OSError, smtplib.SMTPException, BadHeaderError) as exc:
         # No address in the log line: the recipient is personal data, and

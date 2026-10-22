@@ -1,4 +1,5 @@
 {% extends "layouts/error.html" %}
-{% block title %}404 Not Found · BrightBean Chat{% endblock %}
-{% block heading %}404 Not Found{% endblock %}
-{% block message %}That page does not exist.{% endblock %}
+{% load i18n %}
+{% block title %}{% translate "404 Not Found" %} · BrightBean Chat{% endblock %}
+{% block heading %}{% translate "404 Not Found" %}{% endblock %}
+{% block message %}{% translate "That page does not exist." %}{% endblock %}

@@ -13,8 +13,9 @@ import {
   useUpdateNodeInternals,
 } from "@xyflow/react";
 import { memo, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
-import { plainKind } from "../schema/plain";
+import { nodeTypeLabel, plainKind } from "../schema/plain";
 import { groupOf, nodeSpec } from "../schema/artifact";
 import { handleLabel, sourceHandles } from "../schema/handles";
 import { chipValues } from "../stats/chip";
@@ -22,8 +23,6 @@ import { useBuilder } from "../store/context";
 import { selectEntryIds, type CardData } from "../store/selectors";
 import { worstSeverity } from "../validation/normalize";
 import { NodePreview } from "./previews";
-
-const HANDLE_COPY: Record<string, string> = { default: "Next" };
 
 function FlowNodeCardInner({
   id,
@@ -34,6 +33,7 @@ function FlowNodeCardInner({
   data: CardData;
   selected?: boolean;
 }) {
+  const { t } = useTranslation();
   const nodeId = data.nodeId;
   const type = useBuilder((state) => state.nodeType[nodeId]);
   const config = useBuilder((state) => state.config[nodeId]);
@@ -114,10 +114,10 @@ function FlowNodeCardInner({
           </span>
         ) : null}
         {isEntry && !isNote ? (
-          <span className="fb-entry-flag ml-auto">Starts here</span>
+          <span className="fb-entry-flag ml-auto">{t("flowNodeCard.startsHere")}</span>
         ) : null}
       </div>
-      <div className="fb-node-title truncate">{spec?.label ?? type}</div>
+      <div className="fb-node-title truncate">{nodeTypeLabel(spec, type)}</div>
 
       <div className="fb-node-body">
         <NodePreview type={type} config={config} picklists={picklists} />
@@ -127,8 +127,9 @@ function FlowNodeCardInner({
         <div className="fb-node-footer">
           {severity ? (
             <span className={`fb-badge fb-badge-${severity}`}>
-              {issues?.length} {severity === "error" ? "error" : "warning"}
-              {(issues?.length ?? 0) === 1 ? "" : "s"}
+              {severity === "error"
+                ? t("flowNodeCard.errorCount", { count: issues?.length ?? 0 })
+                : t("flowNodeCard.warningCount", { count: issues?.length ?? 0 })}
             </span>
           ) : null}
           {chip ? (
@@ -142,15 +143,15 @@ function FlowNodeCardInner({
               {chip.failed > 0 ? (
                 <span
                   className="fb-badge fb-badge-error"
-                  title="Sends that failed"
+                  title={t("flowNodeCard.failedTitle")}
                 >
-                  {chip.failed} failed
+                  {t("flowNodeCard.failedCount", { count: chip.failed })}
                 </span>
               ) : null}
-              <span className="fb-pill" title="Sent · delivered · clicked">
+              <span className="fb-pill" title={t("flowNodeCard.statsTitle")}>
                 {chip.sent} · {chip.delivered} · {chip.clicked}
                 {chip.ctr === null ? null : (
-                  <span className="fb-pill-rate" title="Clicks per send">
+                  <span className="fb-pill-rate" title={t("flowNodeCard.clicksPerSendTitle")}>
                     {" "}
                     {chip.ctr}%
                   </span>
@@ -174,7 +175,7 @@ function FlowNodeCardInner({
           style={{ top: `${((index + 1) / (handles.length + 1)) * 100}%` }}
         >
           <span className="fb-handle-label absolute left-3 -translate-y-1/2 pointer-events-none whitespace-nowrap">
-            {HANDLE_COPY[handle] ?? handleLabel(handle, config)}
+            {handle === "default" ? t("flowNodeCard.nextHandle") : handleLabel(handle, config)}
           </span>
         </Handle>
       ))}

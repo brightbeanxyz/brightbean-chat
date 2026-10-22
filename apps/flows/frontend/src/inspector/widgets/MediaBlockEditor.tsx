@@ -8,6 +8,7 @@
  */
 import { useState } from "react";
 
+import i18n from "../../i18n";
 import type { MediaAsset } from "../../schema/types";
 import { formatPath } from "../../store/paths";
 import { useField } from "../FieldContext";
@@ -38,15 +39,15 @@ export function MediaBlockEditor(props: FieldProps) {
     <div className="fb-field">
       {mediaId ? (
         <p className="fb-field-help flex items-center gap-2">
-          <span className="fb-pill">Library asset {mediaId.slice(0, 8)}…</span>
+          <span className="fb-pill">{i18n.t("mediaBlock.libraryAsset", { id: mediaId.slice(0, 8) })}</span>
           {readOnly ? null : (
             <button
               type="button"
               className="btn-link text-xs"
-              aria-label="Remove the chosen library asset"
+              aria-label={i18n.t("mediaBlock.removeAsset")}
               onClick={() => clear([...path, "media_id"])}
             >
-              Remove
+              {i18n.t("mediaBlock.remove")}
             </button>
           )}
         </p>
@@ -54,7 +55,7 @@ export function MediaBlockEditor(props: FieldProps) {
 
       {readOnly ? null : (
         <button type="button" className="btn-outline-sm mb-2" onClick={() => setPicking((open) => !open)}>
-          {picking ? "Close the library" : "Choose from the library"}
+          {picking ? i18n.t("mediaBlock.closeLibrary") : i18n.t("mediaBlock.chooseFromLibrary")}
         </button>
       )}
 
@@ -70,7 +71,7 @@ export function MediaBlockEditor(props: FieldProps) {
 
       <div className="fb-field">
         <label className="fb-field-label" htmlFor={`fb-url-${path.join("-")}`}>
-          …or a direct URL
+          {i18n.t("mediaBlock.orDirectUrl")}
         </label>
         <input
           id={`fb-url-${path.join("-")}`}
@@ -78,7 +79,7 @@ export function MediaBlockEditor(props: FieldProps) {
           className="form-input-styled"
           value={url}
           disabled={readOnly || Boolean(mediaId)}
-          placeholder={mediaId ? "Using a library asset" : "https://example.com/image.png"}
+          placeholder={mediaId ? i18n.t("mediaBlock.usingLibraryAsset") : i18n.t("mediaBlock.urlPlaceholder")}
           onChange={(event) => {
             const next = event.target.value;
             if (next === "") {
@@ -89,9 +90,7 @@ export function MediaBlockEditor(props: FieldProps) {
             clear([...path, "media_id"]);
           }}
         />
-        <p className="fb-field-help">
-          Pick from the library and we keep the file. Paste a link and it is yours to keep working.
-        </p>
+        <p className="fb-field-help">{i18n.t("mediaBlock.help")}</p>
       </div>
 
       <SchemaField

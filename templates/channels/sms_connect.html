@@ -1,5 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Connect a Twilio number. Same shape as telegram_connect.html — see the note
 there for why content_wrap is cleared and why the platform key is written once.
@@ -11,7 +11,7 @@ the rule. Give one or the other, not both.
 
 Full setup notes live in docs/channels/sms.md.
 {% endcomment %}
-{% block title %}Connect Twilio · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Connect Twilio" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
@@ -21,12 +21,9 @@ Full setup notes live in docs/channels/sms.md.
     <div class="flex items-start gap-4 mb-7">
         <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
         <div class="min-w-0">
-            <h1 class="page-title">Connect a Twilio number</h1>
+            <h1 class="page-title">{% translate "Connect a Twilio number" %}</h1>
             <p class="page-lede mt-1.5">
-                BrightBean Chat sends SMS through your own Twilio account, so the messages, the
-                number and the bill are all yours. The Auth Token is the whole credential: anyone
-                holding it can send as your number and read your messages, so it is stored
-                encrypted and never shown again.
+                {% translate "BrightBean Chat sends SMS through your own Twilio account, so the messages, the number and the bill are all yours. The Auth Token is the whole credential: anyone holding it can send as your number and read your messages, so it is stored encrypted and never shown again." %}
             </p>
         </div>
     </div>
@@ -34,79 +31,72 @@ Full setup notes live in docs/channels/sms.md.
     {% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-4">Before you paste</h2>
+        <h2 class="section-title mb-4">{% translate "Before you paste" %}</h2>
         <ol class="cn-steps" role="list">
-            <li class="cn-step">Open the <a href="https://console.twilio.com/" rel="noopener noreferrer" target="_blank">Twilio console</a> and copy the Account SID and Auth Token from the dashboard.</li>
-            <li class="cn-step">Copy either a phone number you own, in E.164 form (<code>+15551234567</code>), or a Messaging Service SID (<code>MG…</code>) if you send through one.</li>
-            <li class="cn-step">US traffic also needs A2P 10DLC registration, which happens in Twilio and not here. There is a checklist on the SMS settings page.</li>
+            <li class="cn-step">{% blocktranslate %}Open the <a href="https://console.twilio.com/" rel="noopener noreferrer" target="_blank">Twilio console</a> and copy the Account SID and Auth Token from the dashboard.{% endblocktranslate %}</li>
+            <li class="cn-step">{% blocktranslate %}Copy either a phone number you own, in E.164 form (<code>+15551234567</code>), or a Messaging Service SID (<code>MG…</code>) if you send through one.{% endblocktranslate %}</li>
+            <li class="cn-step">{% translate "US traffic also needs A2P 10DLC registration, which happens in Twilio and not here. There is a checklist on the SMS settings page." %}</li>
         </ol>
     </section>
 
     <form class="card p-6 mb-5" method="post">
         {% csrf_token %}
-        <h2 class="section-title mb-4">Your Twilio account</h2>
+        <h2 class="section-title mb-4">{% translate "Your Twilio account" %}</h2>
 
         <div class="field">
-            <label class="field-label" for="account_sid">Account SID</label>
+            <label class="field-label" for="account_sid">{% translate "Account SID" %}</label>
             <input class="form-input-styled" type="text" id="account_sid" name="account_sid" value="{{ form.account_sid }}" autocomplete="off" spellcheck="false" required>
-            <p class="field-hint">Starts with <code>AC</code>.</p>
+            <p class="field-hint">{% blocktranslate %}Starts with <code>AC</code>.{% endblocktranslate %}</p>
         </div>
         <div class="field">
-            <label class="field-label" for="auth_token">Auth Token</label>
+            <label class="field-label" for="auth_token">{% translate "Auth Token" %}</label>
             {% comment %}
             autocomplete="off" and a password input: this value is a live
             credential and must not end up in the browser's saved form data. It
             is also never rendered back — a failed submit clears it deliberately.
             {% endcomment %}
             <input class="form-input-styled" type="password" id="auth_token" name="auth_token" autocomplete="off" spellcheck="false" required>
-            <p class="field-hint">Pasted once. We check it with Twilio before saving anything.</p>
+            <p class="field-hint">{% translate "Pasted once. We check it with Twilio before saving anything." %}</p>
         </div>
 
         <div class="card-row pt-6 mt-6">
-            <h3 class="section-title mb-1">Where messages are sent from</h3>
-            <p class="section-note mb-4">Give one or the other, not both.</p>
+            <h3 class="section-title mb-1">{% translate "Where messages are sent from" %}</h3>
+            <p class="section-note mb-4">{% translate "Give one or the other, not both." %}</p>
 
             <div class="field">
-                <label class="field-label" for="from_number">From number</label>
+                <label class="field-label" for="from_number">{% translate "From number" %}</label>
                 <input class="form-input-styled" type="text" id="from_number" name="from_number" value="{{ form.from_number }}" autocomplete="off" spellcheck="false" placeholder="+15551234567" style="width: 16rem;">
             </div>
-            <div class="divider-text my-5">or</div>
+            <div class="divider-text my-5">{% translate "or" %}</div>
             <div class="field">
-                <label class="field-label" for="messaging_service_sid">Messaging Service SID</label>
+                <label class="field-label" for="messaging_service_sid">{% translate "Messaging Service SID" %}</label>
                 <input class="form-input-styled" type="text" id="messaging_service_sid" name="messaging_service_sid" value="{{ form.messaging_service_sid }}" autocomplete="off" spellcheck="false" placeholder="MG…" style="width: 16rem;">
             </div>
         </div>
 
         <div class="form-actions">
-            <button type="submit" class="btn-pill-primary">Connect</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Connect" %}</button>
         </div>
     </form>
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-3">What happens next</h2>
+        <h2 class="section-title mb-3">{% translate "What happens next" %}</h2>
         {% comment %}
           No copy field here: the webhook URL is per connection and does not
           exist until this form succeeds. It lives on the connection's own page,
           which is where somebody pasting it into Twilio is already standing.
         {% endcomment %}
         <p class="section-note">
-            We check the credentials and confirm the sender belongs to the account, then store the
-            connection. Twilio has no way for us to configure your number remotely, so the last step
-            is yours: open the number (or the messaging service) in the Twilio console and paste the
-            webhook URL shown on the connection's page into <em>A message comes in</em>, as a
-            <code>POST</code>.
+            {% blocktranslate %}We check the credentials and confirm the sender belongs to the account, then store the connection. Twilio has no way for us to configure your number remotely, so the last step is yours: open the number (or the messaging service) in the Twilio console and paste the webhook URL shown on the connection's page into <em>A message comes in</em>, as a <code>POST</code>.{% endblocktranslate %}
         </p>
         <p class="field-hint">
-            That URL has to match <strong>exactly</strong>, trailing slash included: Twilio signs
-            each delivery with an HMAC computed over the URL itself, so a URL that differs by one
-            character fails verification. It also has to be reachable from the public internet over
-            HTTPS. Full setup notes are in docs/channels/sms.md.
+            {% blocktranslate %}That URL has to match <strong>exactly</strong>, trailing slash included: Twilio signs each delivery with an HMAC computed over the URL itself, so a URL that differs by one character fails verification. It also has to be reachable from the public internet over HTTPS. Full setup notes are in docs/channels/sms.md.{% endblocktranslate %}
         </p>
     </section>
 
     <a class="cn-back" href="{{ list_url }}">
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-        Back to channels
+        {% translate "Back to channels" %}
     </a>
 </div>
 {% endwith %}

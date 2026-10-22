@@ -1,4 +1,5 @@
 {% extends "layouts/settings.html" %}
+{% load common_extras i18n %}
 {% comment %}
 The organization's workspaces, in the shape contacts/tag_list.html established.
 
@@ -11,38 +12,37 @@ Archived state is the whole point of this page: it is the only way back to an
 archived workspace, so it reads as a pill on the row rather than as a word in a
 column.
 {% endcomment %}
-{% load common_extras %}
-{% block title %}Workspaces · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Workspaces" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
     <div class="page-header">
         <div class="page-header-text">
-            <h1 class="page-title">Workspaces</h1>
+            <h1 class="page-title">{% translate "Workspaces" %}</h1>
             <p class="page-lede">
-                Each workspace has its own channels, contacts and inbox. Archiving one keeps
-                everything and takes it out of the switcher.
+                {% translate "Each workspace has its own channels, contacts and inbox. Archiving one keeps everything and takes it out of the switcher." %}
             </p>
         </div>
         {% if can_manage %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-workspace')">{% include "partials/_nav_icon.html" with name="grid" icon_size=16 %} New workspace</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-workspace')">{% include "partials/_nav_icon.html" with name="grid" icon_size=16 %} {% translate "New workspace" %}</button>
         {% endif %}
     </div>
 
     {% if can_manage %}
-    {% modal "new-workspace" title="New workspace" %}
+    {% translate "New workspace" as new_workspace_title %}
+    {% modal "new-workspace" title=new_workspace_title %}
     <form method="post" action="{% url 'organizations:create_workspace' %}">
         {% csrf_token %}
         <div class="bb-modal-body">
             <div class="field">
-                <label class="field-label" for="new-workspace-name">What is it called?</label>
-                <input class="form-input-styled" id="new-workspace-name" type="text" name="name" maxlength="100" required autofocus placeholder="Acme EU">
+                <label class="field-label" for="new-workspace-name">{% translate "What is it called?" %}</label>
+                <input class="form-input-styled" id="new-workspace-name" type="text" name="name" maxlength="100" required autofocus placeholder="{% translate 'Acme EU' %}">
             </div>
         </div>
         <div class="bb-modal-actions">
-            <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-            <button type="submit" class="btn-pill-primary">Create workspace</button>
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Create workspace" %}</button>
         </div>
     </form>
     {% endmodal %}
@@ -57,26 +57,27 @@ column.
             <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2.5">
                     <span class="list-row-title truncate">{{ workspace.name }}</span>
-                    {% if workspace.is_archived %}<span class="status-pill status-pill-disabled">Archived</span>{% endif %}
+                    {% if workspace.is_archived %}<span class="status-pill status-pill-disabled">{% translate "Archived" %}</span>{% endif %}
                 </div>
                 <div class="list-row-meta">
-                    {% if workspace.id in member_workspace_ids %}You are a member{% else %}You do not have access{% endif %}
+                    {% if workspace.id in member_workspace_ids %}{% translate "You are a member" %}{% else %}{% translate "You do not have access" %}{% endif %}
                 </div>
             </div>
 
             {% if workspace.id in member_workspace_ids and not workspace.is_archived %}
-            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'workspaces:dashboard' workspace_id=workspace.id %}">Open</a>
+            <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'workspaces:dashboard' workspace_id=workspace.id %}">{% translate "Open" %}</a>
             {% endif %}
 
             {% if can_manage %}
-            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ workspace.name }}">
+            {% blocktranslate asvar more_actions_label with name=workspace.name %}More actions for {{ name }}{% endblocktranslate %}
+            <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ more_actions_label }}">
                 <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
             </button>
             <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
                 <form method="post" action="{% url 'organizations:set_workspace_archived' target_id=workspace.id %}">
                     {% csrf_token %}
                     <input type="hidden" name="archived" value="{% if workspace.is_archived %}0{% else %}1{% endif %}">
-                    <button type="submit" class="row-menu-item{% if not workspace.is_archived %} row-menu-item-danger{% endif %}" role="menuitem">{% if workspace.is_archived %}Restore{% else %}Archive{% endif %}</button>
+                    <button type="submit" class="row-menu-item{% if not workspace.is_archived %} row-menu-item-danger{% endif %}" role="menuitem">{% if workspace.is_archived %}{% translate "Restore" %}{% else %}{% translate "Archive" %}{% endif %}</button>
                 </form>
             </div>
             {% endif %}
@@ -85,8 +86,8 @@ column.
     </div>
     {% else %}
     <div class="empty-state">
-        <p class="empty-state-title">No workspaces yet</p>
-        <p class="empty-state-body">A workspace is one shop, brand or team, with its own inbox.</p>
+        <p class="empty-state-title">{% translate "No workspaces yet" %}</p>
+        <p class="empty-state-body">{% translate "A workspace is one shop, brand or team, with its own inbox." %}</p>
     </div>
     {% endif %}
 </div>

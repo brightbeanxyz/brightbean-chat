@@ -25,6 +25,8 @@ means re-checking that the result still validates clean on every platform, which
 
 from typing import Any
 
+from django.utils.translation import gettext_lazy as _
+
 from apps.flows.schema.envelope import SCHEMA_VERSION
 
 __all__ = ["starter_graph"]
@@ -36,7 +38,11 @@ __all__ = ["starter_graph"]
 #: screen.
 _POSITION = {"x": 520, "y": 160}
 
-_FIRST_MESSAGE = "Hi! Thanks for getting in touch. How can we help?"
+# gettext_lazy: this module loads once at import, before any request (and so
+# before any language is active). str() below, inside starter_graph(), is
+# where the lazy proxy actually resolves — at flow-creation time, in whichever
+# language is active for that request.
+_FIRST_MESSAGE = _("Hi! Thanks for getting in touch. How can we help?")
 
 
 def starter_graph() -> dict[str, Any]:
@@ -48,7 +54,9 @@ def starter_graph() -> dict[str, Any]:
                 "id": "n1",
                 "type": "send_message",
                 "position": dict(_POSITION),
-                "config": {"blocks": [{"type": "text", "text": _FIRST_MESSAGE}]},
+                # str(): "config" ends up in a JSONField, and a lazy proxy is
+                # not JSON-serializable — this is also where it evaluates.
+                "config": {"blocks": [{"type": "text", "text": str(_FIRST_MESSAGE)}]},
             }
         ],
         "edges": [],

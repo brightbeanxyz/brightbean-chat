@@ -1,19 +1,18 @@
 {% extends "layouts/workspace_settings.html" %}
-{% block title %}Add a channel · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title mb-4">Add a channel</h1>{% endblock %}
+{% load i18n %}
+{% block title %}{% translate "Add a channel" %} · BrightBean Chat{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">{% translate "Add a channel" %}</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
-    This creates the connection and its webhook secret. Credentials are entered
-    in each platform's own connect flow, which arrives with that platform's
-    adapter.
+    {% translate "This creates the connection and its webhook secret. Credentials are entered in each platform's own connect flow, which arrives with that platform's adapter." %}
   </p>
 
   <form method="post">
     {% csrf_token %}
     {{ form.non_field_errors }}
     <p>
-      <label for="{{ form.platform.id_for_label }}">Platform</label><br />
+      <label for="{{ form.platform.id_for_label }}">{% translate "Platform" %}</label><br />
       {{ form.platform }}
       {{ form.platform.errors }}
     </p>
@@ -29,8 +28,8 @@
       <span class="muted">{{ form.external_id.help_text }}</span>
       {{ form.external_id.errors }}
     </p>
-    <button type="submit" class="btn-pill-primary btn-pill-sm">Create channel</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Create channel" %}</button>
   </form>
 
-  <p><a href="{% url 'channels:list' workspace_id=request.workspace.id %}">Back to channels</a></p>
+  <p><a href="{% url 'channels:list' workspace_id=request.workspace.id %}">{% translate "Back to channels" %}</a></p>
 {% endblock %}

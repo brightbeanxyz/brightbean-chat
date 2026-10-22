@@ -18,6 +18,8 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.functional import Promise
+from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.members.decorators import require_org_role
@@ -40,16 +42,16 @@ from apps.members.signals_keys import PENDING_INVITE_SESSION_KEY
 from apps.workspaces.models import Workspace
 
 
-def _org_role_choices_for(membership: OrgMembership) -> list[tuple[str, str]]:
+def _org_role_choices_for(membership: OrgMembership) -> list[tuple[str, str | Promise]]:
     """Only offer roles the backend would actually accept.
 
     Mirrors ``create_invitation``'s admin-tier rule, so the form never presents
     an option that comes back as an error.
     """
-    choices: list[tuple[str, str]] = []
+    choices: list[tuple[str, str | Promise]] = []
     if membership.org_role == OrgRole.OWNER:
-        choices.append((OrgRole.ADMIN.value, "Admin"))
-    choices.append((OrgRole.MEMBER.value, "Member"))
+        choices.append((OrgRole.ADMIN.value, OrgRole.ADMIN.label))
+    choices.append((OrgRole.MEMBER.value, OrgRole.MEMBER.label))
     return choices
 
 
@@ -128,7 +130,7 @@ def invite_member(request: OrgRequest) -> HttpResponse:
     except MembershipError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, "Invitation sent.")
+        messages.success(request, gettext("Invitation sent."))
     return redirect(reverse("members:list"))
 
 
@@ -142,7 +144,7 @@ def resend_invite(request: OrgRequest, invitation_id: str) -> HttpResponse:
     except MembershipError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, "Invitation resent.")
+        messages.success(request, gettext("Invitation resent."))
     return redirect(reverse("members:list"))
 
 
@@ -156,7 +158,7 @@ def revoke_invite(request: OrgRequest, invitation_id: str) -> HttpResponse:
     except MembershipError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, "Invitation revoked.")
+        messages.success(request, gettext("Invitation revoked."))
     return redirect(reverse("members:list"))
 
 
@@ -170,7 +172,7 @@ def update_member_role(request: OrgRequest, membership_id: str) -> HttpResponse:
     except MembershipError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, "Role updated.")
+        messages.success(request, gettext("Role updated."))
     return redirect(reverse("members:list"))
 
 
@@ -184,7 +186,7 @@ def remove_member_view(request: OrgRequest, membership_id: str) -> HttpResponse:
     except MembershipError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, "Member removed.")
+        messages.success(request, gettext("Member removed."))
     return redirect(reverse("members:list"))
 
 
@@ -213,7 +215,7 @@ def manage_workspaces(request: OrgRequest, membership_id: str) -> HttpResponse:
         except MembershipError as exc:
             messages.error(request, str(exc))
         else:
-            messages.success(request, "Workspace access updated.")
+            messages.success(request, gettext("Workspace access updated."))
         return redirect(reverse("members:manage_workspaces", kwargs={"membership_id": membership_id}))
 
     current = {
@@ -270,7 +272,7 @@ def accept_invite(request: HttpRequest, token: str) -> HttpResponse:
                 {"invitation": invitation, "error": str(exc)},
                 status=422,
             )
-        messages.success(request, f"You have joined {invitation.organization.name}.")
+        messages.success(request, gettext("You have joined %(name)s.") % {"name": invitation.organization.name})
         return redirect(reverse("index"))
 
     return render(request, "members/accept_invite.html", {"invitation": invitation})

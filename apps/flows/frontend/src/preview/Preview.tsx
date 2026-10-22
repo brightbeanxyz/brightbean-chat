@@ -13,6 +13,8 @@
  * message. It is also the safe reading: nothing in a config is ever evaluated,
  * only displayed.
  */
+import { useTranslation } from "react-i18next";
+
 import { nodeSpec } from "../schema/artifact";
 import { useBuilder } from "../store/context";
 
@@ -36,32 +38,33 @@ function labels(block: Record<string, unknown>, key: string): string[] {
 }
 
 export function Preview() {
+  const { t } = useTranslation();
   const selected = useBuilder((state) => state.selection.nodes);
   const nodeId = selected.length === 1 ? (selected[0] as string) : null;
   const nodeType = useBuilder((state) => (nodeId ? state.nodeType[nodeId] : undefined));
   const config = useBuilder((state) => (nodeId ? state.config[nodeId] : undefined));
 
   return (
-    <section className="fb-preview" aria-label="Preview">
-      <p className="fb-section-label">Preview</p>
+    <section className="fb-preview" aria-label={t("preview.label")}>
+      <p className="fb-section-label">{t("preview.sectionLabel")}</p>
       <div className="fb-phone">
         <div className="fb-phone-screen">
           {nodeId && nodeType ? (
             <Bubbles type={nodeType} config={config} />
           ) : (
-            <p className="fb-phone-empty">Pick a step to see it the way they will.</p>
+            <p className="fb-phone-empty">{t("preview.pickAStep")}</p>
           )}
         </div>
       </div>
       <p className="fb-preview-note">
-        Placeholders like <code>{"{{ first_name }}"}</code> are filled in when the message is actually
-        sent.
+        {t("preview.placeholderNotePrefix")} <code>{"{{ first_name }}"}</code> {t("preview.placeholderNoteSuffix")}
       </p>
     </section>
   );
 }
 
 function Bubbles({ type, config }: { type: string; config: unknown }) {
+  const { t } = useTranslation();
   const blocks = isRecord(config) ? records(config["blocks"]) : [];
 
   if (blocks.length === 0) {
@@ -72,7 +75,7 @@ function Bubbles({ type, config }: { type: string; config: unknown }) {
       return <Bubble text={prompt} />;
     }
     const label = nodeSpec(type)?.label ?? type;
-    return <p className="fb-phone-empty">{label} does not send anything, so there is nothing to show.</p>;
+    return <p className="fb-phone-empty">{t("preview.doesNotSend", { label })}</p>;
   }
 
   return (
@@ -87,7 +90,7 @@ function Bubbles({ type, config }: { type: string; config: unknown }) {
         }
         return (
           <div key={index} className="fb-phone-attachment">
-            {kind ? `${kind.charAt(0).toUpperCase()}${kind.slice(1)}` : "Attachment"}
+            {kind ? `${kind.charAt(0).toUpperCase()}${kind.slice(1)}` : t("preview.attachment")}
           </div>
         );
       })}
@@ -96,10 +99,11 @@ function Bubbles({ type, config }: { type: string; config: unknown }) {
 }
 
 function Bubble({ text: body, buttons = [] }: { text: string; buttons?: string[] }) {
+  const { t } = useTranslation();
   return (
     <div className="fb-phone-turn">
       <div className="fb-phone-bubble">
-        {body || <span className="fb-phone-placeholder">No message yet</span>}
+        {body || <span className="fb-phone-placeholder">{t("preview.noMessageYet")}</span>}
       </div>
       {buttons.length > 0 ? (
         <div className="fb-phone-buttons">

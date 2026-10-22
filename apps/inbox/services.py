@@ -28,6 +28,7 @@ from typing import Any
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from django.utils.translation import gettext
 
 from apps.inbox.models import (
     DEFAULT_LABEL_COLOR,
@@ -124,7 +125,7 @@ def create_label(workspace: Any, *, name: str, color: str = "") -> ConversationL
     :mod:`apps.inbox.rendering` completes.
     """
     label = ConversationLabel(workspace=workspace, name=(name or "").strip(), color=_color(color))
-    _validated(label, fallback="That label is not valid.")
+    _validated(label, fallback=gettext("That label is not valid."))
     label.save()
     return label
 
@@ -138,7 +139,7 @@ def update_label(label: ConversationLabel, *, name: str, color: str) -> Conversa
     """
     label.name = (name or "").strip()
     label.color = _color(color)
-    _validated(label, fallback="That label is not valid.")
+    _validated(label, fallback=gettext("That label is not valid."))
     label.save(update_fields=["name", "color", "updated_at"])
     return label
 
@@ -152,7 +153,9 @@ def apply_label(conversation: Conversation, label: ConversationLabel, *, by: Any
     """
     links = ConversationLabelLink.objects.for_workspace(conversation.workspace_id)
     if links.filter(conversation=conversation).count() >= MAX_LABELS_PER_CONVERSATION:
-        raise InboxError(f"A conversation can carry at most {MAX_LABELS_PER_CONVERSATION} labels.")
+        raise InboxError(
+            gettext("A conversation can carry at most %(max)s labels.") % {"max": MAX_LABELS_PER_CONVERSATION}
+        )
     try:
         with transaction.atomic():
             ConversationLabelLink(conversation=conversation, label=label, applied_by=by).save()
@@ -238,7 +241,7 @@ def schedule_reminder(
 ) -> InboxReminder:
     """Arrange an in-app nudge about this thread (SPEC §14)."""
     if remind_at <= timezone.now():
-        raise InboxError("Pick a time in the future.")
+        raise InboxError(gettext("Pick a time in the future."))
     existing = _already_arranged(InboxReminder, conversation, compose_token)
     if existing is not None:
         return existing
@@ -250,7 +253,7 @@ def schedule_reminder(
         created_by=created_by,
         compose_token=compose_token,
     )
-    _validated(reminder, fallback="That reminder is not valid.")
+    _validated(reminder, fallback=gettext("That reminder is not valid."))
     if not _saved(reminder):
         # Two genuinely simultaneous posts both missed the read above; the
         # constraint arbitrated, and the loser reads the winner's row back.
@@ -286,7 +289,7 @@ def schedule_reply(
     a gate.
     """
     if send_at <= timezone.now():
-        raise InboxError("Pick a time in the future.")
+        raise InboxError(gettext("Pick a time in the future."))
     existing = _already_arranged(ScheduledReply, conversation, compose_token)
     if existing is not None:
         return existing
@@ -313,9 +316,9 @@ def reschedule_reply(reply: ScheduledReply, *, body: dict[str, Any], send_at: da
     leave the key describing a moment that had passed.
     """
     if reply.status != DeferredStatus.PENDING:
-        raise InboxError("That reply has already been sent or cancelled.")
+        raise InboxError(gettext("That reply has already been sent or cancelled."))
     if send_at <= timezone.now():
-        raise InboxError("Pick a time in the future.")
+        raise InboxError(gettext("Pick a time in the future."))
     _cancel_action(reply)
     reply.body = body
     reply.send_at = send_at

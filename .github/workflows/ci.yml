@@ -7,14 +7,25 @@ on:
     branches: [main]
   # Lets the full suite be exercised on a feature branch before a PR exists.
   workflow_dispatch:
+    inputs:
+      # Unrelated to the full-suite use case above; only the ocr-review job
+      # reads this, to re-run just the code review without pushing an empty
+      # commit. Left blank, a dispatch behaves exactly as it did before.
+      pr_number:
+        description: "PR number to re-run the code review on (leave blank for a normal full-suite dispatch)"
+        required: false
 
 # Principle of least privilege: default to read-only for every job.
 permissions:
   contents: read
 
 # Cancel in-progress runs when a new commit is pushed to the same branch/PR.
+# pr_number is appended (empty string for every trigger except a targeted
+# ocr-review re-run) so two manual re-runs for different PRs, both dispatched
+# against the same ref, don't cancel each other — OpenCodeReview's own review
+# of the PR that added pr_number caught this sharing the plain ref-only group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.pr_number }}
   cancel-in-progress: true
 
 jobs:
@@ -22,6 +33,12 @@ jobs:
     name: Lint (ruff)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # A workflow_dispatch that names pr_number means "just re-run the code
+    # review" (see ocr-review below) — skip the full suite rather than
+    # silently running it too, which is what actually happened before this
+    # condition existed (OpenCodeReview found it reviewing the PR that added
+    # pr_number in the first place). Every other trigger is unaffected.
+    if: github.event_name != 'workflow_dispatch' || inputs.pr_number == ''
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,6 +69,8 @@ jobs:
     name: Type check (mypy)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # See lint's comment on this condition.
+    if: github.event_name != 'workflow_dispatch' || inputs.pr_number == ''
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,6 +120,8 @@ jobs:
     name: Test (pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # See lint's comment on this condition.
+    if: github.event_name != 'workflow_dispatch' || inputs.pr_number == ''
     services:
       postgres:
         # Pulled via Google's mirror of Docker Hub official images. Anonymous
@@ -203,6 +224,22 @@ jobs:
         # error somewhere unrelated. This turns that into one clean diff.
         run: python manage.py makemigrations --check --dry-run
 
+      - name: Compile translation catalogs
+        # locale/*/LC_MESSAGES/django.mo is gitignored (a build artefact, same
+        # posture as theme/static/css/dist), so a fresh checkout has none.
+        # Django reads .mo at runtime, not .po, and falls back to English with
+        # no error when a catalog is missing — silent everywhere except the
+        # tests that assert actual Russian/Kyrgyz text, which is how this gap
+        # was found (Copilot review, PR #1).
+        #
+        # msgfmt is not on the runner image, and `django-admin` does not put the
+        # checkout on sys.path, so it cannot import config.settings.test —
+        # manage.py does, the same way the Dockerfile runs it.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gettext
+          python manage.py compilemessages
+
       - name: pytest
         # --dist loadfile comes from addopts in pyproject.toml (see the comment
         # there for why the grouping is load*file*); -n is supplied here and in
@@ -220,6 +257,8 @@ jobs:
     name: Dependency audit + frontend build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # See lint's comment on this condition.
+    if: github.event_name != 'workflow_dispatch' || inputs.pr_number == ''
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -400,6 +439,9 @@ jobs:
     # A failing lint/typecheck/test check still blocks the PR on its own, so the
     # gate bought no safety — only latency. Starting at t=0 alongside `test`
     # takes CI wall clock from ~4m10s to ~2m20s.
+    #
+    # See lint's comment for the if: below, a different axis of gating.
+    if: github.event_name != 'workflow_dispatch' || inputs.pr_number == ''
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -646,6 +688,8 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # See lint's comment on this condition.
+    if: github.event_name != 'workflow_dispatch' || inputs.pr_number == ''
     # We invoke the gitleaks binary directly rather than using
     # gitleaks/gitleaks-action, because that action now requires a paid
     # license for GitHub organizations. The binary itself remains free
@@ -728,3 +772,144 @@ jobs:
           echo "${COUNT} commit(s) in range."
 
           gitleaks detect --source . --redact --verbose --no-banner --log-opts="${RANGE}"
+
+  ocr-review:
+    name: Code review (OpenCodeReview)
+    runs-on: ubuntu-latest
+    # 25, not 15: OCR_LLM_TIMEOUT below is 1200s (20 min) now that
+    # reasoning.effort=max routinely runs gpt-5.6-luna past the action's old
+    # 300s default on a large diff — the job's own ceiling has to clear that
+    # plus checkout/install/post overhead, or it kills the run first and the
+    # LLM-timeout bump below does nothing.
+    timeout-minutes: 25
+    # `pull_request`, not `_target`: GitHub withholds repo secrets from
+    # `pull_request` runs on a fork PR regardless of the approval gate below,
+    # so a stranger's PR can never see OCR_OPENAI_API_KEY or OCR_GITHUB_PAT —
+    # it just reviews nothing. The upstream action defaults to
+    # `pull_request_target` for exactly the opposite reason (secrets on forks
+    # too); we trade that reach away on a public repo on purpose.
+    #
+    # Restricted to `opened`, not every push: each run is real OpenAI spend
+    # plus CI minutes, and re-reviewing on every `synchronize` adds up fast
+    # over a PR's life. Re-run on demand instead, via workflow_dispatch's
+    # pr_number input below — harmless to pass unconditionally on a normal
+    # pull_request run, where it's empty and the action falls back to the
+    # event payload as if omitted.
+    if: ${{ (github.event_name == 'pull_request' && github.event.action == 'opened') || (github.event_name == 'workflow_dispatch' && inputs.pr_number != '') }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # workflow_dispatch is started by a trusted collaborator, but GitHub
+      # does not withhold secrets from it based on what pr_number names the
+      # way it does for the automatic pull_request trigger above — this run
+      # would carry OCR_OPENAI_API_KEY and the App's private key regardless
+      # of whether that PR happens to be from a fork. OpenCodeReview's own
+      # review of the PR that added pr_number caught this: refuse before
+      # minting a token or spending an LLM call on unreviewed fork content.
+      - name: Refuse a fork PR on manual re-run
+        id: fork-check
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # A workflow_dispatch input is text a collaborator typed, not a
+          # trusted literal — embedding ${{ inputs.pr_number }} straight into
+          # this script (as an earlier version of this step did) means its
+          # value is spliced into the shell source before bash ever sees it:
+          # quotes or a command substitution in it would run as this job's
+          # own commands, with GH_TOKEN and, a step later, the App/OpenAI
+          # secrets in scope (found in review of PR #9's own commit adding
+          # this). Passed through env and read as a shell variable instead,
+          # plus a numeric check, so it's always data, never script.
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          case "${PR_NUMBER}" in
+            (''|*[!0-9]*) echo "::error::pr_number must be numeric, got '${PR_NUMBER}'"; exit 1 ;;
+          esac
+          # head_sha/base_ref too, while we're already asking the API for
+          # this PR: on a pull_request run the action reads both straight off
+          # the event payload, but workflow_dispatch carries no such payload,
+          # and — confirmed live, dispatching a review for a PR this way —
+          # the action does NOT fall back to resolving them itself from
+          # pr_number. Left unset, both env vars it computes them from are
+          # empty strings, its merge-base command fails on an empty ref and
+          # falls back to an empty HEAD_SHA too, and it silently reports
+          # "no items were selected" after 0 files and ~60ms — a real review
+          # never runs, and the job still exits success. Pass them explicitly.
+          pr_json="$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json isCrossRepository,headRefOid,baseRefName)"
+          is_fork="$(jq -r '.isCrossRepository' <<< "${pr_json}")"
+          if [ "${is_fork}" != "false" ]; then
+            echo "::error::PR #${PR_NUMBER} is from a fork; a workflow_dispatch run always carries repo secrets regardless of pr_number, unlike the automatic pull_request trigger above. Refusing to review it this way."
+            exit 1
+          fi
+          echo "head_sha=$(jq -r '.headRefOid' <<< "${pr_json}")" >> "$GITHUB_OUTPUT"
+          echo "base_ref=$(jq -r '.baseRefName' <<< "${pr_json}")" >> "$GITHUB_OUTPUT"
+          echo "PR #${PR_NUMBER} is not a fork PR — proceeding."
+
+      # A GitHub App token instead of a personal PAT: comments post under the
+      # app's own bot identity (e.g. "OpenCodeReview Bot"), scoped to exactly
+      # Pull requests: read & write + Contents: read + Metadata: read, and
+      # revocable independently of any one person's account.
+      - name: Mint app token
+        id: app-token
+        # v3.2.0, for real this time: the previous pin here (fee1f7d6...)
+        # carried this same "# v3.2.0" comment but the tags API says that
+        # commit is v2.2.2 — which happens to still work with app-id below
+        # (v2.2.2's only input), but is a full version behind what the
+        # comment claims and would break the moment anyone added client-id
+        # trusting the label.
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.OCR_APP_ID }}
+          private-key: ${{ secrets.OCR_APP_PRIVATE_KEY }}
+
+      # The action does its own checkout, Node setup, install, config and
+      # posting (inline comments via the PR Review API, with a sticky-summary
+      # fallback) — see alibaba/open-code-review's docs/integrations/ci.md.
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@bccbc15f785269400735d5255540c231e6c02b6d # v1.12.9
+        env:
+          # The action reads this itself (`"${OCR_LLM_TIMEOUT:-300}"`, no
+          # matching `with:` input) — 300s was too short once reasoning.effort
+          # was set to max above, which routinely runs gpt-5.6-luna past five
+          # minutes on a large diff and failed the run with no review posted.
+          # 1200s needs the job's own timeout-minutes raised too, above.
+          OCR_LLM_TIMEOUT: "1200"
+        with:
+          # /v1/responses, not /v1/chat/completions: gpt-5.6-luna rejects
+          # `tools` together with any `reasoning_effort` on chat/completions
+          # ("Function tools with reasoning_effort are not supported for
+          # gpt-5.6-luna in /v1/chat/completions. To use function tools, use
+          # /v1/responses or set reasoning_effort to 'none'.") — and this
+          # action's review flow always sends tools, so every run hit it
+          # regardless of reasoning_effort's value. Confirmed with a direct
+          # API call outside the action (see the ocr-ci-code-review memory).
+          llm_url: https://api.openai.com/v1/responses
+          # Ignored once llm_protocol is explicit (per its own description),
+          # so left out rather than kept as a stale, misleading "false".
+          llm_protocol: openai-responses
+          llm_auth_token: ${{ secrets.OCR_OPENAI_API_KEY }}
+          # Codename in a repo variable, not hardcoded: switching models
+          # later is `gh variable set OCR_LLM_MODEL -R zireklab/brightbean-chat
+          # -b <model>`, not a file edit.
+          llm_model: ${{ vars.OCR_LLM_MODEL }}
+          # NOT llm_reasoning_effort: that input merges a *flat*
+          # reasoning_effort key — the chat/completions shape. /v1/responses
+          # rejects that flat key ("this parameter has moved to
+          # 'reasoning.effort'") and wants it nested instead; extra_body is a
+          # raw passthrough, so the correctly-nested field goes there. This
+          # also still has to override the action's default
+          # `{"thinking": {"type": "disabled"}}` — /v1/responses 400s on that
+          # too ("Unknown parameter: 'thinking'"), same as chat/completions
+          # did with the plain "{}" this replaces.
+          llm_extra_body: '{"reasoning": {"effort": "max"}}'
+          # Only the pull_request event carries this in its own payload;
+          # workflow_dispatch does not, so it has to come from the input.
+          pr_number: ${{ inputs.pr_number }}
+          # Empty on a normal pull_request run (fork-check didn't run), which
+          # is fine: the action's own fallback prefers the event payload
+          # whenever these are blank. See fork-check's comment for why a
+          # workflow_dispatch run can't leave them out instead.
+          head_sha: ${{ steps.fork-check.outputs.head_sha }}
+          base_ref: ${{ steps.fork-check.outputs.base_ref }}
+          github_token: ${{ steps.app-token.outputs.token }}

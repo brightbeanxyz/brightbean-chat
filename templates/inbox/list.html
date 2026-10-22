@@ -21,25 +21,25 @@ No inline event handlers: the CSP allows 'unsafe-eval' for Alpine's x-*
 expressions but NOT 'unsafe-inline', so an onclick= attribute is silently
 inert.
 {% endcomment %}
-{% load common_extras %}
+{% load common_extras i18n %}
 
-{% block title %}Inbox · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Inbox" %} · BrightBean Chat{% endblock %}
 
 {% block page_header %}
   <div class="page-header mb-4">
     <div class="page-header-text">
-      <h1 class="page-title">Inbox</h1>
-      <p class="page-lede">Every conversation across your connected channels.</p>
+      <h1 class="page-title">{% translate "Inbox" %}</h1>
+      <p class="page-lede">{% translate "Every conversation across your connected channels." %}</p>
     </div>
     {% comment %}
       The keyboard shortcuts, said out loud (HANDOFF §2.4). They have worked
       since the inbox shipped and nothing on the page admitted they existed.
       Hidden on a phone, where there is no keyboard to press them on.
     {% endcomment %}
-    <p class="ib-shortcuts hidden md:flex" aria-label="Keyboard shortcuts">
-      <span><kbd>j</kbd> <kbd>k</kbd> navigate</span>
-      <span><kbd>e</kbd> done</span>
-      <span><kbd>r</kbd> reply</span>
+    <p class="ib-shortcuts hidden md:flex" aria-label="{% translate 'Keyboard shortcuts' %}">
+      <span><kbd>j</kbd> <kbd>k</kbd> {% translate "navigate" %}</span>
+      <span><kbd>e</kbd> {% translate "done" %}</span>
+      <span><kbd>r</kbd> {% translate "reply" %}</span>
     </p>
   </div>
 {% endblock %}
@@ -108,7 +108,7 @@ inert.
       would just be a second request. data-poll is what the If-None-Match
       listener keys on, which is how a mutation's request never carries a tag.
     {% endcomment %}
-    <section class="ib-rail" aria-label="Conversations"
+    <section class="ib-rail" aria-label="{% translate 'Conversations' %}"
              x-data="inboxSelection()"
              :class="count && 'is-selecting'"
              x-on:inbox-list-changed.camel.window="clear()">
@@ -137,7 +137,7 @@ inert.
           the fields. Channel and label, the genuinely long lists, are in the
           Filter popover below, several of each at once.
         {% endcomment %}
-        <div class="tabs tabs-inline ib-tabs" role="tablist" aria-label="Views">
+        <div class="tabs tabs-inline ib-tabs" role="tablist" aria-label="{% translate 'Views' %}">
           {% for view in views %}
           <button type="button" role="tab" class="tab" aria-controls="inbox-list"
                   :aria-selected="(state === '{{ view.state|escapejs }}' && assignee === '{{ view.assignee|escapejs }}') ? 'true' : 'false'"
@@ -147,10 +147,11 @@ inert.
           {% endfor %}
         </div>
         <div class="ib-toolbar">
+          {% translate "Search conversations" as search_conversations_label %}
           <label class="search-field flex-1 min-w-0">
             {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
             <input type="search" id="inbox-search" name="q" x-model="q" class="search-input"
-                   placeholder="Search conversations" aria-label="Search conversations" maxlength="100">
+                   placeholder="{{ search_conversations_label }}" aria-label="{{ search_conversations_label }}" maxlength="100">
           </label>
           {% filter_popover groups=filter_groups onchange="reload()" noun="conversation" icon_only=True %}
         </div>
@@ -169,15 +170,18 @@ inert.
           <template x-for="id in ids" :key="id">
             <input type="hidden" name="conversation" :value="id">
           </template>
-          <span class="text-xs" x-text="count + (count === 1 ? ' selected' : ' selected')"></span>
-          <label class="sr-only" for="bulk-label">Label</label>
+          {% translate "selected" as selected_word %}
+          <span class="text-xs" x-text="count + ' {{ selected_word|escapejs }}'"></span>
+          <label class="sr-only" for="bulk-label">{% translate "Label" %}</label>
+          <span class="bb-select-wrap">
           <select id="bulk-label" class="bb-select" name="label" required>
-            <option value="">Choose a label…</option>
+            <option value="">{% translate "Choose a label…" %}</option>
             {% for option in label_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}
           </select>
-          <button type="submit" class="btn-outline btn-inline" name="action" value="add">Add</button>
-          <button type="submit" class="btn-outline btn-inline" name="action" value="remove">Remove</button>
-          <button type="button" class="btn-link btn-inline" @click="clear()">Clear</button>
+          </span>
+          <button type="submit" class="btn-outline btn-inline" name="action" value="add">{% translate "Add" %}</button>
+          <button type="submit" class="btn-outline btn-inline" name="action" value="remove">{% translate "Remove" %}</button>
+          <button type="button" class="btn-link btn-inline" @click="clear()">{% translate "Clear" %}</button>
         </form>
       {% endif %}
       <div id="inbox-list" class="ib-rail-scroll"
@@ -209,14 +213,14 @@ inert.
         <div class="ib-thread ib-thread-empty">
           <div class="ib-empty-state">
             <span class="ib-empty-icon" aria-hidden="true">{% include "partials/_nav_icon.html" with name="inbox" icon_size=26 %}</span>
-            <p class="ib-empty-title">Select a conversation</p>
+            <p class="ib-empty-title">{% translate "Select a conversation" %}</p>
             <p class="ib-empty-body">
-              {% if unread_count %}{{ unread_count }} conversation{{ unread_count|pluralize }} need{{ unread_count|pluralize:"s," }} a reply.{% else %}You are all caught up.{% endif %}
-              Use <b>j</b> and <b>k</b> to move through the list.
+              {% if unread_count %}{% blocktranslate count count=unread_count %}{{ count }} conversation needs a reply.{% plural %}{{ count }} conversations need a reply.{% endblocktranslate %}{% else %}{% translate "You are all caught up." %}{% endif %}
+              {% blocktranslate %}Use <b>j</b> and <b>k</b> to move through the list.{% endblocktranslate %}
             </p>
             {% if conversations %}
               <button type="button" class="ib-empty-action" @click="openFirstUnread()">
-                {% if unread_count %}Open first unread{% else %}Open the newest{% endif %}
+                {% if unread_count %}{% translate "Open first unread" %}{% else %}{% translate "Open the newest" %}{% endif %}
               </button>
             {% endif %}
           </div>
@@ -228,6 +232,8 @@ inert.
 {% endblock %}
 
 {% block alpine_components %}
+{% translate "The media library could not be reached." as media_library_unavailable %}
+{% translate "That is as many attachments as one message can carry." as max_attachments_reached %}
 <script nonce="{{ request.csp_nonce }}">
   (function () {
     // SPEC §14's 304s, client half. See the comment at the top of this file.
@@ -394,7 +400,7 @@ inert.
             );
           })
           .catch(() => {
-            this.picker.error = 'The media library could not be reached.';
+            this.picker.error = '{{ media_library_unavailable|escapejs }}';
             this.picker.results = [];
           })
           .finally(() => {
@@ -407,7 +413,7 @@ inert.
       // signed one at send time.
       attach(asset) {
         if (this.items.length >= config.max) {
-          this.picker.error = 'That is as many attachments as one message can carry.';
+          this.picker.error = '{{ max_attachments_reached|escapejs }}';
           return;
         }
         if (!this.items.some((item) => item.id === asset.id)) {

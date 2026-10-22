@@ -10,8 +10,9 @@
 
 import { describe, expect, it } from "vitest";
 
+import i18n from "../i18n";
 import { GROUPS, NODE_TYPES, nodeSpec } from "./artifact";
-import { GROUP_PHRASE, TYPE_PHRASE, plainKind } from "./plain";
+import { GROUP_PHRASE, TYPE_PHRASE, nodeTypeDescription, nodeTypeLabel, plainKind } from "./plain";
 
 describe("plain-language node kinds", () => {
   it.each(NODE_TYPES.map((spec) => spec.type))(
@@ -62,5 +63,38 @@ describe("plain-language node kinds", () => {
         spec.label.toLowerCase(),
       );
     }
+  });
+
+  describe("nodeTypeLabel and nodeTypeDescription", () => {
+    it.each(NODE_TYPES.map((spec) => spec.type))(
+      "%s resolves to a non-empty label and description",
+      (type) => {
+        const spec = nodeSpec(type);
+        expect(nodeTypeLabel(spec, type)).toBeTruthy();
+        expect(nodeTypeDescription(spec, type)).toBeTruthy();
+      },
+    );
+
+    it("falls through to the registry's own label for an unregistered type", () => {
+      // The branch a node type added by a later layer lands in before
+      // anybody writes translated copy for it — still nameable, in English,
+      // rather than invisible. See nodeTypeLabel's own doc.
+      const spec = { label: "Do The New Thing", type: "something_new" } as ReturnType<typeof nodeSpec>;
+      expect(nodeTypeLabel(spec, "something_new")).toBe("Do The New Thing");
+      expect(nodeTypeLabel(undefined, "something_new")).toBe("something_new");
+    });
+
+    it("actually translates, rather than just resolving to the English text under a different key", async () => {
+      await i18n.changeLanguage("ru");
+      try {
+        expect(nodeTypeLabel(nodeSpec("send_message"), "send_message")).toBe("Отправить сообщение");
+        expect(nodeTypeDescription(nodeSpec("send_message"), "send_message")).toContain("Отправляет сообщение");
+      } finally {
+        // Every other test in this suite assumes English; changeLanguage() has
+        // no scoped-override form the way Django's translation.override() does,
+        // so restoring it by hand is this test's own job.
+        await i18n.changeLanguage("en");
+      }
+    });
   });
 });

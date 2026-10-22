@@ -11,11 +11,12 @@ already known to be http(s) — see apps/inbox/rendering.py. `rel` and `target`
 are still explicit: the destination was chosen by the same stranger who wrote
 the message.
 {% endcomment %}
+{% load i18n %}
 <div>
   {% if card.image_url %}<img class="ib-media" src="{{ card.image_url }}" alt="" loading="lazy">{% endif %}
   {% if card.title %}<div class="font-semibold">{{ card.title }}</div>{% endif %}
   {% if card.subtitle %}<div>{{ card.subtitle }}</div>{% endif %}
-  {% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">Open</a>{% endif %}
+  {% if card.url %}<a href="{{ card.url }}" target="_blank" rel="noopener noreferrer">{% translate "Open" %}</a>{% endif %}
   {% if card.buttons %}
     <div class="ib-bubble-actions">
       {% for button in card.buttons %}

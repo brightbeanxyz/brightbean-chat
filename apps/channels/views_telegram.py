@@ -33,6 +33,8 @@ from django.db import IntegrityError, transaction
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
 from apps.channels.models import ChannelConnection
@@ -52,7 +54,7 @@ __all__ = ["telegram_connect"]
 #: An operator's next step is the same in all three (check it with BotFather and
 #: try again), and a message that distinguished them would be an oracle for
 #: whether a given token string is a real bot.
-REJECTED_MESSAGE = (
+REJECTED_MESSAGE = _(
     "Telegram did not accept that token. Copy it again from BotFather (it looks like "
     "123456789:AA...) and check that the bot is active."
 )
@@ -67,7 +69,7 @@ BOT_USERNAME = re.compile(r"^[A-Za-z0-9_]{5,32}$")
 #: Shown when the token is good but ``setWebhook`` failed. Separate from the
 #: above because the fix is genuinely different: this one is almost always a
 #: deployment that is not reachable over public HTTPS.
-WEBHOOK_FAILED = (
+WEBHOOK_FAILED = _(
     "That token works, but Telegram could not be pointed at this deployment. The webhook "
     "URL has to be reachable over public HTTPS with a valid certificate; see "
     "docs/channels/telegram.md."
@@ -95,7 +97,7 @@ def telegram_connect(request: WorkspaceRequest, workspace_id: str) -> HttpRespon
     if request.method == "POST":
         token = (request.POST.get("bot_token") or "").strip()
         if not token:
-            error = "Paste the token BotFather gave you."
+            error = gettext("Paste the token BotFather gave you.")
         else:
             error = _connect(request, token)
             if not error:
@@ -124,13 +126,13 @@ def _connect(request: WorkspaceRequest, token: str) -> str:
         # from `request_json` names the host, but the surrounding code path is
         # the one place a bot token exists in plain text (SECURITY-BASELINE §5).
         logger.info("Telegram connect: getMe was rejected for workspace %s.", request.workspace.pk)
-        return REJECTED_MESSAGE
+        return str(REJECTED_MESSAGE)
 
     bot_id = bot.get("id")
     username = bot.get("username")
     if not isinstance(bot_id, int) or isinstance(bot_id, bool) or not isinstance(username, str) or not username:
         logger.warning("Telegram connect: getMe returned an unusable identity.")
-        return REJECTED_MESSAGE
+        return str(REJECTED_MESSAGE)
 
     # The organization's channel limit. See apps/channels/plan.py on why this
     # is called here in all six adapters rather than in one shared service.
@@ -159,7 +161,7 @@ def _connect(request: WorkspaceRequest, token: str) -> str:
         # SPEC §5's unique (platform, external_id) is deployment-wide, so this
         # can be another workspace's row. The wording never says which — same
         # message the form's own pre-check uses (SECURITY-BASELINE §1).
-        return DUPLICATE_ACCOUNT_ERROR
+        return str(DUPLICATE_ACCOUNT_ERROR)
 
     # setWebhook runs **outside** the savepoint above, and deliberately. It is
     # a network round trip with a 30-second timeout; holding a transaction open
@@ -179,7 +181,9 @@ def _connect(request: WorkspaceRequest, token: str) -> str:
     except APIError:
         logger.info("Telegram connect: setWebhook failed for workspace %s.", request.workspace.pk)
         connection.delete()
-        return WEBHOOK_FAILED
+        return str(WEBHOOK_FAILED)
 
-    messages.success(request, f"Connected @{username}. Send it /start to check it works.")
+    messages.success(
+        request, gettext("Connected @%(username)s. Send it /start to check it works.") % {"username": username}
+    )
     return ""

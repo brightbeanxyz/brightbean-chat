@@ -49,6 +49,8 @@ from django.db import IntegrityError, transaction
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
 from apps.channels.forms import DUPLICATE_ACCOUNT_ERROR
@@ -83,12 +85,12 @@ AWS_REGION_RE = re.compile(r"^[a-z]{2}(-gov)?-[a-z]+-\d$")
 #: operator's next step is the same either way, and distinguishing "wrong
 #: password" from "no such user" is an oracle.
 REJECTED_MESSAGES = {
-    "smtp": (
+    "smtp": _(
         "The mail server did not accept those details. Check the host, port, encryption and "
         "sign-in details with your provider and try again."
     ),
-    "resend": "Resend did not accept that API key. Copy it again from the Resend dashboard and try again.",
-    "ses": (
+    "resend": _("Resend did not accept that API key. Copy it again from the Resend dashboard and try again."),
+    "ses": _(
         "AWS did not accept those credentials. Check the access key, secret and region, and that the "
         "key is allowed to use SES."
     ),
@@ -202,15 +204,15 @@ def _connect(request: WorkspaceRequest, provider: str) -> str:
         # request, which on an auth failure means it can quote the credential
         # (SECURITY-BASELINE §5).
         logger.info("Email connect refused by %s for workspace %s.", provider, request.workspace.pk)
-        return REJECTED_MESSAGES.get(provider, REJECTED_MESSAGES["smtp"])
+        return str(REJECTED_MESSAGES.get(provider, REJECTED_MESSAGES["smtp"]))
 
     try:
         with transaction.atomic():
             connection.save()
     except IntegrityError:
-        return DUPLICATE_ACCOUNT_ERROR
+        return str(DUPLICATE_ACCOUNT_ERROR)
 
-    messages.success(request, f"Connected {domain}.")
+    messages.success(request, gettext("Connected %(domain)s.") % {"domain": domain})
     return ""
 
 
@@ -224,7 +226,7 @@ def _credentials(request: WorkspaceRequest, provider: str, from_address: str) ->
     if provider == "resend":
         api_key = (request.POST.get("api_key") or "").strip()
         if not api_key:
-            return "Paste the API key from your Resend dashboard."
+            return gettext("Paste the API key from your Resend dashboard.")
         # Resend's own webhook signing secret. Optional at connect time: bounce
         # handling needs it, sending does not, and an operator who has not
         # created the endpoint yet should not be blocked from connecting.
@@ -234,9 +236,9 @@ def _credentials(request: WorkspaceRequest, provider: str, from_address: str) ->
         secret = (request.POST.get("secret_access_key") or "").strip()
         region = (request.POST.get("region") or "").strip().lower()
         if not key_id or not secret or not region:
-            return "Enter the access key, the secret and the AWS region."
+            return gettext("Enter the access key, the secret and the AWS region.")
         if not AWS_REGION_RE.match(region):
-            return "That is not an AWS region name. It looks like eu-west-1 or us-gov-east-1."
+            return gettext("That is not an AWS region name. It looks like eu-west-1 or us-gov-east-1.")
         return {
             **common,
             "access_key_id": key_id,
@@ -251,13 +253,13 @@ def _credentials(request: WorkspaceRequest, provider: str, from_address: str) ->
 
     host = (request.POST.get("host") or "").strip()
     if not host:
-        return "Enter the SMTP host your provider gave you."
+        return gettext("Enter the SMTP host your provider gave you.")
     port = (request.POST.get("port") or "").strip() or "587"
     if not port.isdigit():
-        return "Enter a numeric SMTP port, usually 587 for STARTTLS or 465 for SSL."
+        return gettext("Enter a numeric SMTP port, usually 587 for STARTTLS or 465 for SSL.")
     security = (request.POST.get("security") or "starttls").strip().lower()
     if security not in {"starttls", "ssl", "none"}:
-        return "Choose STARTTLS, SSL or none for the connection encryption."
+        return gettext("Choose STARTTLS, SSL or none for the connection encryption.")
     return {
         **common,
         "host": host,
@@ -309,9 +311,9 @@ def update_credentials(request: WorkspaceRequest, workspace_id: str, connection_
     if changed:
         connection.credentials = credentials  # type: ignore[assignment]
         connection.save(update_fields=["credentials", "updated_at"])
-        messages.success(request, "Updated this channel's webhook settings.")
+        messages.success(request, gettext("Updated this channel's webhook settings."))
     else:
-        messages.info(request, "Nothing to update.")
+        messages.info(request, gettext("Nothing to update."))
     return redirect(reverse("channels:detail", kwargs={"workspace_id": workspace_id, "connection_id": connection.pk}))
 
 
@@ -339,7 +341,7 @@ def send_test_email(request: WorkspaceRequest, workspace_id: str, connection_id:
     )
     recipient = normalize_email(getattr(request.user, "email", "") or "")
     if not recipient:
-        return JsonResponse({"ok": False, "message": "Your account has no email address to send a test to."})
+        return JsonResponse({"ok": False, "message": gettext("Your account has no email address to send a test to.")})
 
     # Per connection rather than per user: the thing being protected is the
     # sending domain's reputation, and that belongs to the connection.
@@ -349,12 +351,12 @@ def send_test_email(request: WorkspaceRequest, workspace_id: str, connection_id:
         window_seconds=TEST_EMAIL_WINDOW_SECONDS,
     ):
         return JsonResponse(
-            {"ok": False, "message": "Too many test emails for this channel just now. Try again shortly."}
+            {"ok": False, "message": gettext("Too many test emails for this channel just now. Try again shortly.")}
         )
 
     envelope = _test_envelope(connection, recipient)
     if not envelope.from_address:
-        return JsonResponse({"ok": False, "message": "This connection has no from-address stored."})
+        return JsonResponse({"ok": False, "message": gettext("This connection has no from-address stored.")})
 
     try:
         email_backends.deliver(connection, envelope)
@@ -363,10 +365,16 @@ def send_test_email(request: WorkspaceRequest, workspace_id: str, connection_id:
         return JsonResponse(
             {
                 "ok": False,
-                "message": REJECTED_MESSAGES.get(email_backends.provider_for(connection), REJECTED_MESSAGES["smtp"]),
+                # str(): a gettext_lazy proxy is not JSON-serializable, and this
+                # is where it evaluates.
+                "message": str(
+                    REJECTED_MESSAGES.get(email_backends.provider_for(connection), REJECTED_MESSAGES["smtp"])
+                ),
             }
         )
-    return JsonResponse({"ok": True, "message": f"Sent a test email to {recipient}."})
+    return JsonResponse(
+        {"ok": True, "message": gettext("Sent a test email to %(recipient)s.") % {"recipient": recipient}}
+    )
 
 
 def _test_envelope(connection: ChannelConnection, recipient: str) -> email_backends.Envelope:

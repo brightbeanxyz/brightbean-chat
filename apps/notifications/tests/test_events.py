@@ -73,6 +73,31 @@ class TestTheShippedVocabulary:
 
         assert labels == sorted(labels)
 
+    def test_the_filter_dropdown_labels_are_actually_translated(self):
+        """Every registered label is gettext_lazy, not a plain string left
+        over from before the type was widened to CopyText.
+
+        broadcast_finished and scheduled_reply_failed specifically: both are
+        registered from a *different* app's own module
+        (apps/broadcasts/notifications.py, apps/inbox/notifications.py) — see
+        those modules' own docstrings for why — and register_event() accepts
+        an identical re-registration as a no-op but still overwrites REGISTRY
+        with whichever call ran last. A label wrapped in one module's copy of
+        the registration and left plain in the other's stays silently plain
+        whenever app-loading order happens to run that plain one last.
+        """
+        from django.utils.translation import override
+
+        with override("ru"):
+            labels = {str(label) for _, label in registered_choices()}
+
+        assert "Flow run failed" not in labels
+        assert "Запуск сценария завершился ошибкой" in labels
+        assert "Broadcast finished" not in labels
+        assert "Рассылка завершена" in labels
+        assert "Scheduled reply failed" not in labels
+        assert "Не удалось отправить отложенный ответ" in labels
+
     def test_burst_prone_events_do_not_email(self):
         """flow_execution_failed fires once per execution, so one broken flow in
         a busy workspace would be a mail storm."""

@@ -1,5 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Connect a WhatsApp number. Same shape as telegram_connect.html — see the note
 there for why content_wrap is cleared and why the platform key is written once.
@@ -17,7 +17,7 @@ class name generated there never reaches the bundle.
 access_token is a PasswordInput(render_value=False), which is what keeps the
 token out of the response on a failed submit. Nothing here re-renders it.
 {% endcomment %}
-{% block title %}Connect WhatsApp · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Connect WhatsApp" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
@@ -27,10 +27,9 @@ token out of the response on a failed submit. Nothing here re-renders it.
     <div class="flex items-start gap-4 mb-7">
         <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
         <div class="min-w-0">
-            <h1 class="page-title">Connect a WhatsApp number</h1>
+            <h1 class="page-title">{% translate "Connect a WhatsApp number" %}</h1>
             <p class="page-lede mt-1.5">
-                This is the direct-from-Meta path: you generate a permanent system user token in
-                Business Manager and paste it here. It is stored encrypted and never shown again.
+                {% translate "This is the direct-from-Meta path: you generate a permanent system user token in Business Manager and paste it here. It is stored encrypted and never shown again." %}
             </p>
         </div>
     </div>
@@ -38,38 +37,38 @@ token out of the response on a failed submit. Nothing here re-renders it.
     {% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-4">Before you paste</h2>
+        <h2 class="section-title mb-4">{% translate "Before you paste" %}</h2>
         <ol class="cn-steps" role="list">
-            <li class="cn-step">In Business Manager, open <em>WhatsApp Accounts</em> and copy the WhatsApp Business Account ID.</li>
-          <li class="cn-step">Open the number under that account and copy its <em>phone number ID</em> (the API ID, not the number).</li>
+            <li class="cn-step">{% blocktranslate %}In Business Manager, open <em>WhatsApp Accounts</em> and copy the WhatsApp Business Account ID.{% endblocktranslate %}</li>
+            <li class="cn-step">{% blocktranslate %}Open the number under that account and copy its <em>phone number ID</em> (the API ID, not the number).{% endblocktranslate %}</li>
             <li class="cn-step">
-                Create a system user with <code>whatsapp_business_messaging</code> and
-                <code>whatsapp_business_management</code>, then generate a permanent token for it.
+                {% blocktranslate %}Create a system user with <code>whatsapp_business_messaging</code> and <code>whatsapp_business_management</code>, then generate a permanent token for it.{% endblocktranslate %}
             </li>
         </ol>
     </section>
 
     <form class="card p-6 mb-5 cn-form" method="post">
         {% csrf_token %}
-        <h2 class="section-title mb-4">Paste the three values</h2>
+        <h2 class="section-title mb-4">{% translate "Paste the three values" %}</h2>
         {% include "partials/_auth_form_fields.html" with form=form %}
         <div class="form-actions">
-            <button type="submit" class="btn-pill-primary">Connect</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Connect" %}</button>
         </div>
     </form>
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-3">What happens next</h2>
+        <h2 class="section-title mb-3">{% translate "What happens next" %}</h2>
         <p class="section-note mb-4">
-            We prove the token against Meta before anything is written, then subscribe the account
-            to this deployment.
+            {% translate "We prove the token against Meta before anything is written, then subscribe the account to this deployment." %}
         </p>
-        {% include "partials/_copy_field.html" with label="Deliveries arrive at" value=webhook_url hint="Paste this into the app's WhatsApp webhook configuration, with the verify token shown there. Full setup notes are in docs/channels/whatsapp.md." only %}
+        {% translate "Deliveries arrive at" as deliveries_at_label %}
+        {% translate "Paste this into the app's WhatsApp webhook configuration, with the verify token shown there. Full setup notes are in docs/channels/whatsapp.md." as deliveries_at_hint %}
+        {% include "partials/_copy_field.html" with label=deliveries_at_label value=webhook_url hint=deliveries_at_hint only %}
     </section>
 
     <a class="cn-back" href="{{ list_url }}">
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-        Back to channels
+        {% translate "Back to channels" %}
     </a>
 </div>
 {% endwith %}

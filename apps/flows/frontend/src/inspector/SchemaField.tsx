@@ -12,6 +12,7 @@
  * the generated form. That is the seam that lets a node type registered by a
  * later layer be configurable with zero code, and lets this one be pleasant.
  */
+import i18n from "../i18n";
 import {
   anyOfRequirements,
   branchAt,
@@ -32,7 +33,7 @@ import { ID_PATTERN } from "../schema/handles";
 import type { JsonSchema } from "../schema/types";
 import { formatPath, type ConfigPath } from "../store/paths";
 import { useField } from "./FieldContext";
-import { ADD_GROUPS, ADD_ONE, labelFor, variantLabel } from "./copy";
+import { ADD_GROUPS, addGroupLabel, addOneLabel, labelFor, variantLabel } from "./copy";
 import { JsonField, NumberField, ScalarField, SelectField, TextField, ToggleField, fieldId, type FieldProps } from "./fields";
 import { lookupOverride } from "./overrides";
 
@@ -181,7 +182,7 @@ export function ObjectField({
         />
         {optional && !readOnly ? (
           <button type="button" className="btn-link text-xs -mt-2 mb-2 block" onClick={() => clear(childPath)}>
-            Remove {labelFor(key, deref(property)?.title)}
+            {i18n.t("inspector.removeItem", { label: labelFor(key, deref(property)?.title) })}
           </button>
         ) : null}
       </div>
@@ -205,10 +206,10 @@ export function ObjectField({
   const adders =
     readOnly || absent.length === 0 ? null : path.length === 0 ? (
       <div className="fb-adders">
-        <p className="fb-adders-label">Add to this step</p>
-        {groupAdders(absent).map(([label, group]) => (
-          <div key={label} className="fb-adder-group">
-            <p className="fb-adder-group-label">{label}</p>
+        <p className="fb-adders-label">{i18n.t("inspector.addToStep")}</p>
+        {groupAdders(absent).map(([groupKey, group]) => (
+          <div key={groupKey} className="fb-adder-group">
+            <p className="fb-adder-group-label">{addGroupLabel(groupKey)}</p>
             <div className="fb-add-chips">{group.map(chip)}</div>
           </div>
         ))}
@@ -222,7 +223,11 @@ export function ObjectField({
   if (path.length === 0 || hideLabel) {
     return (
       <>
-        {unmet ? <p className="fb-field-error">Fill in one of: {alternatives.map((g) => g.join(" + ")).join(" or ")}.</p> : null}
+        {unmet ? (
+          <p className="fb-field-error">
+            {i18n.t("inspector.fillInOneOf", { groups: alternatives.map((g) => g.join(" + ")).join(" or ") })}
+          </p>
+        ) : null}
         {body}
         {adders}
       </>
@@ -232,9 +237,13 @@ export function ObjectField({
   return (
     <div className="fb-field">
       <span className="fb-field-label">{labelFor(propertyName, schema.title)}</span>
-      {required ? null : <span className="fb-empty"> optional</span>}
+      {required ? null : <span className="fb-empty"> {i18n.t("inspector.optional")}</span>}
       <div className="fb-subgroup">
-        {unmet ? <p className="fb-field-error">Fill in one of: {alternatives.map((g) => g.join(" or ")).join(", ")}.</p> : null}
+        {unmet ? (
+          <p className="fb-field-error">
+            {i18n.t("inspector.fillInOneOf", { groups: alternatives.map((g) => g.join(" or ")).join(", ") })}
+          </p>
+        ) : null}
         {body}
         {adders}
       </div>
@@ -252,12 +261,12 @@ export function ObjectField({
  */
 function groupAdders(absent: [string, JsonSchema][]): [string, [string, JsonSchema][]][] {
   const claimed = new Set(ADD_GROUPS.flatMap((group) => group.keys));
-  const fallback = ADD_GROUPS[ADD_GROUPS.length - 1]?.label ?? "More";
+  const fallbackKey = ADD_GROUPS[ADD_GROUPS.length - 1]?.key ?? "more";
 
   return ADD_GROUPS.map((group): [string, [string, JsonSchema][]] => [
-    group.label,
+    group.key,
     absent.filter(([key]) =>
-      group.keys.length > 0 ? group.keys.includes(key) : !claimed.has(key) && group.label === fallback,
+      group.keys.length > 0 ? group.keys.includes(key) : !claimed.has(key) && group.key === fallbackKey,
     ),
   ]).filter(([, entries]) => entries.length > 0);
 }
@@ -290,7 +299,7 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
       <span className="fb-field-label">{labelFor(propertyName, schema.title)}</span>
       {max !== undefined ? <span className="fb-empty"> {items.length}/{max}</span> : null}
 
-      {items.length === 0 ? <p className="fb-empty">Nothing yet.</p> : null}
+      {items.length === 0 ? <p className="fb-empty">{i18n.t("inspector.nothingYet")}</p> : null}
 
       {items.map((item, index) => (
         <div key={index} className="fb-subgroup">
@@ -305,7 +314,10 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
                   type="button"
                   className="fb-row-btn"
                   onClick={() => move(index, index - 1)}
-                  aria-label={`Move ${labelFor(propertyName, schema.title)} ${index + 1} up`}
+                  aria-label={i18n.t("inspector.moveUp", {
+                    label: labelFor(propertyName, schema.title),
+                    index: index + 1,
+                  })}
                 >
                   ↑
                 </button>
@@ -313,7 +325,10 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
                   type="button"
                   className="fb-row-btn"
                   onClick={() => move(index, index + 1)}
-                  aria-label={`Move ${labelFor(propertyName, schema.title)} ${index + 1} down`}
+                  aria-label={i18n.t("inspector.moveDown", {
+                    label: labelFor(propertyName, schema.title),
+                    index: index + 1,
+                  })}
                 >
                   ↓
                 </button>
@@ -322,7 +337,10 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
                   className="fb-row-btn is-danger"
                   disabled={items.length <= min}
                   onClick={() => set(path, items.filter((_unused, at) => at !== index), `remove:${formatPath(path)}`)}
-                  aria-label={`Remove ${labelFor(propertyName, schema.title)} ${index + 1}`}
+                  aria-label={i18n.t("inspector.removeIndexed", {
+                    label: labelFor(propertyName, schema.title),
+                    index: index + 1,
+                  })}
                 >
                   ✕
                 </button>
@@ -348,10 +366,10 @@ export function ArrayField({ schema, path, value, propertyName }: FieldProps) {
           // panel can hold several arrays and three controls called "Add" say
           // nothing about what they add. What changes is that the *visible*
           // label now says the same thing: it read "Add", full stop.
-          aria-label={`Add to ${labelFor(propertyName, schema.title)}`}
+          aria-label={i18n.t("inspector.addToList", { label: labelFor(propertyName, schema.title) })}
           onClick={() => set(path, [...items, defaultFor(schema.items, propertyName)], `append:${formatPath(path)}`)}
         >
-          + {ADD_ONE[propertyName] ?? `Add to ${labelFor(propertyName, schema.title)}`}
+          + {addOneLabel(propertyName) ?? i18n.t("inspector.addToList", { label: labelFor(propertyName, schema.title) })}
         </button>
       )}
     </div>
@@ -406,24 +424,26 @@ export function VariantField({
           <label className="fb-field-label" htmlFor={fieldId(path)}>
             {labelFor(propertyName, schema.title)}
           </label>
-          {required ? null : <span className="fb-empty"> optional</span>}
+          {required ? null : <span className="fb-empty"> {i18n.t("inspector.optional")}</span>}
         </>
       )}
-      <select
-        id={fieldId(path)}
-        aria-label={labelFor(propertyName, schema.title)}
-        className="bb-select"
-        value={typeof current === "string" ? current : ""}
-        disabled={readOnly}
-        onChange={(event) => set(path, seedVariant(rawSchema, event.target.value), `variant:${formatPath(path)}`)}
-      >
-        <option value="">Choose…</option>
-        {tags.map((tag) => (
-          <option key={tag} value={tag}>
-            {variantLabel(tag)}
-          </option>
-        ))}
-      </select>
+      <span className="bb-select-wrap">
+        <select
+          id={fieldId(path)}
+          aria-label={labelFor(propertyName, schema.title)}
+          className="bb-select"
+          value={typeof current === "string" ? current : ""}
+          disabled={readOnly}
+          onChange={(event) => set(path, seedVariant(rawSchema, event.target.value), `variant:${formatPath(path)}`)}
+        >
+          <option value="">{i18n.t("inspector.choose")}</option>
+          {tags.map((tag) => (
+            <option key={tag} value={tag}>
+              {variantLabel(tag)}
+            </option>
+          ))}
+        </select>
+      </span>
       {branch ? (
         <div className="fb-subgroup">
           {BranchOverride ? (
@@ -485,26 +505,28 @@ export function UnionField({
           <label className="fb-field-label" htmlFor={fieldId(path)}>
             {labelFor(propertyName, schema.title)}
           </label>
-          {required ? null : <span className="fb-empty"> optional</span>}
+          {required ? null : <span className="fb-empty"> {i18n.t("inspector.optional")}</span>}
         </>
       )}
-      <select
-        id={fieldId(path)}
-        aria-label={labelFor(propertyName, schema.title)}
-        className="bb-select"
-        value={current === -1 ? "" : String(current)}
-        disabled={readOnly}
-        onChange={(event) =>
-          set(path, defaultFor(branchAt(rawSchema, Number(event.target.value))), `union:${formatPath(path)}`)
-        }
-      >
-        {current === -1 ? <option value="">Choose…</option> : null}
-        {labels.map((label, index) => (
-          <option key={index} value={index}>
-            {label}
-          </option>
-        ))}
-      </select>
+      <span className="bb-select-wrap">
+        <select
+          id={fieldId(path)}
+          aria-label={labelFor(propertyName, schema.title)}
+          className="bb-select"
+          value={current === -1 ? "" : String(current)}
+          disabled={readOnly}
+          onChange={(event) =>
+            set(path, defaultFor(branchAt(rawSchema, Number(event.target.value))), `union:${formatPath(path)}`)
+          }
+        >
+          {current === -1 ? <option value="">{i18n.t("inspector.choose")}</option> : null}
+          {labels.map((label, index) => (
+            <option key={index} value={index}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </span>
       {branch ? (
         <div className="fb-subgroup">
           {scalarBranch ? (

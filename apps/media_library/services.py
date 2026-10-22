@@ -21,6 +21,7 @@ from typing import Any
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.db import transaction
+from django.utils.translation import gettext
 
 from apps.media_library.mimes import MediaKind, UnsupportedMediaError, kind_for, sniff
 from apps.media_library.models import MediaAsset, MediaFolder
@@ -66,7 +67,7 @@ def create_asset(
     # Cheapest reject first: larger than every per-kind cap means no allowed
     # type could accept it, so there is no reason to read a byte.
     if declared_size > largest_upload_bytes():
-        raise QuotaExceededError("That file is larger than any media type this deployment accepts.")
+        raise QuotaExceededError(gettext("That file is larger than any media type this deployment accepts."))
 
     # The client's Content-Type header and the filename extension are not
     # consulted, here or anywhere else in this app.
@@ -168,7 +169,7 @@ def update_asset(asset: MediaAsset, *, title: str | None = None, alt_text: str |
 def move_asset(asset: MediaAsset, folder: MediaFolder | None) -> MediaAsset:
     """Move an asset into ``folder``, or to the library root when ``None``."""
     if folder is not None and folder.workspace_id != asset.workspace_id:
-        raise ValidationError("That folder belongs to a different workspace.")
+        raise ValidationError(gettext("That folder belongs to a different workspace."))
     asset.folder = folder
     asset.save(update_fields=["folder", "updated_at"])
     return asset
@@ -191,14 +192,16 @@ def create_folder(*, workspace: Any, name: str, parent: MediaFolder | None = Non
     from django.conf import settings
 
     if parent is not None and parent.workspace_id != workspace.pk:
-        raise ValidationError("That folder belongs to a different workspace.")
+        raise ValidationError(gettext("That folder belongs to a different workspace."))
 
     # Depth is capped by MediaFolder.clean(); this caps breadth. Without it the
     # picker payload, the move dropdown and the sidebar rail each render an
     # unbounded list, and they all grow together.
     limit = int(settings.MEDIA_MAX_FOLDERS_PER_WORKSPACE)
     if MediaFolder.objects.for_workspace(workspace).count() >= limit:
-        raise ValidationError(f"This workspace already has the maximum of {limit} folders.")
+        raise ValidationError(
+            gettext("This workspace already has the maximum of %(limit)s folders.") % {"limit": limit}
+        )
     folder = MediaFolder(workspace=workspace, parent=parent, name=name.strip()[:255])
     # No ``exclude`` here, deliberately. Both uniqueness constraints are on
     # (workspace, ...), and Django skips validating any constraint that touches
@@ -240,8 +243,11 @@ def delete_folder(folder: MediaFolder) -> None:
     if clashes:
         names = ", ".join(f"“{name}”" for name in clashes)
         raise ValidationError(
-            f"“{folder.name}” contains {names}, and a folder of that name already exists "
-            f"where its contents would move. Rename one of them first."
+            gettext(
+                "“%(folder)s” contains %(names)s, and a folder of that name already exists "
+                "where its contents would move. Rename one of them first."
+            )
+            % {"folder": folder.name, "names": names}
         )
 
     with transaction.atomic():

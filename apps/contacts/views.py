@@ -79,6 +79,7 @@ from django.shortcuts import render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import urlencode
+from django.utils.translation import gettext, ngettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
@@ -225,12 +226,12 @@ def _sort_options() -> list[dict[str, str]]:
     the module the ordering allowlist lives in.
     """
     labels = {
-        "recent": "Last interaction",
-        "oldest": "Least recent",
-        "name": "Name (A–Z)",
-        "name_desc": "Name (Z–A)",
-        "email": "Email",
-        "created": "Newest first",
+        "recent": gettext("Last interaction"),
+        "oldest": gettext("Least recent"),
+        "name": gettext("Name (A–Z)"),
+        "name_desc": gettext("Name (Z–A)"),
+        "email": gettext("Email"),
+        "created": gettext("Newest first"),
     }
     return [{"value": key, "label": labels.get(key, key)} for key in SORTS]
 
@@ -298,13 +299,13 @@ def _facet_context(workspace: Any, query: ContactQuery) -> dict[str, Any]:
             "subscription": list(query.subscriptions),
         },
         "filter_groups": [
-            {"key": "channel", "label": "Channel", "options": channels},
+            {"key": "channel", "label": gettext("Channel"), "options": channels},
             {
                 "key": "tag",
-                "label": "Tag",
+                "label": gettext("Tag"),
                 "options": [(t.pk, t.name) for t in Tag.objects.for_workspace(workspace).order_by("name")],
             },
-            {"key": "subscription", "label": "Status", "options": list(filters.SUBSCRIPTIONS.items())},
+            {"key": "subscription", "label": gettext("Status"), "options": list(filters.SUBSCRIPTIONS.items())},
         ],
     }
 
@@ -585,16 +586,16 @@ def contact_edit(request: WorkspaceRequest, workspace_id: str, contact_id: str) 
     contact = _contact_or_404(request, contact_id)
     submitted = {name: request.POST[name] for name in services.EDITABLE_FIELDS if name in request.POST}
     if not submitted:
-        return toast_response(tone="info", title="Nothing to save")
+        return toast_response(tone="info", title=gettext("Nothing to save"))
     try:
         changed = services.update_contact(contact, **submitted)
     except ContactsError as exc:
-        return _failed(exc, "Could not save the contact")
+        return _failed(exc, gettext("Could not save the contact"))
     if not changed:
-        return toast_response(tone="info", title="No change")
+        return toast_response(tone="info", title=gettext("No change"))
     return toast_response(
         tone="success",
-        title="Contact saved",
+        title=gettext("Contact saved"),
         body=contact.display_name,
         events={"contactChanged": True},
     )
@@ -636,8 +637,10 @@ def contact_field_value(request: WorkspaceRequest, workspace_id: str, contact_id
         else:
             services.set_field_value(contact, field, raw)
     except ContactsError as exc:
-        return _failed(exc, f"Could not save {field.name}")
-    return toast_response(tone="success", title=f"{field.name} saved", events={"contactChanged": True})
+        return _failed(exc, gettext("Could not save %(field)s") % {"field": field.name})
+    return toast_response(
+        tone="success", title=gettext("%(field)s saved") % {"field": field.name}, events={"contactChanged": True}
+    )
 
 
 def _aware_datetime(raw: str, field: CustomField) -> Any:
@@ -686,23 +689,25 @@ def contact_tag_add(request: WorkspaceRequest, workspace_id: str, contact_id: st
         if existing is None and not _can(request, "manage_crm"):
             return toast_response(
                 tone="error",
-                title="That tag does not exist",
-                body="Creating tags needs the manage_crm permission. Ask an editor to add it first.",
+                title=gettext("That tag does not exist"),
+                body=gettext("Creating tags needs the manage_crm permission. Ask an editor to add it first."),
             )
         try:
             tag, _created = services.get_or_create_tag(request.workspace, name)
         except ContactsError as exc:
-            return _failed(exc, "Could not add the tag")
+            return _failed(exc, gettext("Could not add the tag"))
     else:
-        return toast_response(tone="info", title="Pick a tag first")
+        return toast_response(tone="info", title=gettext("Pick a tag first"))
 
     try:
         added = services.add_tag(contact, tag)
     except ContactsError as exc:
-        return _failed(exc, "Could not add the tag")
+        return _failed(exc, gettext("Could not add the tag"))
     if not added:
-        return toast_response(tone="info", title="Already tagged", body=tag.name)
-    return toast_response(tone="success", title="Tag added", body=tag.name, events={"contactTagsChanged": True})
+        return toast_response(tone="info", title=gettext("Already tagged"), body=tag.name)
+    return toast_response(
+        tone="success", title=gettext("Tag added"), body=tag.name, events={"contactTagsChanged": True}
+    )
 
 
 @login_required
@@ -713,8 +718,10 @@ def contact_tag_remove(request: WorkspaceRequest, workspace_id: str, contact_id:
     tag = get_scoped_object_or_404(Tag, request.workspace, pk=tag_id)
     removed = services.remove_tag(contact, tag)
     if not removed:
-        return toast_response(tone="info", title="That tag was not on this contact")
-    return toast_response(tone="success", title="Tag removed", body=tag.name, events={"contactTagsChanged": True})
+        return toast_response(tone="info", title=gettext("That tag was not on this contact"))
+    return toast_response(
+        tone="success", title=gettext("Tag removed"), body=tag.name, events={"contactTagsChanged": True}
+    )
 
 
 @login_required
@@ -770,10 +777,10 @@ def identity_opt_out(request: WorkspaceRequest, workspace_id: str, contact_id: s
 
     changed = activity.opt_out(identity, source="manual")
     if not changed:
-        return toast_response(tone="info", title="Already opted out")
+        return toast_response(tone="info", title=gettext("Already opted out"))
     return toast_response(
         tone="success",
-        title="Opted out",
+        title=gettext("Opted out"),
         body=f"{identity.platform} · {identity.platform_user_id}",
         events={"contactChannelsChanged": True},
     )
@@ -794,16 +801,16 @@ def contact_start_flow(request: WorkspaceRequest, workspace_id: str, contact_id:
     if flow is None:
         return toast_response(
             tone="error",
-            title="Could not start that flow",
-            body="It has no published version, or it is archived.",
+            title=gettext("Could not start that flow"),
+            body=gettext("It has no published version, or it is archived."),
         )
     try:
         execution = activity.start_flow_for(contact, flow, actor=request.user)
     except (FlowNotRunnableError, ContactsError) as exc:
-        return _failed(exc, "Could not start that flow")
+        return _failed(exc, gettext("Could not start that flow"))
     return toast_response(
         tone="success",
-        title="Flow started",
+        title=gettext("Flow started"),
         body=flow.name,
         events={"contactAutomationChanged": True, "executionId": str(execution.pk)},
     )
@@ -823,11 +830,11 @@ def contact_stop_automation(request: WorkspaceRequest, workspace_id: str, contac
     contact = _contact_or_404(request, contact_id)
     stopped = activity.stop_automation(contact)
     if not stopped:
-        return toast_response(tone="info", title="Nothing was running")
+        return toast_response(tone="info", title=gettext("Nothing was running"))
     return toast_response(
         tone="success",
-        title="Automation stopped",
-        body=f"{stopped} run{'' if stopped == 1 else 's'} expired.",
+        title=gettext("Automation stopped"),
+        body=ngettext("%(count)s run expired.", "%(count)s runs expired.", stopped) % {"count": stopped},
         events={"contactAutomationChanged": True},
     )
 
@@ -848,7 +855,7 @@ def contact_delete(request: WorkspaceRequest, workspace_id: str, contact_id: str
     services.delete_contact(contact)
     return toast_response(
         tone="success",
-        title="Contact deleted",
+        title=gettext("Contact deleted"),
         body=contact.display_name,
         events={"contactsChanged": True},
     )
@@ -910,19 +917,23 @@ def bulk_tag(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     removing = request.POST.get("mode") == "remove"
     contacts = list(_selected(request))
     if not contacts:
-        return toast_response(tone="info", title="Nothing selected")
+        return toast_response(tone="info", title=gettext("Nothing selected"))
 
     touched = 0
     for contact in contacts:
         try:
             changed = services.remove_tag(contact, tag) if removing else services.add_tag(contact, tag)
         except ContactsError as exc:
-            return _failed(exc, "Could not update the tags")
+            return _failed(exc, gettext("Could not update the tags"))
         touched += int(changed)
-    verb = "removed from" if removing else "added to"
+    title = (
+        ngettext("Tag removed from %(count)s contact", "Tag removed from %(count)s contacts", touched)
+        if removing
+        else ngettext("Tag added to %(count)s contact", "Tag added to %(count)s contacts", touched)
+    ) % {"count": touched}
     return _bulk_result(
-        f"Tag {verb} {touched} contact{'' if touched == 1 else 's'}",
-        f"{tag.name}: {len(contacts)} selected.",
+        title,
+        gettext("%(tag)s: %(count)s selected.") % {"tag": tag.name, "count": len(contacts)},
     )
 
 
@@ -939,14 +950,14 @@ def bulk_delete(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """
     contacts = list(_selected(request))
     if not contacts:
-        return toast_response(tone="info", title="Nothing selected")
+        return toast_response(tone="info", title=gettext("Nothing selected"))
     deleted = 0
     for contact in contacts:
         activity.stand_down(contact)
         deleted += int(services.delete_contact(contact))
     return _bulk_result(
-        f"{deleted} contact{'' if deleted == 1 else 's'} deleted",
-        "They are hidden everywhere and excluded from every segment.",
+        ngettext("%(count)s contact deleted", "%(count)s contacts deleted", deleted) % {"count": deleted},
+        gettext("They are hidden everywhere and excluded from every segment."),
     )
 
 
@@ -980,7 +991,7 @@ def bulk_sequence(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     removing = request.POST.get("mode") == "unsubscribe"
     contacts = list(_selected(request))
     if not contacts:
-        return toast_response(tone="info", title="Nothing selected")
+        return toast_response(tone="info", title=gettext("Nothing selected"))
 
     # A refusal for one contact does not abandon the rest, and does not discard
     # the ones already done. Each `subscribe` commits its own transaction, so
@@ -1003,18 +1014,27 @@ def bulk_sequence(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if not touched and refusals:
         # Nothing happened at all, so there is no partial state to report and
         # the reason is the whole story.
-        return toast_response(tone="error", title="Could not update the sequence", body=refusals[0])
+        return toast_response(tone="error", title=gettext("Could not update the sequence"), body=refusals[0])
 
-    verb = "unsubscribed from" if removing else "subscribed to"
     detail = (
-        "Unsubscribing stops future steps; anything already running finishes."
+        gettext("Unsubscribing stops future steps; anything already running finishes.")
         if removing
-        else "Everyone starts again at step 1."
+        else gettext("Everyone starts again at step 1.")
     )
     if refusals:
-        detail = f"{len(refusals)} skipped: {refusals[0]}"
+        detail = ngettext("%(count)s skipped: %(reason)s", "%(count)s skipped: %(reason)s", len(refusals)) % {
+            "count": len(refusals),
+            "reason": refusals[0],
+        }
+    title = (
+        ngettext(
+            "%(count)s contact unsubscribed from %(name)s", "%(count)s contacts unsubscribed from %(name)s", touched
+        )
+        if removing
+        else ngettext("%(count)s contact subscribed to %(name)s", "%(count)s contacts subscribed to %(name)s", touched)
+    ) % {"count": touched, "name": sequence.name}
     return _bulk_result(
-        f"{touched} contact{'' if touched == 1 else 's'} {verb} {sequence.name}",
+        title,
         detail,
         events={"contactsChanged": True, "sequenceSubscribersChanged": True, "sequenceStepsChanged": True},
     )
@@ -1048,10 +1068,10 @@ def segment_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse
             filter_json=_posted_filter(request),
         )
     except (ContactsError, ConditionError) as exc:
-        return _failed(exc, "Could not save the segment")
+        return _failed(exc, gettext("Could not save the segment"))
     return toast_response(
         tone="success",
-        title="Segment saved",
+        title=gettext("Segment saved"),
         body=segment.name,
         events={"segmentsChanged": True, "segmentSaved": str(segment.pk)},
     )
@@ -1073,8 +1093,10 @@ def segment_update(request: WorkspaceRequest, workspace_id: str, segment_id: str
     try:
         services.update_segment(segment, name=name, filter_json=document)
     except (ContactsError, ConditionError) as exc:
-        return _failed(exc, "Could not update the segment")
-    return toast_response(tone="success", title="Segment updated", body=segment.name, events={"segmentsChanged": True})
+        return _failed(exc, gettext("Could not update the segment"))
+    return toast_response(
+        tone="success", title=gettext("Segment updated"), body=segment.name, events={"segmentsChanged": True}
+    )
 
 
 @login_required
@@ -1090,7 +1112,7 @@ def segment_delete(request: WorkspaceRequest, workspace_id: str, segment_id: str
     segment = get_scoped_object_or_404(Segment, request.workspace, pk=segment_id)
     name = segment.name
     segment.delete()
-    return toast_response(tone="success", title="Segment deleted", body=name, events={"segmentsChanged": True})
+    return toast_response(tone="success", title=gettext("Segment deleted"), body=name, events={"segmentsChanged": True})
 
 
 # ---------------------------------------------------------------------------
@@ -1243,16 +1265,20 @@ def import_upload(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """
     upload = request.FILES.get("file")
     if upload is None:
-        return toast_response(tone="error", title="Pick a CSV file first")
+        return toast_response(tone="error", title=gettext("Pick a CSV file first"))
     if not request.POST.get("consent_ack"):
         return toast_response(
             tone="error",
-            title="Confirm the note about reachability",
-            body="Imported contacts cannot be messaged until they write to you first.",
+            title=gettext("Confirm the note about reachability"),
+            body=gettext("Imported contacts cannot be messaged until they write to you first."),
         )
     if upload.size > settings.CONTACT_IMPORT_MAX_BYTES:
         megabytes = settings.CONTACT_IMPORT_MAX_BYTES // (1024 * 1024)
-        return toast_response(tone="error", title="That file is too large", body=f"The limit is {megabytes} MB.")
+        return toast_response(
+            tone="error",
+            title=gettext("That file is too large"),
+            body=gettext("The limit is %(mb)s MB.") % {"mb": megabytes},
+        )
 
     run = ContactImport(
         workspace=request.workspace,
@@ -1278,11 +1304,11 @@ def import_upload(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         # find again.
         run.file.delete(save=False)
         run.delete()
-        return _failed(exc, "That file could not be read")
+        return _failed(exc, gettext("That file could not be read"))
     return toast_response(
         tone="success",
-        title="File uploaded",
-        body="Map its columns to finish.",
+        title=gettext("File uploaded"),
+        body=gettext("Map its columns to finish."),
         events={"importCreated": str(run.pk)},
     )
 
@@ -1330,12 +1356,12 @@ def import_mapping(request: WorkspaceRequest, workspace_id: str, import_id: str)
         # `is_writing`, not `is_running`: re-mapping during a *dry run* is safe
         # and is exactly what an operator who spotted a mistake wants. See the
         # property.
-        return toast_response(tone="info", title="That import is already running")
+        return toast_response(tone="info", title=gettext("That import is already running"))
 
     try:
         header = imports.read_header(run)
     except (imports.UnusableImportError, OSError, ValueError) as exc:
-        return _failed(exc, "That file could not be read")
+        return _failed(exc, gettext("That file could not be read"))
     mapping = {
         str(index): request.POST.get(f"column-{index}", "")
         for index in range(len(header))
@@ -1348,7 +1374,7 @@ def import_mapping(request: WorkspaceRequest, workspace_id: str, import_id: str)
     try:
         imports.resolve_mapping(request.workspace, mapping, header)
     except ContactsError as exc:
-        return _failed(exc, "That mapping cannot be used")
+        return _failed(exc, gettext("That mapping cannot be used"))
 
     run.mapping = mapping
     run.dedupe = dedupe
@@ -1363,8 +1389,8 @@ def import_mapping(request: WorkspaceRequest, workspace_id: str, import_id: str)
     imports.enqueue(run, mode=imports.MODE_DRY_RUN)
     return toast_response(
         tone="success",
-        title="Checking the file",
-        body="Nothing is written until you confirm.",
+        title=gettext("Checking the file"),
+        body=gettext("Nothing is written until you confirm."),
         events={"importChanged": True},
     )
 
@@ -1384,8 +1410,8 @@ def import_run(request: WorkspaceRequest, workspace_id: str, import_id: str) -> 
     if run.status != ImportStatus.VALIDATED:
         return toast_response(
             tone="error",
-            title="Check the file first",
-            body="The preview has to finish before anything is imported.",
+            title=gettext("Check the file first"),
+            body=gettext("The preview has to finish before anything is imported."),
         )
     run.next_offset = 0
     # See `import_mapping`: the panel polls on `is_running`, so the status has to
@@ -1394,7 +1420,10 @@ def import_run(request: WorkspaceRequest, workspace_id: str, import_id: str) -> 
     run.save(update_fields=["next_offset", "status", "updated_at"])
     imports.enqueue(run, mode=imports.MODE_IMPORT)
     return toast_response(
-        tone="success", title="Import started", body="You can leave this page.", events={"importChanged": True}
+        tone="success",
+        title=gettext("Import started"),
+        body=gettext("You can leave this page."),
+        events={"importChanged": True},
     )
 
 
@@ -1476,10 +1505,10 @@ def tag_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     try:
         tag, created = services.get_or_create_tag(request.workspace, request.POST.get("name", ""))
     except ContactsError as exc:
-        return _failed(exc, "Could not create the tag")
+        return _failed(exc, gettext("Could not create the tag"))
     if not created:
-        return toast_response(tone="info", title="That tag already exists", body=tag.name)
-    return toast_response(tone="success", title="Tag created", body=tag.name, events={"tagsChanged": True})
+        return toast_response(tone="info", title=gettext("That tag already exists"), body=tag.name)
+    return toast_response(tone="success", title=gettext("Tag created"), body=tag.name, events={"tagsChanged": True})
 
 
 @login_required
@@ -1490,8 +1519,8 @@ def tag_rename(request: WorkspaceRequest, workspace_id: str, tag_id: str) -> Htt
     try:
         services.rename_tag(tag, request.POST.get("name", ""))
     except ContactsError as exc:
-        return _failed(exc, "Could not rename the tag")
-    return toast_response(tone="success", title="Tag renamed", body=tag.name, events={"tagsChanged": True})
+        return _failed(exc, gettext("Could not rename the tag"))
+    return toast_response(tone="success", title=gettext("Tag renamed"), body=tag.name, events={"tagsChanged": True})
 
 
 @login_required
@@ -1503,8 +1532,9 @@ def tag_delete(request: WorkspaceRequest, workspace_id: str, tag_id: str) -> Htt
     removed = services.delete_tag(tag)
     return toast_response(
         tone="success",
-        title="Tag deleted",
-        body=f"{name} removed from {removed} contact{'' if removed == 1 else 's'}.",
+        title=gettext("Tag deleted"),
+        body=ngettext("%(name)s removed from %(count)s contact.", "%(name)s removed from %(count)s contacts.", removed)
+        % {"name": name, "count": removed},
         events={"tagsChanged": True},
     )
 
@@ -1525,11 +1555,12 @@ def tag_merge(request: WorkspaceRequest, workspace_id: str, tag_id: str) -> Http
     try:
         moved = services.merge_tags(source, target)
     except ContactsError as exc:
-        return _failed(exc, "Could not merge the tags")
+        return _failed(exc, gettext("Could not merge the tags"))
     return toast_response(
         tone="success",
-        title="Tags merged",
-        body=f"{moved} contact{'' if moved == 1 else 's'} moved to {target.name}.",
+        title=gettext("Tags merged"),
+        body=ngettext("%(count)s contact moved to %(name)s.", "%(count)s contacts moved to %(name)s.", moved)
+        % {"count": moved, "name": target.name},
         events={"tagsChanged": True},
     )
 
@@ -1562,8 +1593,10 @@ def field_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
             field_type=request.POST.get("field_type", ""),
         )
     except ContactsError as exc:
-        return _failed(exc, "Could not create the field")
-    return toast_response(tone="success", title="Field created", body=field.name, events={"fieldsChanged": True})
+        return _failed(exc, gettext("Could not create the field"))
+    return toast_response(
+        tone="success", title=gettext("Field created"), body=field.name, events={"fieldsChanged": True}
+    )
 
 
 @login_required
@@ -1575,8 +1608,10 @@ def field_rename(request: WorkspaceRequest, workspace_id: str, field_id: str) ->
     try:
         services.rename_custom_field(field, request.POST.get("name", ""))
     except ContactsError as exc:
-        return _failed(exc, "Could not rename the field")
-    return toast_response(tone="success", title="Field renamed", body=field.name, events={"fieldsChanged": True})
+        return _failed(exc, gettext("Could not rename the field"))
+    return toast_response(
+        tone="success", title=gettext("Field renamed"), body=field.name, events={"fieldsChanged": True}
+    )
 
 
 @login_required
@@ -1588,8 +1623,11 @@ def field_delete(request: WorkspaceRequest, workspace_id: str, field_id: str) ->
     removed = services.delete_custom_field(field)
     return toast_response(
         tone="success",
-        title="Field deleted",
-        body=f"{name}: {removed} stored value{'' if removed == 1 else 's'} removed.",
+        title=gettext("Field deleted"),
+        body=ngettext(
+            "%(name)s: %(count)s stored value removed.", "%(name)s: %(count)s stored values removed.", removed
+        )
+        % {"name": name, "count": removed},
         events={"fieldsChanged": True},
     )
 
@@ -1674,16 +1712,17 @@ def contact_erase(request: WorkspaceRequest, workspace_id: str, contact_id: str)
     try:
         record = erasure.begin(contact, source=ErasureSource.UI, requested_by=request.user)
     except ContactsError as exc:
-        return _failed(exc, "Could not erase this contact")
+        return _failed(exc, gettext("Could not erase this contact"))
 
     queued = record.status != ErasureStatus.DONE
     return toast_response(
         tone="success",
-        title="Contact erased" if not queued else "Erasure started",
+        title=gettext("Contact erased") if not queued else gettext("Erasure started"),
         body=(
-            f"{label} and everything held about them are gone."
+            gettext("%(name)s and everything held about them are gone.") % {"name": label}
             if not queued
-            else f"{label} is hidden everywhere already; the rest is being removed in the background."
+            else gettext("%(name)s is hidden everywhere already; the rest is being removed in the background.")
+            % {"name": label}
         ),
         events={"contactsChanged": True},
     )
@@ -1714,13 +1753,13 @@ def bulk_erase(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if (request.POST.get("confirm") or "").strip() != erasure.CONFIRMATION:
         return toast_response(
             tone="error",
-            title="Erasure not confirmed",
-            body=f"Type {erasure.CONFIRMATION} to confirm. Nothing was changed.",
+            title=gettext("Erasure not confirmed"),
+            body=gettext("Type %(word)s to confirm. Nothing was changed.") % {"word": erasure.CONFIRMATION},
         )
 
     contacts = list(_selected(request))
     if not contacts:
-        return toast_response(tone="info", title="Nothing selected")
+        return toast_response(tone="info", title=gettext("Nothing selected"))
 
     started = 0
     for contact in contacts:
@@ -1745,14 +1784,19 @@ def bulk_erase(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     named = len({raw for raw in request.POST.getlist("ids")[:MAX_BULK_IDS]})
     untouched = max(0, named - started)
 
-    body = "They are hidden everywhere already. Their messages, identities and consent records are being removed."
+    body = gettext(
+        "They are hidden everywhere already. Their messages, identities and consent records are being removed."
+    )
     if untouched:
-        body += (
-            f" {untouched} of the {named} selected {'was' if untouched == 1 else 'were'} not touched. "
-            f"They were already deleted, being erased, or outside this workspace."
-        )
+        body += " " + ngettext(
+            "%(untouched)s of the %(named)s selected was not touched. "
+            "They were already deleted, being erased, or outside this workspace.",
+            "%(untouched)s of the %(named)s selected were not touched. "
+            "They were already deleted, being erased, or outside this workspace.",
+            untouched,
+        ) % {"untouched": untouched, "named": named}
     return _bulk_result(
-        f"Erasing {started} contact{'' if started == 1 else 's'}",
+        ngettext("Erasing %(count)s contact", "Erasing %(count)s contacts", started) % {"count": started},
         body,
     )
 
@@ -1762,13 +1806,13 @@ def _confirmation_refusal(request: WorkspaceRequest, contact: Contact) -> HttpRe
     if (request.POST.get("confirm") or "").strip() != erasure.CONFIRMATION:
         return toast_response(
             tone="error",
-            title="Erasure not confirmed",
-            body=f"Type {erasure.CONFIRMATION} to confirm. Nothing was changed.",
+            title=gettext("Erasure not confirmed"),
+            body=gettext("Type %(word)s to confirm. Nothing was changed.") % {"word": erasure.CONFIRMATION},
         )
     if (request.POST.get("contact_id") or "") != str(contact.pk):
         return toast_response(
             tone="error",
-            title="That form was for a different contact",
-            body="Reload the page and try again. Nothing was changed.",
+            title=gettext("That form was for a different contact"),
+            body=gettext("Reload the page and try again. Nothing was changed."),
         )
     return None
