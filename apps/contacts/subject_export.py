@@ -198,7 +198,7 @@ def _retained(suppressions: list[dict[str, Any]]) -> dict[str, Any]:
         "email_suppressions": suppressions,
         "note": (
             "A suppressed email address is kept even after this contact is erased. The record is a fact about a "
-            "mailbox — that it rejected mail or its owner reported it as spam — rather than about a contact row, "
+            "mailbox that rejected mail or whose owner reported spam, rather than about a contact row, "
             "and deleting it would mean a later import could mail an address that asked not to be mailed."
         ),
     }

@@ -1,5 +1,5 @@
 {% comment %}
-The two behaviours every settings list needs, defined once for the page.
+The row menu every settings list needs, defined once for the page.
 
 **The "…" menu's anchoring.** position: fixed and anchored on open, the way
 templates/components/ui_select.html does it and for the same reason: these rows
@@ -14,11 +14,8 @@ not bubble, so a listener on window never saw them and the fixed panel simply
 drifted away from its row. A capture-phase listener on the document does see
 them, whatever scrolls.
 
-**`bbChanged`.** Whether a response actually changed anything. apps/common/htmx
-answers both success and refusal with a 204, so `detail.successful` is true for
-"Tag created" AND for "That tag already exists" — a create form keyed on it
-wiped what the operator typed on the one response where they needed it back.
-Only the success path sets the HX-Trigger, which is what this reads.
+`bbChanged`, which used to be the second behaviour here, is global now — see
+partials/_modal_behaviours.html, which base.html includes on every page.
 
 A plain window function rather than Alpine.data(), because every call site also
 needs flags of its own and spreads this into them:
@@ -68,13 +65,6 @@ definitions exist by the time Alpine boots.
         },
         closeMenu: closeOpen,
       };
-    };
-
-    window.bbChanged = function (event, name) {
-      if (!event.detail || !event.detail.successful) return false;
-      var xhr = event.detail.xhr;
-      var triggered = (xhr && xhr.getResponseHeader('HX-Trigger')) || '';
-      return triggered.indexOf(name) !== -1;
     };
   })();
 </script>

@@ -57,7 +57,7 @@
           },
           {
             "config": {
-              "text": "The tag is the point: broadcast the reminder to everyone carrying 'RSVP yes' the day before. A per-person reminder cannot live in this flow — Instagram closes the messaging window 24 hours after their last message.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+              "text": "The tag is the point: broadcast the reminder to everyone carrying 'RSVP yes' the day before. A per-person reminder cannot live in this flow because Instagram closes the messaging window 24 hours after their last message.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
             },
             "id": "reminders",
             "position": {

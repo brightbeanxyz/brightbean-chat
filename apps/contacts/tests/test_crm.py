@@ -765,15 +765,19 @@ class TestListShape:
         assert body.index("Recent") < body.index("Older") < body.index("Never")
 
     def test_the_export_link_carries_the_current_view(self, tenancy, client_for):
+        """Export appends the page's own query string, and filtering keeps that
+        query string current through HX-Push-Url — so the download is the view
+        on screen, filtered with HTMX or not."""
         tag, _ = services.get_or_create_tag(tenancy.workspace, "VIP")
         document = json.dumps({"match": "all", "rules": [{"source": "tag", "key": str(tag.pk), "op": "has"}]})
+        client = client_for(tenancy.owner)
 
-        body = (
-            client_for(tenancy.owner).get(url(tenancy, "contacts/"), {"filter": document, "q": "ada"}).content.decode()
-        )
+        page = client.get(url(tenancy, "contacts/")).content.decode()
+        rows = client.get(url(tenancy, "contacts/rows/"), {"filter": document, "q": "ada"})
 
-        assert "contacts/export/?filter=" in body
-        assert "q=ada" in body
+        assert "contacts/export/' + window.location.search" in page
+        assert "filter=" in rows.headers["HX-Push-Url"]
+        assert "q=ada" in rows.headers["HX-Push-Url"]
 
     def test_a_viewer_sees_no_write_controls(self, tenancy, client_for, crm):
         """The template branches on the same flags the decorators enforce, so a

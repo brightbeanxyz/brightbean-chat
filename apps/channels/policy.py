@@ -92,12 +92,20 @@ POLICIES: dict[str, PlatformPolicy] = {
     ),
     # SPEC §6.3 / §8: automation is Blocked outside 24h. An agent send is
     # allowed with HUMAN_AGENT within 7 days of the last inbound message.
-    # broadcast_allowed False — Instagram has no tag that permits it.
+    #
+    # broadcast_allowed True, with the window doing every bit of the gating.
+    # Nothing reopens a closed Instagram window — there is no tag for it, no
+    # template, and HUMAN_AGENT is inbox-only with promotional use a policy
+    # violation — so a broadcast here reaches the open-window audience and the
+    # rest are skipped with Denial.OUTSIDE_WINDOW, counted like any other skip.
+    # That is a narrow send, not an impossible one: refusing the platform
+    # outright was stricter than Meta requires, and the composer now says what
+    # the audience will actually be (composer.window_notice).
     Platform.INSTAGRAM: PlatformPolicy(
         window_hours=24,
         outside_window="blocked",
         human_agent_days=7,
-        broadcast_allowed=False,
+        broadcast_allowed=True,
         rate_default=8.0,
     ),
     # SPEC §6.4 / §8: outside 24h automation and broadcasts need one of the

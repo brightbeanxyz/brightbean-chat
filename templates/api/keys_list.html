@@ -3,41 +3,43 @@
 {% comment %}
 API keys, in the shape contacts/tag_list.html established.
 
-The issue form re-opens on an error — `adding || error` — because issue_key
-answers a refusal by re-rendering this page at status 400 rather than
-redirecting, and a disclosure that closed itself would hide the form that
-produced the message.
+The issue form is a modal that opens itself on an error (`open=error`), because
+issue_key answers a refusal by re-rendering this page at status 400 rather than
+redirecting, and a dialog that stayed shut would hide the form that produced the
+message. The message renders inside it, next to the fields it is about.
 
 No named action on a row: the only thing you can do to a key is revoke it, and a
 destructive action is the one thing that must not be the row's obvious button.
 {% endcomment %}
+{% load common_extras %}
 {% block title %}{% translate "API keys" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
-<div class="max-w-[860px] w-full" x-data="{ adding: {% if error %}true{% else %}false{% endif %} }">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+<div class="max-w-[1060px] w-full">
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">{% translate "API keys" %}</h1>
-            <p class="page-lede mt-1.5">
+            <p class="page-lede">
                 {% url 'api_docs' as api_docs_url %}
                 {% blocktranslate %}A key authenticates calls to the <a href="{{ api_docs_url }}">public API</a> as one workspace. Keys are organization-level because they span every workspace in the organization, but each key acts inside exactly one.{% endblocktranslate %}
             </p>
         </div>
         {% if workspaces %}
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newName.focus())">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} {% translate "Issue a key" %}</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('issue-key')">{% include "partials/_nav_icon.html" with name="key" icon_size=16 %} {% translate "Issue a key" %}</button>
         {% endif %}
     </div>
 
-    {% if error %}<div class="alert-error mb-5">{{ error }}</div>{% endif %}
-
     {% if workspaces %}
-    <form class="card p-6 mb-5" method="post" action="{% url 'api_keys_issue' %}" x-show="adding" x-cloak>
+    {% translate "Issue a key" as issue_key_title %}
+    {% modal "issue-key" title=issue_key_title open=error size="lg" %}
+    <form method="post" action="{% url 'api_keys_issue' %}">
         {% csrf_token %}
-        <h2 class="section-title mb-5">{% translate "Issue a key" %}</h2>
+        <div class="bb-modal-body">
+        {% if error %}<div class="alert-error mb-5">{{ error }}</div>{% endif %}
         <div class="field">
             <label class="field-label" for="key-name">{% translate "Name" %}</label>
-            <input class="form-input-styled" id="key-name" x-ref="newName" type="text" name="name" maxlength="100" required placeholder="Zapier scenario" value="{{ submitted_name }}" style="width: 20rem;">
+            <input class="form-input-styled" id="key-name" type="text" name="name" maxlength="100" required autofocus placeholder="Zapier scenario" value="{{ submitted_name }}">
         </div>
         <div class="field">
             <label class="field-label" for="key-workspace">{% translate "Workspace" %}</label>
@@ -59,11 +61,13 @@ destructive action is the one thing that must not be the row's obvious button.
                 {% blocktranslate %}<strong>Read</strong> lists contacts, tags, fields and flows. <strong>Write</strong> adds creating and updating contacts, tagging, setting field values, starting flows and sending messages. No scope grants channel, member or key management.{% endblocktranslate %}
             </p>
         </div>
-        <div class="form-actions">
+        </div>
+        <div class="bb-modal-actions">
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
             <button type="submit" class="btn-pill-primary">{% translate "Issue key" %}</button>
-            <button type="button" class="btn-pill-secondary" @click="adding = false">{% translate "Cancel" %}</button>
         </div>
     </form>
+    {% endmodal %}
     {% else %}
     {% comment %}
     Both gates have to pass to issue a key: organization admin (which the page
@@ -103,7 +107,12 @@ destructive action is the one thing that must not be the row's obvious button.
                 <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
             </button>
             <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
-                <form method="post" action="{% url 'api_keys_revoke' api_key_id=row.key.id %}">
+                {% comment %}
+                  Asked first: every integration using this key stops working the
+                  moment it is revoked, and a revoked key cannot be restored.
+                {% endcomment %}
+                <form method="post" action="{% url 'api_keys_revoke' api_key_id=row.key.id %}"
+                      @submit="if (!window.confirm('Revoke {{ row.key.name|escapejs }}? Anything using it stops working straight away, and it cannot be turned back on.')) $event.preventDefault()">
                     {% csrf_token %}
                     <button type="submit" class="row-menu-item row-menu-item-danger" role="menuitem">{% translate "Revoke this key" %}</button>
                 </form>
@@ -116,7 +125,7 @@ destructive action is the one thing that must not be the row's obvious button.
     <div class="empty-state">
         <p class="empty-state-title">{% translate "No keys yet" %}</p>
         <p class="empty-state-body">
-            {% translate "A key lets something outside BrightBean Chat — a Zapier scenario, a script, your own backend — read and write in one workspace." %}
+            {% translate "Let Zapier, scripts, or your own backend access this workspace." %}
         </p>
     </div>
     {% endif %}

@@ -13,7 +13,7 @@ URL buttons are wrapped on every platform regardless, and there is deliberately
 no switch for it: a button is a link the flow author added on purpose, and its
 click count is the number the builder's overlay shows.
 
-.bb-checkbox rather than .bb-toggle. Every .bb-toggle in the product posts on
+.bb-checkbox rather than .switch. Every .switch in the product posts on
 change; a toggle sitting above a Save button would lie about when it takes
 effect. This page's h1 was also the one that never got .page-title, so it has
 been rendering at the @layer base 18px while every sibling used 28px.
@@ -22,7 +22,7 @@ been rendering at the @layer base 18px while every sibling used 28px.
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
-<div class="max-w-[620px] w-full">
+<div class="max-w-[1060px] w-full">
     <h1 class="page-title">{% translate "Email tracking" %}</h1>
     <p class="page-lede mt-1.5 mb-6">
         {% translate "Click and open tracking for email. Both are off until you turn them on." %}

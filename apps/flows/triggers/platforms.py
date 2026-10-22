@@ -11,13 +11,15 @@ there are none — which keeps today's behaviour exactly until somebody adds a
 trigger.
 """
 
+from collections.abc import Iterable
 from typing import Any
 
+from apps.common.platforms import Platform
 from apps.flows.capabilities import connected_platforms
 from apps.flows.models import Trigger
 from apps.flows.triggers.registry import spec_for
 
-__all__ = ["declared_platforms_for_flow", "platforms_for_flow", "platforms_for_trigger"]
+__all__ = ["declared_platforms_for_flow", "platforms_for_flow", "platforms_for_trigger", "shown_platforms"]
 
 
 def platforms_for_trigger(trigger: Trigger, *, connected: set[str]) -> set[str]:
@@ -40,6 +42,30 @@ def platforms_for_trigger(trigger: Trigger, *, connected: set[str]) -> set[str]:
     if connection is not None:
         return {str(connection.platform)}
     return set(spec.platforms) & connected
+
+
+def shown_platforms(triggers: Iterable[Trigger], *, connected: set[str]) -> tuple[str, ...]:
+    """The platform glyphs a flow's row on the Flows list carries.
+
+    A label, not a capability answer, so it reads every trigger the flow has —
+    paused ones included, because a flow set offline still belongs to the
+    channel it was built for. Takes the triggers in hand rather than querying,
+    so the list can prefetch them (and their connections) once for the page.
+
+    An unbound trigger shows the connected platforms its type covers; when none
+    of them is connected it shows every one it could run on, so a story-mention
+    flow in a workspace without Instagram still says Instagram. A
+    channel-independent trigger (``api``, ``rule``) names no platform and shows
+    nothing. Ordered as :class:`Platform` lists them, so two rows with the same
+    channels draw them in the same order.
+    """
+    shown: set[str] = set()
+    for trigger in triggers:
+        spec = spec_for(trigger.type)
+        if spec is None or not spec.platforms:
+            continue
+        shown |= platforms_for_trigger(trigger, connected=connected) or set(spec.platforms)
+    return tuple(platform for platform in Platform.values if platform in shown)
 
 
 def declared_platforms_for_flow(flow: Any) -> tuple[str, ...]:

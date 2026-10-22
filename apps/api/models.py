@@ -253,7 +253,7 @@ class WebhookDelivery(WorkspaceScopedModel):
     response_code = models.PositiveSmallIntegerField(
         null=True,
         blank=True,
-        help_text="Null when the receiver was never reached — DNS, timeout, or the SSRF guard.",
+        help_text="Null when the receiver was never reached because of DNS, timeout, or the SSRF guard.",
     )
     duration_ms = models.PositiveIntegerField(default=0)
     error = models.TextField(blank=True, default="", help_text="Scrubbed and capped; see MAX_STORED_ERROR_CHARS.")
@@ -264,7 +264,7 @@ class WebhookDelivery(WorkspaceScopedModel):
         indexes = [models.Index(fields=["webhook", "-created_at"], name="webhookdelivery_hook_time_idx")]
 
     def __str__(self) -> str:
-        return f"{self.event} → {self.status} ({self.response_code or '—'})"
+        return f"{self.event} → {self.status} ({self.response_code or 'None'})"
 
     @property
     def succeeded(self) -> bool:

@@ -1,45 +1,46 @@
 {% extends "layouts/workspace_settings.html" %}
 {% comment %}
-Labels, in the shape contacts/tag_list.html established — see the note there for
-why `adding` lives on this wrapper rather than inside the swapped partial.
+Labels, in the shape contacts/tag_list.html established: the create form is a
+modal, opened by id from the header and from the empty state.
 
 The lede keeps the tag-versus-label distinction in full. It is the only place in
 the product that draws it, and the two pages sit next to each other in the
 settings column, so somebody who has just come from Tags needs the sentence that
 says why this is not that.
 {% endcomment %}
-{% load i18n %}
+{% load common_extras i18n %}
 {% block title %}{% translate "Labels" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
-<div class="max-w-[860px] w-full" x-data="{ adding: false }">
-    <div class="flex flex-wrap items-end justify-between gap-6 mb-6">
-        <div>
+<div class="max-w-[1060px] w-full">
+    <div class="page-header">
+        <div class="page-header-text">
             <h1 class="page-title">{% translate "Labels" %}</h1>
-            <p class="page-lede mt-1.5">
-                {% blocktranslate %}Labels file a conversation. They are the inbox's own filing system, and they are not
-                contact tags: a tag like "VIP" follows a person across every channel they use, while
-                a label like "waiting on shipping" is true of one thread and stops being true when
-                it is answered. Inbox rules can add labels automatically.{% endblocktranslate %}
-            </p>
+            <p class="page-lede">{% translate "Keep conversations organized. Rules can add labels automatically." %}</p>
         </div>
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="adding = true; $nextTick(() => $refs.newName.focus())">{% include "partials/_nav_icon.html" with name="tag" icon_size=16 %} {% translate "New label" %}</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-label')">{% include "partials/_nav_icon.html" with name="tag" icon_size=16 %} {% translate "New label" %}</button>
     </div>
 
-    {% translate "Waiting on shipping" as new_label_placeholder %}
-    <form class="card p-4 mb-5 flex flex-wrap items-end gap-3" x-show="adding" x-cloak hx-post="{% url 'inbox:label_create' workspace_id=request.workspace.id %}" @htmx:after-request="if (bbChanged($event, 'inboxLabelsChanged')) { $el.reset(); adding = false }">
-        <div class="field field-inline">
-            <label class="field-label" for="new-label-name">{% translate "What is the label called?" %}</label>
-            <input class="form-input-styled" id="new-label-name" x-ref="newName" type="text" name="name" maxlength="60" required placeholder="{{ new_label_placeholder }}" style="width: 18rem;">
+    {% translate "New label" as new_label_title %}
+    {% modal "new-label" title=new_label_title close_on="inboxLabelsChanged" %}
+    <form hx-post="{% url 'inbox:label_create' workspace_id=request.workspace.id %}">
+        <div class="bb-modal-body">
+            <div class="field">
+                <label class="field-label" for="new-label-name">{% translate "What is the label called?" %}</label>
+                <input class="form-input-styled" id="new-label-name" type="text" name="name" maxlength="60" required autofocus placeholder="{% translate 'Waiting on shipping' %}">
+            </div>
+            <div class="field">
+                <label class="field-label" for="new-label-color">{% translate "Colour" %}</label>
+                <input class="field-swatch-well" id="new-label-color" type="color" name="color" value="{{ default_color }}">
+            </div>
         </div>
-        <div class="field field-inline">
-            <label class="field-label" for="new-label-color">{% translate "Colour" %}</label>
-            <input class="field-swatch-well" id="new-label-color" type="color" name="color" value="{{ default_color }}">
+        <div class="bb-modal-actions">
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Create label" %}</button>
         </div>
-        <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Add it" %}</button>
-        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="adding = false">{% translate "Cancel" %}</button>
     </form>
+    {% endmodal %}
 
     {% include "inbox/_label_rows.html" %}
 </div>

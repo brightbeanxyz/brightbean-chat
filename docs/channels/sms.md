@@ -9,6 +9,19 @@ Specification: `docs/SPEC.md` §6.6 (the channel), §11.9 (the `send_sms` node),
 `apps/channels/providers/sms.py`, `apps/channels/sms_compliance.py`,
 `apps/channels/segments.py`, `apps/flows/engine/nodes/send_sms.py`.
 
+## What you need
+
+* **A Twilio account with a phone number** that can send SMS. A trial account
+  works for testing, but Twilio only lets it text numbers you have verified.
+* **A public HTTPS address for this deployment, set as `APP_URL`.** Twilio
+  delivers inbound texts by POSTing to it, and the connection's webhook URL is
+  built from it. On the Compose stack `APP_DOMAIN` sets it for you; on Railway
+  it is in the variables table of the self-hosting guide. For local development
+  see [Testing from your laptop](#testing-from-your-laptop).
+
+Nothing goes in `.env` for SMS itself. The credentials are entered in the app and
+stored on the connection, one per number.
+
 ## Connecting a number
 
 1. **Get the credentials.** Open the [Twilio console](https://console.twilio.com/)
@@ -21,7 +34,8 @@ Specification: `docs/SPEC.md` §6.6 (the channel), §11.9 (the `send_sms` node),
    sticky sender and the A2P campaign — and a bare number is fine otherwise.
    Give one or the other; Twilio's API accepts one and rejects both.
 
-3. **Paste them** into *Settings → Channels → SMS → set it up*
+3. **Paste them in.** Open *Settings → Channels*, find **SMS** under *Available
+   to connect*, and click **Set up**
    (`/w/<workspace>/settings/channels/sms/connect/`).
 
    The app fetches the account to check the credentials, then fetches the number
@@ -29,24 +43,36 @@ Specification: `docs/SPEC.md` §6.6 (the channel), §11.9 (the `send_sms` node),
    stored until both succeed, so a wrong credential leaves no trace — and a
    number you do not own is caught now rather than on your first send.
 
-4. **Paste the webhook URL back into Twilio.** The connection's page
-   (*Settings → Channels →* the connection) shows it:
+4. **Paste the webhook URL back into Twilio.** Saving the form takes you back
+   to the channels list. Click the new connection to open its page, which shows
+   the URL with a copy button:
 
    ```
    https://<your deployment>/webhooks/sms/<connection id>/
    ```
 
-   In the Twilio console, open the number (Phone Numbers → Manage → Active
-   numbers → your number) or the messaging service (Messaging → Services → your
-   service → Integration), and set **A message comes in** to that URL with the
-   method **HTTP POST**.
+   Where it goes in Twilio depends on what you connected in step 2:
+
+   * **A phone number:** *Phone Numbers → Manage → Active numbers →* your
+     number. Under *Messaging Configuration*, set **A message comes in** to
+     **Webhook**, paste the URL, choose **HTTP POST**, and save.
+   * **A messaging service:** *Messaging → Services →* your service →
+     *Integration*. Under *Incoming Messages*, choose **Send a webhook**, paste
+     the URL as the **Request URL**, and save. The service's setting overrides
+     whatever is configured on the numbers in its pool.
 
    You do not need to set a status-callback URL by hand. Every message this app
    sends carries `StatusCallback` pointing at the same URL, which is how
    delivery receipts get back.
 
-5. **Text the number.** The channels list shows a *Last event* column; when it
-   moves from "Nothing received yet" to a timestamp, inbound is working.
+5. **Text the number from your phone.** On the channels list the connection
+   reads *Connected, but nothing has arrived yet* until the first delivery. When
+   it changes to *Healthy · last message … ago* and the text shows up in the
+   inbox, inbound is working. If it does not change, see
+   [Troubleshooting](#troubleshooting).
+
+6. **Send one back.** Reply from the inbox conversation. When it arrives on
+   your phone, outbound is working too.
 
 The auth token is stored encrypted (`EncryptedJSONField`) and never displayed
 again. It is the entire credential: anyone holding it can send as your number
@@ -77,9 +103,24 @@ Two consequences worth knowing:
   caller can set — and a caller who could choose the host could choose the string
   their forged signature was computed over.
 
-The URL also has to be reachable from the public internet over HTTPS. For local
-development, put a tunnel in front of the dev server, set `APP_URL` to the
-tunnel's address, and paste that into Twilio.
+The URL also has to be reachable from the public internet over HTTPS.
+
+### Testing from your laptop
+
+Twilio cannot reach `localhost`, so put a tunnel in front of the dev server:
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+(`ngrok http 8000` works the same way.) It prints an `https://` address. Set
+that as `APP_URL` in `.env`, restart the app, and only then connect the number
+or reopen the connection's page. The webhook URL it shows now starts with the
+tunnel's address, and that is the one to paste into Twilio.
+
+A free tunnel gets a new address every time it starts. When it changes, update
+`APP_URL`, restart, and paste the new webhook URL into Twilio again, or every
+delivery fails with a 403.
 
 ## STOP, HELP and START
 
@@ -203,9 +244,18 @@ The node always runs in the worker, never inline in a webhook request
 
 ## Troubleshooting
 
-**Every delivery is 403.** The URL in Twilio does not match what the app
-verifies against. Check `APP_URL`, check the trailing slash, and check `https`
-vs `http`. Behind a proxy, check `TRUSTED_PROXIES`.
+Twilio's own record of each webhook attempt is under *Monitor → Logs → Errors*
+in the console. Look there first when a text does not arrive.
+
+**Every delivery is 403.** Twilio logs these as error 11200. The URL in Twilio
+does not match what the app verifies against. Check `APP_URL`, check the
+trailing slash, and check `https` vs `http`. Behind a proxy, check
+`TRUSTED_PROXIES`.
+
+**Nothing arrives, and Twilio logs no error.** Twilio is not calling the URL at
+all. Check that it is saved on the number, or, if the number belongs to a
+messaging service, on the service's *Integration* page, which wins over the
+number's own setting.
 
 **Deliveries stop after a while.** Too many refused signatures in a row bans the
 source for `WEBHOOK_SIGNATURE_BAN_SECONDS`; fix the URL and wait it out.

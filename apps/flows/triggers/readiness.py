@@ -49,7 +49,7 @@ def readiness_warnings(flow: Any, *, connected: set[str]) -> list[Issue]:
         return [
             Issue(
                 code="flow_has_no_trigger",
-                message="Nothing starts this flow yet, so it will not run. Add a trigger under “When it runs”.",
+                message="Nothing starts this flow yet, so it will not run. Add a trigger.",
                 stage="graph",
             )
         ]
@@ -59,10 +59,7 @@ def readiness_warnings(flow: Any, *, connected: set[str]) -> list[Issue]:
         return [
             Issue(
                 code="flow_triggers_all_disabled",
-                message=(
-                    "Every trigger on this flow is switched off, so it will not run. "
-                    "Switch one on under “When it runs”."
-                ),
+                message="Every trigger is switched off, so this flow will not start. Turn one on.",
                 stage="graph",
             )
         ]

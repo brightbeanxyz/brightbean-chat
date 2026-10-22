@@ -21,10 +21,10 @@ No inline event handlers anywhere. The CSP (config/settings/base.py) allows
 looks fine and is inert.
 
 Studio keeps this page's `.ml-*` rules in a per-page <style> block. They are
-design-system classes, so they live in theme/static_src/src/styles.css as
+design-system classes, so they live in apps/theme/static_src/src/styles.css as
 `.media-*` where the picker surfaces Layer 3 and Layer 6 mount can reach them.
 {% endcomment %}
-{% load media_library i18n %}
+{% load media_library common_extras i18n %}
 
 {% block title %}{% translate "Media" %} · BrightBean Chat{% endblock %}
 
@@ -67,22 +67,31 @@ design-system classes, so they live in theme/static_src/src/styles.css as
     {% include "media_library/_folder_rail.html" %}
 
     {% if can_manage %}
+      <button type="button" class="btn-pill-secondary btn-pill-sm mt-3" @click="$modal('new-folder')">{% translate "New folder" %}</button>
       {% comment %}
-        Clear the field only on success, so a rejected name (a duplicate, say)
-        stays in the box for the user to correct rather than vanishing along
-        with the error toast.
+        Closes only on `mediaChanged`, the success path's event. A rejected name
+        (a duplicate, say) answers 400, so the dialog stays open with the name
+        still in the box for the user to correct.
       {% endcomment %}
-      <form class="mt-3"
-            hx-post="{% url 'media:folder_create' workspace_id=request.workspace.id %}"
-            hx-swap="none"
-            hx-on::after-request="if (event.detail.successful) this.reset()">
-        <label for="new-folder" class="sr-only">{% translate "New folder name" %}</label>
-        <input class="form-input-styled" type="text" id="new-folder" name="name" placeholder="{% translate 'New folder' %}" maxlength="255" required>
-        {% if current_folder and current_folder != 'root' %}
-          <input type="hidden" name="parent" value="{{ current_folder }}">
-        {% endif %}
-        <button type="submit" class="btn-pill-secondary btn-pill-sm mt-1.5">{% translate "Create folder" %}</button>
+      {% translate "New folder" as new_folder_title %}
+      {% modal "new-folder" title=new_folder_title close_on="mediaChanged" %}
+      <form hx-post="{% url 'media:folder_create' workspace_id=request.workspace.id %}" hx-swap="none">
+        <div class="bb-modal-body">
+          <div class="field">
+            <label class="field-label" for="new-folder-name">{% translate "What is the folder called?" %}</label>
+            <input class="form-input-styled" type="text" id="new-folder-name" name="name" placeholder="{% translate 'Brand assets' %}" maxlength="255" required autofocus>
+            {% if current_folder and current_folder != 'root' %}
+              <input type="hidden" name="parent" value="{{ current_folder }}">
+              <span class="field-hint">{% translate "It goes inside the folder you have open." %}</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="bb-modal-actions">
+          <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+          <button type="submit" class="btn-pill-primary">{% translate "Create folder" %}</button>
+        </div>
       </form>
+      {% endmodal %}
     {% endif %}
   </aside>
 

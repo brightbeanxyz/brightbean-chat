@@ -201,7 +201,7 @@ register_trigger_type(
     _spec(
         TriggerType.RULE,
         _("Something happens here"),
-        _("Runs when something happens to a contact — a tag added, a field changed."),
+        _("Runs when a contact gets a tag or a field changes."),
         trigger_schema.RULE,
         bindable=False,
     )

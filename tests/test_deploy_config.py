@@ -477,8 +477,9 @@ def test_the_railway_guide_trusts_only_private_ranges_for_client_addresses() -> 
 
 DOCUMENTED = (
     REPO_ROOT / "README.md",
-    REPO_ROOT / "SECURITY.md",
+    REPO_ROOT / ".github" / "SECURITY.md",
     REPO_ROOT / "docs" / "self-hosting.md",
+    REPO_ROOT / "docs" / "pentest-runbook.md",
 )
 
 _MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")

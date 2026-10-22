@@ -401,17 +401,34 @@ class TestPagingIsBounded:
         assert not on_first & on_second, "a row appeared on both pages"
         assert len(on_first | on_second) == 40, "a row appeared on neither page"
 
-    def test_the_pager_url_encodes_the_filter_values(self, tenancy, client_for):
+    def test_the_pager_carries_only_values_from_the_list(self, tenancy, client_for):
+        """The type is validated against the registry before it reaches the
+        pager, so a crafted value cannot smuggle a second parameter into its
+        links — it is dropped, not merely encoded."""
         for index in range(35):
             make_notification(tenancy.owner, title=f"Row {index}")
 
         body = (
             client_for(tenancy.owner)
-            .get(reverse("notifications:list"), {"event_type": "a&read_state=read"})
+            .get(reverse("notifications:list"), {"event_type": ["a&read_state=read", "inbox_reminder"]})
             .content.decode()
         )
 
-        assert "a%26read_state%3Dread" in body
+        assert "read_state=read" not in body
+        assert "a%26read_state" not in body
+
+    def test_several_types_combine_and_the_pager_repeats_them(self, tenancy, client_for):
+        make_notification(tenancy.owner, event_type="flow_loop_cap_hit", title="Loop")
+        make_notification(tenancy.owner, event_type="inbox_reminder", title="Remind")
+        for index in range(35):
+            make_notification(tenancy.owner, event_type="inbox_reminder", title=f"Row {index}")
+
+        response = client_for(tenancy.owner).get(
+            reverse("notifications:list"), {"event_type": ["inbox_reminder", "flow_loop_cap_hit"]}
+        )
+
+        assert response.context["selected_event_types"] == ["flow_loop_cap_hit", "inbox_reminder"]
+        assert "event_type=flow_loop_cap_hit&amp;event_type=inbox_reminder" in response.content.decode()
 
 
 @pytest.mark.django_db

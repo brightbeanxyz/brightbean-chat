@@ -111,7 +111,7 @@
           },
           {
             "config": {
-              "text": "This asks people to confirm the follow rather than checking it. Instagram with Instagram Login publishes no follow webhook, so nothing can verify it — there is no 'is a follower' condition to branch on. The tag is what you segment on later.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
+              "text": "This asks people to confirm the follow rather than checking it. Instagram with Instagram Login publishes no follow webhook, so nothing can verify it. There is no 'is a follower' condition to branch on. The tag is what you segment on later.\n\nBefore you publish: swap every example.com link for your own, rename the tags to match yours, and rewrite the copy in your voice."
             },
             "id": "why_honour_system",
             "position": {

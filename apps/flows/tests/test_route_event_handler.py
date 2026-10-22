@@ -1,11 +1,13 @@
 """The deferred path: serialization, the worker handler, and exactly-once."""
 
+import copy
 import json
 
 import pytest
 from django.utils import timezone
 
 from apps.channels.events import EventType
+from apps.common.jsonsize import jsonb_byte_size
 from apps.common.platforms import Platform
 from apps.flows.models import FlowExecution, RoutedEvent, Trigger, TriggerType
 from apps.flows.tests.routing_support import routing_adapter
@@ -14,7 +16,9 @@ from apps.flows.triggers.handlers import ROUTE_EVENT, handle_route_event, route_
 from apps.flows.triggers.serialization import (
     MAX_ROUTE_EXTRA_KEYS,
     MAX_ROUTE_PAYLOAD_BYTES,
+    MAX_ROUTE_SHRUNK_TEXT_BYTES,
     MAX_ROUTE_TEXT_CHARS,
+    _truncate_to_bytes,
     event_to_payload,
     payload_to_event,
     shrink_to_fit,
@@ -23,6 +27,15 @@ from apps.queueing.models import ScheduledAction
 from apps.queueing.registry import registered_types
 
 SEND = {"blocks": [{"type": "text", "text": "hello"}]}
+
+EMOJI = "\U0001f600"
+#: What `json.loads` returns for the escape `"\ud800"`: valid JSON, and a code
+#: point `.encode("utf-8")` refuses. Any webhook body can carry one.
+LONE_SURROGATE = json.loads('"\\ud800"')
+
+
+def _document(connection, event):
+    return {"stage": "trigger", "connection_id": str(connection.pk), "event": event_to_payload(event)}
 
 
 def _identity(connection, contact, user="tg-1"):
@@ -171,7 +184,81 @@ class TestSerialization:
         assert shrunk is not None
         assert shrunk["event"]["payload"]["extra"] == {}
         assert shrunk["event"]["payload"]["attachments"] == []
-        assert len(json.dumps(shrunk).encode()) <= MAX_ROUTE_PAYLOAD_BYTES
+        # Measured the way the column measures, not with `json.dumps`'s default
+        # escaping: this assertion passed only because the fixture is ASCII,
+        # and asserted a bound the code does not actually enforce.
+        assert jsonb_byte_size(shrunk) <= MAX_ROUTE_PAYLOAD_BYTES
+
+    def test_an_emoji_payload_is_not_shrunk_against_a_size_it_never_occupies(self, tenancy, connection):
+        """The mirror of the test above: measuring an emoji as its twelve-byte
+        escape rather than its four stored bytes sent a payload that already
+        fit down the whole ladder — dropping `extra`, then the attachments,
+        then truncating the very text the keyword matcher reads.
+
+        The escaped-size assertion pins the fixture inside the window where the
+        two measurements disagree; without it, a change to MAX_ROUTE_TEXT_CHARS
+        or to the cap would leave a test that passes against the bug too.
+        """
+        text = EMOJI * 2000
+        document = _document(connection, inbound(connection, text=text, extra={"blob": "y" * 100}))
+
+        assert len(json.dumps(document, separators=(",", ":")).encode()) > MAX_ROUTE_PAYLOAD_BYTES
+
+        shrunk = shrink_to_fit(document)
+
+        assert shrunk is not None
+        assert shrunk["event"]["payload"]["extra"] != {}
+        assert shrunk["event"]["payload"]["text"] == text
+
+    def test_a_lone_surrogate_is_refused_rather_than_raised(self, tenancy, connection):
+        """`json.loads` hands one back from any webhook body, it survives
+        `json.dumps`, and it raises UnicodeEncodeError from the encode. On this
+        path that exception is not a finding — it is a 500 on an inbound
+        request, taken while measuring a document nobody could have stored."""
+        document = _document(connection, inbound(connection, text=LONE_SURROGATE))
+
+        assert shrink_to_fit(document) is None
+
+    def test_a_non_finite_number_is_refused_rather_than_queued(self, tenancy, connection):
+        """`_extra` keeps raw floats and `json.dumps` writes bare NaN, so this
+        used to measure small, queue cleanly, and be rejected by jsonb at the
+        insert — after the webhook had already been answered."""
+        document = _document(connection, inbound(connection, text="hi", extra={"score": float("nan")}))
+
+        assert shrink_to_fit(document) is None
+
+    def test_a_refused_document_is_not_left_stripped(self, tenancy, connection):
+        """The rungs rewrite the payload in place and `body` aliased the
+        caller's own dict, so a document this function ends up refusing came
+        back already emptied of everything the rungs had tried."""
+        event = inbound(connection, text="x" * 4000, extra={"blob": "y" * 400})
+        document = _document(connection, event)
+        document["event"]["payload"]["attachments"] = ["https://example.test/" + "z" * 1900] * 20
+        before = copy.deepcopy(document)
+
+        shrink_to_fit(document)
+
+        assert document == before
+
+    def test_the_text_rung_cuts_on_a_byte_budget_not_a_character_count(self, tenancy, connection):
+        """MAX_ROUTE_TEXT_CHARS is in characters and the document cap is in
+        bytes, so the widest legal text — 4096 emoji — is 16 KiB on its own and
+        overruns the budget before an id is added. The rung is what reconciles
+        the units, and the literal 1000 characters it replaces was safe only
+        because 1000 emoji happens to be 4000 bytes."""
+        document = _document(connection, inbound(connection, text=EMOJI * MAX_ROUTE_TEXT_CHARS))
+        assert jsonb_byte_size(document) > MAX_ROUTE_PAYLOAD_BYTES
+
+        shrunk = shrink_to_fit(document)
+
+        assert shrunk is not None
+        text = shrunk["event"]["payload"]["text"]
+        assert len(text.encode("utf-8")) <= MAX_ROUTE_SHRUNK_TEXT_BYTES
+        assert jsonb_byte_size(shrunk) <= MAX_ROUTE_PAYLOAD_BYTES
+        # Byte-denominated, not the literal 1000 characters this replaced: the
+        # budget buys 1024 four-byte emoji, and a character count would have
+        # thrown away the last 24 of them for no reason anyone could state.
+        assert len(text) == MAX_ROUTE_SHRUNK_TEXT_BYTES // 4 > 1000
 
     def test_the_idempotency_key_hashes_the_event_id(self, tenancy, connection):
         """Attacker-controlled and unbounded, so it must not reach the column raw
@@ -295,3 +382,42 @@ class TestTheHandler:
             handle_route_event(action.payload, action)
 
         assert ScheduledAction.objects.for_workspace(tenancy.workspace).filter(type=ROUTE_EVENT).count() == 1
+
+
+class TestCuttingText:
+    """The grapheme backstop on the truncation rung.
+
+    Python strings are code points, so a slice cannot halve an emoji — but it
+    can land inside a cluster that renders as one glyph, and each of these is
+    reachable from an emoji keyboard.
+    """
+
+    @pytest.mark.parametrize(
+        ("cluster", "label"),
+        [
+            ("\U0001f468\u200d\U0001f469\u200d\U0001f467", "ZWJ family"),
+            ("\U0001f44d\U0001f3fd", "skin-tone modifier"),
+            ("\U0001f1e9\U0001f1ea", "regional-indicator flag"),
+            ("\u2764\ufe0f", "variation selector"),
+            ("7\ufe0f\u20e3", "keycap"),
+            ("e\u0301", "combining acute"),
+        ],
+    )
+    def test_a_cluster_is_never_cut_in_half(self, cluster, label):
+        """Every prefix length is tried, so the cut lands at every offset
+        inside the cluster as well as between whole ones."""
+        text = cluster * 6
+        for limit in range(1, len(text.encode("utf-8")) + 1):
+            cut = _truncate_to_bytes(text, limit)
+            assert cut == cluster * (len(cut) // len(cluster)), f"{label} split at {limit} bytes"
+
+    def test_it_respects_the_byte_budget(self):
+        text = EMOJI * 50
+        for limit in range(1, 200):
+            assert len(_truncate_to_bytes(text, limit).encode("utf-8")) <= limit
+
+    def test_plain_text_is_cut_where_the_budget_falls(self):
+        assert _truncate_to_bytes("abcdef", 4) == "abcd"
+
+    def test_text_inside_the_budget_is_returned_unchanged(self):
+        assert _truncate_to_bytes(EMOJI * 3, 1000) == EMOJI * 3

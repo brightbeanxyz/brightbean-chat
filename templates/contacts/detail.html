@@ -38,9 +38,11 @@ apps/contacts/activity.py before it can become a src.
           SPEC §19's subject access response. A plain link, not htmx: the answer
           is a file download, and hx-get would swap JSON into the DOM.
         {% endcomment %}
-        <a class="media-pill"
+        <a class="bb-icon-action"
            href="{% url 'contacts:subject_export' workspace_id=request.workspace.id contact_id=contact.id %}"
-           download>{% translate "Export data" %}</a>
+           aria-label="{% translate 'Export contact data' %}" title="{% translate 'Export contact data' %}" download>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg>
+        </a>
       {% endif %}
       {% if can_manage_crm %}
         {% blocktranslate asvar delete_contact_confirm with name=contact.display_name %}Delete {{ name }}? They are hidden everywhere, drop out of every segment, and any running automation stops.{% endblocktranslate %}
@@ -99,7 +101,7 @@ apps/contacts/activity.py before it can become a src.
                     hx-trigger="change from:find input, change from:find select, submit">
                 {% if row.is_boolean %}
                   <select id="custom-{{ row.field.id }}" name="value" class="w-32">
-                    <option value="" {% if not row.has_value %}selected{% endif %}>—</option>
+                    <option value="" {% if not row.has_value %}selected{% endif %}>{% translate "Not set" %}</option>
                     <option value="true" {% if row.form_value == "true" %}selected{% endif %}>{% translate "True" %}</option>
                     <option value="false" {% if row.form_value == "false" %}selected{% endif %}>{% translate "False" %}</option>
                   </select>
@@ -114,7 +116,7 @@ apps/contacts/activity.py before it can become a src.
                 {% endif %}
               </form>
             {% else %}
-              <input type="text" id="custom-{{ row.field.id }}" value="{{ row.form_value|default:'—' }}" readonly disabled>
+              <input type="text" id="custom-{{ row.field.id }}" value="{{ row.form_value|default:'Not set' }}" readonly disabled>
             {% endif %}
           </div>
         {% endfor %}

@@ -66,6 +66,23 @@ def whatsapp_connection(tenancy: Any) -> ChannelConnection:
 
 
 @pytest.fixture
+def instagram_connection(tenancy: Any) -> ChannelConnection:
+    """An Instagram connection: a 24-hour window with no escape at all.
+
+    Broadcasts are permitted on it and reach only the open-window audience
+    (SPEC §6.3), which makes it the fixture for every "the window is the whole
+    gate" assertion.
+    """
+    return ChannelConnection.objects.create(
+        workspace=tenancy.workspace,
+        platform=Platform.INSTAGRAM,
+        display_name="Test account",
+        external_id=f"ig-{tenancy.slug}",
+        status=ConnectionStatus.ACTIVE,
+    )
+
+
+@pytest.fixture
 def make_contacts(tenancy: Any) -> Callable[..., list[Contact]]:
     """``make_contacts(n, connection=...)`` → contacts each with one identity.
 

@@ -340,7 +340,7 @@ class TestALabelledRowsLayout:
         so any rule shaped `grid-row: 1 / span <n>` is right only for the `n`
         the author had in front of them.
         """
-        css = (Path(__file__).parents[3] / "theme" / "static_src" / "src" / "styles.css").read_text()
+        css = (Path(__file__).parents[3] / "apps" / "theme" / "static_src" / "src" / "styles.css").read_text()
         block = css[css.index(".ib-row {") : css.index(".ib-row:hover")]
 
         assert "grid-column: 2" in block, "content children are not pinned to the second column"

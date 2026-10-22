@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load i18n %}
+{% load common_extras i18n %}
 {% comment %}
 The sequence list. Everything below the toolbar is _list_rows.html, so the table
 has exactly one renderer: the filters fetch it, and every mutation answers with a
@@ -20,50 +20,74 @@ templates/flows/template_gallery.html's own {% templatetag openblock %} block su
 {% endcomment %}
 {% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
 
-{% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
-        <h1 class="page-title">{% translate "Sequences" %}</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
-            {% translate "A series of messages sent over days. Each step waits for the time you set, counting from the message before it, then runs a flow." %}
-        </p>
-    </div>
-    {% if can_edit %}
-    <form class="flex items-center gap-2"
-          hx-post="{% url 'campaigns:create' workspace_id=request.workspace.id %}"
-          hx-swap="none"
-          x-data
-          @htmx:after-request="$el.reset()">
-        {% csrf_token %}
-        {% translate "New sequence name" as new_sequence_name_label %}
-        <input type="text" name="name" maxlength="200" required placeholder="{{ new_sequence_name_label }}"
-               class="form-input-styled" style="width: 14rem;" aria-label="{{ new_sequence_name_label }}">
-        <button type="submit" class="btn-brand btn-inline">{% translate "Create" %}</button>
-    </form>
-    {% endif %}
-</div>
-{% endblock %}
+{% comment %}
+Sequences is the middle tab of the automations strip, so it carries the strip
+too — without it the Flows and Templates tabs vanished the moment this one was
+clicked. The header has the Flows page's shape for the same reason: three tabs
+of one section should not move the title about as you switch between them.
+{% endcomment %}
+{% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}
 
 {% block content %}
-<div>
-    <form id="sequence-filters"
-          class="bb-filters-scroll flex items-center gap-2 overflow-x-auto pb-3"
+<div class="max-w-[1060px] w-full"
+     x-data="{
+        q: '{{ query|escapejs }}',
+        filters: {{ filters|json_attr }},
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        clearFilters() { this.q = ''; Object.keys(this.filters).forEach(k => this.filters[k] = []); this.reload(); }
+     }">
+    <div class="page-header">
+        <div class="page-header-text">
+            <h1 class="page-title">{% translate "Sequences" %}</h1>
+            <p class="page-lede">
+                {% translate "A series of messages sent over days. Each step waits for the time you set, counting from the message before it, then runs a flow." %}
+            </p>
+        </div>
+        {% if can_edit %}
+        <div class="page-header-actions">
+            <button type="button" class="btn-pill-primary" @click="$modal('new-sequence')">
+                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} {% translate "New sequence" %}
+            </button>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if can_edit %}
+    {% translate "New sequence" as new_sequence_title %}
+    {% modal "new-sequence" title=new_sequence_title close_on="sequencesChanged" %}
+    <form hx-post="{% url 'campaigns:create' workspace_id=request.workspace.id %}" hx-swap="none">
+        <div class="bb-modal-body">
+            <div class="field">
+                <label class="field-label" for="new-sequence-name">{% translate "What is this sequence called?" %}</label>
+                <input class="form-input-styled" id="new-sequence-name" type="text" name="name" maxlength="200" required autofocus placeholder="{% translate 'New subscriber welcome' %}">
+            </div>
+        </div>
+        <div class="bb-modal-actions">
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Create sequence" %}</button>
+        </div>
+    </form>
+    {% endmodal %}
+    {% endif %}
+
+    <div class="mb-5">
+    <form id="sequence-filters" x-ref="filters"
+          class="list-toolbar"
           hx-get="{% url 'campaigns:list' workspace_id=request.workspace.id %}"
           hx-target="#sequence-rows"
           hx-swap="innerHTML"
-          hx-trigger="input changed delay:300ms, change"
+          hx-trigger="input changed delay:300ms from:#sequence-search, filters-changed"
           @submit.prevent>
         {% translate "Search sequences" as search_sequences_label %}
-        <input type="search" name="q" value="{{ query }}" placeholder="{{ search_sequences_label }}"
-               class="form-input-styled" style="width: 16rem;" aria-label="{{ search_sequences_label }}">
-        <label for="sequence-status" class="sr-only">{% translate "Status" %}</label>
-        <select id="sequence-status" name="status" class="form-input-styled" style="width: 11rem;">
-            <option value="">{% translate "All statuses" %}</option>
-            {% for value, label in status_options %}
-            <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-        </select>
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input type="search" id="sequence-search" name="q" x-model="q" placeholder="{{ search_sequences_label }}"
+                   class="search-input" aria-label="{{ search_sequences_label }}">
+        </label>
+        {% filter_popover groups=filter_groups onchange="reload()" target="#sequence-rows" count=sequences|length noun="sequence" %}
     </form>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
+    </div>
 
     <div id="sequence-rows"
          hx-get="{% url 'campaigns:list' workspace_id=request.workspace.id %}"

@@ -1,0 +1,94 @@
+# Runtime dependencies for BrightBean Chat.
+#
+# This is both the file humans edit and the file that gets installed. It lists
+# DIRECT dependencies only; pip resolves the transitive tree at install time.
+#
+# Exact pins, not ranges. Studio uses ranges and its own requirements.txt
+# documents the consequence: CI resolves the newest match while local
+# environments sit on an older one, so a release broke 509 tests in CI that
+# passed locally. Dependabot (.github/dependabot.yml) moves these forward.
+#
+# Development and test tooling lives in requirements/dev.txt so the runtime
+# image does not ship pytest, ruff and mypy.
+
+# Core
+Django==5.2.17            # 5.2 is the LTS line (security fixes through Apr 2028)
+django-environ==0.14.0
+psycopg[binary]==3.3.4     # psycopg 3; Postgres is the only datastore (SPEC §2)
+gunicorn==26.1.0
+
+# Security
+django-csp==4.0            # 4.x dict-form config; see config/settings/base.py
+cryptography==50.0.0       # AES-256-GCM + HKDF for apps/common/encryption.py
+
+# Platform HTTP (channel adapters — apps/channels/providers/base.py)
+# Direct dependency of the adapter base: timeouts, 429 handling and error
+# mapping are shared by every Layer-4/5 adapter, which is what makes contract 4's
+# "one module and one registry line" per platform true. Its MockTransport is
+# also what lets that policy be tested without a network.
+httpx==0.28.1
+
+# Static files
+whitenoise==6.12.0
+
+# Storage (local disk or any S3-compatible endpoint, incl. Cloudflare R2)
+django-storages[s3]==1.14.6
+
+# Media library thumbnails (issue #16). Only the image path uses it; there is
+# deliberately no ffmpeg dependency, so video thumbnails and duration are not
+# extracted.
+Pillow==13.0.0
+
+# Amazon SES, for the email channel's SES backend (issue #21). Already present
+# transitively via django-storages[s3]; named here because apps/channels/providers/
+# email_backends.py imports it directly, and an undeclared direct import is one
+# `django-storages` release away from vanishing. The import is deferred inside
+# the one function that builds a client, so an SMTP-only or Resend-only
+# deployment never loads botocore.
+boto3==1.43.78
+
+# Monitoring (inert unless SENTRY_DSN is set)
+sentry-sdk[django]==2.68.1
+
+# Auth
+django-allauth[socialaccount]==65.19.7   # 65.x API: ACCOUNT_LOGIN_METHODS / ACCOUNT_SIGNUP_FIELDS
+                                          # 65.19.6 raised the oauthlib floor to >=4.0.0 (GHSA-hj66-6f7g-4r5v,
+                                          # GHSA-xpv3-w29h-x7cv / PYSEC-2026-4114) — oauthlib itself isn't
+                                          # pinned here, so pip was free to resolve the vulnerable 3.3.1 under
+                                          # the old <4 ceiling. 65.19.7's own security fix (Tumblr identifiers)
+                                          # and 65.19.6's (Bitbucket/Pinterest identifiers) don't apply: only
+                                          # the google provider is installed (config/settings/base.py).
+bcrypt==5.0.0             # BCryptSHA256PasswordHasher's runtime dep; Django does not declare it
+
+# QR codes for ref-URL triggers (issue #11, SPEC §21 phase 2). Pure Python with
+# no runtime dependencies on 3.12, and it renders SVG without Pillow — the QR
+# has to be generated locally because SPEC forbids handing a workspace's deep
+# link to an external image service.
+segno==1.6.6
+
+# Public REST API v1 (issue #25, SPEC §17). django-ninja gives request/response
+# schemas, OpenAPI generation and a bearer-auth hook without the class-based
+# indirection DRF adds; its `HttpBearer` is what `apps/api/auth.py` extends to
+# resolve an API key to a workspace. Pulls pydantic 2 transitively — that is the
+# schema layer, and it is what enforces `extra="forbid"` on every request body
+# (SECURITY-BASELINE §7's mass-assignment guard).
+django-ninja==1.6.3
+
+# Stripe, for the optional hosted billing integration (apps/billing). Inert
+# unless STRIPE_SECRET_KEY and both price ids are set, which is never true on a
+# self-hosted install — the package is imported lazily, inside the one module
+# that talks to Stripe, so an unconfigured deployment never loads it.
+#
+# The only vendor SDK in a tree where six chat platforms all speak raw httpx, so
+# it needs an argument. It is `stripe.Webhook.construct_event`: verifying the
+# `t=,v1=` signature scheme by hand is custom crypto on the one endpoint where
+# getting it wrong means a forged "they paid" is indistinguishable from a real
+# one, and this is the implementation Stripe tests. The rest of the surface we
+# use is four REST calls that httpx would have handled fine.
+#
+# It brings `requests`, which botocore already pins into the lock, so there is no
+# second HTTP stack here. It does mean this is egress the SSRF sweep in
+# tests/test_ssrf_call_sites.py cannot see — that scan is httpx-only — so
+# apps/billing/stripe_client.py is registered in its NON_HTTP_EGRESS map and in
+# docs/security-audit.md, the way email_backends.py's boto3 and SMTP are.
+stripe==15.6.1

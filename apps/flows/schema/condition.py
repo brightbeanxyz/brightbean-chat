@@ -66,7 +66,7 @@ _SPEC_11_4_SCHEMA: dict[str, Any] = {
                     "op": {
                         "type": "string",
                         "description": (
-                            "Operators by value type — text: is, is_not, contains, has_value, no_value; "
+                            "Operators by value type. Text: is, is_not, contains, has_value, no_value; "
                             "number: =, !=, >, <, >=, <=; date/datetime: before, after, on, days_ago, "
                             "days_from_now; boolean: is; tag: has, has_not; sequence: subscribed, "
                             "not_subscribed; window: inside, outside."

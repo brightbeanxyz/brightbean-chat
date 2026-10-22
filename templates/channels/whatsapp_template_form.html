@@ -2,7 +2,7 @@
 {% load i18n %}
 {% block title %}{% translate "WhatsApp template" %} · BrightBean Chat{% endblock %}
 {% block page_header %}
-  <h1>{% if template %}{% translate "Edit template" %}{% else %}{% translate "New template" %}{% endif %}</h1>
+  <h1 class="page-title mb-4">{% if template %}{% translate "Edit template" %}{% else %}{% translate "New template" %}{% endif %}</h1>
 {% endblock %}
 
 {% block content %}
@@ -37,7 +37,7 @@
     <h2>{% translate "Preview" %}</h2>
     <div id="template-preview" class="muted"><p>{% translate "Start typing to see the message." %}</p></div>
 
-    {% if editable %}<button type="submit">{% translate "Save draft" %}</button>{% endif %}
+    {% if editable %}<button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save draft" %}</button>{% endif %}
   </form>
 
   <p><a href="{{ list_url }}">{% translate "Back to templates" %}</a></p>

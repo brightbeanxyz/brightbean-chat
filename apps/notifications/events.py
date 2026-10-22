@@ -111,7 +111,7 @@ class NotificationEvent:
     email_subject: CopyText = ""
     emails_by_default: bool = True
     # Maps to the alert-* / --success-* / --error-* vocabulary in
-    # theme/static_src/src/styles.css.
+    # apps/theme/static_src/src/styles.css.
     tone: str = "info"
     #: Keys the copy needs. A caller who omits one gets the DEBUG/log policy
     #: rather than a sentence with a hole in it that nobody notices.

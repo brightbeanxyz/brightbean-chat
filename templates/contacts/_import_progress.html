@@ -46,7 +46,7 @@ redraws this panel without a reload.
         {% for error in run.errors|slice:":20" %}
           <tr>
             <td>{{ error.row }}</td>
-            <td>{{ error.column|default:"—" }}</td>
+            <td>{{ error.column|default:"N/A" }}</td>
             <td>{{ error.message }}</td>
           </tr>
         {% endfor %}
@@ -70,7 +70,7 @@ redraws this panel without a reload.
           hx-post="{% url 'contacts:import_run' workspace_id=request.workspace.id import_id=run.id %}"
           hx-swap="none"
           hx-confirm="{{ import_confirm }}">
-      <button type="submit" class="btn-brand btn-inline">{% translate "Import for real" %}</button>
+      <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Import for real" %}</button>
       <span class="muted text-xs">{% translate "Rows listed above are skipped; everything else is written." %}</span>
     </form>
   {% endif %}

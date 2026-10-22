@@ -28,6 +28,7 @@ from dataclasses import replace
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import F
 from django.http import Http404, HttpResponse, HttpResponseNotModified
 from django.shortcuts import render
 from django.urls import NoReverseMatch, reverse
@@ -43,6 +44,7 @@ from apps.channels.capabilities import capabilities_for
 from apps.channels.events import MediaBlock, OutboundMessage, TextBlock
 from apps.channels.media import MEDIA_CACHE_CONTROL, MediaUnavailableError, fetch_media, media_response
 from apps.channels.models import ChannelConnection
+from apps.common.filters import multi
 from apps.common.htmx import toast_response
 from apps.common.platforms import Platform
 from apps.common.polling import conditional, if_none_match, version_etag
@@ -62,6 +64,7 @@ from apps.inbox.models import (
     ScheduledReply,
 )
 from apps.inbox.rendering import (
+    day_label,
     failed_scheduled_reply,
     is_redacted,
     label_chip,
@@ -71,6 +74,8 @@ from apps.inbox.rendering import (
     preview_of,
     render_message,
     rule_summary,
+    short_age,
+    time_left,
 )
 from apps.media_library.resolution import MediaNotFoundError, resolve
 from apps.members.decorators import require_permission
@@ -134,19 +139,25 @@ def _can_edit_contact(request: WorkspaceRequest) -> bool:
     return bool(request.workspace_membership.effective_permissions.get("edit_contact_fields", False))
 
 
-def _filters(request: WorkspaceRequest) -> dict[str, str]:
+def _filters(request: WorkspaceRequest) -> dict[str, Any]:
     """The list's filter state, normalised.
 
     Normalised rather than passed through, because these values are part of the
     ETag: ``?state=open`` and ``?state=open&`` must produce the same token or a
-    poll would look like a change on every other request.
+    poll would look like a change on every other request. Channel and label
+    repeat — the Filter popover allows several of each — and ``multi`` returns
+    them deduplicated and sorted, so the same selection in a different order is
+    the same token too. They are kept as strings rather than parsed here: an id
+    that does not parse must still reach the selector, which answers it with an
+    empty list rather than by quietly dropping the filter.
     """
     state = (request.GET.get("state") or "").strip()
     return {
         "state": state if state in ConversationState.values else "",
-        "connection": (request.GET.get("connection") or "").strip(),
+        "q": (request.GET.get("q") or "").strip()[: selectors.MAX_SEARCH_CHARS],
+        "connection": multi(request.GET, "connection"),
         "assignee": (request.GET.get("assignee") or "").strip(),
-        "label": (request.GET.get("label") or "").strip(),
+        "label": multi(request.GET, "label"),
     }
 
 
@@ -161,9 +172,10 @@ def _rows_context(request: WorkspaceRequest) -> tuple[dict[str, Any], Any]:
         request.workspace,
         viewer=request.user,
         state=filters["state"],
-        connection_id=filters["connection"] or None,
+        connection_id=filters["connection"],
         assignee=filters["assignee"],
         label=filters["label"],
+        search=filters["q"],
     )
     return filters, rows
 
@@ -188,8 +200,9 @@ def _rendered_rows(request: WorkspaceRequest, rows: Any) -> dict[str, Any]:
         "conversations": [
             {
                 "conversation": conversation,
-                "preview": preview_of(latest[conversation.pk]) if conversation.pk in latest else "",
+                "preview": _row_preview(latest.get(conversation.pk)),
                 "last_internal": bool(latest[conversation.pk].internal) if conversation.pk in latest else False,
+                "age": short_age(conversation.last_message_at),
                 "unread": bool(getattr(conversation, "unread", False)),
                 "labels": label_chips(labels.get(conversation.pk, [])[:LIST_CHIPS]),
                 "extra_labels": max(0, len(labels.get(conversation.pk, [])) - LIST_CHIPS),
@@ -198,7 +211,23 @@ def _rendered_rows(request: WorkspaceRequest, rows: Any) -> dict[str, Any]:
             for conversation in conversations
         ],
         "open_conversation_id": request.GET.get("open", ""),
+        # For the empty thread pane's "N need a reply" — counted off the rows
+        # already in hand, so it is the list's own number and costs nothing.
+        "unread_count": sum(1 for conversation in conversations if getattr(conversation, "unread", False)),
     }
+
+
+def _row_preview(message: Message | None) -> str:
+    """The row's last line, with "You: " when a teammate wrote it (HANDOFF §3,
+    Inbox) — so a list scanned for "who is waiting on us" does not read our own
+    last word as theirs. Not for a note, which carries its own "Note" chip, nor
+    for automation, which is not "you"."""
+    if message is None:
+        return ""
+    text = preview_of(message)
+    if message.source == MessageSource.AGENT and not message.internal and text:
+        return f"You: {text}"
+    return text
 
 
 def _connections(request: WorkspaceRequest) -> list[ChannelConnection]:
@@ -224,13 +253,11 @@ def _assignee_options(request: WorkspaceRequest) -> list[dict[str, str]]:
 
 
 def _label_context_for(request: WorkspaceRequest, conversation: Conversation) -> dict[str, Any]:
-    """The header's chips and its picker.
+    """The contact panel's label chips and its "+ Add" picker.
 
     One query for the thread's own labels, plus the palette the picker offers.
-    Not folded into ``_thread_body_context``: the picker is a ``<select>``, and
-    the header exists precisely because a three-second swap would close one under
-    the reader — the same argument its docstring makes about the assignee
-    control.
+    Not folded into ``_thread_body_context``: a three-second swap would close the
+    picker under the reader. The panel refetches only on a change.
     """
     carried = selectors.labels_by_conversation(request.workspace, [conversation]).get(conversation.pk, [])
     carried_ids = {label.pk for label in carried}
@@ -244,6 +271,29 @@ def _label_context_for(request: WorkspaceRequest, conversation: Conversation) ->
             {"value": str(row.pk), "label": row.name}
             for row in selectors.labels_for(request.workspace)
             if row.pk not in carried_ids
+        ],
+    }
+
+
+def _filter_context(request: WorkspaceRequest, filters: dict[str, Any]) -> dict[str, Any]:
+    """The Filter popover's sections and its starting selection.
+
+    Channel and label — the two genuinely long lists. Assignee and state are
+    not here: the view tabs (All, Unassigned, Mine, Done) already ask those as
+    questions, and a second control for the same parameter would let the two
+    disagree about what is showing.
+    """
+    return {
+        "filters": {"connection": filters["connection"], "label": filters["label"]},
+        "filter_groups": [
+            {
+                "key": "connection",
+                "label": "Channel",
+                "options": [
+                    {"value": c.pk, "label": c.display_name, "icon": c.platform} for c in _connections(request)
+                ],
+            },
+            {"key": "label", "label": "Label", "options": _label_options(request)},
         ],
     }
 
@@ -315,6 +365,10 @@ def _compliance(request: WorkspaceRequest, conversation: Conversation) -> dict[s
     }
     if isinstance(decision, Allowed):
         context["tag"] = decision.tag or ""
+        # "Window open for 3h 12m" in the status bar. Minutes at the finest, and
+        # folded into the thread's ETag, so the bar moves once a minute rather
+        # than on every poll — the countdowns' trade (see _countdowns).
+        context["window_left"] = time_left(identity.window_expires_at)
     if isinstance(decision, NeedsTag):
         # SPEC §6.4: Meta's allowed-use text is shown verbatim, so it lives in
         # the policy table and is passed straight through.
@@ -356,6 +410,13 @@ def _thread_body_context(
     disagree, and for ``deferred`` it would also be three more queries per poll.
     """
     page, has_more = selectors.thread_messages(request.workspace, conversation, limit=limit)
+    # Hung on the message so the template can say which flow a bubble came
+    # from without a dict lookup by variable key, which Django templates lack.
+    flow_names = selectors.flow_names_for(request.workspace, list(page))
+    now = timezone.now()
+    for message in page:
+        message.flow_name = flow_names.get(message.pk, "")  # type: ignore[attr-defined]
+        message.day_label = day_label(message.created_at, now=now)  # type: ignore[attr-defined]
     return {
         "conversation": conversation,
         "rendered": [render_message(message) for message in page],
@@ -490,10 +551,30 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
         "contact": contact,
         "contact_url": _contact_url(request, conversation),
         "identities": identities,
+        # The address this conversation is on — the opt-in the panel reports
+        # first, because it is the one a reply here goes to.
+        #
+        # Not picked out of `identities` above: `(contact, channel_connection)`
+        # is not unique the way `(channel_connection, platform_user_id)` is — a
+        # contact merge (apps/messaging/merge.py) re-points identities onto the
+        # survivor unconditionally, so one contact can hold two identity rows on
+        # the same connection with different platform_user_ids. Most recently
+        # active wins, on the theory that it is the one this open thread is
+        # actually hearing from.
+        "identity": (
+            ContactChannelIdentity.objects.for_workspace(request.workspace)
+            .filter(contact=contact, channel_connection_id=conversation.channel_connection_id)
+            .order_by(F("last_inbound_at").desc(nulls_last=True))
+            .first()
+        ),
+        "last_run": selectors.last_execution_for(request.workspace, contact, conversation),
+        # The conversation's labels live in this panel beside the contact's
+        # tags: both are "+ Add" chip rows, and the panel only refetches on a
+        # change, so a picker open in it is never closed by the poll.
+        **_label_context_for(request, conversation),
         "custom_fields": _custom_fields(request, contact),
         "contact_tags": contact_tags,
         "available_tags": list(Tag.objects.for_workspace(request.workspace).exclude(pk__in=chosen)),
-        "execution": selectors.live_execution_for(request.workspace, contact),
         # The panel's pause toggle reads this. It used to arrive only because
         # the thread merged _thread_body_context over the top, so the standalone
         # sidebar endpoint — the one every refresh after a send or a pause goes
@@ -587,6 +668,7 @@ def inbox(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "label_options": _label_options(request),
         "can_reply": _can_reply(request),
         "views": _views_cached(request),
+        **_filter_context(request, filters),
     }
     return render(request, "inbox/list.html", context)
 
@@ -606,9 +688,10 @@ def rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "inbox-rows",
         request.user.pk,
         filters["state"],
-        filters["connection"],
+        filters["q"],
+        ",".join(filters["connection"]),
         filters["assignee"],
-        filters["label"],
+        ",".join(filters["label"]),
         context["open_conversation_id"],
         *selectors.list_version(context["conversations"]),
     )
@@ -637,10 +720,9 @@ def thread(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
             deferred=_deferred_context(request, conversation),
         ),
         **_sidebar_context(request, conversation),
-        **_composer_context(conversation),
         # ``_sidebar_context`` above already carries ``members``, which the
-        # header's assignee <select> reads too.
-        **_label_context_for(request, conversation),
+        # header's assignee <select> reads too, and the labels.
+        **_composer_context(conversation),
     }
     if _is_htmx(request):
         return render(request, "inbox/_thread.html", context)
@@ -655,6 +737,7 @@ def thread(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
             "assignee_options": _assignee_options(request),
             "label_options": _label_options(request),
             "views": _views_cached(request),
+            **_filter_context(request, filters),
         }
     )
     return render(request, "inbox/list.html", context)
@@ -693,6 +776,9 @@ def messages(request: WorkspaceRequest, workspace_id: str, conversation_id: str)
         _can_reply(request),
         _is_paused(conversation),
         compliance["code"],
+        compliance.get("window_left", ""),
+        # The day dividers say "Today" and "Yesterday"; they move at midnight.
+        timezone.localdate(),
         *selectors.conversation_version(request.workspace, conversation),
         # The deferred-work half. Two aggregates rather than a Max alone, for the
         # reason selectors' docstring gives: cancelling moves updated_at, and the
@@ -744,7 +830,6 @@ def header(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
             "conversation": conversation,
             "can_reply": _can_reply(request),
             "members": _members(request),
-            **_label_context_for(request, conversation),
         },
     )
 

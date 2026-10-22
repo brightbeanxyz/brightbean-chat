@@ -205,6 +205,11 @@ CAPABILITIES: dict[str, Capabilities] = {
     # No generic file attachments. proactive_send False: outside the 24h
     # window automation is Blocked, and the HUMAN_AGENT extension is an
     # agent-only path the compliance engine owns.
+    #
+    # broadcast_allowed True even so, and the two are not in tension:
+    # proactive_send is about reaching a closed window, which nothing here does,
+    # while a broadcast is an ordinary in-window send repeated. The window still
+    # decides every recipient one at a time.
     Platform.INSTAGRAM: Capabilities(
         image=True,
         audio=True,
@@ -219,6 +224,7 @@ CAPABILITIES: dict[str, Capabilities] = {
         tags_supported=(_HUMAN_AGENT,),
         max_buttons=3,
         max_quick_replies=13,
+        broadcast_allowed=True,
         max_text_len=1000,
         max_image_bytes=8 * _MB,
         max_audio_bytes=25 * _MB,

@@ -227,15 +227,15 @@ test_media/
 node_modules/
 
 # Compiled Tailwind bundle. A build artefact: `npm run build:css` regenerates
-# it from theme/static_src/src/styles.css, the Dockerfile builds it in a node
+# it from apps/theme/static_src/src/styles.css, the Dockerfile builds it in a node
 # stage, and the compose `tailwind` service rebuilds it on save in dev.
 # (static/js/vendor/ is deliberately NOT ignored — those copies are committed
 # so a clone without Node still runs; see scripts/vendor-js.mjs.)
-theme/static/css/dist/
+apps/theme/static/css/dist/
 
 # Compiled flow-builder bundle (issue #10). The same class of artefact as the
 # Tailwind bundle above: `npm run build:js` regenerates it from
-# frontend/builder/, the Dockerfile builds it in the node stage, and
+# apps/flows/frontend/, the Dockerfile builds it in the node stage, and
 # apps/flows/templatetags/flow_builder.py renders a visible notice when it is
 # absent rather than a broken page.
 #

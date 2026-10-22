@@ -173,7 +173,7 @@ All PKs are UUIDv7. All tenant tables have `workspace_id` FK with index. Timesta
 - `segment`: workspace_id, name, filter_json (same condition schema as the Condition node, section 11.4).
 
 ### flows
-- `flow`: workspace_id, name, status (draft, active, archived), folder (nullable text).
+- `flow`: workspace_id, name, status (draft, active, offline, archived), folder (nullable text). `offline` is a flow that was live and was taken offline: it has no published version, so nothing starts it, and conversations already in it were stopped.
 - `flow_version`: flow_id, version (int, monotonic), graph_json, published (bool), created_by. A flow has at most one published version. Editing always writes a new draft version; publishing flips flags atomically.
 - `trigger`: workspace_id, flow_id, channel_connection_id (nullable = all connections of matching platform), type (enum, section 10), config_json, enabled, priority (int). Index (workspace_id, type, enabled).
 - `flow_execution`: flow_version_id, contact_id, workspace_id, status (running, waiting_reply, waiting_delay, completed, failed, expired), current_node_id, variables json, blocks_since_pause (int), wait_config json (what resumes it: quick-reply set, data-collection field, timer id), started_by (trigger id / broadcast id / sequence id / api), updated_at. Partial unique index: one row per (contact_id, flow_id) where status in (running, waiting_reply, waiting_delay). Index (status, updated_at).
@@ -240,7 +240,7 @@ The engine renders one abstract `OutboundMessage`; the adapter downgrades unsupp
 - OAuth connect flow identical in shape to Studio's existing IG provider; store user token + refresh handling.
 - Webhook fields: `messages`, `messaging_postbacks`, `comments`, `mentions`, `message_deletions` (must be handled: redact message body, keep row with status deleted).
 - Signature: `X-Hub-Signature-256`, HMAC-SHA256 of raw body with app secret, constant-time compare, before JSON parsing.
-- Window: 24h from last inbound user message; HUMAN_AGENT tag extends to 7 days, allowed only for agent (inbox) sends, never automation. proactive_send false. broadcast_allowed false.
+- Window: 24h from last inbound user message; HUMAN_AGENT tag extends to 7 days, allowed only for agent (inbox) sends, never automation. proactive_send false. `broadcast_allowed` **true**, gated entirely by the window: nothing reopens a closed Instagram window (no tag, no template, and HUMAN_AGENT is inbox-only with promotional use a policy violation), so a broadcast reaches the open-window audience and skips the rest with `outside_window`. The composer must state this before the counts do — section 13.1's window notice.
 - Private replies (comment-to-DM): one message per comment, within 7 days of the comment. Track per comment id.
 - Docs must state: Advanced Access + App Review + Business Verification required to serve accounts other than the app owner's.
 
@@ -440,12 +440,12 @@ Enrollment via action node, rule trigger, or manually from contact view. Each st
 ## 13. Broadcasts
 
 ### 13.1 Composer
-Channel connection, target = segment or ad-hoc condition filter, content = inline mini-flow (send_message [+ buttons]) or WhatsApp template with variable mappings, schedule now/later, Messenger tag selector when needed.
+Channel connection, target = segment or ad-hoc condition filter, content = inline mini-flow (send_message [+ buttons]) or WhatsApp template with variable mappings, schedule now/later, Messenger tag selector when needed, and a window notice on the audience and review steps for any platform whose `outside_window` is `blocked` (section 13.2).
 
 ### 13.2 Fanout
 On send: `scheduled_action(type=broadcast_fanout)` resolves the audience with the condition engine, applies compliance filtering per identity (window, opt-out, template requirement), records skipped counts, and inserts one `broadcast_send` action per contact in batches of 500. Sends drain through the per-connection token bucket. Broadcast page shows live counters from stats json (updated in batches). Cancellation flips remaining pending actions to cancelled.
 
-Instagram never appears in the broadcast channel selector.
+Every platform whose policy row sets `broadcast_allowed` appears in the channel selector; today that is all six. Instagram is in the selector but narrow by construction: its window does all the gating (section 6.3), so most of a large audience resolves to `outside_window` skips. The composer shows a one-sentence window notice on the audience and review steps wherever `outside_window` is `blocked` on a platform that has a window, so the thin audience is stated before it is counted rather than inferred from the per-reason rows.
 
 ---
 

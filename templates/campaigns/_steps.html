@@ -10,24 +10,23 @@ each step saves independently, so a validation refusal on one cannot discard
 edits to another.
 {% endcomment %}
 <section>
-    <h2 class="text-xs font-semibold uppercase tracking-wide mb-2" style="color: var(--text-tertiary);">{% translate "Steps" %}</h2>
+    <h2 class="section-eyebrow mb-2.5">{% translate "Steps" %}</h2>
 
     {% if not steps %}
-    <div class="rounded-xl border p-8 text-center mb-4" style="border-color: var(--border); background: var(--surface-1);">
-        <p class="text-sm font-medium" style="color: var(--text-primary);">{% translate "No steps yet" %}</p>
-        <p class="text-sm mt-1" style="color: var(--text-secondary);">
-            {% translate "A sequence with no steps completes the moment somebody subscribes to it." %}
-        </p>
+    <div class="mb-4">
+    {% translate "No steps yet" as no_steps_title %}
+    {% translate "A sequence with no steps completes the moment somebody subscribes to it." as no_steps_body %}
+    {% include "components/empty_state.html" with icon="sequences" title=no_steps_title body=no_steps_body %}
     </div>
     {% else %}
-    <div class="rounded-xl border divide-y mb-4" style="border-color: var(--border); background: var(--surface-1);">
+    <div class="card overflow-hidden mb-4">
         {% for step in steps %}
-        <div class="p-3 sm:p-4" x-data="{ editing: false }">
+        <div class="card-row p-4" x-data="{ editing: false }">
             <div class="flex flex-wrap items-center gap-3">
                 <span class="inline-flex items-center justify-center rounded-full text-xs font-semibold"
-                      style="width: 1.75rem; height: 1.75rem; background: var(--primary-soft); color: var(--primary);">{{ step.position }}</span>
+                      style="width: 1.75rem; height: 1.75rem; background: var(--ink); color: var(--text-inverse);">{{ step.position }}</span>
                 <div class="flex-1 min-w-0">
-                    <p class="text-sm font-medium truncate" style="color: var(--text-primary);">{{ step.flow.name }}</p>
+                    <p class="list-row-title truncate">{{ step.flow.name }}</p>
                     <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
                         {% blocktranslate with delay=step.delay_label %}Wait {{ delay }}{% endblocktranslate %}{% if step.window.enabled %},
                         {{ step.window.from }}–{{ step.window.to }}{% if step.window.use_contact_timezone %} {% translate "in the contact's timezone" %}{% endif %}{% endif %}
@@ -36,14 +35,14 @@ edits to another.
                 </div>
                 {% if can_edit %}
                 <div class="flex items-center gap-2">
-                    <button type="button" class="btn-outline btn-inline" @click="editing = !editing">{% translate "Edit" %}</button>
-                    <button type="button" class="btn-outline btn-inline"
+                    <button type="button" class="btn-pill-secondary btn-pill-sm" @click="editing = !editing" :aria-expanded="editing ? 'true' : 'false'">{% translate "Edit" %}</button>
+                    <button type="button" class="btn-icon-round"
                             hx-post="{% url 'campaigns:step_move' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
                             hx-vals='{"direction": "up"}' hx-swap="none" aria-label="{% translate 'Move step up' %}">↑</button>
-                    <button type="button" class="btn-outline btn-inline"
+                    <button type="button" class="btn-icon-round"
                             hx-post="{% url 'campaigns:step_move' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
                             hx-vals='{"direction": "down"}' hx-swap="none" aria-label="{% translate 'Move step down' %}">↓</button>
-                    <button type="button" class="btn-outline btn-inline btn-danger-soft"
+                    <button type="button" class="btn-danger-link ml-1"
                             hx-post="{% url 'campaigns:step_delete' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
                             hx-swap="none"
                             hx-confirm="{% blocktranslate with position=step.position %}Remove step {{ position }}? Anyone waiting on it moves to whatever takes its place.{% endblocktranslate %}">{% translate "Remove" %}</button>
@@ -59,8 +58,8 @@ edits to another.
                 {% csrf_token %}
                 {% include "campaigns/_step_fields.html" with step=step %}
                 <div class="flex items-center gap-2 mt-3">
-                    <button type="submit" class="btn-brand btn-inline">{% translate "Save step" %}</button>
-                    <button type="button" class="btn-outline btn-inline" @click="editing = false">{% translate "Cancel" %}</button>
+                    <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Save step" %}</button>
+                    <button type="button" class="btn-link" @click="editing = false">{% translate "Cancel" %}</button>
                 </div>
             </form>
             {% endif %}
@@ -70,9 +69,10 @@ edits to another.
     {% endif %}
 
     {% if can_edit %}
-    <div class="rounded-xl border p-3 sm:p-4" style="border-color: var(--border); background: var(--surface-1);"
-         x-data="{ adding: false }">
-        <button type="button" class="btn-outline btn-inline" x-show="!adding" @click="adding = true">{% translate "Add a step" %}</button>
+    <div class="card p-4" x-data="{ adding: false }">
+        <button type="button" class="btn-pill-secondary btn-pill-sm" x-show="!adding" @click="adding = true">
+            {% include "partials/_nav_icon.html" with name="plus" icon_size=15 %} {% translate "Add a step" %}
+        </button>
         <form x-show="adding" x-cloak
               hx-post="{% url 'campaigns:step_create' workspace_id=request.workspace.id sequence_id=sequence.id %}"
               hx-swap="none"
@@ -80,8 +80,8 @@ edits to another.
             {% csrf_token %}
             {% include "campaigns/_step_fields.html" %}
             <div class="flex items-center gap-2 mt-3">
-                <button type="submit" class="btn-brand btn-inline">{% translate "Add step" %}</button>
-                <button type="button" class="btn-outline btn-inline" @click="adding = false">{% translate "Cancel" %}</button>
+                <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Add step" %}</button>
+                <button type="button" class="btn-link" @click="adding = false">{% translate "Cancel" %}</button>
             </div>
         </form>
     </div>

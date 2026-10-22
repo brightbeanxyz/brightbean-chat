@@ -25,11 +25,11 @@ entry node — is a perfectly ordinary draft and is handled in
 :mod:`apps.flows.schema.validation` instead.
 """
 
-import json
 import math
 import re
 from typing import Any
 
+from apps.common.jsonsize import jsonb_byte_size
 from apps.flows.schema.issues import Issue
 from apps.flows.schema.jsonschema import validate_instance
 from apps.flows.schema.nodes import all_defs, node_spec
@@ -112,13 +112,15 @@ def empty_graph() -> dict[str, Any]:
 
 
 def graph_byte_size(graph: Any) -> int:
-    """Serialized size in bytes, or ``-1`` when the value is not JSON at all."""
-    try:
-        # allow_nan=False: NaN and Infinity are a CPython extension, not JSON,
-        # and Postgres `jsonb` refuses them outright.
-        return len(json.dumps(graph, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8"))
-    except (TypeError, ValueError):
-        return -1
+    """Serialized size in bytes, or ``-1`` when the value is not JSON at all.
+
+    The measurement itself is :func:`apps.common.jsonsize.jsonb_byte_size`,
+    which is where the reasoning about ``ensure_ascii``, ``allow_nan`` and
+    lone surrogates now lives. This keeps the ``-1`` sentinel because
+    :func:`check_limits` reads it and names a different issue for it.
+    """
+    size = jsonb_byte_size(graph)
+    return -1 if size is None else size
 
 
 def _measure(value: Any, *, depth_limit: int) -> tuple[int, bool]:

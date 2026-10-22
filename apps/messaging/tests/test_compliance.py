@@ -8,6 +8,7 @@ file. That is what "driven from registry data" has to mean to be worth
 anything.
 """
 
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -184,8 +185,40 @@ class TestOutsideTheWindow:
 
 
 class TestBroadcastEligibility:
-    def test_instagram_never_appears_in_a_broadcast(self) -> None:
-        """SPEC §13.2, and it is refused before the window is even consulted."""
+    def test_a_window_is_a_narrower_audience_and_not_a_refusal(self) -> None:
+        """SPEC §6.3: an Instagram broadcast is gated by its window, not forbidden.
+
+        The pair is the test; neither half means much alone. Inside the window a
+        broadcast is an ordinary send. Outside it the verdict has to be
+        ``OUTSIDE_WINDOW`` — one counted skip the composer can total and explain
+        — rather than ``BROADCAST_NOT_ALLOWED``, which is terminal and would
+        have taken the whole audience with it.
+
+        ``last_inbound_days=1`` is deliberate: it sits inside the 7-day
+        HUMAN_AGENT range, so this also pins that the allowance does not leak
+        into a broadcast.
+        """
+        inside = decide(identity(Platform.INSTAGRAM, window_open=True), "broadcast")
+        assert isinstance(inside, Allowed)
+        assert inside.code == Grant.IN_WINDOW
+
+        outside = decide(identity(Platform.INSTAGRAM, window_open=False, last_inbound_days=1), "broadcast")
+        assert isinstance(outside, Blocked)
+        assert outside.code == Denial.OUTSIDE_WINDOW
+
+    def test_the_flag_still_refuses_the_platform_that_sets_it(self, monkeypatch: Any) -> None:
+        """``broadcast_allowed`` has no live caller and still has to work.
+
+        Every shipped row sets it True, so the rule reading it is unreachable
+        from the policy table as it stands — and contract 4 fixes the field, so
+        the engine owes it an answer the day a platform needs one. A synthetic
+        row is what is left to assert with. The open window is the point: the
+        refusal has to come *before* the window is consulted, or a platform that
+        forbids broadcasts would quietly permit them to anyone recent.
+        """
+        forbidden = replace(channel_policy.POLICIES[Platform.INSTAGRAM], broadcast_allowed=False)
+        monkeypatch.setitem(channel_policy.POLICIES, Platform.INSTAGRAM, forbidden)
+
         result = decide(identity(Platform.INSTAGRAM, window_open=True), "broadcast")
         assert isinstance(result, Blocked)
         assert result.code == Denial.BROADCAST_NOT_ALLOWED

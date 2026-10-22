@@ -30,6 +30,7 @@ template selection, segment counting and suppression each still have exactly one
 implementation.
 """
 
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -39,8 +40,20 @@ from django.utils import timezone
 from apps.broadcasts import handlers, services
 from apps.broadcasts.models import BroadcastStatus, RecipientStatus
 from apps.messaging.codes import Denial
+from apps.messaging.handlers import MAX_SEND_ATTEMPTS, handle_send_retry
 from apps.messaging.models import ContactChannelIdentity, Message
 from apps.queueing.models import ActionStatus, ActionType, ScheduledAction
+
+#: One pass per attempt the message itself is allowed. Past
+#: ``MAX_SEND_ATTEMPTS`` a retry does not defer again — ``handle_send_retry``
+#: gives up and marks the message ``failed`` — so further passes cannot drain
+#: anything and would only turn "still queued" into "failed" while reporting it
+#: in the same words. The send budget, not the bucket, is what bounds this.
+_MAX_RETRY_PASSES = MAX_SEND_ATTEMPTS
+
+#: Two Messenger tokens' worth of refill. Long enough that a further pass finds
+#: something, and only paid when one is actually needed.
+_REFILL_PAUSE_SECONDS = 0.05
 
 #: One full chunk plus a partial. See the module docstring for why not ten thousand.
 AUDIENCE = 600
@@ -65,6 +78,26 @@ def _drain_fanout(workspace):
             return
         handlers.handle_broadcast_fanout(action.payload, action)
         _actions(workspace, ActionType.BROADCAST_FANOUT).filter(pk=action.pk).update(status=ActionStatus.DONE)
+
+
+def _drain_send_retries(workspace):
+    """Run every pending ``send_retry`` to exhaustion, the way a worker would.
+
+    A retry can defer again — the bucket is still the bucket — so this loops
+    rather than making one pass, and sleeps a refill interval before a *further*
+    pass so that one has tokens to find. The common case clears in one pass and
+    sleeps not at all. Bounded, so a send that genuinely cannot leave fails the
+    assertion that follows instead of hanging the suite.
+    """
+    for _ in range(_MAX_RETRY_PASSES):
+        pending = list(_actions(workspace, ActionType.SEND_RETRY, status=ActionStatus.PENDING))
+        if not pending:
+            return
+        for action in pending:
+            handle_send_retry(action.payload, action)
+            _actions(workspace, ActionType.SEND_RETRY).filter(pk=action.pk).update(status=ActionStatus.DONE)
+        if _actions(workspace, ActionType.SEND_RETRY, status=ActionStatus.PENDING).exists():
+            time.sleep(_REFILL_PAUSE_SECONDS)
 
 
 @pytest.mark.django_db
@@ -122,6 +155,22 @@ class TestTenThousandContactBroadcast:
             assert len(sends) == in_window
             for action in sends:
                 handlers.handle_broadcast_send(action.payload, action)
+
+            # The bucket is entitled to defer, and this loop is exactly the shape
+            # that makes it: a connection's burst is one second of tokens (forty
+            # on Messenger, apps/messaging/buckets.py::capacity_for) and the loop
+            # above asks for a hundred sends as fast as Python can issue them.
+            # Past the burst the facade turns a wait it will not sit through into
+            # a ``send_retry`` and leaves the message ``queued`` with
+            # ``rate_deferred`` — correct behaviour, covered deterministically by
+            # test_send.py's ``SEND_BUCKET_MAX_WAIT_SECONDS = 0`` case. How many
+            # sends take that route depends on wall clock, so asserting the
+            # adapter's count straight after the loop was a coin toss: it came up
+            # 85, 96 or 98 whenever another pytest session was loading the same
+            # Postgres. The property worth asserting is that every eligible
+            # contact ends with exactly one message, not that none of them took
+            # the scenic route to it.
+            _drain_send_retries(tenancy.workspace)
 
             assert len(adapter.sends) == in_window
 

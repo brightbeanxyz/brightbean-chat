@@ -55,7 +55,7 @@
 
   {% url 'account_login' as login_url %}
   <p class="text-center text-sm mt-5" style="color: var(--text-secondary);">
-    {% blocktranslate %}Already have an account? <a href="{{ login_url }}" style="color: var(--primary);">Sign in</a>.{% endblocktranslate %}
+    {% blocktranslate %}Already have an account? <a href="{{ login_url }}" class="font-semibold underline underline-offset-2" style="color: var(--text-primary);">Sign in</a>.{% endblocktranslate %}
   </p>
 </div>
 {% endblock %}

@@ -181,7 +181,7 @@ class TestItOffersTheChannelTheFlowIsBuiltFor:
 
         payload = client_for(tenancy.user_for(WorkspaceRole.EDITOR)).post(url(tenancy, drafted_flow)).json()
 
-        assert "Send any message" in payload["instructions"]
+        assert "Send a message" in payload["instructions"]
 
     def test_telegram_needs_no_instructions(self, tenancy: Tenancy, client_for: Any, drafted_flow: Any) -> None:
         from apps.channels.providers.telegram import store_bot_token

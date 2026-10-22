@@ -1,7 +1,7 @@
 {% extends "layouts/workspace_settings.html" %}
 {% load i18n %}
 {% block title %}{% translate "Webhook" %} · BrightBean Chat{% endblock %}
-{% block page_header %}<h1>{% translate "Webhook endpoint" %}</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">{% translate "Webhook endpoint" %}</h1>{% endblock %}
 
 {% block content %}
   <p><code>{{ webhook.url }}</code></p>
@@ -41,17 +41,18 @@
       <input type="checkbox" name="enabled" {% if webhook.enabled %}checked{% endif %} /> {% translate "Enabled" %}
     </label>
 
-    <button type="submit">{% translate "Save" %}</button>
+    <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save" %}</button>
   </form>
 
   <h2>{% translate "Signing secret" %}</h2>
   <p class="muted">
     {% translate "Every delivery carries an HMAC of the body over this secret. Rotating it invalidates signatures immediately. Update your receiver first, or deliveries will start failing verification the moment you rotate." %}
   </p>
-  <form method="post"
+  <form method="post" x-data
+        @submit="if (!window.confirm('Rotate the signing secret? Signatures made with the old one stop verifying straight away.')) $event.preventDefault()"
         action="{% url 'api_webhooks:rotate_secret' workspace_id=request.workspace.id webhook_id=webhook.id %}">
     {% csrf_token %}
-    <button type="submit">{% translate "Rotate secret" %}</button>
+    <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Rotate secret" %}</button>
   </form>
 
   <h2>{% translate "Test" %}</h2>
@@ -60,7 +61,7 @@
   </p>
   <form method="post" action="{% url 'api_webhooks:test' workspace_id=request.workspace.id webhook_id=webhook.id %}">
     {% csrf_token %}
-    <button type="submit">{% translate "Send test event" %}</button>
+    <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Send test event" %}</button>
   </form>
 
   <h2>{% translate "Recent deliveries" %}</h2>
@@ -87,10 +88,16 @@
     <p class="muted">{% translate "Nothing delivered yet." %}</p>
   {% endif %}
 
-  <h2>{% translate "Delete" %}</h2>
-  <form method="post" action="{% url 'api_webhooks:delete' workspace_id=request.workspace.id webhook_id=webhook.id %}">
+  {% comment %}
+    Destructive, so a red link below a rule, and it asks first (HANDOFF §2.4).
+  {% endcomment %}
+  <hr>
+  {% translate "Delete this endpoint? It stops receiving events and its delivery history goes with it." as delete_endpoint_confirm %}
+  <form method="post" x-data
+        @submit="if (!window.confirm('{{ delete_endpoint_confirm|escapejs }}')) $event.preventDefault()"
+        action="{% url 'api_webhooks:delete' workspace_id=request.workspace.id webhook_id=webhook.id %}">
     {% csrf_token %}
-    <button type="submit">{% translate "Delete endpoint" %}</button>
+    <button type="submit" class="btn-danger-link">{% translate "Delete endpoint" %}</button>
   </form>
 
   <p><a href="{% url 'api_webhooks:list' workspace_id=request.workspace.id %}">{% translate "Back to webhooks" %}</a></p>

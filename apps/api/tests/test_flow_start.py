@@ -142,6 +142,20 @@ class TestStartingAFlow:
         assert response.status_code == 422
         assert response.json()["error"]["code"] == "flow_not_runnable"
 
+    def test_an_offline_flow_is_a_422(self, client, tenancy, auth, contact):
+        """Its API trigger stays enabled when it goes offline; the missing
+        published version is what refuses the start."""
+        from apps.flows.services import take_offline
+
+        flow, _ = api_flow(tenancy.workspace)
+        take_offline(flow)
+
+        response = start(client, auth, contact, flow)
+
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "flow_not_runnable"
+        assert not FlowExecution.objects.for_workspace(tenancy.workspace).filter(flow=flow).exists()
+
     def test_starting_again_supersedes_rather_than_stacking(self, client, tenancy, auth, contact):
         """SPEC §22: one live execution per contact; a new start supersedes."""
         flow, _ = api_flow(tenancy.workspace)

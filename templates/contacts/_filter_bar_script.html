@@ -53,7 +53,6 @@ operator table the condition engine's docstring exists to prevent.
       config: config,
       match: (config.document && config.document.match) || 'all',
       rules: ((config.document && config.document.rules) || []).map(hydrate),
-      segmentName: '',
 
       // The builder starts closed — it is how a segment gets made, not how a
       // list gets read — but opens on load when the current view already has

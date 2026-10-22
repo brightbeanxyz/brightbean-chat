@@ -13,7 +13,7 @@ import pytest
 from django.db import connection
 
 from apps.flows.fixtures import graph_for
-from apps.flows.models import Flow, FlowStatus, FlowVersion
+from apps.flows.models import Flow, FlowStatus, FlowVersion, Trigger
 from apps.flows.schema import empty_graph
 from apps.flows.services import (
     FlowValidationError,
@@ -26,6 +26,7 @@ from apps.flows.services import (
     restore_flow,
     save_draft,
 )
+from apps.flows.triggers.types import TriggerType
 
 
 def _versions(workspace: Any, flow: Flow) -> Any:
@@ -76,6 +77,85 @@ class TestDraftSaves:
 
 @pytest.mark.django_db
 class TestPublish:
+    def test_it_turns_on_all_triggers_when_every_one_was_off(self, tenancy):
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        for priority in (0, 10):
+            Trigger.objects.create(
+                workspace=tenancy.workspace,
+                flow=flow,
+                type=TriggerType.API,
+                config_json={},
+                priority=priority,
+                enabled=False,
+            )
+
+        result = publish(flow, user=tenancy.owner)
+
+        assert not Trigger.objects.for_workspace(tenancy.workspace).filter(flow=flow, enabled=False).exists()
+        assert "flow_triggers_all_disabled" not in {issue.code for issue in result.validation.warnings}
+
+    def test_it_preserves_intentionally_paused_triggers(self, tenancy):
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        on = Trigger.objects.create(
+            workspace=tenancy.workspace,
+            flow=flow,
+            type=TriggerType.API,
+            config_json={},
+            enabled=True,
+        )
+        off = Trigger.objects.create(
+            workspace=tenancy.workspace,
+            flow=flow,
+            type=TriggerType.API,
+            config_json={},
+            enabled=False,
+        )
+
+        publish(flow, user=tenancy.owner)
+        on.refresh_from_db()
+        off.refresh_from_db()
+
+        assert on.enabled is True
+        assert off.enabled is False
+
+    def test_republishing_an_unchanged_flow_can_turn_paused_triggers_on(self, tenancy):
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+        save_draft(flow, graph_for("send_message"), user=tenancy.owner)
+        trigger = Trigger.objects.create(
+            workspace=tenancy.workspace,
+            flow=flow,
+            type=TriggerType.API,
+            config_json={},
+            enabled=True,
+        )
+        publish(flow, user=tenancy.owner)
+        trigger.enabled = False
+        trigger.save(update_fields=["enabled"])
+
+        result = publish(flow, user=tenancy.owner)
+        trigger.refresh_from_db()
+
+        assert trigger.enabled is True
+        assert result.version.version == 1
+
+    def test_a_failed_publish_does_not_enable_triggers(self, tenancy):
+        flow = create_flow(workspace=tenancy.workspace, name="Welcome")
+        trigger = Trigger.objects.create(
+            workspace=tenancy.workspace,
+            flow=flow,
+            type=TriggerType.API,
+            config_json={},
+            enabled=False,
+        )
+
+        with pytest.raises(FlowValidationError):
+            publish(flow, user=tenancy.owner)
+        trigger.refresh_from_db()
+
+        assert trigger.enabled is False
+
     def test_it_returns_the_findings_it_validated_against(self, tenancy):
         """The caller needs them for its response and publish has just computed
         them; returning only the version made every caller validate twice."""

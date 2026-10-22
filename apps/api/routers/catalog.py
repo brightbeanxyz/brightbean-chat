@@ -26,7 +26,9 @@ router = Router(tags=["catalog"])
 @require_permission("use_inbox")
 def list_flows(
     request: ApiRequest,
-    status: Annotated[str | None, Query(description='"draft", "active" or "archived". Default: all.')] = None,
+    status: Annotated[
+        str | None, Query(description='"draft", "active", "offline" or "archived". Default: all.')
+    ] = None,
     limit: Annotated[int | None, Query()] = None,
     cursor: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:

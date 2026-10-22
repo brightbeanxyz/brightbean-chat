@@ -46,41 +46,19 @@ REQUIREMENT_KIND_LABELS: dict[str, Any] = {
 #: new kind that got one and not the other would render a bare slug as a heading
 #: or a heading with nothing under it.
 REQUIREMENT_KIND_HELP: dict[str, Any] = {
-    "tag": _(
-        "This flow labels people with the tags below, and your workspace does not have "
-        "them yet. For each one: create it under this name, or point it at a tag you "
-        "already use. (A tag is a label on a person — “VIP”, “Newsletter” — that you can "
-        "search and filter by later.)"
-    ),
-    "custom_field": _(
-        "This flow saves these details onto a contact, and your workspace does not have "
-        "them yet. For each one: create it, or point it at a field you already have. "
-        "(A custom field is a detail that is not built in — a size, a booking date, an "
-        "order number. Its type decides what you can store, and cannot be changed later.)"
-    ),
-    "sequence": _(
-        "A sequence is a series of messages sent over days. A new one arrives empty, so add its messages afterwards."
-    ),
-    "segment": _("A segment is a saved contact filter and cannot be created from a file. Pick one you already have."),
-    "member": _("Who the flow assigns conversations to and notifies. Defaults to you."),
-    "flow": _("Flows this one hands over to. A file exported with everything it uses carries them along."),
+    "tag": _("Create these tags or match them to tags you already use."),
+    "custom_field": _("Create these fields or match them to existing ones. Field types cannot be changed later."),
+    "sequence": _("New sequences arrive empty. Add their messages after importing."),
+    "segment": _("Choose an existing saved contact filter."),
+    "member": _("Choose who gets assigned or notified. Defaults to you."),
+    "flow": _("Choose the flows this one hands over to."),
     "media": _("Pick an image or file from your library, or paste a link to use instead."),
-    "platform": _(
-        "Which connected account each trigger should watch. Letting one watch every account "
-        "is wider than it sounds: it covers every platform that kind of trigger works on, not "
-        "just this one, so a Telegram keyword trigger would answer SMS as well."
-    ),
-    "request_header": _(
-        "These were stripped when the file was made, so no password could travel in it. Supply your own."
-    ),
-    "whatsapp_template": _("The flow sends these approved templates. Nothing to answer — make sure you have them."),
+    "platform": _("Choose an account for each trigger. Every account may include other supported channels."),
+    "request_header": _("Add your own headers. The export removed any secrets."),
+    "whatsapp_template": _("Make sure these approved templates exist in your WhatsApp account."),
     "link_handle": _("The public @handle a link was built from was stripped when the file was made."),
     "from_override": _("The sending address was stripped when the file was made."),
-    "comment_posts": _(
-        "The trigger watched particular posts, and which posts was stripped when the file was made. "
-        "List your own — leaving this blank does not mean every post, it means no posts, so the "
-        "trigger would never fire."
-    ),
+    "comment_posts": _("Enter the posts to watch. Blank means no posts, so the trigger will not run."),
 }
 
 

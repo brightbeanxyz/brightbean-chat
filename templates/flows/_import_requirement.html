@@ -35,13 +35,12 @@ hand-posted field cannot introduce one.
 
     {% if requirement.in_document %}
     <p class="text-sm mt-2" style="color: var(--text-secondary);">
-        {% translate "Included in this file. It resolves to the copy about to be created." %}
+        {% translate "Included in this file." %}
     </p>
 
     {% elif kind == "whatsapp_template" %}
     <p class="text-sm mt-2" style="color: var(--text-secondary);">
-        {% blocktranslate with template_name=requirement.name %}This flow sends the approved template <span class="font-mono">{{ template_name }}</span>.
-        Nothing to answer here. Make sure your WhatsApp account has it.{% endblocktranslate %}
+        {% blocktranslate with template_name=requirement.name %}Make sure <span class="font-mono">{{ template_name }}</span> exists in your WhatsApp account.{% endblocktranslate %}
     </p>
 
     {% elif kind == "request_header" or kind == "link_handle" or kind == "from_override" or kind == "comment_posts" %}
@@ -89,9 +88,9 @@ hand-posted field cannot introduce one.
     {% endcomment %}
     {% if not options %}
     <p class="text-xs mt-1.5" style="color: var(--text-tertiary);">
-        {% blocktranslate with name=requirement.name|default:requirement.key %}No {{ name }} account is connected yet. You can
+        {% blocktranslate with name=requirement.name|default:requirement.key %}No {{ name }} account is connected. You can
         <a href="{{ connect_url }}" class="btn-text-hover-primary" style="text-decoration: underline;">connect one</a>
-        and come back, or import now and pick the account later.{% endblocktranslate %}
+        or pick one after importing.{% endblocktranslate %}
     </p>
     {% endif %}
     {% if resolution.action == "blank" %}

@@ -83,23 +83,44 @@ DEFAULT_BATCH_SIZE = 50
 #: column on every one of its five attempts.
 MAX_STORED_ERROR_CHARS = 2000
 
-# The table name is written out rather than interpolated from
-# ``_meta.db_table``: an f-string here would be a string-built query (ruff S608)
-# for no benefit, and the two are pinned together by a test.
+#: The claim, as one statement (SPEC §15).
+#:
+#: The table name is written out rather than interpolated from
+#: ``_meta.db_table``: an f-string here would be a string-built query (ruff S608)
+#: for no benefit, and the two are pinned together by a test.
+#:
+#: The ``MATERIALIZED`` is load-bearing and the reason this is a CTE rather than
+#: the obvious ``WHERE id IN (SELECT … LIMIT %s FOR UPDATE SKIP LOCKED)``. That
+#: form reads as if the limit bounds the claim, and most of the time it does —
+#: but a locking subquery under a semi-join is a ``LockRows`` node the planner is
+#: free to re-evaluate, and when it does, ``LIMIT`` bounds each evaluation rather
+#: than the statement. The result is a claim larger than the batch it was asked
+#: for: measured here as ``claim_batch(2)`` returning five rows from a single
+#: execution, reproducible once a bulk insert elsewhere in the session had moved
+#: the table's statistics enough to change the plan.
+#:
+#: Over-claiming is not cosmetic. ``drain`` decides it has emptied the queue by
+#: comparing ``claimed < batch_size``, the batch size is what paces a worker
+#: against the per-connection token buckets, and ``--max-batches`` is an
+#: operator's bound on how much one process will do. All three read the same
+#: number, and all three are wrong if the statement can exceed it. A CTE marked
+#: ``MATERIALIZED`` is evaluated exactly once, which makes the limit a property
+#: of the statement instead of a property of the plan.
 CLAIM_SQL = """
+    WITH due AS MATERIALIZED (
+         SELECT id
+           FROM queueing_scheduled_action
+          WHERE status = 'pending'
+            AND run_at <= now()
+          ORDER BY run_at
+          LIMIT %s
+            FOR UPDATE SKIP LOCKED
+    )
     UPDATE queueing_scheduled_action
        SET status = 'running',
            attempts = attempts + 1,
            updated_at = now()
-     WHERE id IN (
-           SELECT id
-             FROM queueing_scheduled_action
-            WHERE status = 'pending'
-              AND run_at <= now()
-            ORDER BY run_at
-            LIMIT %s
-              FOR UPDATE SKIP LOCKED
-           )
+     WHERE id IN (SELECT id FROM due)
     RETURNING *
 """
 
@@ -172,6 +193,8 @@ def claim_batch(limit: int = DEFAULT_BATCH_SIZE) -> list[ScheduledAction]:
     ten minutes later.
     """
     limit = positive_int(limit)
+    # At most ``limit`` rows, guaranteed by CLAIM_SQL's materialised CTE rather
+    # than by the plan the optimiser happens to pick. See the constant.
     # Cross-tenant on purpose: this is the deployment-wide drain. See the module
     # docstring. Application code reads ScheduledAction through .for_workspace().
     claimed = list(ScheduledAction.objects.raw(CLAIM_SQL, [limit]))

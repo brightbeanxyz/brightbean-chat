@@ -63,9 +63,9 @@ even with one item in it, so these rows do not disagree with the tag rows.
   <div class="empty-state">
     <p class="empty-state-title">{% translate "No custom fields yet" %}</p>
     <p class="empty-state-body">
-      {% translate "A field is where a flow puts an answer it collected — a size, a booking date, a plan — so a filter can search on it later." %}
+      {% translate "Save answers from flows, then use them to filter contacts." %}
     </p>
-    <button type="button" class="btn-pill-secondary mt-4" @click="adding = true">{% translate "New field" %}</button>
+    <button type="button" class="btn-pill-secondary mt-4" @click="$modal('new-field')">{% translate "New field" %}</button>
   </div>
   {% endif %}
 </div>

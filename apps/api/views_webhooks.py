@@ -204,7 +204,7 @@ def webhook_test(request: WorkspaceRequest, workspace_id: str, webhook_id: str) 
     delivery = send_test_event(webhook)
     if delivery.succeeded:
         messages.success(
-            request, gettext("Test delivered — the endpoint answered %(code)s.") % {"code": delivery.response_code}
+            request, gettext("Test delivered. The endpoint answered %(code)s.") % {"code": delivery.response_code}
         )
     else:
         messages.error(request, gettext("Test failed: %(reason)s.") % {"reason": delivery.error or delivery.status})

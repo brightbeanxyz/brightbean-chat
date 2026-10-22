@@ -8,6 +8,30 @@ Specification: `docs/SPEC.md` §6.7 (the channel) and §11.10 (the `send_email`
 node). Implementation: `apps/channels/providers/email.py`, with the three
 transports behind `apps/channels/providers/email_backends.py`.
 
+> **This page is about the email channel**, which sends flows, broadcasts and
+> inbox replies to your contacts. It is set up in the app, per workspace.
+>
+> The mail BrightBean Chat sends to *its own users* (signup verification,
+> password resets, invitations, notifications) is a different thing, set once
+> per deployment with the `EMAIL_*` variables in `.env`. See
+> [Account email](../../README.md#account-email). The two share no settings.
+
+## Setup at a glance
+
+1. Publish [SPF, DKIM and DMARC](#before-you-connect-anything-spf-dkim-and-dmarc)
+   for the domain you will send from.
+2. [Connect the channel](#connecting): pick SMTP, Resend or SES, enter a
+   from-address on that domain and the provider's credentials.
+3. Click **Send a test email** on the connection's page.
+4. Optional, Resend or SES only: turn on bounce handling
+   ([Resend](#resend), [SES](#amazon-ses)).
+
+Nothing goes in `.env` for any of it. You can send after step 3. Step 4 is what
+lets hard bounces and spam complaints suppress an address automatically.
+
+The channel only sends. A contact who replies is writing to your from-address's
+mailbox, and the reply never reaches the BrightBean Chat inbox.
+
 ## Before you connect anything: SPF, DKIM and DMARC
 
 Set all three up on the domain you are going to send from, before you send
@@ -50,13 +74,34 @@ transactional mail.
 
 ## Connecting
 
-*Settings → Channels → Email → set it up*
-(`/w/<workspace>/settings/channels/email/connect/`).
+Open *Settings → Channels*, find **Email** under *Available to connect*, and
+click **Set up** (`/w/<workspace>/settings/channels/email/connect/`). Pick a
+provider at the top of the form, and the fields below it change to match.
 
-Whichever provider you choose, the credentials are checked against it **before
-anything is written**, so a mistyped password leaves no half-configured channel
-behind. They are stored in an encrypted column and never shown again; changing
-them means entering them again.
+Every provider asks for the same three things first:
+
+| Field | Notes |
+|---|---|
+| From address | What recipients see, e.g. `hello@mail.example.com`. Its domain becomes the channel's identity and must be the domain you set up SPF, DKIM and DMARC for |
+| From name | Optional. The name shown next to the address, e.g. "Acme Support" |
+| Channel name | Optional. What the channel is called inside BrightBean Chat. Defaults to the domain |
+
+Then the provider's own fields, below. Whichever provider you choose, the
+credentials are checked against it **before anything is written**, so a
+mistyped password leaves no half-configured channel behind. They are stored in
+an encrypted column and never shown again; changing them means entering them
+again.
+
+Once it saves, click the new connection in the channels list and press **Send a
+test email**. It sends one real message through the connection to the address
+you log in with, carrying the same unsubscribe headers and footer as every other
+send. If it arrives, the channel works.
+
+The channels list will keep showing *Connected, but nothing has arrived yet* for
+an SMTP connection, and for a Resend or SES one until bounce handling is on and
+the provider's first notification arrives. That line counts inbound webhook
+deliveries, and provider notifications are the only thing an email connection
+ever receives. It does not mean sending is broken.
 
 ### Your own SMTP server
 
@@ -86,9 +131,15 @@ v1 — if you need bounce handling, use Resend or SES.
 
 ### Resend
 
-Paste an API key from the Resend dashboard. Optionally paste a **webhook signing
-secret** as well; you need it for bounce handling and not for sending, so you can
-add it later.
+First add your sending domain under *Domains* in the Resend dashboard and wait
+for it to show as verified. The DNS records Resend gives you there are the SPF
+and DKIM from the section above. Resend refuses to send from a domain it has not
+verified, and the connect step checks only the API key, so an unverified domain
+first shows up as a failed test email.
+
+Then paste an API key from the Resend dashboard. Optionally paste a **webhook
+signing secret** as well; you need it for bounce handling and not for sending,
+so you can add it later.
 
 To turn on bounce handling:
 
@@ -113,33 +164,77 @@ that does not exist.
 
 ### Amazon SES
 
+First create a **domain identity** for your sending domain in the SES console
+(*Identities → Create identity*), in the region you will send from, and publish
+the DKIM records it gives you. SES sends only from verified identities.
+
+Then create an IAM user for BrightBean Chat with an access key, and attach this
+policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ses:GetAccount", "ses:SendEmail", "ses:SendRawEmail"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "sns:ConfirmSubscription",
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+`ses:GetAccount` is the one people leave out. The connect step and the test
+button both call it to check the key, so without it the form says AWS did not
+accept the credentials even though the key itself is fine. The second statement
+is only for bounce handling; narrow its `Resource` to your topic's ARN once you
+have one.
+
 | Field | Notes |
 |---|---|
-| Access key ID / secret | An IAM user or role with `ses:SendEmail` |
+| Access key ID / secret | The IAM user's access key, from above |
 | Region | The SES region your domain is verified in, e.g. `eu-west-1` |
-| Bounce topic ARN | Optional. See "which topic is yours" below |
+| Bounce topic ARN | Optional, and easier to add afterwards. See below |
 
 New SES accounts are in the **sandbox**, where you may only send to addresses you
 have verified and are capped at a low daily rate. Request production access
 before you rely on it; the connect step will succeed either way, because it
 checks the credentials rather than trying a send.
 
-To turn on bounce handling:
+To turn on bounce handling, do these **in this order**:
 
-1. Create an SNS topic in the same region.
-2. In SES, configure your domain's Bounce and Complaint notifications (and
-   Delivery, if you want them) to publish to that topic.
-3. Subscribe the topic to
-   `https://<your-deployment>/webhooks/email/ses/<connection id>/` with the
-   HTTPS protocol.
-4. Add `sns:ConfirmSubscription` to the IAM policy for the key you connected.
+1. **Create an SNS topic** in the same region as SES, and copy its ARN.
+2. **Save the ARN in BrightBean Chat** first: paste it into *SES bounce topic
+   ARN* under *Bounce handling* on the channel's page, and save.
+3. **Subscribe the topic to the channel.** In SNS, create a subscription on the
+   topic with protocol **HTTPS** and the channel's webhook URL as the endpoint:
+   `https://<your-deployment>/webhooks/email/ses/<connection id>/`. Within a
+   minute the subscription's status should change from *Pending confirmation* to
+   *Confirmed*.
+4. **Point SES at the topic.** Open your domain under *Identities*, then the
+   *Notifications* tab, and edit *Feedback notifications*: set Bounce and
+   Complaint (and Delivery, if you want them) to the topic.
 
-Step 4 is the one that is easy to miss and the reason the subscription would
-otherwise sit at "pending confirmation" forever. When SNS posts its
-`SubscriptionConfirmation`, BrightBean Chat confirms it by **calling the AWS
-API** with the credentials this connection already holds — it never fetches the
-`SubscribeURL` in the payload, because that URL is supplied by whoever sent the
-request and fetching it would be a server-side request forgery for no gain.
+The order matters because confirmation is only accepted from the topic saved in
+step 2. Subscribe first and SNS's confirmation request arrives before the app
+knows the topic, gets ignored, and the subscription sits at *Pending
+confirmation* forever.
+
+Confirmation also needs the worker running and `sns:ConfirmSubscription` on the
+key. When SNS posts its `SubscriptionConfirmation`, BrightBean Chat queues a job
+that confirms it by **calling the AWS API** with the credentials this connection
+already holds. It never fetches the `SubscribeURL` in the payload, because that
+URL is supplied by whoever sent the request and fetching it would be a
+server-side request forgery for no gain.
+
+A subscription stuck at *Pending confirmation* is missing one of those three:
+the saved ARN, the permission, or the worker. Fix it, then select the
+subscription in the SNS console and click **Request confirmation**.
 
 Every SNS delivery's RSA signature is verified against AWS's signing
 certificate. The certificate URL in the payload has to match

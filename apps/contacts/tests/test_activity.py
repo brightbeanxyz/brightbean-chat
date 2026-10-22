@@ -242,6 +242,22 @@ class TestAutomation:
         assert draft not in list(activity.startable_flows(tenancy.workspace))
         assert activity.startable_flow(tenancy.workspace, draft.pk) is None
 
+    def test_an_offline_flow_is_not_offered(self, tenancy, contact):
+        from apps.flows.services import take_offline
+        from apps.flows.tests.support import graph, node, published_flow
+
+        flow = published_flow(
+            tenancy.workspace,
+            graph([node("a", "action", {"actions": [{"verb": "remove_tag", "tag": "x"}]})]),
+            name="Was live",
+        )
+        assert activity.startable_flow(tenancy.workspace, flow.pk) is not None
+
+        take_offline(flow)
+
+        assert flow not in list(activity.startable_flows(tenancy.workspace))
+        assert activity.startable_flow(tenancy.workspace, flow.pk) is None
+
     def test_starting_an_unpublished_flow_is_a_toast_not_a_500(self, tenancy, client_for, contact):
         import json
 

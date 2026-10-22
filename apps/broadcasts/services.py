@@ -70,6 +70,7 @@ from apps.broadcasts.models import (
 from apps.broadcasts.notifications import EVENT_BROADCAST_FINISHED
 from apps.channels import policy as channel_policy
 from apps.channels import whatsapp_templates
+from apps.channels.models import ChannelConnection, ConnectionStatus
 from apps.contacts import conditions
 from apps.flows import services as flow_services
 from apps.flows.models import Flow, FlowStatus, FlowVersion
@@ -335,6 +336,21 @@ def set_tag(broadcast: Broadcast, tag: str) -> Broadcast:
     return broadcast
 
 
+def set_send_time(broadcast: Broadcast, when: datetime | None) -> Broadcast:
+    """Record when a draft should go out — ``None`` for "as soon as it is sent".
+
+    Stored, not acted on: the composer's Review step is what calls
+    :func:`schedule_broadcast`, which reads this field as its default. A draft is
+    never picked up by the worker whatever this holds (the fanout is queued by
+    ``schedule_broadcast`` alone), so writing it early is safe.
+    """
+    _require_draft(broadcast)
+    broadcast.scheduled_at = when
+    broadcast.send_time_chosen = True
+    broadcast.save(update_fields=["scheduled_at", "send_time_chosen", "updated_at"])
+    return broadcast
+
+
 def duplicate_broadcast(broadcast: Broadcast, *, user: Any = None) -> Broadcast:
     """Copy a broadcast back to draft, content and all.
 
@@ -455,6 +471,7 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
     if not broadcast.target_filter_json:
         # Reachable through the API, where nothing walks the wizard's steps.
         raise BroadcastError(gettext("Choose who this broadcast goes to."))
+    _require_eligible_connection(broadcast)
     _require_sendable_template(broadcast)
 
     # Before the audience is counted, not after: the numbers this gate refuses
@@ -508,6 +525,25 @@ def schedule_broadcast(broadcast: Broadcast, *, when: datetime | None = None) ->
         )
     broadcast.refresh_from_db()
     return broadcast
+
+
+def _require_eligible_connection(broadcast: Broadcast) -> None:
+    """Refuse a connection that stopped being broadcastable since it was picked.
+
+    The composer only offers ``composer.broadcastable_connections`` (not
+    disabled, and the platform's own policy still allows a broadcast), but a
+    broadcast schedules now and sends later: an admin can disable the
+    connection, or Instagram's window can close with no way to reopen it,
+    anywhere in the gap between the operator choosing it and pressing send.
+    Same reasoning as :func:`_require_sendable_template` — refuse here, once,
+    rather than fanning out against a connection nobody can send on.
+    """
+    connection = ChannelConnection.objects.for_workspace(broadcast.workspace_id).get(pk=broadcast.channel_connection_id)
+    if (
+        connection.status == ConnectionStatus.DISABLED
+        or not channel_policy.policy_for(connection.platform).broadcast_allowed
+    ):
+        raise BroadcastError(gettext("This channel can no longer be used for broadcasts. Choose another one."))
 
 
 def _require_sendable_template(broadcast: Broadcast) -> None:

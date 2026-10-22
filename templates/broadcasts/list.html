@@ -6,43 +6,63 @@ the table has exactly one renderer: the filters fetch it, and every mutation
 answers with a `broadcastsChanged` event that makes it re-fetch itself.
 
 The "New broadcast" form offers only connections the policy table says permit
-broadcasts — apps/broadcasts/composer.py::broadcastable_connections — which is
-where SPEC §13.2's "Instagram never appears in the broadcast channel selector"
-actually happens. There is no platform name in this file.
+broadcasts — apps/broadcasts/composer.py::broadcastable_connections. Every
+shipped platform permits them; what narrows an Instagram broadcast is its
+messaging window, not the selector (SPEC §13.2). There is no platform name in
+this file.
 {% endcomment %}
 
 {% block title %}{% translate "Broadcasts" %} · BrightBean Chat{% endblock %}
 
 {% block page_header %}
-<div class="flex flex-wrap items-start justify-between gap-3 mb-6">
-    <div>
+<div class="page-header max-w-[1060px]">
+    <div class="page-header-text">
         <h1 class="page-title">{% translate "Broadcasts" %}</h1>
-        <p class="text-sm" style="color: var(--text-secondary);">
+        <p class="page-lede">
             {% translate "One message to many contacts, filtered for compliance before it goes out." %}
         </p>
     </div>
     {% if connections %}
-    <form class="flex items-center gap-2"
-          hx-post="{% url 'broadcasts:create' workspace_id=request.workspace.id %}"
-          hx-swap="none"
-          x-data
-          @htmx:after-request="$el.reset()">
-        {% csrf_token %}
-        {% translate "New broadcast name" as new_broadcast_name_label %}
-        <input type="text" name="name" maxlength="200" required placeholder="{{ new_broadcast_name_label }}"
-               class="form-input-styled" style="width: 14rem;" aria-label="{{ new_broadcast_name_label }}">
-        <label class="sr-only" for="new-broadcast-connection">{% translate "Channel" %}</label>
-        <span class="bb-filter-select-wrap">
-        <select id="new-broadcast-connection" name="connection_id" class="bb-filter-select" required>
-            {% for connection in connections %}
-            <option value="{{ connection.id }}">{{ connection.display_name }}</option>
-            {% endfor %}
-        </select>
-        </span>
-        <button type="submit" class="btn-brand btn-inline">{% translate "Create" %}</button>
-    </form>
+    <div class="page-header-actions">
+        <button type="button" class="btn-pill-primary" @click="$modal('new-broadcast')">
+            {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} {% translate "New broadcast" %}
+        </button>
+    </div>
     {% endif %}
 </div>
+
+{% comment %}
+  No close_on: a created draft answers with HX-Redirect into the composer, so
+  the page leaves under the dialog. A refusal is a 204 toast, and the dialog
+  stays open with what was typed.
+{% endcomment %}
+{% if connections %}
+{% translate "New broadcast" as new_broadcast_title %}
+{% modal "new-broadcast" title=new_broadcast_title %}
+<form hx-post="{% url 'broadcasts:create' workspace_id=request.workspace.id %}" hx-swap="none">
+    <div class="bb-modal-body">
+        <div class="field">
+            <label class="field-label" for="new-broadcast-name">{% translate "What is this broadcast called?" %}</label>
+            <input class="form-input-styled" id="new-broadcast-name" type="text" name="name" maxlength="200" required autofocus placeholder="{% translate 'Spring sale announcement' %}">
+        </div>
+        <div class="field">
+            <label class="field-label" for="new-broadcast-connection">{% translate "Channel" %}</label>
+            <span class="bb-select-wrap">
+            <select class="form-input-styled bb-select" id="new-broadcast-connection" name="connection_id" required>
+                {% for connection in connections %}
+                <option value="{{ connection.id }}">{{ connection.display_name }}</option>
+                {% endfor %}
+            </select>
+            </span>
+        </div>
+    </div>
+    <div class="bb-modal-actions">
+        <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+        <button type="submit" class="btn-pill-primary">{% translate "Create broadcast" %}</button>
+    </div>
+</form>
+{% endmodal %}
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -54,27 +74,31 @@ actually happens. There is no platform name in this file.
 </div>
 {% endif %}
 
-<div x-data="{
+<div class="max-w-[1060px] w-full" x-data="{
         q: '{{ q|escapejs }}',
-        status: '{{ status|escapejs }}',
-        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); }
+        filters: {{ filters|json_attr }},
+        reload() { this.$nextTick(() => this.$refs.filters.dispatchEvent(new Event('filters-changed'))); },
+        clearFilters() { this.q = ''; Object.keys(this.filters).forEach(k => this.filters[k] = []); this.reload(); }
      }">
 
+    <div class="mb-5">
     <form id="broadcast-filters" x-ref="filters"
-          class="crm-toolbar"
+          class="list-toolbar"
           hx-get="{% url 'broadcasts:rows' workspace_id=request.workspace.id %}"
           hx-target="#broadcast-rows"
           hx-swap="innerHTML"
-          hx-trigger="input changed delay:300ms, filters-changed, broadcastsChanged from:body, broadcastChanged from:body"
+          hx-trigger="input changed delay:300ms from:#broadcast-q, filters-changed, broadcastsChanged from:body, broadcastChanged from:body"
           @submit.prevent>
-        <label class="sr-only" for="broadcast-q">{% translate "Search" %}</label>
         {% translate "Search broadcasts" as search_broadcasts_placeholder %}
-        <input id="broadcast-q" type="search" name="q" x-model="q" placeholder="{{ search_broadcasts_placeholder }}"
-               class="form-input-styled" style="width: 16rem;">
-        <input type="hidden" name="status" :value="status">
-        {% translate "Any status" as any_status_placeholder %}
-        {% ui_select model="status" options=status_options placeholder=any_status_placeholder icon="status" onchange="reload()" %}
+        <label class="search-field w-full sm:w-64">
+            {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
+            <input id="broadcast-q" type="search" name="q" x-model="q" placeholder="{{ search_broadcasts_placeholder }}"
+                   class="search-input" aria-label="{{ search_broadcasts_placeholder }}">
+        </label>
+        {% filter_popover groups=filter_groups onchange="reload()" target="#broadcast-rows" count=broadcasts|length noun="broadcast" %}
     </form>
+    {% filter_chips groups=filter_groups onchange="reload()" %}
+    </div>
 
     <div id="broadcast-rows">
         {% include "broadcasts/_rows.html" %}

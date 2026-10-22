@@ -14,24 +14,30 @@ that created it — ``apps/flows/handlers.py`` already treats ids that way, and
 this treats values the same.
 """
 
-import json
 import logging
+import unicodedata
 from typing import Any
 
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from apps.channels.events import EventPayload, EventType, NormalizedEvent
+from apps.common.jsonsize import jsonb_byte_size
 
 __all__ = [
     "MAX_ROUTE_ATTACHMENTS",
     "MAX_ROUTE_EXTRA_KEYS",
     "MAX_ROUTE_PAYLOAD_BYTES",
+    "MAX_ROUTE_SHRUNK_TEXT_BYTES",
     "MAX_ROUTE_TEXT_CHARS",
     "event_to_payload",
     "payload_to_event",
     "shrink_to_fit",
 ]
+
+#: Zero-width joiner. Chains the parts of a family or a profession emoji,
+#: so a cut on either side of one leaves both halves rendering separately.
+_ZWJ = "\u200d"
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +46,12 @@ _EVENT_TYPES: frozenset[str] = frozenset(member.value for member in EventType)
 #: Matches what a wait will actually read from an answer. Carrying the full
 #: 100k ``apps.messaging.ingest`` is willing to *store* would put an unbounded
 #: string in a queue row for no reader.
+#:
+#: In **characters**, deliberately, because that is the unit the engine reads
+#: in — but it is therefore not a bound on bytes, and the document cap below
+#: is: 4096 emoji is 16 KiB of UTF-8 on its own. Nothing here reconciles the
+#: two units, and nothing needs to; ``shrink_to_fit`` is what enforces the
+#: byte budget, and ``MAX_ROUTE_SHRUNK_TEXT_BYTES`` is the rung that does it.
 MAX_ROUTE_TEXT_CHARS = 4096
 MAX_ROUTE_ATTACHMENTS = 20
 MAX_ROUTE_URL_CHARS = 2000
@@ -50,6 +62,15 @@ MAX_ROUTE_EXTRA_VALUE_CHARS = 500
 #: The whole payload. A document over this is shrunk in a documented order and,
 #: if that is not enough, refused rather than written.
 MAX_ROUTE_PAYLOAD_BYTES = 16 * 1024
+
+#: What the last shrink rung leaves of the text. Derived from the payload
+#: budget rather than picked, and counted in **bytes** like the budget it
+#: serves — the two caps above it are in characters, and the gap between the
+#: units is the whole problem: ``MAX_ROUTE_TEXT_CHARS`` of emoji is 16 KiB of
+#: UTF-8, the entire document budget, before an id or a timestamp is added.
+#: The literal 1000 this replaces happened to be safe only because 1000 emoji
+#: is 4000 bytes; nothing said so, and nothing would have caught it moving.
+MAX_ROUTE_SHRUNK_TEXT_BYTES = MAX_ROUTE_PAYLOAD_BYTES // 4
 
 
 def event_to_payload(event: NormalizedEvent) -> dict[str, Any]:
@@ -134,27 +155,142 @@ def shrink_to_fit(document: dict[str, Any]) -> dict[str, Any] | None:
     refused rather than silently turned into something that would match a
     different keyword than the one the contact sent.
     """
+    size = _size(document)
+    if size is None:
+        # Not a size problem: a non-finite number or a lone surrogate is a
+        # value `jsonb` refuses at any length, and no rung below can shrink it
+        # into one the column accepts.
+        logger.warning("A route_event payload holds a value that cannot be stored as JSON; dropping it.")
+        return None
+    if size <= MAX_ROUTE_PAYLOAD_BYTES:
+        return document
+
     body = document.get("event", {}).get("payload")
     if not isinstance(body, dict):
-        return document if _size(document) <= MAX_ROUTE_PAYLOAD_BYTES else None
-    if _size(document) <= MAX_ROUTE_PAYLOAD_BYTES:
-        return document
+        return None
+
+    # Copy before the first mutation. The rungs below rewrite the payload in
+    # place, and `body` aliases the caller's own dict: a document this function
+    # ends up refusing used to go back to the caller already stripped of its
+    # extra, attachments and media_ids.
+    body = dict(body)
+    document = {**document, "event": {**document["event"], "payload": body}}
 
     for field, replacement in (("extra", {}), ("attachments", []), ("media_ids", [])):
+        if not body.get(field):
+            # Nothing to drop. Skipping spares a full re-serialisation of a
+            # document that has not changed, and spares the log a line saying
+            # we dropped something that was never there.
+            continue
         body[field] = replacement
         logger.info("Dropped %s from a route_event payload to fit the size cap.", field)
-        if _size(document) <= MAX_ROUTE_PAYLOAD_BYTES:
+        if _within_cap(document):
             return document
 
-    body["text"] = body.get("text", "")[:1000]
-    if _size(document) <= MAX_ROUTE_PAYLOAD_BYTES:
-        logger.info("Truncated the text of a route_event payload to fit the size cap.")
-        return document
+    text = body.get("text", "")
+    truncated = _truncate_to_bytes(text, MAX_ROUTE_SHRUNK_TEXT_BYTES) if isinstance(text, str) else ""
+    if truncated != text:
+        body["text"] = truncated
+        if _within_cap(document):
+            logger.info("Truncated the text of a route_event payload to fit the size cap.")
+            return document
     return None
 
 
-def _size(document: dict[str, Any]) -> int:
-    return len(json.dumps(document, separators=(",", ":")).encode("utf-8"))
+def _size(document: dict[str, Any]) -> int | None:
+    """Bytes the queue's jsonb column will hold, or ``None`` if it will not.
+
+    The measurement is :func:`apps.common.jsonsize.jsonb_byte_size`, shared
+    with the flow-graph and trigger-config caps. Two properties of it matter
+    here and neither was true of the hand-rolled ``json.dumps`` this replaces:
+
+    It counts UTF-8, not escapes. Over-counting an emoji at three times its
+    stored size sent :func:`shrink_to_fit` down the whole ladder on payloads
+    that already fit — dropping ``extra``, then the attachments, then
+    truncating the very text the keyword matcher reads.
+
+    It answers ``None`` instead of raising. A lone surrogate, which
+    ``json.loads`` will hand us straight from a webhook body, survives
+    ``json.dumps`` and then raises ``UnicodeEncodeError`` from the encode. On
+    this path that exception is not a finding, it is a 500 on an inbound
+    request from a stranger.
+    """
+    return jsonb_byte_size(document)
+
+
+def _within_cap(document: dict[str, Any]) -> bool:
+    """Whether the document now fits. ``None`` — unstorable — is not fitting."""
+    size = _size(document)
+    return size is not None and size <= MAX_ROUTE_PAYLOAD_BYTES
+
+
+def _truncate_to_bytes(text: str, limit: int) -> str:
+    """At most ``limit`` UTF-8 bytes, cut on a grapheme boundary.
+
+    Two cuts, because the budget and the text are in different units. The byte
+    slice lands anywhere, so ``errors="ignore"`` drops the partial code point
+    it leaves and gives back a character count; :func:`_cut_at_grapheme` then
+    walks that back off a cluster boundary.
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    return _cut_at_grapheme(text, len(encoded[:limit].decode("utf-8", errors="ignore")))
+
+
+def _cut_at_grapheme(text: str, limit: int) -> str:
+    """``text`` cut at or before ``limit`` characters, never inside a cluster.
+
+    Python strings are code points, so a slice cannot halve an emoji — but it
+    can land between the two halves of a flag, between a face and its skin
+    tone, or inside the ZWJ chain of a family, and each of those renders as
+    the pieces rather than the glyph. A full grapheme segmenter is a
+    dependency this repo does not carry; the handful of joiners below are the
+    ones reachable from an emoji keyboard.
+    """
+    if len(text) <= limit:
+        return text
+    cut = limit
+    while cut > 0 and _splits_a_cluster(text, cut):
+        cut -= 1
+    return text[:cut]
+
+
+def _splits_a_cluster(text: str, cut: int) -> bool:
+    if cut <= 0 or cut >= len(text):
+        return False
+    if _joins_backwards(text[cut]):
+        return True
+    if text[cut - 1] == _ZWJ:
+        return True
+    if _is_regional(text[cut]) and _is_regional(text[cut - 1]):
+        # A flag is a *pair* of regional indicators, so whether this cut is
+        # inside one depends on how many come before it.
+        run = 0
+        index = cut - 1
+        while index >= 0 and _is_regional(text[index]):
+            run += 1
+            index -= 1
+        return run % 2 == 1
+    return False
+
+
+def _joins_backwards(char: str) -> bool:
+    """Whether ``char`` binds to the character before it."""
+    code = ord(char)
+    return (
+        unicodedata.combining(char) != 0
+        or char == _ZWJ
+        or 0xFE00 <= code <= 0xFE0F  # variation selectors
+        or 0xE0100 <= code <= 0xE01EF  # variation selectors supplement
+        or 0x1F3FB <= code <= 0x1F3FF  # skin-tone modifiers
+        or code == 0x20E3  # combining enclosing keycap
+        or 0xE0020 <= code <= 0xE007F  # tag characters, as in subdivision flags
+    )
+
+
+def _is_regional(char: str) -> bool:
+    return 0x1F1E6 <= ord(char) <= 0x1F1FF
 
 
 def _identifier(value: Any) -> str:

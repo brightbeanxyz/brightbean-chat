@@ -170,3 +170,32 @@ def test_development_boots_with_no_secrets_at_all():
     result = _check("config.settings.development", _clean_env())
 
     assert result.returncode == 0, result.stderr
+
+
+def test_the_test_database_is_scoped_to_this_checkout():
+    """Two worktrees on one machine must not share a test database.
+
+    Every checkout inherits ``DATABASE_URL`` verbatim from ``.env.example``, so
+    without a suffix they all name the same ``test_brightbean_chat`` and two
+    pytest sessions run against each other's rows. The failures that produces
+    point anywhere but here — ``claim_batch`` is cross-tenant by design, so the
+    queueing batch-limit tests simply see more rows than they created — which is
+    why this is asserted rather than left to a comment in the settings module.
+    """
+    import hashlib
+    import re
+
+    from django.conf import settings
+
+    # Recomputed rather than read back off DATABASES["default"]["NAME"]: by the
+    # time a test runs, Django has already swapped that key for the test
+    # database it created, so comparing against it would assert nothing.
+    expected = hashlib.blake2s(str(settings.BASE_DIR).encode(), digest_size=4).hexdigest()
+
+    # An optional trailing `_gwN`: pytest-xdist appends its own worker suffix
+    # to this same key the first time a worker actually touches the database,
+    # so under `-n auto` (every real run, including CI) the checkout suffix
+    # this test protects is no longer necessarily the last four bytes — just
+    # still the one immediately after the base name.
+    name = settings.DATABASES["default"]["TEST"]["NAME"]
+    assert re.search(rf"_{expected}(_gw\d+)?$", name), name

@@ -1,18 +1,18 @@
 {
   "name": "brightbean-chat",
   "private": true,
-  "description": "Frontend toolchain: the Tailwind 4 build for theme/static_src, the vendored runtime libraries in static/js, and the flow-builder React island in frontend/builder.",
+  "description": "Frontend toolchain: the Tailwind 4 build for apps/theme/static_src, the vendored runtime libraries in static/js, and the flow-builder React island in apps/flows/frontend.",
   "license": "AGPL-3.0-or-later",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "build:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --minify",
-    "watch:css": "tailwindcss --input ./theme/static_src/src/styles.css --output ./theme/static/css/dist/styles.css --watch",
-    "build:js": "vite build --config frontend/builder/vite.config.mts",
-    "watch:js": "vite build --config frontend/builder/vite.config.mts --watch",
-    "typecheck:js": "tsc --noEmit --project frontend/builder/tsconfig.json",
-    "test:js": "vitest run --config frontend/builder/vite.config.mts",
+    "build:css": "tailwindcss --input ./apps/theme/static_src/src/styles.css --output ./apps/theme/static/css/dist/styles.css --minify",
+    "watch:css": "tailwindcss --input ./apps/theme/static_src/src/styles.css --output ./apps/theme/static/css/dist/styles.css --watch",
+    "build:js": "vite build --config apps/flows/frontend/vite.config.mts",
+    "watch:js": "vite build --config apps/flows/frontend/vite.config.mts --watch",
+    "typecheck:js": "tsc --noEmit --project apps/flows/frontend/tsconfig.json",
+    "test:js": "vitest run --config apps/flows/frontend/vite.config.mts",
     "vendor": "node scripts/vendor-js.mjs",
     "build": "npm run build:css && npm run build:js && npm run vendor"
   },
@@ -41,10 +41,12 @@
     "jsdom": "30.0.1",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "vite": "8.2.2",
-    "vitest": "4.1.11"
+    "vite": "8.3.5",
+    "vitest": "4.1.12"
   },
   "overrides": {
-    "@parcel/watcher": "2.6.0"
+    "@tailwindcss/cli": {
+      "@parcel/watcher": "2.6.0"
+    }
   }
 }

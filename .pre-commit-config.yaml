@@ -50,7 +50,7 @@ repos:
   # and cryptography — an isolated env holding only mypy and django-stubs fails
   # during plugin initialisation instead of type-checking anything. Listing
   # those runtime packages under additional_dependencies would work but would
-  # duplicate pins that requirements.txt already owns, and they would drift.
+  # duplicate pins that requirements/base.txt already owns, and they would drift.
   # `make setup` installs what this needs.
   - repo: local
     hooks:
@@ -59,7 +59,7 @@ repos:
         entry: mypy
         language: system
         types: [python]
-        files: ^(apps|config|theme|tests)/
+        files: ^(apps|config|tests)/
         args: ["--ignore-missing-imports"]
 
   # gitleaks: block commits that contain secrets
