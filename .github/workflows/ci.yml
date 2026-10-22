@@ -124,13 +124,11 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.pr_number == ''
     services:
       postgres:
-        # Was public.ecr.aws/docker/library/postgres:16-alpine — that mirror's
-        # own anonymous-pull data quota started failing CI intermittently with
-        # "toomanyrequests: Data limit exceeded" (found 2026-10-19, PR #11).
-        # Switched back to the plain Docker Hub image; if that mirror's own
-        # rate limit starts breaking CI again, the fix is authenticating the
-        # pull (a Docker Hub service account), not bouncing between mirrors.
-        image: postgres:16-alpine
+        # Pulled via Google's mirror of Docker Hub official images. Anonymous
+        # Docker Hub pulls hit rate limits, and AWS's public ECR mirror (used
+        # before this) started failing every run with "toomanyrequests: Data
+        # limit exceeded". Same image digest on all three registries.
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_DB: brightbean_chat
           POSTGRES_USER: postgres

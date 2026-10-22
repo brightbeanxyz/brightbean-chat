@@ -172,7 +172,7 @@ def test_development_boots_with_no_secrets_at_all():
     assert result.returncode == 0, result.stderr
 
 
-def test_the_test_database_is_scoped_to_this_checkout():
+def test_the_test_database_is_scoped_to_this_checkout(request):
     """Two worktrees on one machine must not share a test database.
 
     Every checkout inherits ``DATABASE_URL`` verbatim from ``.env.example``, so
@@ -183,7 +183,6 @@ def test_the_test_database_is_scoped_to_this_checkout():
     why this is asserted rather than left to a comment in the settings module.
     """
     import hashlib
-    import re
 
     from django.conf import settings
 
@@ -192,10 +191,13 @@ def test_the_test_database_is_scoped_to_this_checkout():
     # database it created, so comparing against it would assert nothing.
     expected = hashlib.blake2s(str(settings.BASE_DIR).encode(), digest_size=4).hexdigest()
 
-    # An optional trailing `_gwN`: pytest-xdist appends its own worker suffix
-    # to this same key the first time a worker actually touches the database,
-    # so under `-n auto` (every real run, including CI) the checkout suffix
-    # this test protects is no longer necessarily the last four bytes — just
-    # still the one immediately after the base name.
+    # Under ``pytest -n`` (CI, ``make test``) pytest-django appends the xdist
+    # worker id after our suffix — ``test_brightbean_chat_<hash>_gw0`` — as soon
+    # as any earlier test on the same worker has set up the database. Whether
+    # that happened depends on scheduling, so peel the worker id off either way.
     name = settings.DATABASES["default"]["TEST"]["NAME"]
-    assert re.search(rf"_{expected}(_gw\d+)?$", name), name
+    worker = getattr(request.config, "workerinput", {}).get("workerid")
+    if worker:
+        name = name.removesuffix(f"_{worker}")
+
+    assert name.endswith(f"_{expected}")
