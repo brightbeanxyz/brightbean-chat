@@ -37,7 +37,7 @@ django-storages[s3]==1.14.6
 # Media library thumbnails (issue #16). Only the image path uses it; there is
 # deliberately no ffmpeg dependency, so video thumbnails and duration are not
 # extracted.
-Pillow==12.3.0
+Pillow==13.0.0
 
 # Amazon SES, for the email channel's SES backend (issue #21). Already present
 # transitively via django-storages[s3]; named here because apps/channels/providers/

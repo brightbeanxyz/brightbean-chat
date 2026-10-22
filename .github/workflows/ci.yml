@@ -778,7 +778,12 @@ jobs:
   ocr-review:
     name: Code review (OpenCodeReview)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25, not 15: OCR_LLM_TIMEOUT below is 1200s (20 min) now that
+    # reasoning.effort=max routinely runs gpt-5.6-luna past the action's old
+    # 300s default on a large diff — the job's own ceiling has to clear that
+    # plus checkout/install/post overhead, or it kills the run first and the
+    # LLM-timeout bump below does nothing.
+    timeout-minutes: 25
     # `pull_request`, not `_target`: GitHub withholds repo secrets from
     # `pull_request` runs on a fork PR regardless of the approval gate below,
     # so a stranger's PR can never see OCR_OPENAI_API_KEY or OCR_GITHUB_PAT —
@@ -865,6 +870,13 @@ jobs:
       # fallback) — see alibaba/open-code-review's docs/integrations/ci.md.
       - name: Run OpenCodeReview
         uses: alibaba/open-code-review@bccbc15f785269400735d5255540c231e6c02b6d # v1.12.9
+        env:
+          # The action reads this itself (`"${OCR_LLM_TIMEOUT:-300}"`, no
+          # matching `with:` input) — 300s was too short once reasoning.effort
+          # was set to max above, which routinely runs gpt-5.6-luna past five
+          # minutes on a large diff and failed the run with no review posted.
+          # 1200s needs the job's own timeout-minutes raised too, above.
+          OCR_LLM_TIMEOUT: "1200"
         with:
           # /v1/responses, not /v1/chat/completions: gpt-5.6-luna rejects
           # `tools` together with any `reasoning_effort` on chat/completions
