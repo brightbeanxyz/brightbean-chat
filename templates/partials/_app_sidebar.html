@@ -327,6 +327,19 @@ the header gone there is one trigger, inside the panel's own wrapper, so the
                         <span>Organization Settings</span>
                     </a>
                 </div>
+                {% comment %}Theme: static/js/theme.js owns storage and applies it.{% endcomment %}
+                <div class="sidebar-menu-section">
+                    <div class="theme-switch" role="radiogroup" aria-label="Theme"
+                         x-data="{ theme: window.bbTheme ? window.bbTheme.get() : 'system' }">
+                        <template x-for="option in ['system', 'light', 'dark']" :key="option">
+                            <button type="button" class="theme-switch-option" role="radio"
+                                    :class="{ 'is-active': theme === option }"
+                                    :aria-checked="theme === option ? 'true' : 'false'"
+                                    @click="theme = option; window.bbTheme && window.bbTheme.set(option)"
+                                    x-text="option.charAt(0).toUpperCase() + option.slice(1)"></button>
+                        </template>
+                    </div>
+                </div>
                 {% if logout_url %}
                 <div class="sidebar-menu-section">
                     <form method="post" action="{{ logout_url }}">
