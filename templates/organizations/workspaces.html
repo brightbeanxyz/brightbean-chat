@@ -21,15 +21,15 @@ column.
         <div class="page-header-text">
             <h1 class="page-title">{% translate "Workspaces" %}</h1>
             <p class="page-lede">
-                {% translate "Each workspace has its own channels, contacts and inbox. Archiving one keeps everything and takes it out of the switcher." %}
+                {% if single_workspace %}{% translate "Each workspace has its own channels, contacts and inbox." %}{% else %}{% translate "Each workspace has its own channels, contacts and inbox. Archiving one keeps everything and takes it out of the switcher." %}{% endif %}
             </p>
         </div>
-        {% if can_manage %}
+        {% if can_change_workspaces %}
         <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-workspace')">{% include "partials/_nav_icon.html" with name="grid" icon_size=16 %} {% translate "New workspace" %}</button>
         {% endif %}
     </div>
 
-    {% if can_manage %}
+    {% if can_change_workspaces %}
     {% translate "New workspace" as new_workspace_title %}
     {% modal "new-workspace" title=new_workspace_title %}
     <form method="post" action="{% url 'organizations:create_workspace' %}">
@@ -68,7 +68,7 @@ column.
             <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'workspaces:dashboard' workspace_id=workspace.id %}">{% translate "Open" %}</a>
             {% endif %}
 
-            {% if can_manage %}
+            {% if can_change_workspaces or workspace.is_archived and can_restore_workspaces %}
             {% blocktranslate asvar more_actions_label with name=workspace.name %}More actions for {{ name }}{% endblocktranslate %}
             <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ more_actions_label }}">
                 <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>

@@ -66,6 +66,7 @@ The same envelope as the workspace API:
 | `external_id_conflict` | 409 | The `external_id` exists but for an organization with a different name or owner. |
 | `conflict` | 409 | A concurrent change blocked the request and no result could be found; retry. |
 | `deleted` | 409 | The `external_id` belongs to an organization that was deleted; ids are not recycled. |
+| `single_workspace` | 409 | The deployment runs with `SINGLE_WORKSPACE_MODE`, so a workspace is only created with its organization. |
 | `plan_workspaces`, `plan_seats`, `plan_api` | 409 | The organization's plan does not include another workspace, user or API key. |
 | `key_limit` | 409 | The workspace already has the maximum number of active keys (50). |
 | `rate_limited` | 429 | Over the per-key limit. |

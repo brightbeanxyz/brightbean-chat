@@ -343,6 +343,11 @@ OIDC_TRUST_EMAIL = env.bool("OIDC_TRUST_EMAIL", default=False)
 OIDC_LINK_BY_EMAIL = env.bool("OIDC_LINK_BY_EMAIL", default=True)
 #: Left empty, allauth picks from the provider's discovery document.
 OIDC_TOKEN_AUTH_METHOD = env("OIDC_TOKEN_AUTH_METHOD", default="").strip()
+#: One workspace per organization, created together with the organization. The
+#: create control disappears, and creating or archiving/restoring a workspace is
+#: refused — in the web UI and the platform API alike. Organizations that already
+#: have several keep them.
+SINGLE_WORKSPACE_MODE = env.bool("SINGLE_WORKSPACE_MODE", default=False)
 #: Who may create an account at all (local form and Google; single sign-on has
 #: its own, stricter OIDC_SIGNUP). ``open``: anyone, with an organization of
 #: their own. ``invite``: only someone holding a valid organization invitation.

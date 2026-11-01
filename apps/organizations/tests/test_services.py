@@ -4,6 +4,7 @@ import threading
 
 import pytest
 from django.db import connection, transaction
+from django.test.utils import CaptureQueriesContext
 
 from apps.accounts.models import User
 from apps.accounts.services import ExternalIdInUseError, provision_organization_and_workspace
@@ -12,7 +13,7 @@ from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.members.roles import OrgRole, WorkspaceRole
 from apps.members.services import MembershipError, accept_invitation, add_member_directly, create_invitation
 from apps.organizations.models import Organization
-from apps.organizations.services import WorkspaceError, create_workspace
+from apps.organizations.services import WorkspaceError, create_workspace, set_workspace_archived
 from apps.workspaces.models import Workspace
 from tests.support import create_user
 
@@ -24,6 +25,45 @@ class TestCreateWorkspace:
 
         assert workspace.name == "Support"
         assert not WorkspaceMembership.objects.filter(workspace=workspace).exists()
+
+    def test_single_workspace_mode_refuses_creation_but_not_provisioning(self, tenancy, settings):
+        settings.SINGLE_WORKSPACE_MODE = True
+
+        with pytest.raises(WorkspaceError) as exc:
+            create_workspace(tenancy.organization, "Second")
+        assert exc.value.code == "single_workspace"
+
+        newcomer = create_user("fresh@example.test")
+        org = provision_organization_and_workspace(newcomer)
+        assert Workspace.objects.filter(organization=org).count() == 1
+
+    def test_single_workspace_mode_guards_archiving_inside_the_service(self, tenancy, settings):
+        settings.SINGLE_WORKSPACE_MODE = True
+        spare = Workspace.objects.create(organization=tenancy.organization, name="Spare", is_archived=True)
+
+        for target, archived in ((tenancy.workspace, True), (spare, False)):
+            with pytest.raises(WorkspaceError) as exc:
+                set_workspace_archived(tenancy.organization, target, archived=archived)
+            assert exc.value.code == "single_workspace"
+
+        Workspace.objects.filter(pk=tenancy.workspace.pk).update(is_archived=True)
+        set_workspace_archived(tenancy.organization, spare, archived=False)
+        spare.refresh_from_db()
+        assert spare.is_archived is False
+
+    def test_single_workspace_restore_locks_the_organization_row(self, tenancy, settings):
+        # organization_locked skips the row lock on an unlimited plan, so the
+        # "no active workspace" check must take it itself or two restores race.
+        settings.SINGLE_WORKSPACE_MODE = True
+        Workspace.objects.filter(pk=tenancy.workspace.pk).update(is_archived=True)
+        workspace = Workspace.objects.get(pk=tenancy.workspace.pk)
+
+        with CaptureQueriesContext(connection) as queries:
+            set_workspace_archived(tenancy.organization, workspace, archived=False)
+
+        assert any("FOR UPDATE" in q["sql"] for q in queries)
+        workspace.refresh_from_db()
+        assert workspace.is_archived is False
 
     def test_the_creator_becomes_its_admin(self, tenancy):
         workspace = create_workspace(tenancy.organization, "Sales", creator=tenancy.owner)

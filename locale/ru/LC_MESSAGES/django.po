@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-29 04:15+0000\n"
+"POT-Creation-Date: 2026-11-01 12:29+0600\n"
 "PO-Revision-Date: 2026-09-20 12:00+0600\n"
 "Last-Translator: BrightBean Chat\n"
 "Language-Team: ru\n"
@@ -19,7 +19,15 @@ msgstr ""
 "n%10<=4 && (n%100<12 || n%100>14) ? 1 : n%10==0 || (n%10>=5 && n%10<=9) || "
 "(n%100>=11 && n%100<=14)? 2 : 3);\n"
 
-#: apps/accounts/adapters.py:145
+#: apps/accounts/adapters.py:147
+msgid "An invitation is required to sign up."
+msgstr "Для регистрации нужно приглашение."
+
+#: apps/accounts/adapters.py:156
+msgid "This account was just created. Try signing in again."
+msgstr "Этот аккаунт только что создан. Попробуйте войти ещё раз."
+
+#: apps/accounts/adapters.py:195
 #, python-format
 msgid ""
 "An account with this address already exists. Sign in with your password, "
@@ -27,14 +35,6 @@ msgid ""
 msgstr ""
 "Аккаунт с этим адресом уже существует. Войдите по паролю, примите "
 "приглашение, затем подключите %(name)s в разделе подключённых аккаунтов."
-
-#: apps/accounts/adapters.py:170
-msgid "An invitation is required to sign up."
-msgstr "Для регистрации нужно приглашение."
-
-#: apps/accounts/adapters.py:183
-msgid "This account was just created. Try signing in again."
-msgstr "Этот аккаунт только что создан. Попробуйте войти ещё раз."
 
 #: apps/analytics/views.py:216
 msgid "Email tracking settings saved."
@@ -149,36 +149,36 @@ msgstr ""
 "В этом пространстве уже %(limit)s активных ключей. Отзовите один, прежде чем "
 "выпускать новый."
 
-#: apps/api/services.py:222
+#: apps/api/services.py:226
 #, python-format
 msgid "Unknown event: %(events)s."
 msgstr "Неизвестное событие: %(events)s."
 
-#: apps/api/services.py:224
+#: apps/api/services.py:228
 msgid "Choose at least one event to send."
 msgstr "Выберите хотя бы одно событие для отправки."
 
-#: apps/api/services.py:240
+#: apps/api/services.py:244
 msgid "Enter the URL deliveries should be sent to."
 msgstr "Укажите URL, на который отправлять доставки."
 
-#: apps/api/services.py:242
+#: apps/api/services.py:246
 msgid "That URL is too long (500 characters maximum)."
 msgstr "Этот URL слишком длинный (максимум 500 символов)."
 
-#: apps/api/services.py:245
+#: apps/api/services.py:249
 msgid "The URL must start with http:// or https://."
 msgstr "URL должен начинаться с http:// или https://."
 
-#: apps/api/services.py:249
+#: apps/api/services.py:253
 msgid "The URL must not carry a username or password."
 msgstr "URL не должен содержать имя пользователя или пароль."
 
-#: apps/api/services.py:251 apps/api/services.py:255
+#: apps/api/services.py:255 apps/api/services.py:259
 msgid "That does not look like a valid URL."
 msgstr "Это не похоже на корректный URL."
 
-#: apps/api/services.py:282
+#: apps/api/services.py:286
 #, python-format
 msgid "This workspace already has %(limit)s endpoints."
 msgstr "В этом пространстве уже %(limit)s конечных точек."
@@ -381,7 +381,7 @@ msgstr "Активные автоматизации"
 msgid "Users"
 msgstr "Пользователи"
 
-#: apps/billing/selectors.py:76 apps/common/context_processors.py:375
+#: apps/billing/selectors.py:76 apps/common/context_processors.py:376
 #: templates/organizations/workspaces.html:15
 #: templates/organizations/workspaces.html:22
 msgid "Workspaces"
@@ -1600,132 +1600,132 @@ msgstr "%(name)s удалён."
 msgid "Saved the cost estimates."
 msgstr "Оценки стоимости сохранены."
 
-#: apps/common/context_processors.py:238 templates/api/keys_list.html:45
+#: apps/common/context_processors.py:239 templates/api/keys_list.html:45
 msgid "Workspace"
 msgstr "Рабочее пространство"
 
-#: apps/common/context_processors.py:243 apps/common/context_processors.py:368
+#: apps/common/context_processors.py:244 apps/common/context_processors.py:369
 msgid "General"
 msgstr "Общее"
 
-#: apps/common/context_processors.py:251 apps/flows/portability/cards.py:35
+#: apps/common/context_processors.py:252 apps/flows/portability/cards.py:35
 #: templates/channels/list.html:24 templates/channels/list.html:31
 #: templates/contacts/_channels.html:21 templates/contacts/_rows.html:53
 #: templates/partials/_sidebar_channels.html:35
 msgid "Channels"
 msgstr "Каналы"
 
-#: apps/common/context_processors.py:287
+#: apps/common/context_processors.py:288
 #: templates/media_library/library.html:41
 msgid "Library"
 msgstr "Медиатека"
 
-#: apps/common/context_processors.py:307 apps/flows/portability/cards.py:28
+#: apps/common/context_processors.py:308 apps/flows/portability/cards.py:28
 #: templates/contacts/_rows.html:54 templates/contacts/_tag_chips.html:17
 #: templates/contacts/import_detail.html:71 templates/contacts/tag_list.html:11
 #: templates/contacts/tag_list.html:18 templates/inbox/_sidebar.html:91
 msgid "Tags"
 msgstr "Теги"
 
-#: apps/common/context_processors.py:315 templates/inbox/_sidebar.html:52
+#: apps/common/context_processors.py:316 templates/inbox/_sidebar.html:52
 #: templates/inbox/label_settings.html:12
 #: templates/inbox/label_settings.html:19
 msgid "Labels"
 msgstr "Метки"
 
-#: apps/common/context_processors.py:323 templates/inbox/rule_settings.html:3
+#: apps/common/context_processors.py:324 templates/inbox/rule_settings.html:3
 #: templates/inbox/rule_settings.html:29
 msgid "Inbox rules"
 msgstr "Правила входящих"
 
-#: apps/common/context_processors.py:335 templates/inbox/_sidebar.html:169
+#: apps/common/context_processors.py:336 templates/inbox/_sidebar.html:169
 msgid "Fields"
 msgstr "Поля"
 
-#: apps/common/context_processors.py:343 templates/analytics/settings.html:21
+#: apps/common/context_processors.py:344 templates/analytics/settings.html:21
 #: templates/analytics/settings.html:26
 msgid "Email tracking"
 msgstr "Отслеживание писем"
 
-#: apps/common/context_processors.py:355 templates/api/webhooks_list.html:16
+#: apps/common/context_processors.py:356 templates/api/webhooks_list.html:16
 msgid "Webhooks"
 msgstr "Вебхуки"
 
-#: apps/common/context_processors.py:364
+#: apps/common/context_processors.py:365
 msgid "Organisation"
 msgstr "Организация"
 
-#: apps/common/context_processors.py:381
+#: apps/common/context_processors.py:382
 msgid "People & roles"
 msgstr "Люди и роли"
 
-#: apps/common/context_processors.py:385 templates/organizations/billing.html:3
+#: apps/common/context_processors.py:386 templates/organizations/billing.html:3
 #: templates/organizations/billing.html:9
 msgid "Plan & billing"
 msgstr "Тариф и оплата"
 
-#: apps/common/context_processors.py:393
+#: apps/common/context_processors.py:394
 msgid "Developers"
 msgstr "Разработчикам"
 
-#: apps/common/context_processors.py:405 templates/accounts/settings.html:14
+#: apps/common/context_processors.py:406 templates/accounts/settings.html:14
 #: templates/accounts/settings.html:19
 msgid "Profile"
 msgstr "Профиль"
 
-#: apps/common/context_processors.py:411 templates/accounts/preferences.html:8
+#: apps/common/context_processors.py:412 templates/accounts/preferences.html:8
 #: templates/accounts/preferences.html:14
 #: templates/accounts/preferences.html:20
 #: templates/channels/whatsapp_templates.html:26
 msgid "Language"
 msgstr "Язык"
 
-#: apps/common/context_processors.py:435
+#: apps/common/context_processors.py:436
 msgid "Home"
 msgstr "Главная"
 
-#: apps/common/context_processors.py:442 templates/inbox/list.html:26
+#: apps/common/context_processors.py:443 templates/inbox/list.html:26
 #: templates/inbox/list.html:31
 msgid "Inbox"
 msgstr "Входящие"
 
-#: apps/common/context_processors.py:455 apps/common/context_processors.py:526
+#: apps/common/context_processors.py:456 apps/common/context_processors.py:527
 #: templates/analytics/overview.html:45 templates/flows/list.html:27
 #: templates/flows/list.html:51
 msgid "Flows"
 msgstr "Сценарии"
 
-#: apps/common/context_processors.py:465 templates/broadcasts/compose.html:15
+#: apps/common/context_processors.py:466 templates/broadcasts/compose.html:15
 #: templates/broadcasts/compose.html:33 templates/broadcasts/list.html:15
 #: templates/broadcasts/list.html:20 templates/channels/detail.html:82
 msgid "Broadcasts"
 msgstr "Рассылки"
 
-#: apps/common/context_processors.py:473 templates/contacts/detail.html:17
+#: apps/common/context_processors.py:474 templates/contacts/detail.html:17
 #: templates/contacts/import_list.html:13 templates/contacts/list.html:31
 #: templates/contacts/list.html:46
 msgid "Contacts"
 msgstr "Контакты"
 
-#: apps/common/context_processors.py:487 templates/analytics/overview.html:15
+#: apps/common/context_processors.py:488 templates/analytics/overview.html:15
 #: templates/analytics/overview.html:20
 msgid "Insights"
 msgstr "Аналитика"
 
-#: apps/common/context_processors.py:505 templates/notifications/list.html:3
+#: apps/common/context_processors.py:506 templates/notifications/list.html:3
 #: templates/notifications/list.html:5
 #: templates/notifications/partials/_bell.html:53
 #: templates/notifications/partials/_bell_panel.html:9
 msgid "Notifications"
 msgstr "Уведомления"
 
-#: apps/common/context_processors.py:534 apps/flows/portability/cards.py:30
+#: apps/common/context_processors.py:535 apps/flows/portability/cards.py:30
 #: templates/campaigns/detail.html:12 templates/campaigns/detail.html:39
 #: templates/campaigns/list.html:13 templates/campaigns/list.html:41
 msgid "Sequences"
 msgstr "Цепочки"
 
-#: apps/common/context_processors.py:542
+#: apps/common/context_processors.py:543
 #: templates/flows/template_gallery.html:17
 #: templates/flows/template_gallery.html:35
 msgid "Templates"
@@ -4641,7 +4641,7 @@ msgid "Cannot invite someone as an organization owner."
 msgstr "Нельзя пригласить кого-то как владельца организации."
 
 #: apps/members/services.py:232 apps/members/services.py:393
-#: apps/members/services.py:541
+#: apps/members/services.py:545
 #, python-format
 msgid "Unknown org role: %(role)r."
 msgstr "Неизвестная роль в организации: %(role)r."
@@ -4685,48 +4685,48 @@ msgstr ""
 msgid "Cannot add someone as an organization owner."
 msgstr "Нельзя добавить кого-то как владельца организации."
 
-#: apps/members/services.py:436
+#: apps/members/services.py:440
 msgid "Cannot resend an already accepted invitation."
 msgstr "Нельзя повторно отправить уже принятое приглашение."
 
-#: apps/members/services.py:447
+#: apps/members/services.py:451
 msgid "Cannot revoke an already accepted invitation."
 msgstr "Нельзя отозвать уже принятое приглашение."
 
-#: apps/members/services.py:479
+#: apps/members/services.py:483
 #, python-format
 msgid "You have been invited to %(org_name)s on BrightBean Chat"
 msgstr "Вас пригласили в %(org_name)s в BrightBean Chat"
 
-#: apps/members/services.py:502
+#: apps/members/services.py:506
 msgid "You cannot remove yourself from the organization."
 msgstr "Вы не можете удалить себя из организации."
 
-#: apps/members/services.py:514
+#: apps/members/services.py:518
 msgid "Cannot remove the last organization owner."
 msgstr "Нельзя удалить последнего владельца организации."
 
-#: apps/members/services.py:516
+#: apps/members/services.py:520
 msgid "remove"
 msgstr "удалить"
 
-#: apps/members/services.py:537
+#: apps/members/services.py:541
 msgid "Cannot promote to owner. Transfer ownership instead."
 msgstr "Нельзя повысить до владельца. Вместо этого передайте право владения."
 
-#: apps/members/services.py:545
+#: apps/members/services.py:549
 msgid "change"
 msgstr "изменить"
 
-#: apps/members/services.py:547
+#: apps/members/services.py:551
 msgid "Only organization owners can promote someone to admin."
 msgstr "Только владельцы организации могут назначать администраторов."
 
-#: apps/members/services.py:552
+#: apps/members/services.py:556
 msgid "Cannot change the role of the last organization owner."
 msgstr "Нельзя изменить роль последнего владельца организации."
 
-#: apps/members/services.py:593
+#: apps/members/services.py:597
 msgid ""
 "You cannot modify a workspace membership whose role is higher than your own."
 msgstr "Вы не можете изменить членство в пространстве с ролью выше вашей."
@@ -4973,38 +4973,46 @@ msgstr "Непрочитано"
 msgid "Read"
 msgstr "Прочитано"
 
-#: apps/organizations/services.py:42 apps/workspaces/views.py:346
+#: apps/organizations/services.py:39
+msgid "Workspaces cannot be added or archived on this installation."
+msgstr "В этой установке нельзя добавлять пространства и архивировать их."
+
+#: apps/organizations/services.py:52 apps/workspaces/views.py:346
 msgid "A workspace needs a name."
 msgstr "Пространству нужно имя."
 
-#: apps/organizations/services.py:47 apps/organizations/services.py:56
+#: apps/organizations/services.py:57 apps/organizations/services.py:66
 msgid "A workspace with that name already exists."
 msgstr "Пространство с таким именем уже существует."
 
-#: apps/organizations/services.py:85 apps/organizations/views.py:54
+#: apps/organizations/services.py:93
+msgid "Another workspace is already active on this installation."
+msgstr "В этой установке уже есть активное пространство."
+
+#: apps/organizations/services.py:126 apps/organizations/views.py:54
 msgid "An organization needs a name."
 msgstr "Организации нужно имя."
 
-#: apps/organizations/services.py:97
+#: apps/organizations/services.py:138
 msgid "That account already belongs to an organization."
 msgstr "Этот аккаунт уже состоит в организации."
 
-#: apps/organizations/services.py:107
+#: apps/organizations/services.py:148
 msgid "The owner account no longer exists."
 msgstr "Аккаунт владельца больше не существует."
 
-#: apps/organizations/services.py:113
+#: apps/organizations/services.py:154
 msgid ""
 "The organization could not be created because of a concurrent change; retry."
 msgstr ""
 "Организацию не удалось создать из-за параллельного изменения; повторите "
 "запрос."
 
-#: apps/organizations/services.py:121
+#: apps/organizations/services.py:162
 msgid "An organization with that external id was deleted."
 msgstr "Организация с этим внешним id была удалена."
 
-#: apps/organizations/services.py:128
+#: apps/organizations/services.py:167
 msgid ""
 "That external id belongs to an organization with a different name or owner."
 msgstr ""
@@ -5018,20 +5026,20 @@ msgstr "Такой часовой пояс не распознан."
 msgid "Organization settings saved."
 msgstr "Настройки организации сохранены."
 
-#: apps/organizations/views.py:135
+#: apps/organizations/views.py:140
 #, python-format
 msgid "Created %(name)s."
 msgstr "%(name)s создано."
 
-#: apps/organizations/views.py:168 apps/organizations/views.py:176
-#, python-format
-msgid "Restored %(name)s."
-msgstr "%(name)s восстановлено."
-
-#: apps/organizations/views.py:174
+#: apps/organizations/views.py:167
 #, python-format
 msgid "Archived %(name)s."
 msgstr "%(name)s архивировано."
+
+#: apps/organizations/views.py:169
+#, python-format
+msgid "Restored %(name)s."
+msgstr "%(name)s восстановлено."
 
 #: apps/workspaces/views.py:87
 msgid "Good morning"
@@ -11403,6 +11411,10 @@ msgstr "URL логотипа"
 #: templates/organizations/settings.html:59
 msgid "Only organization admins can change these."
 msgstr "Только администраторы организации могут это менять."
+
+#: templates/organizations/workspaces.html:24
+msgid "Each workspace has its own channels, contacts and inbox."
+msgstr "У каждого пространства свои каналы, контакты и входящие."
 
 #: templates/organizations/workspaces.html:24
 msgid ""

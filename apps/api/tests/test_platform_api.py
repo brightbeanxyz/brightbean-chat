@@ -252,6 +252,15 @@ class TestWorkspacesAndUsers:
         assert response.status_code == 201
         assert response.json()["name"] == "Second"
 
+    def test_single_workspace_mode_refuses_a_second_workspace(self, client, org, platform_auth, settings):
+        settings.SINGLE_WORKSPACE_MODE = True
+
+        response = post(client, f"/organizations/{org['id']}/workspaces", {"name": "Second"}, platform_auth)
+
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "single_workspace"
+        assert Workspace.objects.filter(organization_id=org["id"]).count() == 1
+
     def test_the_plan_workspace_limit_is_a_conflict(self, client, org, platform_auth, tight_plan):
         response = post(client, f"/organizations/{org['id']}/workspaces", {"name": "Second"}, platform_auth)
 

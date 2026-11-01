@@ -17,6 +17,7 @@ in a loop. A new page becomes an entry in a list, not a fifth convention.
 from dataclasses import dataclass
 from typing import Any
 
+from django.conf import settings
 from django.core.signals import setting_changed
 from django.dispatch import receiver
 from django.http import HttpRequest
@@ -778,10 +779,11 @@ def navigation_context(request: HttpRequest) -> dict[str, Any]:
 
     # Creating a workspace is an org-tier action (issue #31's RBAC), so the
     # control is hidden rather than rendered and refused.
-    can_create_workspace = org_membership is not None and org_membership.org_role in {
-        OrgRole.OWNER,
-        OrgRole.ADMIN,
-    }
+    can_create_workspace = (
+        org_membership is not None
+        and org_membership.org_role in {OrgRole.OWNER, OrgRole.ADMIN}
+        and not settings.SINGLE_WORKSPACE_MODE
+    )
 
     # Issue #14: open conversations carrying an inbound message this member has
     # not read. Guarded on a resolved workspace as well as on authentication —
