@@ -36,7 +36,7 @@ def single_workspace_refusal(enabled: bool) -> str | None:
     """Why workspaces cannot be added or archived in single-workspace mode, or None."""
     if not enabled:
         return None
-    return gettext("This installation allows one workspace per organization.")
+    return gettext("Workspaces cannot be added or archived on this installation.")
 
 
 def create_workspace(org: Any, name: str, *, creator: Any = None) -> Workspace:

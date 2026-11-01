@@ -85,13 +85,18 @@ def workspaces_view(request: OrgRequest) -> HttpResponse:
             "workspace_id", flat=True
         )
     )
+    single = settings.SINGLE_WORKSPACE_MODE
+    can_manage = _can_manage(request)
     return render(
         request,
         "organizations/workspaces.html",
         {
             "workspaces": workspaces,
             "member_workspace_ids": member_workspace_ids,
-            "can_change_workspaces": _can_manage(request) and not settings.SINGLE_WORKSPACE_MODE,
+            "single_workspace": single,
+            "can_change_workspaces": can_manage and not single,
+            # See set_workspace_archived: the way back for an org with none active.
+            "can_restore_workspaces": can_manage and not any(not w.is_archived for w in workspaces),
         },
     )
 
@@ -153,11 +158,14 @@ def set_workspace_archived(request: OrgRequest, target_id: str) -> HttpResponse:
     if workspace is None:
         raise Http404("No such workspace.")
 
-    if refusal := services.single_workspace_refusal(settings.SINGLE_WORKSPACE_MODE):
+    archiving = request.POST.get("archived") == "1"
+    # Restoring stays open to an organization left with no active workspace
+    # (archived before the mode was switched on): it is the only way back.
+    in_use = Workspace.objects.for_org(request.org.pk).filter(is_archived=False).exists()
+    if refusal := services.single_workspace_refusal(settings.SINGLE_WORKSPACE_MODE and (archiving or in_use)):
         messages.error(request, refusal)
         return redirect(reverse("organizations:workspaces"))
 
-    archiving = request.POST.get("archived") == "1"
     if not archiving and workspace.is_archived:
         # Restoring is the same lever as creating. Without this an organization
         # at its workspace limit archives one, creates another, and restores the

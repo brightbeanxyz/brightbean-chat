@@ -4864,8 +4864,12 @@ msgid "Read"
 msgstr "Окулду"
 
 #: apps/organizations/services.py
-msgid "This installation allows one workspace per organization."
-msgstr "Бул орнотууда уюмда бир гана иш жайы болушу мүмкүн."
+msgid "Workspaces cannot be added or archived on this installation."
+msgstr "Бул орнотууда иш жайларын кошууга жана архивдөөгө болбойт."
+
+#: templates/organizations/workspaces.html
+msgid "Each workspace has its own channels, contacts and inbox."
+msgstr "Ар бир иш жайынын өз каналдары, байланыштары жана кириш кабарлары бар."
 
 #: apps/organizations/services.py:42 apps/workspaces/views.py:346
 msgid "A workspace needs a name."

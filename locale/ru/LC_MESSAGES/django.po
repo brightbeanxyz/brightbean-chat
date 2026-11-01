@@ -4974,8 +4974,12 @@ msgid "Read"
 msgstr "Прочитано"
 
 #: apps/organizations/services.py
-msgid "This installation allows one workspace per organization."
-msgstr "В этой установке у организации может быть только одно рабочее пространство."
+msgid "Workspaces cannot be added or archived on this installation."
+msgstr "В этой установке нельзя добавлять рабочие пространства и архивировать их."
+
+#: templates/organizations/workspaces.html
+msgid "Each workspace has its own channels, contacts and inbox."
+msgstr "У каждого пространства свои каналы, контакты и входящие."
 
 #: apps/organizations/services.py:42 apps/workspaces/views.py:346
 msgid "A workspace needs a name."
