@@ -12,7 +12,7 @@ from apps.members.models import OrgMembership, WorkspaceMembership
 from apps.members.roles import OrgRole, WorkspaceRole
 from apps.members.services import MembershipError, accept_invitation, add_member_directly, create_invitation
 from apps.organizations.models import Organization
-from apps.organizations.services import WorkspaceError, create_workspace
+from apps.organizations.services import WorkspaceError, create_workspace, set_workspace_archived
 from apps.workspaces.models import Workspace
 from tests.support import create_user
 
@@ -35,6 +35,20 @@ class TestCreateWorkspace:
         newcomer = create_user("fresh@example.test")
         org = provision_organization_and_workspace(newcomer)
         assert Workspace.objects.filter(organization=org).count() == 1
+
+    def test_single_workspace_mode_guards_archiving_inside_the_service(self, tenancy, settings):
+        settings.SINGLE_WORKSPACE_MODE = True
+        spare = Workspace.objects.create(organization=tenancy.organization, name="Spare", is_archived=True)
+
+        for target, archived in ((tenancy.workspace, True), (spare, False)):
+            with pytest.raises(WorkspaceError) as exc:
+                set_workspace_archived(tenancy.organization, target, archived=archived)
+            assert exc.value.code == "single_workspace"
+
+        Workspace.objects.filter(pk=tenancy.workspace.pk).update(is_archived=True)
+        set_workspace_archived(tenancy.organization, spare, archived=False)
+        spare.refresh_from_db()
+        assert spare.is_archived is False
 
     def test_the_creator_becomes_its_admin(self, tenancy):
         workspace = create_workspace(tenancy.organization, "Sales", creator=tenancy.owner)

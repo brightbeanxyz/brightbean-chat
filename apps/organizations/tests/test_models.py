@@ -122,10 +122,13 @@ class TestOrgSettingsViews:
         spare = Workspace.objects.create(organization=tenancy.organization, name="Spare", is_archived=True)
         settings.SINGLE_WORKSPACE_MODE = True
 
-        client_for(tenancy.owner).post(f"/organization/workspaces/{spare.pk}/archived/", {"archived": "0"})
+        response = client_for(tenancy.owner).post(
+            f"/organization/workspaces/{spare.pk}/archived/", {"archived": "0"}, follow=True
+        )
 
         spare.refresh_from_db()
         assert spare.is_archived is True
+        assert "Another workspace is already active" in response.content.decode()
 
     def test_another_orgs_workspace_cannot_be_archived(self, tenancy, other_tenancy, client_for):
         response = client_for(other_tenancy.owner).post(

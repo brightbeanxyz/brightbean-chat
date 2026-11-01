@@ -68,7 +68,7 @@ column.
             <a class="btn-pill-secondary btn-pill-sm flex-shrink-0" href="{% url 'workspaces:dashboard' workspace_id=workspace.id %}">{% translate "Open" %}</a>
             {% endif %}
 
-            {% if can_change_workspaces or can_restore_workspaces and workspace.is_archived %}
+            {% if can_change_workspaces or workspace.is_archived and can_restore_workspaces %}
             {% blocktranslate asvar more_actions_label with name=workspace.name %}More actions for {{ name }}{% endblocktranslate %}
             <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ more_actions_label }}">
                 <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>

@@ -70,6 +70,37 @@ def create_workspace(org: Any, name: str, *, creator: Any = None) -> Workspace:
     return workspace
 
 
+def set_workspace_archived(org: Any, workspace: Workspace, *, archived: bool) -> None:
+    """Archive or restore ``workspace``; raises :class:`WorkspaceError` on refusal.
+
+    Restoring is the same lever as creating. Without the plan check an
+    organization at its workspace limit archives one, creates another, and
+    restores the first — the shape every "half-enforced limit" bug takes. The
+    write is inside the lock for the reason ``create_workspace``'s is.
+
+    In single-workspace mode archiving is refused, and so is restoring while
+    another workspace is active; restoring into an organization with none stays
+    open (archived before the mode was switched on), as the only way back.
+    """
+    with organization_locked(org):
+        # Fetched before the lock was taken, so another request may have moved it.
+        workspace.refresh_from_db(fields=["is_archived"])
+        if refusal := single_workspace_refusal(settings.SINGLE_WORKSPACE_MODE):
+            if archived:
+                raise WorkspaceError(refusal, code="single_workspace")
+            if workspace.is_archived and Workspace.objects.for_org(org.pk).filter(is_archived=False).exists():
+                raise WorkspaceError(
+                    gettext("Another workspace is already active on this installation."), code="single_workspace"
+                )
+        if not archived and workspace.is_archived:
+            try:
+                check_can_add_workspace(org)
+            except PlanLimitError as exc:
+                raise WorkspaceError(str(exc), code=exc.code) from exc
+        workspace.is_archived = archived
+        workspace.save(update_fields=["is_archived", "updated_at"])
+
+
 class OrganizationError(ValueError):
     """An organization could not be provisioned. ``code`` is machine-readable."""
 

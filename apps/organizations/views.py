@@ -16,7 +16,6 @@ from django.urls import reverse
 from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.billing.entitlements import organization_locked
 from apps.common.windows import is_valid_timezone, timezone_choices
 from apps.members.decorators import require_org_role
 from apps.members.models import WorkspaceMembership
@@ -96,7 +95,7 @@ def workspaces_view(request: OrgRequest) -> HttpResponse:
             "single_workspace": single,
             "can_change_workspaces": can_manage and not single,
             # See set_workspace_archived: the way back for an org with none active.
-            "can_restore_workspaces": can_manage and not any(not w.is_archived for w in workspaces),
+            "can_restore_workspaces": single and can_manage and not any(not w.is_archived for w in workspaces),
         },
     )
 
@@ -159,53 +158,13 @@ def set_workspace_archived(request: OrgRequest, target_id: str) -> HttpResponse:
         raise Http404("No such workspace.")
 
     archiving = request.POST.get("archived") == "1"
-    # Restoring stays open to an organization left with no active workspace
-    # (archived before the mode was switched on): it is the only way back.
-    in_use = Workspace.objects.for_org(request.org.pk).filter(is_archived=False).exists()
-    if refusal := services.single_workspace_refusal(settings.SINGLE_WORKSPACE_MODE and (archiving or in_use)):
-        messages.error(request, refusal)
-        return redirect(reverse("organizations:workspaces"))
-
-    if not archiving and workspace.is_archived:
-        # Restoring is the same lever as creating. Without this an organization
-        # at its workspace limit archives one, creates another, and restores the
-        # first — which is the shape every "half-enforced limit" bug takes. The
-        # write is inside the lock for the reason create_workspace's is.
-        with organization_locked(request.org):
-            refusal = _plan_refusal(request.org)
-            if refusal is not None:
-                messages.error(request, refusal)
-                return redirect(reverse("organizations:workspaces"))
-            workspace.is_archived = archiving
-            workspace.save(update_fields=["is_archived", "updated_at"])
-            messages.success(request, gettext("Restored %(name)s.") % {"name": workspace.name})
-            return redirect(reverse("organizations:workspaces"))
-
-    workspace.is_archived = archiving
-    workspace.save(update_fields=["is_archived", "updated_at"])
-    if workspace.is_archived:
-        messages.success(request, gettext("Archived %(name)s.") % {"name": workspace.name})
-    else:
-        messages.success(request, gettext("Restored %(name)s.") % {"name": workspace.name})
-    return redirect(reverse("organizations:workspaces"))
-
-
-def _plan_refusal(org: Any) -> str | None:
-    """The organization's workspace limit, as a message or None.
-
-    Returns rather than raises: both call sites are POST-redirect-GET views that
-    answer a refusal with ``messages.error`` and a redirect, which is what every
-    other refusal in this module already does.
-
-    A free plan is capped at one workspace, and that cap is what makes every
-    other limit affordable to enforce — the counts in
-    ``apps.billing.entitlements`` sum across an organization's workspaces, and
-    for an organization that has never paid that sum has one term.
-    """
-    from apps.billing.entitlements import PlanLimitError, check_can_add_workspace
-
     try:
-        check_can_add_workspace(org)
-    except PlanLimitError as exc:
-        return str(exc)
-    return None
+        services.set_workspace_archived(request.org, workspace, archived=archiving)
+    except services.WorkspaceError as exc:
+        messages.error(request, str(exc))
+    else:
+        if archiving:
+            messages.success(request, gettext("Archived %(name)s.") % {"name": workspace.name})
+        else:
+            messages.success(request, gettext("Restored %(name)s.") % {"name": workspace.name})
+    return redirect(reverse("organizations:workspaces"))
