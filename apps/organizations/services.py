@@ -83,9 +83,14 @@ def set_workspace_archived(org: Any, workspace: Workspace, *, archived: bool) ->
     open (archived before the mode was switched on), as the only way back.
     """
     with organization_locked(org):
-        # Fetched before the lock was taken, so another request may have moved it.
+        refusal = single_workspace_refusal(settings.SINGLE_WORKSPACE_MODE)
+        if refusal:
+            # organization_locked takes no row lock on an unlimited plan (every
+            # self-hosted install without Stripe), and this check needs one.
+            Organization.objects.select_for_update().filter(pk=org.pk).only("id").first()
+        # Read before the lock was held, so another request may have moved it.
         workspace.refresh_from_db(fields=["is_archived"])
-        if refusal := single_workspace_refusal(settings.SINGLE_WORKSPACE_MODE):
+        if refusal:
             if archived:
                 raise WorkspaceError(refusal, code="single_workspace")
             if workspace.is_archived and Workspace.objects.for_org(org.pk).filter(is_archived=False).exists():

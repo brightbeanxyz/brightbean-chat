@@ -4,6 +4,7 @@ import threading
 
 import pytest
 from django.db import connection, transaction
+from django.test.utils import CaptureQueriesContext
 
 from apps.accounts.models import User
 from apps.accounts.services import ExternalIdInUseError, provision_organization_and_workspace
@@ -49,6 +50,20 @@ class TestCreateWorkspace:
         set_workspace_archived(tenancy.organization, spare, archived=False)
         spare.refresh_from_db()
         assert spare.is_archived is False
+
+    def test_single_workspace_restore_locks_the_organization_row(self, tenancy, settings):
+        # organization_locked skips the row lock on an unlimited plan, so the
+        # "no active workspace" check must take it itself or two restores race.
+        settings.SINGLE_WORKSPACE_MODE = True
+        Workspace.objects.filter(pk=tenancy.workspace.pk).update(is_archived=True)
+        workspace = Workspace.objects.get(pk=tenancy.workspace.pk)
+
+        with CaptureQueriesContext(connection) as queries:
+            set_workspace_archived(tenancy.organization, workspace, archived=False)
+
+        assert any("FOR UPDATE" in q["sql"] for q in queries)
+        workspace.refresh_from_db()
+        assert workspace.is_archived is False
 
     def test_the_creator_becomes_its_admin(self, tenancy):
         workspace = create_workspace(tenancy.organization, "Sales", creator=tenancy.owner)
