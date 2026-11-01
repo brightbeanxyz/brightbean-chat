@@ -86,11 +86,13 @@ class TestTheCommittedArtefact:
 
         from django.conf import settings
 
-        css = (Path(settings.BASE_DIR) / "apps/theme/static_src/src/styles.css").read_text()
+        src = Path(settings.BASE_DIR) / "apps/theme/static_src/src"
+        css = (src / "styles.css").read_text()
+        tokens = (src / "tokens.css").read_text()
 
         for key, _ in GROUPS:
             assert f".fb-node-{key}" in css, f"styles.css has no accent rule for palette group {key!r}"
-            assert f"--flow-group-{key}:" in css, f"styles.css defines no --flow-group-{key}"
+            assert f"--flow-group-{key}:" in tokens, f"tokens.css defines no --flow-group-{key}"
 
     def test_every_group_but_the_fallback_has_a_node_type_in_it(self):
         """`other` is the default a later issue's node type falls into, so it is

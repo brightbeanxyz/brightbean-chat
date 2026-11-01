@@ -38,11 +38,13 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
+from functools import lru_cache
 
 from apps.common.encryption import hmac_digest
 
 __all__ = [
     "LOOKUP_LENGTH",
+    "PLATFORM_TOKEN_PREFIX",
     "TOKEN_PREFIX",
     "MintedKey",
     "digest_for",
@@ -56,13 +58,21 @@ __all__ = [
 #: and this prefix were rebranded together so integrators copy one vocabulary.
 TOKEN_PREFIX = "bb_"  # noqa: S105 - a prefix, not a credential
 
+#: Installation-level keys for the platform API. A different prefix, not a flag
+#: on the same shape: a ``bb_`` key must not parse as a platform key or the other
+#: way round, so neither credential can be presented to the other surface.
+PLATFORM_TOKEN_PREFIX = "bbp_"  # noqa: S105 - a prefix, not a credential
+
 LOOKUP_LENGTH = 8
 
 _SECRET_BYTES = 32
 
+
 # ``token_urlsafe`` emits [A-Za-z0-9_-]; the lookup is lowercase hex. Anchored
 # and length-bounded so a hostile Authorization header cannot make this scan.
-_TOKEN_RE = re.compile(rf"^{re.escape(TOKEN_PREFIX)}([A-Za-z0-9_\-]{{16,128}})_([0-9a-f]{{{LOOKUP_LENGTH}}})$")
+@lru_cache(maxsize=4)
+def _token_re(prefix: str) -> re.Pattern[str]:
+    return re.compile(rf"^{re.escape(prefix)}([A-Za-z0-9_\-]{{16,128}})_([0-9a-f]{{{LOOKUP_LENGTH}}})$")
 
 
 @dataclass(frozen=True)
@@ -88,18 +98,29 @@ def digest_for(secret: str) -> str:
     return hmac_digest(secret)
 
 
-def mint() -> MintedKey:
+def verify(secret: str, stored_digest: str) -> bool:
+    """Constant-time check of a presented secret against a stored digest.
+
+    Over the digests rather than the raw values, so the comparison is over
+    fixed-length data whatever the caller sent.
+    """
+    if not secret or not stored_digest:
+        return False
+    return secrets.compare_digest(digest_for(secret), stored_digest)
+
+
+def mint(prefix: str = TOKEN_PREFIX) -> MintedKey:
     """Generate a new API key."""
     secret = secrets.token_urlsafe(_SECRET_BYTES)
     lookup = lookup_for(secret)
     return MintedKey(
-        plaintext=f"{TOKEN_PREFIX}{secret}_{lookup}",
+        plaintext=f"{prefix}{secret}_{lookup}",
         lookup_prefix=lookup,
         token_digest=digest_for(secret),
     )
 
 
-def parse(raw: str) -> tuple[str, str] | None:
+def parse(raw: str, prefix: str = TOKEN_PREFIX) -> tuple[str, str] | None:
     """Split a presented token into ``(secret, lookup_prefix)``.
 
     Total: every malformation — wrong prefix, wrong shape, wrong length,
@@ -112,7 +133,7 @@ def parse(raw: str) -> tuple[str, str] | None:
     """
     if not raw or not isinstance(raw, str) or len(raw) > 200:
         return None
-    match = _TOKEN_RE.match(raw)
+    match = _token_re(prefix).match(raw)
     if match is None:
         return None
     secret, lookup = match.group(1), match.group(2)

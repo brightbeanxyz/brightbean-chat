@@ -16,6 +16,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchPicker } from "../../api/flows";
 import type { BuilderEnv } from "../../env";
+import i18n from "../../i18n";
+import { variantLabel } from "../copy";
 import type { MediaAsset, MediaFolder } from "../../schema/types";
 
 const KINDS = ["", "image", "audio", "video", "file"] as const;
@@ -89,41 +91,57 @@ export function MediaPickerDialog({ env, platform, kind: fixedKind, onPick, onCl
   }, [load]);
 
   return (
-    <div className="fb-subgroup" role="dialog" aria-label="Choose from the media library">
+    <div className="fb-subgroup" role="dialog" aria-label={i18n.t("mediaPicker.dialogLabel")}>
       <div className="flex flex-wrap gap-1 mb-2">
         <input
           type="search"
           className="form-input-styled flex-1"
-          placeholder="Search the library"
-          aria-label="Search the library"
+          placeholder={i18n.t("mediaPicker.searchPlaceholder")}
+          aria-label={i18n.t("mediaPicker.searchLabel")}
           value={term}
           onChange={(event) => setTerm(event.target.value)}
         />
         {fixedKind ? null : (
-          <select className="bb-select w-28" aria-label="Kind" value={kind} onChange={(event) => setKind(event.target.value)}>
-            {KINDS.map((option) => (
-              <option key={option} value={option}>
-                {option === "" ? "Any kind" : option}
+          <span className="bb-select-wrap w-28">
+            <select
+              className="bb-select"
+              aria-label={i18n.t("mediaPicker.kindLabel")}
+              value={kind}
+              onChange={(event) => setKind(event.target.value)}
+            >
+              {KINDS.map((option) => (
+                <option key={option} value={option}>
+                  {option === "" ? i18n.t("mediaPicker.anyKind") : variantLabel(option)}
+                </option>
+              ))}
+            </select>
+          </span>
+        )}
+        <span className="bb-select-wrap w-32">
+          <select
+            className="bb-select"
+            aria-label={i18n.t("mediaPicker.folderLabel")}
+            value={folder}
+            onChange={(event) => setFolder(event.target.value)}
+          >
+            <option value="">{i18n.t("mediaPicker.allFolders")}</option>
+            <option value={ROOT_FOLDER}>{i18n.t("mediaPicker.noFolder")}</option>
+            {folders.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.name}
               </option>
             ))}
           </select>
-        )}
-        <select className="bb-select w-32" aria-label="Folder" value={folder} onChange={(event) => setFolder(event.target.value)}>
-          <option value="">All folders</option>
-          <option value={ROOT_FOLDER}>No folder</option>
-          {folders.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.name}
-            </option>
-          ))}
-        </select>
+        </span>
         <button type="button" className="btn-link text-xs" onClick={onClose}>
-          Close
+          {i18n.t("mediaPicker.close")}
         </button>
       </div>
 
-      {status === "error" ? <p className="fb-field-error">The media library could not be reached.</p> : null}
-      {status !== "loading" && assets.length === 0 ? <p className="fb-empty">Nothing in the library matches.</p> : null}
+      {status === "error" ? <p className="fb-field-error">{i18n.t("mediaPicker.loadFailed")}</p> : null}
+      {status !== "loading" && assets.length === 0 ? (
+        <p className="fb-empty">{i18n.t("mediaPicker.noMatches")}</p>
+      ) : null}
 
       <div className="fb-asset-grid">
         {assets.map((asset) => (
@@ -131,7 +149,9 @@ export function MediaPickerDialog({ env, platform, kind: fixedKind, onPick, onCl
             {asset.thumbnail_url ? (
               <img className="fb-asset-thumb" src={asset.thumbnail_url} alt={asset.alt_text || asset.filename} />
             ) : (
-              <span className="fb-asset-thumb flex items-center justify-center fb-empty">{asset.kind}</span>
+              <span className="fb-asset-thumb flex items-center justify-center fb-empty">
+                {variantLabel(asset.kind)}
+              </span>
             )}
             <span className="text-xs truncate">{asset.title || asset.filename}</span>
             {asset.platform_warnings.map((warning, index) => (
@@ -145,7 +165,7 @@ export function MediaPickerDialog({ env, platform, kind: fixedKind, onPick, onCl
 
       {cursor ? (
         <button type="button" className="btn-outline-sm mt-2" onClick={() => void load(true, cursor)}>
-          Load more
+          {i18n.t("mediaPicker.loadMore")}
         </button>
       ) : null}
     </div>

@@ -8,6 +8,7 @@
  * A code this bundle has never seen still renders. Layer 4 and Layer 5 add
  * codes, and "an error I cannot classify" must never become "no error".
  */
+import i18n from "../i18n";
 import { useBuilder, useBuilderStore } from "../store/context";
 import { railIssues } from "./normalize";
 
@@ -28,9 +29,9 @@ export function ProblemsRail({ onPick }: { onPick?: () => void } = {}) {
   }
 
   return (
-    <section className="fb-problems" aria-label="Problems">
+    <section className="fb-problems" aria-label={i18n.t("problemsRail.label")}>
       {message ? <p className="alert-error mb-2">{message}</p> : null}
-      {stale && issues.length > 0 ? <p className="fb-empty mb-1">Re-checking…</p> : null}
+      {stale && issues.length > 0 ? <p className="fb-empty mb-1">{i18n.t("problemsRail.rechecking")}</p> : null}
 
       {issues.map((issue, index_) => (
         <button

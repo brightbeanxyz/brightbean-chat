@@ -131,6 +131,7 @@ THIRD_PARTY_APPS = [
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
+    "allauth.socialaccount.providers.openid_connect",
 ]
 
 # The first six are the tenancy, auth and credential substrate (issue #31);
@@ -187,6 +188,14 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     # allauth requires this immediately after AuthenticationMiddleware.
     "allauth.account.middleware.AccountMiddleware",
+    # Reads request.user (LanguagePreferenceMiddleware) or resolves the
+    # language cookie / Accept-Language (LocaleMiddleware) — both need
+    # AuthenticationMiddleware to have already run, and Locale needs to run
+    # after Language so it sees what that one wrote to request.COOKIES. No URL
+    # prefix (see LANGUAGES above) — this app has a public API and
+    # unauthenticated webhook routes that must never carry one.
+    "apps.accounts.middleware.LanguagePreferenceMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     # Reads request.user, so it has to come after authentication. Resolves the
     # workspace named by the URL and 404s the ones the user cannot reach.
     "apps.members.middleware.RBACMiddleware",
@@ -208,6 +217,10 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                # Supplies LANGUAGES / LANGUAGE_CODE / LANGUAGE_BIDI to every
+                # template — used by the Preferences language picker and by
+                # base.html's <html lang="">.
+                "django.template.context_processors.i18n",
                 "apps.accounts.context_processors.auth_providers",
                 # Supplies the sidebar navigation with its `active` flag already
                 # computed — the single active-state convention the whole UI
@@ -302,7 +315,78 @@ ACCOUNT_LOGOUT_REDIRECT_URL = "/accounts/login/"
 GOOGLE_AUTH_CLIENT_ID = env("GOOGLE_AUTH_CLIENT_ID", default="")
 GOOGLE_AUTH_CLIENT_SECRET = env("GOOGLE_AUTH_CLIENT_SECRET", default="")
 
+# Single sign-on through any OpenID Connect provider. Configured like Google: from
+# env, with all three set or the provider is simply absent. The issuer is the
+# operator's, never user input — allauth fetches its discovery document
+# server-side.
+OIDC_ISSUER = env("OIDC_ISSUER", default="").strip()
+OIDC_CLIENT_ID = env("OIDC_CLIENT_ID", default="")
+OIDC_CLIENT_SECRET = env("OIDC_CLIENT_SECRET", default="")
+OIDC_NAME = env("OIDC_NAME", default="Single sign-on")
+#: Who a first-time identity may become. ``invite``: only someone holding an
+#: invitation to the address the provider vouches for, and into that
+#: organization alone. ``open``: anyone, with an organization of their own — the
+#: same as Google sign-in.
+OIDC_SIGNUP = env("OIDC_SIGNUP", default="invite").strip().lower()
+#: Providers that never send ``email_verified`` (Microsoft Entra, for one) would
+#: otherwise be refused outright. Setting this asserts that the provider only
+#: issues addresses it has verified; do not set it for one that lets users type
+#: their own.
+OIDC_TRUST_EMAIL = env.bool("OIDC_TRUST_EMAIL", default=False)
+#: Sign an existing local account in when the provider vouches for its address,
+#: and link the identity so later logins no longer depend on the address. This is
+#: allauth's per-provider ``email_authentication``, not the global
+#: SOCIALACCOUNT_EMAIL_AUTHENTICATION that the note further down refuses: it
+#: covers this provider only, and allauth wipes the password of a local account
+#: whose address was never verified, which is what makes it safe to read "same
+#: address" as "same person". Needs a provider that verifies addresses.
+OIDC_LINK_BY_EMAIL = env.bool("OIDC_LINK_BY_EMAIL", default=True)
+#: Left empty, allauth picks from the provider's discovery document.
+OIDC_TOKEN_AUTH_METHOD = env("OIDC_TOKEN_AUTH_METHOD", default="").strip()
+#: One workspace per organization, created together with the organization. The
+#: create control disappears, and creating or archiving/restoring a workspace is
+#: refused — in the web UI and the platform API alike. Organizations that already
+#: have several keep them.
+SINGLE_WORKSPACE_MODE = env.bool("SINGLE_WORKSPACE_MODE", default=False)
+#: Who may create an account at all (local form and Google; single sign-on has
+#: its own, stricter OIDC_SIGNUP). ``open``: anyone, with an organization of
+#: their own. ``invite``: only someone holding a valid organization invitation.
+#: Accounts made by an operator (createsuperuser, the admin, the platform API)
+#: are not signups and are unaffected.
+SIGNUP = env("SIGNUP", default="open").strip().lower()
+if SIGNUP not in ("open", "invite"):
+    raise ImproperlyConfigured(f"SIGNUP must be 'open' or 'invite', not {SIGNUP!r}")
+if OIDC_SIGNUP not in ("invite", "open"):
+    raise ImproperlyConfigured(f"OIDC_SIGNUP must be 'invite' or 'open', not {OIDC_SIGNUP!r}")
+if OIDC_TOKEN_AUTH_METHOD not in ("", "client_secret_basic", "client_secret_post"):
+    raise ImproperlyConfigured("OIDC_TOKEN_AUTH_METHOD must be 'client_secret_basic' or 'client_secret_post'")
+#: allauth's ``provider_id`` — also ``SocialAccount.provider`` for every
+#: identity linked through it. Renaming it orphans those links.
+OIDC_PROVIDER_ID = "sso"
+OIDC_CONFIGURED = bool(OIDC_ISSUER and OIDC_CLIENT_ID and OIDC_CLIENT_SECRET)
+
 SOCIALACCOUNT_PROVIDERS = {
+    "openid_connect": {
+        "OAUTH_PKCE_ENABLED": True,
+        "SCOPE": ["openid", "email", "profile"],
+        "APPS": (
+            [
+                {
+                    "provider_id": OIDC_PROVIDER_ID,
+                    "name": OIDC_NAME,
+                    "client_id": OIDC_CLIENT_ID,
+                    "secret": OIDC_CLIENT_SECRET,
+                    "settings": {
+                        "server_url": OIDC_ISSUER,
+                        "email_authentication": OIDC_LINK_BY_EMAIL,
+                        **({"token_auth_method": OIDC_TOKEN_AUTH_METHOD} if OIDC_TOKEN_AUTH_METHOD else {}),
+                    },
+                }
+            ]
+            if OIDC_CONFIGURED
+            else []
+        ),
+    },
     "google": {
         "APP": {"client_id": GOOGLE_AUTH_CLIENT_ID, "secret": GOOGLE_AUTH_CLIENT_SECRET},
         "SCOPE": ["profile", "email"],
@@ -549,10 +633,37 @@ def _platform_credentials_from_env() -> dict[str, dict[str, str]]:
 PLATFORM_CREDENTIALS_FROM_ENV = _platform_credentials_from_env()
 
 # Internationalization
-LANGUAGE_CODE = "en-us"
+LANGUAGE_CODE = "en"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
+
+# The languages a user can pick in Settings -> Preferences
+# (apps.accounts.views.account_preferences) and that `make i18n-extract`
+# builds .po files for. Not URL-prefixed: see LocaleMiddleware and
+# LanguagePreferenceMiddleware below — this app has a public API and
+# unauthenticated webhook routes that must never carry a locale prefix, so
+# language is resolved from the cookie (and, for a signed-in user, the account
+# itself) instead of `i18n_patterns()`.
+#
+# "en", not "en-us": Django's own LANG_INFO has no "en-us" entry, so
+# get_language_info("en-us") silently falls back to "en" and returns
+# code="en" — the preferences <select>'s English <option value> and its
+# "selected" comparison against request.user.language then used two
+# different spellings of the same language and never matched.
+LANGUAGES = [
+    ("en", "English"),
+    ("ru", "Русский"),
+    ("ky", "Кыргызча"),
+]
+LOCALE_PATHS = [BASE_DIR / "locale"]
+
+# What <html> renders for anyone without a stored preference: anonymous pages,
+# the bare-Context 500 page, and users who left Preferences on "Default". Slugs
+# from apps.common.themes; apps.common.checks rejects a theme that is not
+# registered or a mode it has no tokens for.
+THEME_DEFAULT = "brightbean"
+COLOR_MODE_DEFAULT = "light"
 
 # Static files
 STATIC_URL = "/static/"
@@ -835,6 +946,13 @@ if STORAGE_BACKEND.lower() == "s3":
     if _storage_origin:
         CSP_POLICY["DIRECTIVES"]["media-src"].append(_storage_origin)
         CSP_POLICY["DIRECTIVES"]["img-src"].append(_storage_origin)
+
+# The provider's origin is per deployment, so it cannot be a literal in OAUTH_FORM_ACTION
+# like Google's. Same reason, same directive: the login button POSTs here and the
+# answer is a redirect to the issuer.
+_oidc_origin = csp_origin(OIDC_ISSUER) if OIDC_CONFIGURED else None
+if _oidc_origin:
+    CSP_POLICY["DIRECTIVES"]["form-action"].append(_oidc_origin)
 
 # ---------------------------------------------------------------------------
 # Logging (SECURITY-BASELINE §5)

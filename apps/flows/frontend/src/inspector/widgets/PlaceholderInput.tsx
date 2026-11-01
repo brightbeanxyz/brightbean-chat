@@ -9,6 +9,7 @@
  */
 import { useRef, useState } from "react";
 
+import i18n from "../../i18n";
 import { FieldShell, fieldId, type FieldProps } from "../fields";
 import { useField } from "../FieldContext";
 
@@ -65,7 +66,7 @@ export function PlaceholderInput(props: FieldProps) {
         />
       )}
       {open && !readOnly ? (
-        <div className="fb-subgroup" role="listbox" aria-label="Insert a placeholder">
+        <div className="fb-subgroup" role="listbox" aria-label={i18n.t("placeholderInput.insertPlaceholder")}>
           {tokens.map((token) => (
             <button key={token} type="button" role="option" className="fb-palette-item" onClick={() => insert(token)}>
               {`{{${token}}}`}
@@ -74,7 +75,8 @@ export function PlaceholderInput(props: FieldProps) {
         </div>
       ) : (
         <p className="fb-field-help">
-          Type <code>{"{{"}</code> to insert a contact field.
+          {i18n.t("placeholderInput.typeToInsertPrefix")} <code>{"{{"}</code>{" "}
+          {i18n.t("placeholderInput.typeToInsertSuffix")}
         </p>
       )}
     </FieldShell>

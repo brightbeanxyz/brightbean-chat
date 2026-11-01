@@ -112,6 +112,22 @@ class TestContentSecurityPolicy:
                 assert src.startswith("/static/"), src
 
 
+HTML_ROOT = '<html lang="{lang}" data-theme="brightbean" data-color-mode="light"'
+
+
+@pytest.mark.django_db
+class TestTheThemeReachesEveryRoot:
+    """``{% theme_attrs %}`` on every kind of page: the shell, the anonymous
+    auth layout, and the error layout, which does not extend base.html."""
+
+    def test_every_shell_page(self, tenant_client, shell_urls):
+        for url in [*shell_urls, "/no-such-page"]:
+            assert HTML_ROOT.format(lang="en") in tenant_client.get(url).content.decode(), url
+
+    def test_the_anonymous_login_page(self, client):
+        assert HTML_ROOT.format(lang="en") in client.get("/accounts/login/").content.decode()
+
+
 @pytest.mark.django_db
 class TestTheSidebar:
     """The sidebar collapses, so the anti-flash mechanism is back — whole.
@@ -1285,6 +1301,7 @@ class TestErrorPages:
         html = get_template(name).render({})
 
         assert "BrightBean Chat" in html
+        assert 'data-theme="brightbean" data-color-mode="light"' in html
 
     @pytest.mark.parametrize(
         ("name", "heading"),

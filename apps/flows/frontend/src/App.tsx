@@ -8,6 +8,7 @@
  */
 import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ApiError } from "./api/client";
 import { loadFlow } from "./api/flows";
@@ -36,6 +37,7 @@ export function App({ env }: { env: BuilderEnv }) {
 }
 
 function Shell() {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const loaded = useBuilder((state) => state.loaded);
   const canEdit = useBuilder((state) => state.env.canEdit);
@@ -58,7 +60,7 @@ function Shell() {
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setFailure(error instanceof ApiError ? error.message : "This flow could not be loaded.");
+          setFailure(error instanceof ApiError ? error.message : t("app.loadFailedFallback"));
         }
       });
     return () => {
@@ -146,7 +148,7 @@ function Shell() {
     return (
       <div className="h-full flex items-center justify-center p-8">
         <div className="alert-error max-w-lg">
-          <p className="font-medium">The flow builder could not load this flow.</p>
+          <p className="font-medium">{t("app.loadFailedHeading")}</p>
           <p className="mt-1">{failure}</p>
         </div>
       </div>
@@ -157,7 +159,7 @@ function Shell() {
     return (
       <div className="h-full flex items-center justify-center p-8">
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Loading the flow builder…
+          {t("app.loading")}
         </p>
       </div>
     );

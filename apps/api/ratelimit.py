@@ -36,6 +36,7 @@ from apps.common.ratelimit import hit, window_key
 __all__ = [
     "AUTH_FAILURE_NAMESPACE",
     "KEY_NAMESPACE",
+    "PLATFORM_KEY_NAMESPACE",
     "RATE_WINDOW_SECONDS",
     "auth_failures_exhausted",
     "over_key_limit",
@@ -43,16 +44,17 @@ __all__ = [
 ]
 
 KEY_NAMESPACE = "api_key"
+PLATFORM_KEY_NAMESPACE = "platform_key"
 AUTH_FAILURE_NAMESPACE = "api_auth_fail"
 
 #: SPEC §17 is stated per second, so the window is a second.
 RATE_WINDOW_SECONDS = 1
 
 
-def over_key_limit(api_key: Any) -> bool:
+def over_key_limit(api_key: Any, *, namespace: str = KEY_NAMESPACE) -> bool:
     """True when this key has already spent its budget for the current second."""
     limit = settings.API_RATE_LIMIT_PER_SECOND
-    key = window_key(KEY_NAMESPACE, str(api_key.pk), window_seconds=RATE_WINDOW_SECONDS)
+    key = window_key(namespace, str(api_key.pk), window_seconds=RATE_WINDOW_SECONDS)
     return hit(key, limit=limit, window_seconds=RATE_WINDOW_SECONDS)
 
 

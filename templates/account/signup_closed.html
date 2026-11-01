@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% load i18n %}
+
+{% block title %}{% translate "Sign up is closed" %} · BrightBean Chat{% endblock %}
+
+{% block auth_content %}
+<div class="auth-card">
+  {% translate "Sign up is closed" as closed_heading %}
+  {% translate "You can't create an account this way." as closed_subheading %}
+  {% include "partials/_auth_brand.html" with heading=closed_heading subheading=closed_subheading %}
+
+  <p class="text-sm mb-5" style="color: var(--text-secondary);">
+    {% if reason %}{{ reason }}{% else %}{% translate "Ask the owner of your organization for an invitation, then open the link in the email and sign in from there." %}{% endif %}
+  </p>
+  <a href="{% url 'account_login' %}" class="btn-brand">{% translate "Back to sign in" %}</a>
+</div>
+{% endblock %}

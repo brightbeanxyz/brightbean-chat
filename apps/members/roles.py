@@ -20,6 +20,7 @@ adding them here first.
 """
 
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 __all__ = [
     "ORG_ROLE_LEVEL",
@@ -36,18 +37,18 @@ class OrgRole(models.TextChoices):
     """Authority over the organization itself: billing-free, but it owns
     workspaces, membership and the org-level credential store."""
 
-    OWNER = "owner", "Owner"
-    ADMIN = "admin", "Admin"
-    MEMBER = "member", "Member"
+    OWNER = "owner", _("Owner")
+    ADMIN = "admin", _("Admin")
+    MEMBER = "member", _("Member")
 
 
 class WorkspaceRole(models.TextChoices):
     """SPEC §4's four roles. Ordered admin > editor > agent > viewer."""
 
-    ADMIN = "admin", "Admin"
-    EDITOR = "editor", "Editor"
-    AGENT = "agent", "Agent"
-    VIEWER = "viewer", "Viewer"
+    ADMIN = "admin", _("Admin")
+    EDITOR = "editor", _("Editor")
+    AGENT = "agent", _("Agent")
+    VIEWER = "viewer", _("Viewer")
 
 
 ORG_ROLE_LEVEL: dict[str, int] = {

@@ -277,7 +277,7 @@ class TestTheThread:
         after = _poll(agent_client, url, etag)
 
         assert after.status_code == 200
-        assert describe(Denial.OPTED_OUT.value) in after.content.decode()
+        assert str(describe(Denial.OPTED_OUT.value)) in after.content.decode()
 
     def test_the_banner_carries_no_countdown_it_cannot_keep_current(
         self, agent_client: Any, url_for: Any, conversation: Conversation

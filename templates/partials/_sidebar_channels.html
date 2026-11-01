@@ -28,11 +28,11 @@ with them (styles.css, beside the other collapsed rules and their pre-paint
 twins) — a "Connect channels" list is a reading exercise, not a rail of icons,
 and Studio hides it in the rail for the same reason.
 {% endcomment %}
-{% load common_extras %}
+{% load common_extras i18n %}
 
 {% if channels.connections %}
 <div class="sidebar-section-label-wrap">
-    <div class="sidebar-section-label">Channels</div>
+    <div class="sidebar-section-label">{% translate "Channels" %}</div>
     {% comment %}
       The heading's own affordance, revealed on hover the way Studio's is. It
       is a shortcut, not the only way in: "More channels" below is always
@@ -40,7 +40,7 @@ and Studio hides it in the rail for the same reason.
       control at all on a touch screen.
     {% endcomment %}
     <a href="{{ channels.home_url }}" class="sidebar-section-action"
-       title="Connect a channel" aria-label="Connect a channel">
+       title="{% translate 'Connect a channel' %}" aria-label="{% translate 'Connect a channel' %}">
         <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
     </a>
@@ -49,7 +49,7 @@ and Studio hides it in the rail for the same reason.
 {% for row in channels.connections %}
 <a href="{{ row.url }}" class="sidebar-nav-item{% if row.active %} active{% endif %}"
    {% if row.active %}aria-current="page"{% endif %}
-         title="{{ row.name }}{% if row.needs_reauth %}: needs reconnecting{% elif row.disabled %}: turned off{% endif %}">
+         title="{{ row.name }}{% if row.needs_reauth %} — {% translate 'needs reconnecting' %}{% elif row.disabled %} — {% translate 'turned off' %}{% endif %}">
     {% comment %}
       Two states mean the channel is not carrying messages, and they are not the
       same news: `needs_reauth` is something to fix, `disabled` is somebody's
@@ -71,7 +71,7 @@ and Studio hides it in the rail for the same reason.
 
 {% if channels.connectable %}
 <div class="sidebar-connect">
-    <div class="sidebar-section-label">Connect channels</div>
+    <div class="sidebar-section-label">{% translate "Connect channels" %}</div>
     {% comment %}
       Three rows, not the whole registry. The list is a nudge sitting under the
       channels somebody actually has, and six chips of platforms they do not is
@@ -88,7 +88,8 @@ and Studio hides it in the rail for the same reason.
       workspace with every platform live has nothing to be offered.
     {% endcomment %}
     {% for row in channels.connectable|slice:":3" %}
-    <a href="{{ row.url }}" class="sidebar-nav-item" title="Connect {{ row.label }}">
+    {% blocktranslate asvar connect_row_label with platform=row.label %}Connect {{ platform }}{% endblocktranslate %}
+    <a href="{{ row.url }}" class="sidebar-nav-item" title="{{ connect_row_label }}">
         <span class="sidebar-channel-mark">
             <span class="sidebar-connect-chip {{ row.platform|platform_ink_class }}">
                 {% include "partials/_platform_icon.html" with platform=row.platform only %}
@@ -101,14 +102,14 @@ and Studio hides it in the rail for the same reason.
         <span class="sidebar-nav-label">{{ row.label }}</span>
     </a>
     {% endfor %}
-    <a href="{{ channels.home_url }}" class="sidebar-nav-item" title="More channels">
+    <a href="{{ channels.home_url }}" class="sidebar-nav-item" title="{% translate 'More channels' %}">
         <span class="sidebar-channel-mark">
             <span class="sidebar-connect-chip">
                 <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
                      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             </span>
         </span>
-        <span class="sidebar-nav-label">More channels</span>
+        <span class="sidebar-nav-label">{% translate "More channels" %}</span>
     </a>
 </div>
 {% endif %}

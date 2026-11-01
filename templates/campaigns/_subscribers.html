@@ -1,4 +1,4 @@
-{% load humanize %}
+{% load humanize i18n %}
 {% comment %}
 The subscriber panel: who is on the sequence, and the manual add/remove SPEC §12
 asks for.
@@ -10,12 +10,12 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
 {% endcomment %}
 <section class="rounded-xl border p-3 sm:p-4" style="border-color: var(--border); background: var(--surface-1);">
     <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <h2 class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-tertiary);">Subscribers</h2>
+        <h2 class="text-xs font-semibold uppercase tracking-wide" style="color: var(--text-tertiary);">{% translate "Subscribers" %}</h2>
         <form hx-get="{% url 'campaigns:subscribers' workspace_id=request.workspace.id sequence_id=sequence.id %}"
               hx-target="#sequence-subscribers"
               hx-swap="innerHTML"
               hx-trigger="change">
-            <label for="subscriber-status" class="sr-only">Status</label>
+            <label for="subscriber-status" class="sr-only">{% translate "Status" %}</label>
             <select id="subscriber-status" name="status" class="form-input-styled" style="width: 10rem;">
                 {% for value, label in status_options %}
                 <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
@@ -32,18 +32,24 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
       the action.
     {% endcomment %}
     <div class="crm-typeahead mb-3">
-        <label for="subscriber-search" class="sr-only">Find a contact</label>
-        <input type="search" id="subscriber-search" name="q" placeholder="Find a contact to subscribe" maxlength="200"
+        <label for="subscriber-search" class="sr-only">{% translate "Find a contact" %}</label>
+        <input type="search" id="subscriber-search" name="q" placeholder="{% translate 'Find a contact to subscribe' %}" maxlength="200"
                hx-get="{% url 'campaigns:subscriber_suggest' workspace_id=request.workspace.id sequence_id=sequence.id %}"
                hx-trigger="input changed delay:200ms, focus"
                hx-target="#subscriber-suggestions"
                hx-swap="innerHTML">
         <div id="subscriber-suggestions"></div>
     </div>
+    {% url 'contacts:list' workspace_id=request.workspace.id as contacts_list_url %}
     <p class="text-xs mb-3" style="color: var(--text-tertiary);">
-        Or subscribe people in bulk from the
-        <a href="{% url 'contacts:list' workspace_id=request.workspace.id %}" class="btn-text-hover-primary">contact list</a>.
+        {% blocktranslate %}Or subscribe people in bulk from the
+        <a href="{{ contacts_list_url }}" class="btn-text-hover-primary">contact list</a>.{% endblocktranslate %}
     </p>
+    {% endif %}
+
+    {% if status == "completed" %}{% translate "completed" as status_word %}
+    {% elif status == "unsubscribed" %}{% translate "unsubscribed" as status_word %}
+    {% else %}{% translate "active" as status_word %}
     {% endif %}
 
     {% if not enrollments %}
@@ -55,10 +61,10 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
     {% endcomment %}
     {% if enrolled_total %}
     <p class="text-sm" style="color: var(--text-secondary);">
-      Nobody is {{ status }} right now. {{ enrolled_total }} enrolled in all.
+        {% blocktranslate with word=status_word count=enrolled_total %}Nobody is {{ word }} right now — {{ count }} enrolled in all.{% endblocktranslate %}
     </p>
     {% else %}
-    <p class="text-sm" style="color: var(--text-secondary);">Nobody here yet.</p>
+    <p class="text-sm" style="color: var(--text-secondary);">{% translate "Nobody here yet." %}</p>
     {% endif %}
     {% else %}
     {% comment %}
@@ -69,10 +75,10 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
     {% endcomment %}
     <p class="text-xs mb-2" style="color: var(--text-tertiary);">
         {% if truncated %}
-            Showing the {{ subscriber_cap }} most recent of {{ subscriber_total }}.
-            Filter or export from the contact list to see the rest.
+            {% blocktranslate with cap=subscriber_cap total=subscriber_total %}Showing the {{ cap }} most recent of {{ total }}.
+            Filter or export from the contact list to see the rest.{% endblocktranslate %}
         {% else %}
-            {{ subscriber_total }} {% if status == "active" %}active{% else %}{{ status }}{% endif %}.
+            {% blocktranslate with total=subscriber_total word=status_word %}{{ total }} {{ word }}.{% endblocktranslate %}
         {% endif %}
     </p>
     <ul class="divide-y" style="border-color: var(--border);">
@@ -91,18 +97,18 @@ apps/contacts/views.py::_selected documents for the bulk endpoints.
                 {% endcomment %}
                 <p class="text-xs" style="color: var(--text-tertiary);">
                     {% if enrollment.status == "completed" %}
-                    Finished {{ enrollment.updated_at|naturaltime }}
+                    {% blocktranslate with when=enrollment.updated_at|naturaltime %}Finished {{ when }}{% endblocktranslate %}
                     {% elif enrollment.status == "unsubscribed" %}
-                    Unsubscribed {{ enrollment.updated_at|naturaltime }}
+                    {% blocktranslate with when=enrollment.updated_at|naturaltime %}Unsubscribed {{ when }}{% endblocktranslate %}
                     {% else %}
-                    Step {{ enrollment.current_step }}{% if enrollment.next_run_at %} · next {{ enrollment.next_run_at|naturaltime }}{% endif %}
+                    {% blocktranslate with n=enrollment.current_step %}Step {{ n }}{% endblocktranslate %}{% if enrollment.next_run_at %} · {% blocktranslate with when=enrollment.next_run_at|naturaltime %}next {{ when }}{% endblocktranslate %}{% endif %}
                     {% endif %}
                 </p>
             </div>
             {% if can_edit and enrollment.status == "active" %}
             <button type="button" class="btn-outline btn-inline btn-danger-soft"
                     hx-post="{% url 'campaigns:subscriber_remove' workspace_id=request.workspace.id sequence_id=sequence.id enrollment_id=enrollment.id %}"
-                    hx-swap="none">Remove</button>
+                    hx-swap="none">{% translate "Remove" %}</button>
             {% endif %}
         </li>
         {% endfor %}

@@ -19,6 +19,7 @@ Delete is the only other thing you can do, and it is destructive, so it sits
 behind the "…" rather than as a second button of equal weight. The menu stays
 even with one item in it, so these rows do not disagree with the tag rows.
 {% endcomment %}
+{% load i18n %}
 <div id="field-rows"
      hx-get="{% url 'contacts:field_rows' workspace_id=request.workspace.id %}"
      hx-trigger="fieldsChanged from:body"
@@ -34,35 +35,37 @@ even with one item in it, so these rows do not disagree with the tag rows.
           <span class="list-row-title truncate">{{ field.name }}</span>
           <span class="status-pill">{{ field.get_type_display }}</span>
         </div>
-        <div class="list-row-meta">{{ field.value_count }} value{{ field.value_count|pluralize }} stored</div>
+        <div class="list-row-meta">{% blocktranslate count count=field.value_count %}{{ count }} value stored{% plural %}{{ count }} values stored{% endblocktranslate %}</div>
       </div>
 
-      <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="renaming = true; $nextTick(() => $refs.name.focus())">Rename</button>
+      <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="renaming = true; $nextTick(() => $refs.name.focus())">{% translate "Rename" %}</button>
 
-      <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ field.name }}">
+      {% blocktranslate asvar field_more_actions with name=field.name %}More actions for {{ name }}{% endblocktranslate %}
+      <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ field_more_actions }}">
         <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
       </button>
 
       <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
-        <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'contacts:field_delete' workspace_id=request.workspace.id field_id=field.id %}" hx-confirm="Delete “{{ field.name }}”? {{ field.value_count }} stored value{{ field.value_count|pluralize }} will go with it." @click="menuOpen = false">Delete</button>
+        {% blocktranslate asvar field_delete_confirm count count=field.value_count with name=field.name %}Delete “{{ name }}”? {{ count }} stored value will go with it.{% plural %}Delete “{{ name }}”? {{ count }} stored values will go with it.{% endblocktranslate %}
+        <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'contacts:field_delete' workspace_id=request.workspace.id field_id=field.id %}" hx-confirm="{{ field_delete_confirm }}" @click="menuOpen = false">{% translate "Delete" %}</button>
       </div>
 
       <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:field_rename' workspace_id=request.workspace.id field_id=field.id %}" @htmx:after-request="if (bbChanged($event, 'fieldsChanged')) renaming = false">
-        <label class="sr-only" for="field-name-{{ field.id }}">Name</label>
+        <label class="sr-only" for="field-name-{{ field.id }}">{% translate "Name" %}</label>
         <input class="form-input-styled" id="field-name-{{ field.id }}" x-ref="name" type="text" name="name" value="{{ field.name }}" maxlength="100" required style="width: 16rem;">
-        <button type="submit" class="btn-pill-secondary btn-pill-sm">Save</button>
-        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Save" %}</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">{% translate "Cancel" %}</button>
       </form>
     </div>
     {% endfor %}
   </div>
   {% else %}
   <div class="empty-state">
-    <p class="empty-state-title">No custom fields yet</p>
+    <p class="empty-state-title">{% translate "No custom fields yet" %}</p>
     <p class="empty-state-body">
-      Save answers from flows, then use them to filter contacts.
+      {% translate "Save answers from flows, then use them to filter contacts." %}
     </p>
-    <button type="button" class="btn-pill-secondary mt-4" @click="$modal('new-field')">New field</button>
+    <button type="button" class="btn-pill-secondary mt-4" @click="$modal('new-field')">{% translate "New field" %}</button>
   </div>
   {% endif %}
 </div>

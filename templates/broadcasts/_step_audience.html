@@ -1,4 +1,4 @@
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Step 2 — the audience (SPEC §13.1).
 
@@ -27,8 +27,8 @@ operator agrees to is computed from the rules they are looking at.
         hx-swap="innerHTML"
         hx-trigger="submit, change delay:400ms, input changed delay:600ms"
         @submit.prevent>
-    <h2 class="wizard-title">Who receives this?</h2>
-    <p class="wizard-lede">Pick a saved segment or build the rules. The count updates as you go, and nobody is messaged until the last step.</p>
+    <h2 class="wizard-title">{% translate "Who receives this?" %}</h2>
+    <p class="wizard-lede">{% translate "Pick a saved segment or build the rules. The count updates as you go, and nobody is messaged until the last step." %}</p>
 
     {% comment %}
       Option cards rather than a select (HANDOFF §3): the choice between a
@@ -37,13 +37,14 @@ operator agrees to is computed from the rules they are looking at.
       preview form above and the save form below read the same value.
     {% endcomment %}
     <fieldset class="option-cards mb-4">
-      <legend class="sr-only">Audience</legend>
+      <legend class="sr-only">{% translate "Audience" %}</legend>
+      {% translate "Saved segment, copied as it is now" as saved_segment_hint %}
       {% for option in filter_config.segments %}
       <label class="option-card">
         <input type="radio" name="segment" value="{{ option.value }}" x-model="segment">
         <span class="option-card-body">
           <span class="option-card-title">{{ option.label }}</span>
-          <span class="option-card-text">Saved segment, copied as it is now</span>
+          <span class="option-card-text">{{ saved_segment_hint }}</span>
         </span>
         <span class="option-card-radio" aria-hidden="true"></span>
       </label>
@@ -51,8 +52,8 @@ operator agrees to is computed from the rules they are looking at.
       <label class="option-card">
         <input type="radio" name="segment" value="" x-model="segment">
         <span class="option-card-body">
-          <span class="option-card-title">Build the rules</span>
-          <span class="option-card-text">Tags, fields, channels — anything the contact list can filter on</span>
+          <span class="option-card-title">{% translate "Build the rules" %}</span>
+          <span class="option-card-text">{% translate "Tags, fields, channels — anything the contact list can filter on" %}</span>
         </span>
         <span class="option-card-radio" aria-hidden="true"></span>
       </label>
@@ -70,7 +71,7 @@ operator agrees to is computed from the rules they are looking at.
     {% include "broadcasts/_audience_preview.html" %}
   </div>
 
-  <p class="wizard-hint mt-3">Opted-out contacts, and anyone the channel will not let you message, are left out automatically.</p>
+  <p class="wizard-hint mt-3">{% translate "Opted-out contacts, and anyone the channel will not let you message, are left out automatically." %}</p>
 
   <form class="wizard-actions" data-wizard-save
         hx-post="{% url 'broadcasts:save_audience' workspace_id=request.workspace.id broadcast_id=broadcast.id %}"
@@ -80,7 +81,7 @@ operator agrees to is computed from the rules they are looking at.
     <input type="hidden" name="filter" :value="serialised">
     <input type="hidden" name="segment" :value="segment">
     {% include "broadcasts/_step_back.html" %}
-    <button type="submit" class="btn-pill-primary">Continue</button>
+    <button type="submit" class="btn-pill-primary">{% translate "Continue" %}</button>
   </form>
 </div>
 </div>

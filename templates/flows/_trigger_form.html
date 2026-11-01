@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 Create or edit one trigger. Loaded into #trigger-form by htmx.
 
 hx-swap="none" on the form is load-bearing, not tidiness: without it htmx swaps
@@ -28,7 +28,7 @@ media_library/_asset_detail.html states.
       future label starting with a verb or an article would read the same way.
     {% endcomment %}
     <h3 class="text-sm font-semibold" style="color: var(--text-primary);">
-        {% if trigger %}Edit{% else %}Add{% endif %} “{{ spec.label }}”
+        {% if trigger %}{% blocktranslate with label=spec.label %}Edit “{{ label }}”{% endblocktranslate %}{% else %}{% blocktranslate with label=spec.label %}Add “{{ label }}”{% endblocktranslate %}{% endif %}
     </h3>
     <p class="text-xs mt-0.5 mb-3" style="color: var(--text-secondary);">{{ spec.description }}</p>
 
@@ -39,13 +39,13 @@ media_library/_asset_detail.html states.
     {% endcomment %}
     {% if spec.unavailable %}
     <p class="text-xs mb-3 rounded-lg p-2.5"
-       style="color: var(--text-secondary); background: rgba(var(--warning-500-rgb), 0.1);">{{ spec.unavailable }}</p>
+       style="color: var(--text-secondary); background: color-mix(in srgb, var(--warning-500) 10%, transparent);">{{ spec.unavailable }}</p>
     {% endif %}
 
     {% if spec.bindable %}
-    <label class="block text-xs font-medium mb-1" for="trigger-connection" style="color: var(--text-primary);">Channel</label>
+    <label class="block text-xs font-medium mb-1" for="trigger-connection" style="color: var(--text-primary);">{% translate "Channel" %}</label>
     <select id="trigger-connection" name="channel_connection" class="form-input-styled mb-3">
-        <option value="">All matching channels</option>
+        <option value="">{% translate "All matching channels" %}</option>
         {% for option in connection_options %}
         <option value="{{ option.value }}"
                 {% if trigger and trigger.channel_connection_id|stringformat:"s" == option.value %}selected{% endif %}>
@@ -66,8 +66,8 @@ media_library/_asset_detail.html states.
     {% endif %}
 
     <div class="flex items-center gap-2 mt-3">
-        <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
+        <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save" %}</button>
         <button type="button" class="btn-pill-secondary btn-pill-sm"
-                @click="$el.closest('#trigger-form').innerHTML = ''">Cancel</button>
+                @click="$el.closest('#trigger-form').innerHTML = ''">{% translate "Cancel" %}</button>
     </div>
 </form>

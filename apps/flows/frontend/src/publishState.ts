@@ -1,4 +1,5 @@
 /** What the toolbar says about publication, trigger reachability and the draft. */
+import i18n from "./i18n";
 import { UNSAVED } from "./persistence/autosave";
 import type { SaveSlice } from "./store/store";
 
@@ -26,18 +27,27 @@ export interface PublishView {
   secondary: "offline" | null;
 }
 
-const SAVE_COPY: Record<string, string> = {
-  clean: "No changes",
-  dirty: "Unsaved changes",
-  saving: "Saving…",
-  saved: "Saved",
-  rejected: "Not saved",
-  error: "Save failed",
-};
+// i18n.t(), not a module-level table: these labels have to read in whatever
+// language is active *now*, the same reason Toolbar.tsx's own busyLabel()
+// does. i18n.t() called at import time would freeze every label in whatever
+// language was active before main.tsx's setBuilderLocale() ever runs.
+function saveCopyFor(state: string): string {
+  const known: Record<string, string> = {
+    clean: i18n.t("publishState.save.clean"),
+    dirty: i18n.t("publishState.save.dirty"),
+    saving: i18n.t("publishState.save.saving"),
+    saved: i18n.t("publishState.save.saved"),
+    rejected: i18n.t("publishState.save.rejected"),
+    error: i18n.t("publishState.save.error"),
+  };
+  return known[state] ?? state;
+}
 
 const PENDING: ReadonlySet<string> = new Set(UNSAVED);
 
-export const OFFLINE_HINT = "Stops this flow now, including conversations already in it.";
+export function offlineHint(): string {
+  return i18n.t("publishState.offlineHint");
+}
 
 export function publishView(
   save: SaveSlice,
@@ -45,7 +55,7 @@ export function publishView(
   triggerCount = 0,
   enabledCount = 0,
 ): PublishView {
-  const saveCopy = SAVE_COPY[save.state] ?? save.state;
+  const saveCopy = saveCopyFor(save.state);
   const pending = PENDING.has(save.state);
   const currentVersionPublished = !pending && save.version?.published === true;
   const allOff = triggerCount > 0 && enabledCount === 0;
@@ -54,14 +64,17 @@ export function publishView(
   // last live version is not a draft — whereas an edit made since is, and
   // "Set live" will publish it, so that one must still say so.
   const neverLive = save.version !== null && !save.version.published && !save.version.published_at;
-  const saveLabel = !pending && neverLive && save.version ? `${saveCopy} · Draft v${save.version.version}` : saveCopy;
+  const saveLabel =
+    !pending && neverLive && save.version
+      ? i18n.t("publishState.draftLabel", { save: saveCopy, version: save.version.version })
+      : saveCopy;
 
   if (flowStatus === "archived") {
     return {
-      statusLabel: "Archived",
+      statusLabel: i18n.t("publishState.archived"),
       statusTone: "plain",
       saveLabel,
-      publishLabel: "Set live",
+      publishLabel: i18n.t("publishState.setLive"),
       publishHint: null,
       action: "publish",
       secondary: null,
@@ -78,13 +91,24 @@ export function publishView(
     // "Live", the word the flow list's pill and switch use for the same state
     // (HANDOFF §3: "status pill (Draft / Live vN)"), with the version that is
     // running so an edit-in-progress is visibly not it.
-    const live = save.publishedVersion ? `Live v${save.publishedVersion.version}` : "Live";
+    const live = save.publishedVersion
+      ? i18n.t("publishState.liveVersion", { version: save.publishedVersion.version })
+      : i18n.t("publishState.live");
     return {
-      statusLabel: allOff ? `${live} · Triggers off` : triggerCount === 0 ? `${live} · No triggers` : live,
+      statusLabel: allOff
+        ? i18n.t("publishState.liveTriggersOff", { live })
+        : triggerCount === 0
+          ? i18n.t("publishState.liveNoTriggers", { live })
+          : live,
       statusTone: allOff || triggerCount === 0 ? "warning" : "success",
       saveLabel,
-      publishLabel: action === "enable" ? "Turn on triggers" : action === "offline" ? "Set offline" : "Set live",
-      publishHint: action === "offline" ? OFFLINE_HINT : null,
+      publishLabel:
+        action === "enable"
+          ? i18n.t("publishState.turnOnTriggers")
+          : action === "offline"
+            ? i18n.t("toolbar.setOffline")
+            : i18n.t("publishState.setLive"),
+      publishHint: action === "offline" ? offlineHint() : null,
       action,
       secondary: action === "offline" ? null : "offline",
     };
@@ -92,10 +116,10 @@ export function publishView(
 
   if (flowStatus === "offline") {
     return {
-      statusLabel: "Offline",
+      statusLabel: i18n.t("publishState.offline"),
       statusTone: "warning",
       saveLabel,
-      publishLabel: "Set live",
+      publishLabel: i18n.t("publishState.setLive"),
       publishHint: null,
       action: "publish",
       secondary: null,
@@ -103,10 +127,10 @@ export function publishView(
   }
 
   return {
-    statusLabel: "Draft",
+    statusLabel: i18n.t("publishState.draft"),
     statusTone: "plain",
     saveLabel,
-    publishLabel: "Set live",
+    publishLabel: i18n.t("publishState.setLive"),
     publishHint: null,
     action: "publish",
     secondary: null,

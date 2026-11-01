@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load i18n %}
 {% comment %}
 Step two: answer what the template needs, then confirm.
 
@@ -14,18 +15,18 @@ did not choose them, and a clickable link on a review page is one misread away
 from visiting a stranger's address.
 {% endcomment %}
 
-{% block title %}Import a flow · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Import a flow" %} · BrightBean Chat{% endblock %}
 
 {% block page_header %}
 <div class="page-header max-w-4xl">
   <div class="page-header-text">
-    <h1 class="page-title">Review this import</h1>
+    <h1 class="page-title">{% translate "Review this import" %}</h1>
     <p class="page-lede">
         {% comment %}
           A shipped template is named the way its tile named it, not by its
           slug — see _source_label in apps/flows/views_portability.py.
         {% endcomment %}
-        {{ source_label }} Check what will be added.
+        {{ source_label }} {% translate "Check what will be added." %}
     </p>
   </div>
 </div>
@@ -37,7 +38,7 @@ from visiting a stranger's address.
 
     {% comment %} What will be created {% endcomment %}
     <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-1);">
-        <h2 class="text-sm font-semibold mb-2" style="color: var(--text-primary);">Flows in this file</h2>
+        <h2 class="text-sm font-semibold mb-2" style="color: var(--text-primary);">{% translate "Flows in this file" %}</h2>
         <ul class="space-y-1">
             {% for flow in plan.document.flows %}
             <li class="text-sm" style="color: var(--text-secondary);">
@@ -46,10 +47,10 @@ from visiting a stranger's address.
                   "Steps", the word the template gallery tile used to get
                   somebody here. "Nodes" is the graph's word for the same thing.
                 {% endcomment %}
-                · {{ flow.graph.nodes|length }} step{{ flow.graph.nodes|length|pluralize }},
-                {{ flow.triggers|length }} trigger{{ flow.triggers|length|pluralize }}
+                · {% blocktranslate count count=flow.graph.nodes|length %}{{ count }} step{% plural %}{{ count }} steps{% endblocktranslate %},
+                {% blocktranslate count count=flow.triggers|length %}{{ count }} trigger{% plural %}{{ count }} triggers{% endblocktranslate %}
                 {% if flow.key == plan.document.entry %}
-                <span class="status-pill status-pill-info ml-1">Main flow</span>
+                <span class="status-pill status-pill-info ml-1">{% translate "Main flow" %}</span>
                 {% endif %}
             </li>
             {% endfor %}
@@ -61,17 +62,17 @@ from visiting a stranger's address.
           first template asked, reasonably, how they were supposed to test it.
         {% endcomment %}
         <p class="text-xs mt-3" style="color: var(--text-tertiary);">
-            Flows arrive as drafts with triggers off. Review each one before setting it live.
+            {% translate "Flows arrive as drafts with triggers off. Review each one before setting it live." %}
         </p>
     </section>
 
     {% comment %} Outbound calls the importer did not choose {% endcomment %}
     {% if plan.outbound_requests %}
     <section class="rounded-xl border p-4 mb-4"
-             style="border-color: var(--warning-500); background: rgba(var(--warning-500-rgb), 0.08);">
-        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">External requests</h2>
+             style="border-color: var(--warning-500); background: color-mix(in srgb, var(--warning-500) 8%, transparent);">
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">{% translate "External requests" %}</h2>
         <p class="text-xs mb-2" style="color: var(--text-secondary);">
-            Check these addresses before publishing.
+            {% translate "Check these addresses before publishing." %}
         </p>
         <ul class="space-y-1">
             {% for call in plan.outbound_requests %}
@@ -84,7 +85,7 @@ from visiting a stranger's address.
                   knows.
                 {% endcomment %}
                 <span class="font-sans text-xs" style="color: var(--text-tertiary);">
-                    (in {{ call.flow_name }})
+                    {% blocktranslate with name=call.flow_name %}(in {{ name }}){% endblocktranslate %}
                 </span>
             </li>
             {% endfor %}
@@ -94,7 +95,7 @@ from visiting a stranger's address.
 
     {% if plan.notes %}
     <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-2);">
-        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">Worth knowing</h2>
+        <h2 class="text-sm font-semibold mb-1" style="color: var(--text-primary);">{% translate "Worth knowing" %}</h2>
         <ul class="space-y-1">
             {% for note in plan.notes %}
             <li class="text-sm" style="color: var(--text-secondary);">{{ note }}</li>
@@ -122,9 +123,9 @@ from visiting a stranger's address.
 
         {% if plan.triggers %}
         <section class="rounded-xl border p-4 mb-4" style="border-color: var(--border); background: var(--surface-1);">
-            <h2 class="text-sm font-semibold" style="color: var(--text-primary);">Triggers</h2>
+            <h2 class="text-sm font-semibold" style="color: var(--text-primary);">{% translate "Triggers" %}</h2>
             <p class="text-xs mt-0.5 mb-3" style="color: var(--text-tertiary);">
-                Keep a trigger off for now, or skip it entirely.
+                {% translate "Keep a trigger off for now, or skip it entirely." %}
             </p>
             <div class="space-y-3">
                 {% for choice in plan.triggers %}
@@ -137,9 +138,9 @@ from visiting a stranger's address.
                         </p>
                     </div>
                     <select name="trigger|{{ choice.key }}|action" class="form-input-styled" style="width: 9rem;"
-                            aria-label="Keep or skip the {{ choice.label }} trigger on {{ choice.flow_name }}">
-                        <option value="keep" {% if choice.keep %}selected{% endif %}>Keep</option>
-                        <option value="skip" {% if not choice.keep %}selected{% endif %}>Skip</option>
+                            aria-label="{% blocktranslate with label=choice.label name=choice.flow_name %}Keep or skip the {{ label }} trigger on {{ name }}{% endblocktranslate %}">
+                        <option value="keep" {% if choice.keep %}selected{% endif %}>{% translate "Keep" %}</option>
+                        <option value="skip" {% if not choice.keep %}selected{% endif %}>{% translate "Skip" %}</option>
                     </select>
                 </div>
                 {% endfor %}
@@ -165,13 +166,13 @@ from visiting a stranger's address.
         {% endcomment %}
         <div class="flex flex-wrap items-center gap-2">
             <button type="submit" name="then" value="import" class="btn-pill-primary">
-                Import {{ plan.document.flows|length }} flow{{ plan.document.flows|length|pluralize }}
+                {% blocktranslate count count=plan.document.flows|length %}Import {{ count }} flow{% plural %}Import {{ count }} flows{% endblocktranslate %}
             </button>
-            <button type="submit" class="btn-pill-secondary">Save for later</button>
-            <a href="{{ list_url }}" class="btn-link">Back to flows</a>
+            <button type="submit" class="btn-pill-secondary">{% translate "Save for later" %}</button>
+            <a href="{{ list_url }}" class="btn-link">{% translate "Back to flows" %}</a>
             <button type="button" class="btn-danger-link ml-auto"
                     hx-post="{{ discard_url }}" hx-swap="none"
-                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">Discard this import</button>
+                    hx-on::after-request="if (JSON.parse(event.detail.xhr.getResponseHeader('HX-Trigger') || '{}').flowImportDiscarded) window.location = '{{ list_url|escapejs }}';">{% translate "Discard this import" %}</button>
         </div>
         {% comment %}
           Names them, and links to them. A bare count is only useful to somebody
@@ -180,9 +181,9 @@ from visiting a stranger's address.
         {% endcomment %}
         {% if not plan.can_apply %}
         <p class="import-todo">
-            Still needed:
+            {% translate "Still needed:" %}
             {% for item in unanswered %}<a href="#{{ item.anchor }}">{{ item.label }}: {{ item.name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}.
-            Save to check again.
+            {% translate "Save to check again." %}
         </p>
         {% endif %}
     </form>

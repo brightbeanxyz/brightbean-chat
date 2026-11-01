@@ -28,11 +28,15 @@ from dataclasses import replace
 from typing import Any
 
 from django.contrib.auth.decorators import login_required
+from django.db.models import F
 from django.http import Http404, HttpResponse, HttpResponseNotModified
 from django.shortcuts import render
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.utils.functional import Promise
+from django.utils.translation import gettext, ngettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.billing.entitlements import organization_locked
@@ -242,8 +246,8 @@ def _assignee_options(request: WorkspaceRequest) -> list[dict[str, str]]:
         .order_by("user__name", "user__email")
     )
     return [
-        {"value": selectors.ASSIGNEE_ME, "label": "Assigned to me"},
-        {"value": selectors.ASSIGNEE_UNASSIGNED, "label": "Unassigned"},
+        {"value": selectors.ASSIGNEE_ME, "label": gettext("Assigned to me")},
+        {"value": selectors.ASSIGNEE_UNASSIGNED, "label": gettext("Unassigned")},
         *({"value": str(m.user_id), "label": m.user.display_name} for m in members),
     ]
 
@@ -549,8 +553,19 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
         "identities": identities,
         # The address this conversation is on — the opt-in the panel reports
         # first, because it is the one a reply here goes to.
-        "identity": next(
-            (row for row in identities if row.channel_connection_id == conversation.channel_connection_id), None
+        #
+        # Not picked out of `identities` above: `(contact, channel_connection)`
+        # is not unique the way `(channel_connection, platform_user_id)` is — a
+        # contact merge (apps/messaging/merge.py) re-points identities onto the
+        # survivor unconditionally, so one contact can hold two identity rows on
+        # the same connection with different platform_user_ids. Most recently
+        # active wins, on the theory that it is the one this open thread is
+        # actually hearing from.
+        "identity": (
+            ContactChannelIdentity.objects.for_workspace(request.workspace)
+            .filter(contact=contact, channel_connection_id=conversation.channel_connection_id)
+            .order_by(F("last_inbound_at").desc(nulls_last=True))
+            .first()
         ),
         "last_run": selectors.last_execution_for(request.workspace, contact, conversation),
         # The conversation's labels live in this panel beside the contact's
@@ -581,11 +596,11 @@ def _sidebar_context(request: WorkspaceRequest, conversation: Conversation) -> d
 #: the fields, so this is a re-presentation and not a new query language.
 #: Channel and label stay as selects beside them, because those genuinely are
 #: long lists.
-INBOX_VIEWS: tuple[tuple[str, str, str, str], ...] = (
-    ("all", "All", "", ""),
-    ("unassigned", "Unassigned", "", selectors.ASSIGNEE_UNASSIGNED),
-    ("mine", "Mine", "", selectors.ASSIGNEE_ME),
-    ("done", "Done", ConversationState.DONE, ""),
+INBOX_VIEWS: tuple[tuple[str, str | Promise, str, str], ...] = (
+    ("all", _("All"), "", ""),
+    ("unassigned", _("Unassigned"), "", selectors.ASSIGNEE_UNASSIGNED),
+    ("mine", _("Mine"), "", selectors.ASSIGNEE_ME),
+    ("done", _("Done"), ConversationState.DONE, ""),
 )
 
 
@@ -864,7 +879,7 @@ def _deliver(request: WorkspaceRequest, conversation_id: Any, *, internal: bool)
         # what happens to an attachment the platform cannot carry.
         body = _outbound_body(request, conversation, allow_media=not internal, dropped=dropped)
     except _ComposeError as exc:
-        return toast_response(tone="error", title="Nothing to send", body=str(exc))
+        return toast_response(tone="error", title=gettext("Nothing to send"), body=str(exc))
 
     message = messaging.send_as_agent(
         workspace=request.workspace,
@@ -879,8 +894,8 @@ def _deliver(request: WorkspaceRequest, conversation_id: Any, *, internal: bool)
         # Not a 400: the refusal is the answer, and the thread now holds a
         # failed row explaining it. describe() rather than message.error,
         # which is a machine code that can carry a provider suffix.
-        return toast_response(tone="error", title="Not sent", body=describe(message.error), events=events)
-    title = "Note added" if internal else "Reply sent"
+        return toast_response(tone="error", title=gettext("Not sent"), body=str(describe(message.error)), events=events)
+    title = gettext("Note added") if internal else gettext("Reply sent")
     if dropped:
         # Sent, but not with everything the agent attached. Saying so beats a
         # success toast under a message that refers to a document the contact
@@ -888,7 +903,8 @@ def _deliver(request: WorkspaceRequest, conversation_id: Any, *, internal: bool)
         return toast_response(
             tone="warn",
             title=title,
-            body=f"{_platform_name(conversation)} cannot carry {_listed(dropped)}, so that was left off.",
+            body=gettext("%(platform)s cannot carry %(items)s, so that was left off.")
+            % {"platform": _platform_name(conversation), "items": _listed(dropped)},
             events=events,
         )
     return toast_response(tone="success", title=title, events=events)
@@ -898,10 +914,23 @@ def _platform_name(conversation: Conversation) -> str:
     return str(conversation.channel_connection.get_platform_display())
 
 
+#: Translated as a full noun phrase per kind, not word-by-word: only English
+#: picks its article from the first letter, and joining bare translated nouns
+#: with no article at all reads fine in every language including this one.
+_KIND_PHRASES = {
+    "image": lambda: gettext("an image"),
+    "audio": lambda: gettext("an audio file"),
+    "video": lambda: gettext("a video"),
+    "file": lambda: gettext("a file"),
+}
+
+
 def _listed(kinds: set[str]) -> str:
     """ "an image", or "an image or a video" — for a sentence, not a log line."""
-    words = sorted(f"{'an' if kind[0] in 'aeiou' else 'a'} {kind}" for kind in kinds)
-    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " or " + words[-1]
+    words = sorted(_KIND_PHRASES[kind]() if kind in _KIND_PHRASES else kind for kind in kinds)
+    if len(words) == 1:
+        return words[0]
+    return gettext("%(list)s or %(last)s") % {"list": ", ".join(words[:-1]), "last": words[-1]}
 
 
 def _idempotency_key(request: WorkspaceRequest, *, prefix: str) -> str:
@@ -962,8 +991,10 @@ def retry(request: WorkspaceRequest, workspace_id: str, conversation_id: str, me
     )
     events = _refresh(inboxSent=True)
     if message.status == MessageStatus.FAILED:
-        return toast_response(tone="error", title="Still not sent", body=describe(message.error), events=events)
-    return toast_response(tone="success", title="Sent", events=events)
+        return toast_response(
+            tone="error", title=gettext("Still not sent"), body=str(describe(message.error)), events=events
+        )
+    return toast_response(tone="success", title=gettext("Sent"), events=events)
 
 
 @login_required
@@ -1076,7 +1107,7 @@ def assign(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
     raw = (request.POST.get("assignee") or "").strip()
     if not raw:
         messaging.assign_conversation(conversation, None)
-        return toast_response(tone="success", title="Unassigned", events=_refresh())
+        return toast_response(tone="success", title=gettext("Unassigned"), events=_refresh())
 
     membership = _membership(request, raw)
     if membership is None:
@@ -1084,10 +1115,16 @@ def assign(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -
         # without it, any user id in the system could be written onto a tenant's
         # conversation by anyone holding reply_in_inbox in any workspace.
         return toast_response(
-            tone="error", title="Cannot assign", body="That person is not a member of this workspace."
+            tone="error",
+            title=gettext("Cannot assign"),
+            body=gettext("That person is not a member of this workspace."),
         )
     messaging.assign_conversation(conversation, membership.user)
-    return toast_response(tone="success", title=f"Assigned to {membership.user.display_name}", events=_refresh())
+    return toast_response(
+        tone="success",
+        title=gettext("Assigned to %(name)s") % {"name": membership.user.display_name},
+        events=_refresh(),
+    )
 
 
 @login_required
@@ -1099,7 +1136,7 @@ def set_state(request: WorkspaceRequest, workspace_id: str, conversation_id: str
     wanted = (request.POST.get("state") or "").strip()
     if wanted == ConversationState.DONE:
         messaging.close_conversation(conversation)
-        return toast_response(tone="success", title="Marked done", events=_refresh())
+        return toast_response(tone="success", title=gettext("Marked done"), events=_refresh())
     if wanted == ConversationState.OPEN:
         # open_conversation() is get-or-reopen, so for a thread that already
         # exists this is precisely "reopen" — and it is the facade's function
@@ -1109,8 +1146,10 @@ def set_state(request: WorkspaceRequest, workspace_id: str, conversation_id: str
             contact=conversation.contact,
             connection=conversation.channel_connection,
         )
-        return toast_response(tone="success", title="Reopened", events=_refresh())
-    return toast_response(tone="error", title="Unknown state", body="A conversation is either open or done.")
+        return toast_response(tone="success", title=gettext("Reopened"), events=_refresh())
+    return toast_response(
+        tone="error", title=gettext("Unknown state"), body=gettext("A conversation is either open or done.")
+    )
 
 
 @login_required
@@ -1126,9 +1165,9 @@ def pause(request: WorkspaceRequest, workspace_id: str, conversation_id: str) ->
     conversation = _conversation(request, conversation_id)
     if (request.POST.get("action") or "").strip() == "resume":
         messaging.pause_automation(conversation, None)
-        return toast_response(tone="success", title="Automation resumed", events=_refresh())
+        return toast_response(tone="success", title=gettext("Automation resumed"), events=_refresh())
     messaging.pause_automation(conversation, timezone.now() + messaging.AGENT_AUTOMATION_PAUSE)
-    return toast_response(tone="success", title="Automation paused", events=_refresh())
+    return toast_response(tone="success", title=gettext("Automation paused"), events=_refresh())
 
 
 @login_required
@@ -1150,8 +1189,8 @@ def stop_automation(request: WorkspaceRequest, workspace_id: str, conversation_i
     conversation = _conversation(request, conversation_id)
     stopped = stop_automation(conversation.contact)
     if not stopped:
-        return toast_response(tone="info", title="Nothing running", events=_refresh())
-    return toast_response(tone="success", title="Automation stopped", events=_refresh())
+        return toast_response(tone="info", title=gettext("Nothing running"), events=_refresh())
+    return toast_response(tone="success", title=gettext("Automation stopped"), events=_refresh())
 
 
 @login_required
@@ -1172,13 +1211,13 @@ def tags(request: WorkspaceRequest, workspace_id: str, conversation_id: str) -> 
     if not wanted:
         # The picker's own placeholder option. Nothing to do, and answering 404
         # for it would turn "changed my mind" into an error.
-        return toast_response(tone="info", title="No tag selected")
+        return toast_response(tone="info", title=gettext("No tag selected"))
     tag = get_scoped_object_or_404(Tag, request.workspace, pk=wanted)
     if (request.POST.get("action") or "").strip() == "remove":
         contact_services.remove_tag(conversation.contact, tag)
-        return toast_response(tone="success", title="Tag removed", events={"inboxContactChanged": True})
+        return toast_response(tone="success", title=gettext("Tag removed"), events={"inboxContactChanged": True})
     contact_services.add_tag(conversation.contact, tag)
-    return toast_response(tone="success", title="Tag added", events={"inboxContactChanged": True})
+    return toast_response(tone="success", title=gettext("Tag added"), events={"inboxContactChanged": True})
 
 
 # ---------------------------------------------------------------------------
@@ -1202,8 +1241,8 @@ def add_label(request: WorkspaceRequest, workspace_id: str, conversation_id: str
     try:
         services.apply_label(conversation, label, by=request.user)
     except services.InboxError as exc:
-        return toast_response(tone="error", title="Not labelled", body=str(exc), events=_refresh())
-    return toast_response(tone="success", title="Labelled", events=_refresh())
+        return toast_response(tone="error", title=gettext("Not labelled"), body=str(exc), events=_refresh())
+    return toast_response(tone="success", title=gettext("Labelled"), events=_refresh())
 
 
 @login_required
@@ -1214,7 +1253,7 @@ def remove_label(request: WorkspaceRequest, workspace_id: str, conversation_id: 
     conversation = _conversation(request, conversation_id)
     label = _label_or_404(request, label_id)
     services.remove_label(conversation, label)
-    return toast_response(tone="success", title="Label removed", events=_refresh())
+    return toast_response(tone="success", title=gettext("Label removed"), events=_refresh())
 
 
 @login_required
@@ -1249,10 +1288,14 @@ def bulk_label(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
             # One thread already carrying its maximum must not stop the rest.
             continue
 
-    verb = "removed from" if removing else "added to"
+    title = (
+        ngettext("Label removed from %(count)s conversation", "Label removed from %(count)s conversations", changed)
+        if removing
+        else ngettext("Label added to %(count)s conversation", "Label added to %(count)s conversations", changed)
+    ) % {"count": changed}
     return toast_response(
         tone="success",
-        title=f"Label {verb} {changed} conversation{'' if changed == 1 else 's'}",
+        title=title,
         events=_refresh(),
     )
 
@@ -1270,7 +1313,7 @@ def create_reminder(request: WorkspaceRequest, workspace_id: str, conversation_i
     conversation = _conversation(request, conversation_id)
     when = _when(request.POST.get("remind_at"))
     if when is None:
-        return toast_response(tone="error", title="No reminder set", body="Pick a date and time.")
+        return toast_response(tone="error", title=gettext("No reminder set"), body=gettext("Pick a date and time."))
     recipient = _membership(request, (request.POST.get("recipient") or "").strip())
     try:
         services.schedule_reminder(
@@ -1290,8 +1333,8 @@ def create_reminder(request: WorkspaceRequest, workspace_id: str, conversation_i
             # the contact.
         )
     except services.InboxError as exc:
-        return toast_response(tone="error", title="No reminder set", body=str(exc))
-    return toast_response(tone="success", title="Reminder set", events=_refresh())
+        return toast_response(tone="error", title=gettext("No reminder set"), body=str(exc))
+    return toast_response(tone="success", title=gettext("Reminder set"), events=_refresh())
 
 
 @login_required
@@ -1303,8 +1346,8 @@ def cancel_reminder(
     conversation = _conversation(request, conversation_id)
     reminder = get_scoped_object_or_404(InboxReminder, request.workspace, pk=reminder_id, conversation=conversation)
     if not services.cancel_reminder(reminder):
-        return toast_response(tone="info", title="Already gone", events=_refresh())
-    return toast_response(tone="success", title="Reminder cancelled", events=_refresh())
+        return toast_response(tone="info", title=gettext("Already gone"), events=_refresh())
+    return toast_response(tone="success", title=gettext("Reminder cancelled"), events=_refresh())
 
 
 @login_required
@@ -1321,11 +1364,11 @@ def create_scheduled_reply(request: WorkspaceRequest, workspace_id: str, convers
     conversation = _conversation(request, conversation_id)
     when = _when(request.POST.get("send_at"))
     if when is None:
-        return toast_response(tone="error", title="Not scheduled", body="Pick a date and time.")
+        return toast_response(tone="error", title=gettext("Not scheduled"), body=gettext("Pick a date and time."))
     try:
         body = _outbound_body(request, conversation)
     except _ComposeError as exc:
-        return toast_response(tone="error", title="Not scheduled", body=str(exc))
+        return toast_response(tone="error", title=gettext("Not scheduled"), body=str(exc))
     try:
         services.schedule_reply(
             conversation,
@@ -1335,8 +1378,8 @@ def create_scheduled_reply(request: WorkspaceRequest, workspace_id: str, convers
             compose_token=_compose_token(request),
         )
     except services.InboxError as exc:
-        return toast_response(tone="error", title="Not scheduled", body=str(exc))
-    return toast_response(tone="success", title="Reply scheduled", events=_refresh(inboxSent=True))
+        return toast_response(tone="error", title=gettext("Not scheduled"), body=str(exc))
+    return toast_response(tone="success", title=gettext("Reply scheduled"), events=_refresh(inboxSent=True))
 
 
 @login_required
@@ -1353,12 +1396,12 @@ def update_scheduled_reply(
     try:
         body = _outbound_body(request, conversation)
     except _ComposeError as exc:
-        return toast_response(tone="error", title="Not changed", body=str(exc))
+        return toast_response(tone="error", title=gettext("Not changed"), body=str(exc))
     try:
         services.reschedule_reply(reply, body=body, send_at=when)
     except services.InboxError as exc:
-        return toast_response(tone="error", title="Not changed", body=str(exc))
-    return toast_response(tone="success", title="Scheduled reply updated", events=_refresh())
+        return toast_response(tone="error", title=gettext("Not changed"), body=str(exc))
+    return toast_response(tone="success", title=gettext("Scheduled reply updated"), events=_refresh())
 
 
 @login_required
@@ -1372,8 +1415,8 @@ def cancel_scheduled_reply(
         ScheduledReply, request.workspace, pk=scheduled_reply_id, conversation=conversation
     )
     if not services.cancel_scheduled_reply(reply):
-        return toast_response(tone="info", title="Already gone", events=_refresh())
-    return toast_response(tone="success", title="Scheduled reply cancelled", events=_refresh())
+        return toast_response(tone="info", title=gettext("Already gone"), events=_refresh())
+    return toast_response(tone="success", title=gettext("Scheduled reply cancelled"), events=_refresh())
 
 
 # ---------------------------------------------------------------------------
@@ -1463,7 +1506,7 @@ def _outbound_body(
     """
     text = (request.POST.get("body") or "").strip()
     if len(text) > MAX_REPLY_CHARS:
-        raise _ComposeError("That message is too long.")
+        raise _ComposeError(gettext("That message is too long."))
     dropped = dropped if dropped is not None else set()
     blocks: list[Any] = []
     if text:
@@ -1472,9 +1515,10 @@ def _outbound_body(
         blocks.extend(_attachments(request, conversation, dropped))
     if not blocks:
         raise _ComposeError(
-            f"{conversation.channel_connection.get_platform_display()} cannot carry that attachment."
+            gettext("%(platform)s cannot carry that attachment.")
+            % {"platform": conversation.channel_connection.get_platform_display()}
             if dropped
-            else "Write something first."
+            else gettext("Write something first.")
         )
     return OutboundMessage(blocks=tuple(blocks)).to_body()
 
@@ -1503,7 +1547,7 @@ def _attachments(request: WorkspaceRequest, conversation: Conversation, dropped:
         try:
             asset = resolve(media_id, workspace=request.workspace)
         except MediaNotFoundError:
-            raise _ComposeError("One of those attachments is no longer in the library.") from None
+            raise _ComposeError(gettext("One of those attachments is no longer in the library.")) from None
         kind = str(asset["kind"])
         if capabilities is not None and not capabilities.supports_block(kind):
             dropped.add(kind)
@@ -1585,8 +1629,8 @@ def label_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
             color=request.POST.get("color") or "",
         )
     except services.InboxError as exc:
-        return toast_response(tone="error", title="Not created", body=str(exc))
-    return toast_response(tone="success", title="Label created", events={"inboxLabelsChanged": True})
+        return toast_response(tone="error", title=gettext("Not created"), body=str(exc))
+    return toast_response(tone="success", title=gettext("Label created"), events={"inboxLabelsChanged": True})
 
 
 @login_required
@@ -1597,8 +1641,8 @@ def label_update(request: WorkspaceRequest, workspace_id: str, label_id: str) ->
     try:
         services.update_label(label, name=request.POST.get("name") or "", color=request.POST.get("color") or "")
     except services.InboxError as exc:
-        return toast_response(tone="error", title="Not saved", body=str(exc))
-    return toast_response(tone="success", title="Label saved", events=_refresh(inboxLabelsChanged=True))
+        return toast_response(tone="error", title=gettext("Not saved"), body=str(exc))
+    return toast_response(tone="success", title=gettext("Label saved"), events=_refresh(inboxLabelsChanged=True))
 
 
 @login_required
@@ -1615,7 +1659,7 @@ def label_delete(request: WorkspaceRequest, workspace_id: str, label_id: str) ->
     """
     label = _label_or_404(request, label_id)
     label.delete()
-    return toast_response(tone="success", title="Label deleted", events=_refresh(inboxLabelsChanged=True))
+    return toast_response(tone="success", title=gettext("Label deleted"), events=_refresh(inboxLabelsChanged=True))
 
 
 # ---------------------------------------------------------------------------
@@ -1731,12 +1775,12 @@ def rule_save(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=raw) if raw else None
     name = (request.POST.get("name") or "").strip()
     if not name:
-        return toast_response(tone="error", title="Not saved", body="A rule needs a name.")
+        return toast_response(tone="error", title=gettext("Not saved"), body=gettext("A rule needs a name."))
     try:
         condition = rules_engine.validate_condition(request.workspace, _posted_condition(request))
         actions = rules_engine.validate_actions(request.workspace, _posted_actions(request))
     except (rules_engine.RuleValidationError, ConditionValidationError) as exc:
-        return toast_response(tone="error", title="Not saved", body=str(exc))
+        return toast_response(tone="error", title=gettext("Not saved"), body=str(exc))
 
     # An enabled inbox rule is an active automation and spends the same budget a
     # published flow does — it is "when this arrives, do that", which is what an
@@ -1757,12 +1801,12 @@ def rule_save(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         with organization_locked(request.org):
             refusal = _plan_refusal(request)
             if refusal is not None:
-                return toast_response(tone="warn", title="Not saved", body=refusal)
+                return toast_response(tone="warn", title=gettext("Not saved"), body=refusal)
             rule.save()
-        return toast_response(tone="success", title="Rule saved", events={"inboxRulesChanged": True})
+        return toast_response(tone="success", title=gettext("Rule saved"), events={"inboxRulesChanged": True})
 
     rule.save()
-    return toast_response(tone="success", title="Rule saved", events={"inboxRulesChanged": True})
+    return toast_response(tone="success", title=gettext("Rule saved"), events={"inboxRulesChanged": True})
 
 
 @login_required
@@ -1776,14 +1820,14 @@ def rule_toggle(request: WorkspaceRequest, workspace_id: str, rule_id: str) -> H
         with organization_locked(request.org):
             refusal = _plan_refusal(request)
             if refusal is not None:
-                return toast_response(tone="warn", title="Not enabled", body=refusal)
+                return toast_response(tone="warn", title=gettext("Not enabled"), body=refusal)
             rule.enabled = True
             rule.save(update_fields=["enabled", "updated_at"])
-        return toast_response(tone="success", title="Rule enabled", events={"inboxRulesChanged": True})
+        return toast_response(tone="success", title=gettext("Rule enabled"), events={"inboxRulesChanged": True})
 
     rule.enabled = False
     rule.save(update_fields=["enabled", "updated_at"])
-    return toast_response(tone="success", title="Rule disabled", events={"inboxRulesChanged": True})
+    return toast_response(tone="success", title=gettext("Rule disabled"), events={"inboxRulesChanged": True})
 
 
 @login_required
@@ -1792,7 +1836,7 @@ def rule_toggle(request: WorkspaceRequest, workspace_id: str, rule_id: str) -> H
 def rule_delete(request: WorkspaceRequest, workspace_id: str, rule_id: str) -> HttpResponse:
     rule = get_scoped_object_or_404(InboxRule, request.workspace, pk=rule_id)
     rule.delete()
-    return toast_response(tone="success", title="Rule deleted", events={"inboxRulesChanged": True})
+    return toast_response(tone="success", title=gettext("Rule deleted"), events={"inboxRulesChanged": True})
 
 
 @login_required
@@ -1807,7 +1851,7 @@ def rule_reorder(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     about what happened.
     """
     services.reorder_rules(request.workspace, request.POST.getlist("rule"))
-    return toast_response(tone="success", title="Order updated", events={"inboxRulesChanged": True})
+    return toast_response(tone="success", title=gettext("Order updated"), events={"inboxRulesChanged": True})
 
 
 @login_required

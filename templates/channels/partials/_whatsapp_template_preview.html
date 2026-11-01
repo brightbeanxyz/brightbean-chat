@@ -4,6 +4,7 @@ apps.flows.rendering.render — plain token substitution, no template engine
 (SECURITY-BASELINE §3) — and is escaped by Django on the way out. Nothing on
 this page is ever marked safe.
 {% endcomment %}
+{% load i18n %}
 <div class="card">
   {% if rendered.header %}<p><strong>{{ rendered.header }}</strong></p>{% endif %}
   <p>{{ rendered.body|linebreaksbr }}</p>
@@ -11,7 +12,7 @@ this page is ever marked safe.
 </div>
 
 {% if samples %}
-  <p class="muted">Sample values, used for this preview only. They are never sent.</p>
+  <p class="muted">{% translate "Sample values, used for this preview only. They are never sent." %}</p>
   <ul>
     {% for sample in samples %}
       <li>
@@ -22,5 +23,5 @@ this page is ever marked safe.
     {% endfor %}
   </ul>
 {% else %}
-  <p class="muted">This template has no variables.</p>
+  <p class="muted">{% translate "This template has no variables." %}</p>
 {% endif %}

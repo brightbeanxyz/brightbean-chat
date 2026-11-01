@@ -33,19 +33,24 @@ from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
 from django.db import transaction
 from django.utils import timezone
+from django.utils.functional import Promise
+from django.utils.translation import gettext
 
 from apps.api import keys as key_tokens
 from apps.api.auth import SCOPE_PERMISSIONS, permissions_for_scopes
 from apps.api.events import SUBSCRIBABLE_EVENTS
-from apps.api.models import ApiKey, ApiScope, OutboundWebhook
+from apps.api.models import ApiKey, ApiScope, OutboundWebhook, PlatformApiKey
 from apps.members.models import OrgMembership, WorkspaceMembership
-from apps.members.roles import ORG_ROLE_LEVEL, OrgRole
+from apps.members.roles import ORG_ROLE_LEVEL, PERMISSION_KEYS, OrgRole
 
 __all__ = [
     "ApiKeysError",
     "create_webhook",
     "issue_api_key",
+    "issue_api_key_as_system",
+    "issue_platform_key",
     "revoke_api_key",
+    "revoke_platform_key",
     "update_webhook",
 ]
 
@@ -58,8 +63,13 @@ class ApiKeysError(ValueError):
 
     A ``ValueError`` for the same reason ``apps.contacts.errors.ContactsError``
     is one: the caller passed something that is not allowed, and the views turn
-    it into a form error rather than a 500.
+    it into a form error rather than a 500. ``code`` is for the platform API,
+    which maps a limit to a conflict and everything else to a validation error.
     """
+
+    def __init__(self, message: str, *, code: str = "invalid") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _issuer_may_manage(user: Any, workspace: Any) -> None:
@@ -67,27 +77,28 @@ def _issuer_may_manage(user: Any, workspace: Any) -> None:
     org_membership = OrgMembership.objects.filter(user=user, organization_id=workspace.organization_id).first()
     org_level = ORG_ROLE_LEVEL.get(getattr(org_membership, "org_role", ""), 0)
     if org_level < ORG_ROLE_LEVEL[OrgRole.ADMIN]:
-        raise ApiKeysError("Only an organization owner or admin can issue API keys.")
+        raise ApiKeysError(gettext("Only an organization owner or admin can issue API keys."))
 
     membership = WorkspaceMembership.objects.filter(user=user, workspace=workspace).first()
     if membership is None or not membership.effective_permissions.get("manage_api_keys", False):
-        raise ApiKeysError("You need the manage_api_keys permission in that workspace to issue a key for it.")
+        raise ApiKeysError(gettext("You need the manage_api_keys permission in that workspace to issue a key for it."))
 
 
 def _validated_scopes(scopes: Any, issuer_permissions: dict[str, bool]) -> list[str]:
     requested = sorted({str(scope) for scope in (scopes or ())})
     if not requested:
-        raise ApiKeysError("A key needs at least one scope.")
+        raise ApiKeysError(gettext("A key needs at least one scope."))
     unknown = [scope for scope in requested if scope not in SCOPE_PERMISSIONS]
     if unknown:
-        raise ApiKeysError(f"Unknown scope: {', '.join(unknown)}.")
+        raise ApiKeysError(gettext("Unknown scope: %(scopes)s.") % {"scopes": ", ".join(unknown)})
 
     held = {key for key, granted in issuer_permissions.items() if granted}
     for scope in requested:
         missing = sorted(SCOPE_PERMISSIONS[scope] - held)
         if missing:
             raise ApiKeysError(
-                f"You cannot grant the {scope} scope: it includes {', '.join(missing)}, which you do not hold."
+                gettext("You cannot grant the %(scope)s scope: it includes %(missing)s, which you do not hold.")
+                % {"scope": scope, "missing": ", ".join(missing)}
             )
     return requested
 
@@ -107,25 +118,49 @@ def _check_plan_allows_api(workspace: Any) -> None:
     try:
         check_api_access(workspace.organization)
     except PlanLimitError as exc:
-        raise ApiKeysError(str(exc)) from exc
+        raise ApiKeysError(str(exc), code=exc.code) from exc
+
+
+def _clean_key_name(name: str) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise ApiKeysError(gettext("Give the key a name so you can recognise it later."))
+    if len(cleaned) > 100:
+        raise ApiKeysError(gettext("The name is too long (100 characters maximum)."))
+    return cleaned
 
 
 def issue_api_key(*, workspace: Any, issuer: Any, name: str, scopes: Any) -> ApiKey:
-    """Mint a key. The returned object carries ``raw_token`` — show it once.
+    """Mint a key on behalf of a member. The returned object carries ``raw_token`` — show it once.
 
     Nothing persists the plaintext, and nothing can recover it: an operator who
     loses it issues a new key and revokes this one.
     """
-    cleaned_name = (name or "").strip()
-    if not cleaned_name:
-        raise ApiKeysError("Give the key a name so you can recognise it later.")
-    if len(cleaned_name) > 100:
-        raise ApiKeysError("The name is too long (100 characters maximum).")
-
+    if issuer is None:
+        # Failing closed: a caller that lost track of the user must not mint an
+        # unrestricted key by accident. Installation-level issuance has its own
+        # entry point below.
+        raise ApiKeysError(gettext("A key needs an issuer."))
+    cleaned_name = _clean_key_name(name)
     _issuer_may_manage(issuer, workspace)
     membership = WorkspaceMembership.objects.get(user=issuer, workspace=workspace)
     validated = _validated_scopes(scopes, membership.effective_permissions)
+    return _issue_locked(workspace=workspace, issuer=issuer, cleaned_name=cleaned_name, validated=validated)
 
+
+def issue_api_key_as_system(*, workspace: Any, name: str, scopes: Any) -> ApiKey:
+    """Mint a key with installation-level authority (the platform API).
+
+    Nobody's memberships are consulted and any known scope may be granted, so
+    this is only for callers that have already authenticated a platform key.
+    Name, scope, plan and per-workspace-cap checks are the same as for a member.
+    """
+    cleaned_name = _clean_key_name(name)
+    validated = _validated_scopes(scopes, {key: True for key in PERMISSION_KEYS})
+    return _issue_locked(workspace=workspace, issuer=None, cleaned_name=cleaned_name, validated=validated)
+
+
+def _issue_locked(*, workspace: Any, issuer: Any, cleaned_name: str, validated: Any) -> ApiKey:
     # The plan check and the insert are one critical section; see
     # apps/billing/entitlements.organization_locked on why the write has to be
     # inside the block rather than after it.
@@ -142,7 +177,9 @@ def _issue_api_key_locked(*, workspace: Any, issuer: Any, cleaned_name: str, val
     live = ApiKey.objects.for_workspace(workspace).filter(revoked_at__isnull=True).count()
     if live >= MAX_KEYS_PER_WORKSPACE:
         raise ApiKeysError(
-            f"This workspace already has {MAX_KEYS_PER_WORKSPACE} active keys. Revoke one before issuing another."
+            gettext("This workspace already has %(limit)s active keys. Revoke one before issuing another.")
+            % {"limit": MAX_KEYS_PER_WORKSPACE},
+            code="key_limit",
         )
 
     minted = key_tokens.mint()
@@ -164,12 +201,16 @@ def revoke_api_key(api_key: ApiKey) -> bool:
     Idempotent: revoking an already-revoked key returns False and leaves the
     original timestamp, so the audit trail says when it actually happened.
     """
-    if api_key.revoked_at is not None:
-        return False
     now = timezone.now()
-    api_key.revoked_at = now
-    ApiKey.objects.for_workspace(api_key.workspace_id).filter(pk=api_key.pk).update(revoked_at=now, updated_at=now)
-    return True
+    # The check is the WHERE clause, so two racing revokes keep the first timestamp.
+    revoked = (
+        ApiKey.objects.for_workspace(api_key.workspace_id)
+        .filter(pk=api_key.pk, revoked_at__isnull=True)
+        .update(revoked_at=now, updated_at=now)
+    )
+    if revoked:
+        api_key.revoked_at = now
+    return bool(revoked)
 
 
 def scope_summary(api_key: ApiKey) -> str:
@@ -182,9 +223,9 @@ def _validated_events(events: Any) -> list[str]:
     chosen = [str(event) for event in (events or ())]
     unknown = sorted(set(chosen) - set(SUBSCRIBABLE_EVENTS))
     if unknown:
-        raise ApiKeysError(f"Unknown event: {', '.join(unknown)}.")
+        raise ApiKeysError(gettext("Unknown event: %(events)s.") % {"events": ", ".join(unknown)})
     if not chosen:
-        raise ApiKeysError("Choose at least one event to send.")
+        raise ApiKeysError(gettext("Choose at least one event to send."))
     # Preserve the catalog's order rather than the form's, so two endpoints with
     # the same subscription store the same list.
     return [event for event in SUBSCRIBABLE_EVENTS if event in set(chosen)]
@@ -200,22 +241,22 @@ def _validated_url(url: str) -> str:
     """
     cleaned = (url or "").strip()
     if not cleaned:
-        raise ApiKeysError("Enter the URL deliveries should be sent to.")
+        raise ApiKeysError(gettext("Enter the URL deliveries should be sent to."))
     if len(cleaned) > 500:
-        raise ApiKeysError("That URL is too long (500 characters maximum).")
+        raise ApiKeysError(gettext("That URL is too long (500 characters maximum)."))
     parsed = urlsplit(cleaned)
     if parsed.scheme not in {"http", "https"}:
-        raise ApiKeysError("The URL must start with http:// or https://.")
+        raise ApiKeysError(gettext("The URL must start with http:// or https://."))
     if parsed.username or parsed.password:
         # The guard refuses these too; saying so here is a better error than a
         # delivery that silently never lands.
-        raise ApiKeysError("The URL must not carry a username or password.")
+        raise ApiKeysError(gettext("The URL must not carry a username or password."))
     if not parsed.hostname:
-        raise ApiKeysError("That does not look like a valid URL.")
+        raise ApiKeysError(gettext("That does not look like a valid URL."))
     try:
         URLValidator(schemes=["http", "https"])(cleaned)
     except ValidationError as exc:
-        raise ApiKeysError("That does not look like a valid URL.") from exc
+        raise ApiKeysError(gettext("That does not look like a valid URL.")) from exc
     return cleaned
 
 
@@ -241,7 +282,9 @@ def _create_webhook_locked(*, workspace: Any, url: str, events: Any) -> Outbound
 
     existing = OutboundWebhook.objects.for_workspace(workspace).count()
     if existing >= MAX_WEBHOOKS_PER_WORKSPACE:
-        raise ApiKeysError(f"This workspace already has {MAX_WEBHOOKS_PER_WORKSPACE} endpoints.")
+        raise ApiKeysError(
+            gettext("This workspace already has %(limit)s endpoints.") % {"limit": MAX_WEBHOOKS_PER_WORKSPACE}
+        )
 
     webhook = OutboundWebhook(
         workspace=workspace,
@@ -282,7 +325,7 @@ def rotate_webhook_secret(webhook: OutboundWebhook) -> str:
     return secret
 
 
-def known_scopes() -> list[tuple[str, str]]:
+def known_scopes() -> list[tuple[str, str | Promise]]:
     """``(value, label)`` pairs for the issuance form.
 
     Filtered through ``SCOPE_PERMISSIONS`` rather than listing ``ApiScope``
@@ -291,3 +334,29 @@ def known_scopes() -> list[tuple[str, str]]:
     server then refuses teaches people the product is broken.
     """
     return [(scope.value, scope.label) for scope in ApiScope if scope.value in SCOPE_PERMISSIONS]
+
+
+# --- Platform keys -----------------------------------------------------------
+
+
+def issue_platform_key(*, name: str) -> PlatformApiKey:
+    """Mint an installation-level key. The result carries ``raw_token`` — show it once."""
+    minted = key_tokens.mint(key_tokens.PLATFORM_TOKEN_PREFIX)
+    key = PlatformApiKey.objects.create(
+        name=_clean_key_name(name), lookup_prefix=minted.lookup_prefix, token_digest=minted.token_digest
+    )
+    key.raw_token = minted.plaintext
+    return key
+
+
+def revoke_platform_key(key: PlatformApiKey) -> bool:
+    """Revoke immediately. Returns False if the key was already revoked.
+
+    The check is the ``WHERE`` clause, not the in-memory instance, so two
+    operators racing report one revocation and the first timestamp survives.
+    """
+    now = timezone.now()
+    revoked = PlatformApiKey.objects.filter(pk=key.pk, revoked_at__isnull=True).update(revoked_at=now, updated_at=now)
+    if revoked:
+        key.revoked_at = now
+    return bool(revoked)

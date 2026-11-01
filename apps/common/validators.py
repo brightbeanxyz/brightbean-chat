@@ -16,6 +16,7 @@ import re
 from urllib.parse import urlsplit
 
 from django.core.exceptions import ValidationError
+from django.utils.translation import gettext
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -32,7 +33,7 @@ def validate_hex_color(value: str) -> None:
     if value in ("", None):
         return
     if not isinstance(value, str) or not _HEX_COLOR_RE.match(value):
-        raise ValidationError("Color must be a 6-digit hex value like #3B82F6.")
+        raise ValidationError(gettext("Color must be a 6-digit hex value like #3B82F6."))
 
 
 def is_valid_hex_color(value: str) -> bool:

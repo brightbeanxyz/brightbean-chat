@@ -55,6 +55,8 @@ from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
 
 from apps.channels import messenger_oauth
@@ -88,7 +90,7 @@ PENDING_MAX_AGE = messenger_oauth.STATE_MAX_AGE
 #: **Deliberately one message.** The operator's next step is the same in all of
 #: them — start again — and a message that distinguished them would tell whoever
 #: sent a forged link which part of the forgery was wrong.
-OAUTH_FAILED = (
+OAUTH_FAILED = _(
     "Facebook did not complete that connection. Start the setup again from this page, and make sure "
     "you accept every permission it asks for."
 )
@@ -96,7 +98,7 @@ OAUTH_FAILED = (
 #: Shown when the deployment has no Meta app configured. Distinct from the above
 #: on purpose: this one is not a failed attempt, it is a missing prerequisite, and
 #: the fix is a different screen.
-NOT_CONFIGURED = (
+NOT_CONFIGURED = _(
     "This deployment has no Facebook app credentials yet. Set "
     "PLATFORM_MESSENGER_CLIENT_ID and PLATFORM_MESSENGER_CLIENT_SECRET in the environment; see "
     "docs/channels/messenger.md."
@@ -105,7 +107,7 @@ NOT_CONFIGURED = (
 #: Shown when the page is good but Meta would not subscribe it. Separate because
 #: the fix is genuinely different — almost always a missing permission or an app
 #: still in development mode.
-SUBSCRIBE_FAILED = (
+SUBSCRIBE_FAILED = _(
     "That page connected, but Facebook would not start sending its messages here. The app needs "
     "pages_messaging and pages_manage_metadata on this page; see docs/channels/messenger.md."
 )
@@ -277,7 +279,7 @@ def messenger_pages(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
             # Either nothing was picked, or a hand-crafted POST named a page this
             # account does not administer. One answer for both: naming which
             # would confirm whether a given page id is real.
-            error = "Pick one of the pages below."
+            error = gettext("Pick one of the pages below.")
         else:
             error = _connect_page(request, chosen)
             if not error:
@@ -339,14 +341,14 @@ def _connect_page(request: WorkspaceRequest, page: messenger_oauth.MetaPage) -> 
         # SPEC §5's unique (platform, external_id) is deployment-wide, so this can
         # be another workspace's row. The wording never says which
         # (SECURITY-BASELINE §1).
-        return DUPLICATE_ACCOUNT_ERROR
+        return str(DUPLICATE_ACCOUNT_ERROR)
 
     try:
         messenger_adapter.subscribe_page(connection)
     except APIError:
         logger.info("Messenger connect: subscribing page failed for workspace %s.", request.workspace.pk)
         connection.delete()
-        return SUBSCRIBE_FAILED
+        return str(SUBSCRIBE_FAILED)
 
     try:
         messenger_adapter.set_get_started(connection)
@@ -358,12 +360,17 @@ def _connect_page(request: WorkspaceRequest, page: messenger_oauth.MetaPage) -> 
         logger.info("Messenger connect: the Get Started button could not be set for %s.", connection.pk)
         messages.warning(
             request,
-            f"Connected {connection.display_name}, but the Get Started button could not be configured. "
-            f"the welcome trigger will not fire until it is. See docs/channels/messenger.md.",
+            gettext(
+                "Connected %(name)s, but the Get Started button could not be configured. "
+                "The welcome trigger will not fire until it is. See docs/channels/messenger.md."
+            )
+            % {"name": connection.display_name},
         )
         return ""
 
-    messages.success(request, f"Connected {connection.display_name}. Send it a message to check it works.")
+    messages.success(
+        request, gettext("Connected %(name)s. Send it a message to check it works.") % {"name": connection.display_name}
+    )
     return ""
 
 
@@ -480,7 +487,7 @@ def messenger_posts(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     )
     context: dict[str, Any] = {"posts": [], "reason": "", "connect_url": ""}
     if connection is None:
-        context["reason"] = "Connect a Facebook page to pick posts from it."
+        context["reason"] = gettext("Connect a Facebook page to pick posts from it.")
         context["connect_url"] = reverse("channels:messenger_connect", kwargs={"workspace_id": workspace_id})
         return render(request, "channels/_messenger_posts.html", context)
 
@@ -488,10 +495,10 @@ def messenger_posts(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
         context["posts"] = messenger_adapter.recent_posts(connection)
     except APIError:
         logger.info("Messenger post picker: the page's posts were refused for connection %s.", connection.pk)
-        context["reason"] = "Facebook would not list this page's posts. Reconnect the channel and try again."
+        context["reason"] = gettext("Facebook would not list this page's posts. Reconnect the channel and try again.")
     except Exception:
         logger.exception("Messenger post picker failed for connection %s.", connection.pk)
-        context["reason"] = "The page's posts could not be loaded just now."
+        context["reason"] = gettext("The page's posts could not be loaded just now.")
     if not context["posts"] and not context["reason"]:
-        context["reason"] = "This page has no posts yet."
+        context["reason"] = gettext("This page has no posts yet.")
     return render(request, "channels/_messenger_posts.html", context)

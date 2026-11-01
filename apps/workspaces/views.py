@@ -15,6 +15,7 @@ from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.translation import gettext, ngettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.validators import is_valid_hex_color
@@ -83,8 +84,8 @@ def _greeting() -> str:
     """
     hour = timezone.localtime().hour
     if hour < 12:
-        return "Good morning"
-    return "Good afternoon" if hour < 18 else "Good evening"
+        return gettext("Good morning")
+    return gettext("Good afternoon") if hour < 18 else gettext("Good evening")
 
 
 def _kpis(request: WorkspaceRequest) -> dict[str, Any] | None:
@@ -178,31 +179,31 @@ def _setup_steps(request: WorkspaceRequest) -> list[dict[str, Any]]:
         {
             "key": "channel",
             "permission": "manage_channels",
-            "title": "Connect a channel",
-            "body": "Wherever people already message you: Telegram, Instagram, WhatsApp or email.",
-            "cta": "Connect a channel",
+            "title": gettext("Connect a channel"),
+            "body": gettext("Wherever people already message you: Telegram, Instagram, WhatsApp or email."),
+            "cta": gettext("Connect a channel"),
             "url": reverse("channels:list", kwargs={"workspace_id": workspace.id}),
             "done": has_channel,
-            "done_body": "Messages arrive here now.",
+            "done_body": gettext("Messages arrive here now."),
         },
         {
             "key": "flow",
             "permission": "edit_flows",
-            "title": "Build your first flow",
-            "body": "A template comes with its trigger and its replies already written.",
-            "cta": "Pick a template",
+            "title": gettext("Build your first flow"),
+            "body": gettext("A template comes with its trigger and its replies already written."),
+            "cta": gettext("Pick a template"),
             "url": reverse("flows:list", kwargs={"workspace_id": workspace.id}),
             "done": live_flows > 0,
-            "done_body": "A flow is answering for you.",
+            "done_body": gettext("A flow is answering for you."),
         },
         {
             "key": "team",
-            "title": "Invite your team",
-            "body": "Share the inbox so every reply does not land on you.",
-            "cta": "Invite people",
+            "title": gettext("Invite your team"),
+            "body": gettext("Share the inbox so every reply does not land on you."),
+            "cta": gettext("Invite people"),
             "url": reverse("members:list"),
             "done": teammates > 1,
-            "done_body": "Other people can answer too.",
+            "done_body": gettext("Other people can answer too."),
             # members:list is gated on an organisation role rather than a
             # workspace permission, and every member holds "member".
             "permission": "",
@@ -247,8 +248,8 @@ def _needs_you(request: WorkspaceRequest) -> list[dict[str, Any]]:
             items.append(
                 {
                     "tone": "bad",
-                    "title": f"{connection.display_name} needs reconnecting",
-                    "body": "It stopped receiving messages. Reconnect to start again.",
+                    "title": gettext("%(name)s needs reconnecting") % {"name": connection.display_name},
+                    "body": gettext("It stopped receiving messages. Reconnect to start again."),
                     "url": reverse(
                         "channels:detail",
                         kwargs={"workspace_id": workspace.id, "connection_id": connection.id},
@@ -266,8 +267,11 @@ def _needs_you(request: WorkspaceRequest) -> list[dict[str, Any]]:
             items.append(
                 {
                     "tone": "warn",
-                    "title": f"{unassigned} conversation{'' if unassigned == 1 else 's'} unassigned",
-                    "body": "Nobody has picked these up yet.",
+                    "title": ngettext(
+                        "%(count)s conversation unassigned", "%(count)s conversations unassigned", unassigned
+                    )
+                    % {"count": unassigned},
+                    "body": gettext("Nobody has picked these up yet."),
                     "url": reverse("inbox:list", kwargs={"workspace_id": workspace.id}),
                 }
             )
@@ -277,8 +281,8 @@ def _needs_you(request: WorkspaceRequest) -> list[dict[str, Any]]:
             items.append(
                 {
                     "tone": "quiet",
-                    "title": f"“{broadcast.name}” is scheduled",
-                    "body": "Review it before it goes.",
+                    "title": gettext("“%(name)s” is scheduled") % {"name": broadcast.name},
+                    "body": gettext("Review it before it goes."),
                     "url": reverse(
                         "broadcasts:detail",
                         kwargs={"workspace_id": workspace.id, "broadcast_id": broadcast.id},
@@ -339,14 +343,14 @@ def update_settings(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     # string, so "   " would survive it and be stored as a nameless workspace.
     name = (request.POST.get("name") or "").strip()[:100]
     if not name:
-        messages.error(request, "A workspace needs a name.")
+        messages.error(request, gettext("A workspace needs a name."))
         return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
     # (organization, name) is unique, so without this an ordinary rename onto a
     # sibling's name reaches the constraint and 500s. The create flow already
     # checks; this one has to as well.
     clash = Workspace.objects.for_org(workspace.organization_id).filter(name=name).exclude(pk=workspace.pk)
     if clash.exists():
-        messages.error(request, "Another workspace in this organization already has that name.")
+        messages.error(request, gettext("Another workspace in this organization already has that name."))
         return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
     workspace.name = name
     workspace.icon = (request.POST.get("icon") or "").strip()[:8]
@@ -361,19 +365,19 @@ def update_settings(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     # this page — the picker's list is narrower than the column's rule.
     submitted_timezone = (request.POST.get("timezone") or "").strip()[:63]
     if submitted_timezone and not is_valid_timezone(submitted_timezone):
-        messages.error(request, "That is not a timezone we recognise.")
+        messages.error(request, gettext("That is not a timezone we recognise."))
         return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
     workspace.timezone = submitted_timezone
 
     for field in ("primary_color", "secondary_color"):
         value = (request.POST.get(field) or "").strip()
         if not is_valid_hex_color(value):
-            messages.error(request, "Colours must be a 6-digit hex value like #3B82F6.")
+            messages.error(request, gettext("Colours must be a 6-digit hex value like #3B82F6."))
             return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))
         setattr(workspace, field, value)
 
     workspace.save(
         update_fields=["name", "icon", "description", "timezone", "primary_color", "secondary_color", "updated_at"]
     )
-    messages.success(request, "Workspace settings saved.")
+    messages.success(request, gettext("Workspace settings saved."))
     return redirect(reverse("workspaces:settings", kwargs={"workspace_id": workspace_id}))

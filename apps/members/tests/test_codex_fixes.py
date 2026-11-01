@@ -161,9 +161,9 @@ class TestOneOrganizationPerAccount:
 
         from apps.members import services
 
-        source = inspect.getsource(services.accept_invitation)
+        source = inspect.getsource(services._attach_member)
 
-        assert ".exclude(organization=invitation.organization)" in source
+        assert ".exclude(organization=org)" in source
 
 
 @pytest.mark.django_db

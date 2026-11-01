@@ -10,13 +10,15 @@ typed into Instagram. A thumbnail renders as an <img> because the CSP allows
 which this fragment is swapped into. An inline `onclick` would be blocked: the
 CSP has no 'unsafe-inline' in script-src (config/settings/base.py).
 {% endcomment %}
+{% load i18n %}
 <div class="rounded-lg border p-2" style="border-color: var(--border);" data-testid="instagram-post-picker">
   {% if reason %}
     <p class="text-xs" style="color: var(--text-secondary);">
       {{ reason }}
-      {% if connect_url %}<a href="{{ connect_url }}">Connect Instagram</a>.{% endif %}
+      {% if connect_url %}<a href="{{ connect_url }}">{% translate "Connect Instagram" %}</a>.{% endif %}
     </p>
   {% else %}
+    {% translate "(no caption)" as no_caption %}
     <ul class="grid grid-cols-2 gap-2">
       {% for post in posts %}
         <li class="flex items-center gap-2">
@@ -28,12 +30,12 @@ CSP has no 'unsafe-inline' in script-src (config/settings/base.py).
                    class="rounded object-cover" style="width: 40px; height: 40px;" />
             {% endif %}
             <span>
-              <span class="block">{{ post.caption|default:"(no caption)"|truncatechars:48 }}</span>
+              <span class="block">{{ post.caption|default:no_caption|truncatechars:48 }}</span>
               <span style="color: var(--text-tertiary);">{{ post.media_type }}</span>
             </span>
           </button>
           {% if post.permalink %}
-            <a class="text-xs" href="{{ post.permalink }}" target="_blank" rel="noopener noreferrer">View</a>
+            <a class="text-xs" href="{{ post.permalink }}" target="_blank" rel="noopener noreferrer">{% translate "View" %}</a>
           {% endif %}
         </li>
       {% endfor %}

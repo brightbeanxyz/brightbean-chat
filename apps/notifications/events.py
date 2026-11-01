@@ -29,8 +29,17 @@ import logging
 from dataclasses import dataclass, field
 
 from django.conf import settings
+from django.utils.functional import Promise
+from django.utils.translation import gettext_lazy as _
 
 logger = logging.getLogger(__name__)
+
+#: A copy template: first-party text, plain or gettext_lazy. mypy's django-stubs
+#: types gettext_lazy()'s return as a private, str-like `_StrPromise` rather
+#: than `str` itself — `Promise` is its public base and the widest type that
+#: import is willing to name, so fields and helpers that accept either a plain
+#: template or a lazy-translated one are typed against it instead.
+CopyText = str | Promise
 
 __all__ = [
     "REGISTRY",
@@ -95,11 +104,11 @@ class NotificationEvent:
     """
 
     key: str
-    label: str
+    label: CopyText
     icon: str
-    title: str
-    body: str = ""
-    email_subject: str = ""
+    title: CopyText
+    body: CopyText = ""
+    email_subject: CopyText = ""
     emails_by_default: bool = True
     # Maps to the alert-* / --success-* / --error-* vocabulary in
     # apps/theme/static_src/src/styles.css.
@@ -147,9 +156,15 @@ def get_event(key: str) -> NotificationEvent | None:
     return None
 
 
-def registered_choices() -> list[tuple[str, str]]:
-    """``(key, label)`` pairs for the history page's type filter and the admin."""
-    return sorted(((event.key, event.label) for event in REGISTRY.values()), key=lambda pair: pair[1])
+def registered_choices() -> list[tuple[str, CopyText]]:
+    """``(key, label)`` pairs for the history page's type filter and the admin.
+
+    Sorted by the *resolved* label — a lazy ``label`` compares and orders by
+    its translation in whatever language is active when this runs, same as
+    ``str(label)`` would, so the filter reads alphabetically in Russian or
+    Kyrgyz rather than by the English word underneath it.
+    """
+    return sorted(((event.key, event.label) for event in REGISTRY.values()), key=lambda pair: str(pair[1]))
 
 
 class _Blanks(dict):
@@ -173,16 +188,22 @@ def render(event: NotificationEvent, context: dict[str, object]) -> tuple[str, s
     return _format(event.title, mapping), _format(event.body, mapping)
 
 
-def _format(template: str, mapping: _Blanks) -> str:
+def _format(template: CopyText, mapping: _Blanks) -> str:
     if not template:
         return ""
+    # str(template) first: a gettext_lazy value's translation is looked up
+    # against whichever language is active right now, at the point it is
+    # forced to text — which is exactly what's wanted here, at render() time.
+    # It also sidesteps a mypy gap: django-stubs only exposes .format_map() on
+    # its private, str-like proxy type, not on CopyText's public Promise half.
+    text = str(template)
     try:
-        return template.format_map(mapping)
+        return text.format_map(mapping)
     except (IndexError, ValueError) as exc:
         # A malformed template is ours, not the caller's; do not take the
         # notification down with it.
         logger.error("Malformed notification copy template %r: %s", template, exc)
-        return template
+        return text
 
 
 # ---------------------------------------------------------------------------
@@ -196,13 +217,19 @@ def _format(template: str, mapping: _Blanks) -> str:
 register_event(
     NotificationEvent(
         key="flow_loop_cap_hit",
-        label="Flow hit the loop cap",
+        label=_("Flow hit the loop cap"),
         icon="flows",
         tone="error",
         # SPEC §9.2: 30 blocks since the last pause fails the run and notifies
         # workspace admins. The loop-cap consumer is L3-B.
-        title='Flow "{flow_name}" hit the loop cap',
-        body=(
+        #
+        # gettext_lazy, not gettext: this module runs at import time, before
+        # any request (and so before any language is active). The lazy proxy
+        # defers the actual translation lookup to render()'s .format_map()
+        # call, by which point apps.notifications.engine.notify() has
+        # activated the recipient's language — see that module.
+        title=_('Flow "{flow_name}" hit the loop cap'),
+        body=_(
             "It ran 30 blocks without pausing for {contact_name} and was stopped. "
             "Open the flow and look for a cycle with no wait in it."
         ),
@@ -213,11 +240,11 @@ register_event(
 register_event(
     NotificationEvent(
         key="flow_execution_failed",
-        label="Flow run failed",
+        label=_("Flow run failed"),
         icon="flows",
         tone="error",
-        title='Flow "{flow_name}" failed',
-        body="The run for {contact_name} stopped at {node_label}: {error}",
+        title=_('Flow "{flow_name}" failed'),
+        body=_("The run for {contact_name} stopped at {node_label}: {error}"),
         required_context=("flow_name",),
         # In-app only. This fires once per *execution*, so one broken flow in a
         # busy workspace is a mail storm. The in-app rows still pile up — see
@@ -229,11 +256,11 @@ register_event(
 register_event(
     NotificationEvent(
         key="channel_needs_reauth",
-        label="Channel needs reconnecting",
+        label=_("Channel needs reconnecting"),
         icon="channels",
         tone="warn",
-        title="{channel_name} needs reconnecting",
-        body=(
+        title=_("{channel_name} needs reconnecting"),
+        body=_(
             "{platform_label} stopped accepting the stored credentials. "
             "Nothing will send or receive on this channel until it is reconnected."
         ),
@@ -244,13 +271,13 @@ register_event(
 register_event(
     NotificationEvent(
         key="outbound_webhook_disabled",
-        label="Outbound webhook disabled",
+        label=_("Outbound webhook disabled"),
         icon="channels",
         tone="error",
         # SPEC §17: auto-disable after 100 consecutive failures, with an admin
         # notification. The consumer is L5-F (#25).
-        title="Webhook disabled after repeated failures",
-        body=(
+        title=_("Webhook disabled after repeated failures"),
+        body=_(
             "{url} failed {failure_count} times in a row and has been switched off. "
             "Re-enable it once the endpoint is healthy again."
         ),
@@ -261,13 +288,15 @@ register_event(
 register_event(
     NotificationEvent(
         key="inbox_reminder",
-        label="Inbox reminder",
+        label=_("Inbox reminder"),
         icon="inbox",
         tone="info",
         # SPEC §14: a scheduled_action that becomes an in-app notification.
         # In-app is the whole point of a reminder you set for yourself, so it
         # does not also earn an email.
-        title="Reminder: {contact_name}",
+        title=_("Reminder: {contact_name}"),
+        # No _() here: "{note}" is pure interpolation, no English prose to
+        # translate — the note itself is the caller's own data.
         body="{note}",
         emails_by_default=False,
     )
@@ -276,11 +305,12 @@ register_event(
 register_event(
     NotificationEvent(
         key="member_mentioned",
-        label="Mentioned by a teammate",
+        label=_("Mentioned by a teammate"),
         icon="users",
         tone="info",
         # SPEC §11.2: the action node's notify_members.
-        title="{actor_name} mentioned you",
+        title=_("{actor_name} mentioned you"),
+        # No _() here either — see inbox_reminder's note on "{note}" above.
         body="{message}",
         required_context=("actor_name",),
     )
@@ -289,11 +319,11 @@ register_event(
 register_event(
     NotificationEvent(
         key="broadcast_finished",
-        label="Broadcast finished",
+        label=_("Broadcast finished"),
         icon="broadcasts",
         tone="success",
-        title='Broadcast "{broadcast_name}" finished',
-        body="{sent} sent, {failed} failed, {skipped} skipped.",
+        title=_('Broadcast "{broadcast_name}" finished'),
+        body=_("{sent} sent, {failed} failed, {skipped} skipped."),
         required_context=("broadcast_name",),
         emails_by_default=False,
     )
@@ -302,10 +332,11 @@ register_event(
 register_event(
     NotificationEvent(
         key="whatsapp_template_reviewed",
-        label="WhatsApp template reviewed",
+        label=_("WhatsApp template reviewed"),
         icon="channels",
         tone="info",
-        title='WhatsApp template "{template_name}" was {status}',
+        title=_('WhatsApp template "{template_name}" was {status}'),
+        # No _() here — "{reason}" is pure interpolation, see inbox_reminder's note.
         body="{reason}",
         required_context=("template_name", "status"),
     )

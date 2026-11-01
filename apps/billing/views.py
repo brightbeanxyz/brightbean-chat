@@ -26,6 +26,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse, HttpResponseRedirect
 from django.shortcuts import redirect
+from django.utils.translation import gettext
 from django.views.decorators.http import require_POST
 
 from apps.billing import services
@@ -71,7 +72,7 @@ def checkout(request: OrgRequest) -> HttpResponse:
     if is_paid(request.org):
         # Already subscribed. Sending them through checkout again would create a
         # second subscription against the same customer.
-        messages.info(request, "You are already on the paid plan.")
+        messages.info(request, gettext("You are already on the paid plan."))
         return redirect(services.billing_page_url())
 
     interval = (request.POST.get("interval") or "").strip()
@@ -88,7 +89,7 @@ def checkout(request: OrgRequest) -> HttpResponse:
     except StripeUnavailableError:
         # Never Stripe's own message: a provider's error text routinely quotes
         # the request that produced it, and this is rendered in a page.
-        messages.error(request, "We could not start checkout. Try again in a minute.")
+        messages.error(request, gettext("We could not start checkout. Try again in a minute."))
         return redirect(services.billing_page_url())
 
     return HttpResponseSeeOther(url)
@@ -114,7 +115,7 @@ def portal(request: OrgRequest) -> HttpResponse:
         # like a route that was never there.
         raise Http404("There is no billing account to manage.") from None
     except StripeUnavailableError:
-        messages.error(request, "We could not open the billing portal. Try again in a minute.")
+        messages.error(request, gettext("We could not open the billing portal. Try again in a minute."))
         return redirect(services.billing_page_url())
 
     return HttpResponseSeeOther(url)

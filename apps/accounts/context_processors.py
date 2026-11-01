@@ -12,15 +12,14 @@ from django.http import HttpRequest
 
 
 def auth_providers(request: HttpRequest) -> dict[str, Any]:
-    """Whether Google SSO is actually usable.
+    """Which SSO providers are actually usable.
 
     allauth registers the provider whenever the app is in INSTALLED_APPS, so
     ``{% get_providers %}`` yields a Google button on a deployment that never
     set the credentials — and clicking it fails somewhere inside the OAuth
-    redirect. Templates gate on this instead.
+    redirect. Templates gate on this instead. The same goes for the OIDC provider: with
+    only it configured, ``get_providers`` still yields Google.
     """
-    return {
-        "google_configured": bool(
-            getattr(settings, "GOOGLE_AUTH_CLIENT_ID", "") and getattr(settings, "GOOGLE_AUTH_CLIENT_SECRET", "")
-        )
-    }
+    google = bool(getattr(settings, "GOOGLE_AUTH_CLIENT_ID", "") and getattr(settings, "GOOGLE_AUTH_CLIENT_SECRET", ""))
+    ids = [pid for pid, on in (("google", google), (settings.OIDC_PROVIDER_ID, settings.OIDC_CONFIGURED)) if on]
+    return {"google_configured": google, "sso_provider_ids": ids}

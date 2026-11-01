@@ -1,4 +1,4 @@
-{% load common_extras humanize %}
+{% load common_extras humanize i18n %}
 {% comment %}
 The broadcast table. One renderer for the toolbar's fetch and for every
 mutation's refresh event.
@@ -24,11 +24,11 @@ page is where the live figures are computed, and it writes them back here.
 <table class="data-table">
     <thead>
         <tr>
-            <th scope="col">Broadcast</th>
-            <th scope="col">Status</th>
-            <th scope="col">Delivery</th>
-            <th scope="col" class="is-num">Audience</th>
-            <th scope="col">When</th>
+            <th scope="col">{% translate "Broadcast" %}</th>
+            <th scope="col">{% translate "Status" %}</th>
+            <th scope="col">{% translate "Delivery" %}</th>
+            <th scope="col" class="is-num">{% translate "Audience" %}</th>
+            <th scope="col">{% translate "When" %}</th>
         </tr>
     </thead>
     <tbody>
@@ -64,10 +64,10 @@ page is where the live figures are computed, and it writes them back here.
             </td>
             <td class="is-num font-semibold">{% if stats.queued %}{{ stats.queued|intcomma }}{% else %}—{% endif %}</td>
             <td class="whitespace-nowrap" style="color: var(--text-secondary);">
-                {% if broadcast.status == "sending" %}Now
+                {% if broadcast.status == "sending" %}{% translate "Now" %}
                 {% elif broadcast.finished_at %}{{ broadcast.finished_at|naturalday:"j M" }}
                 {% elif broadcast.scheduled_at %}{{ broadcast.scheduled_at|naturalday:"j M"|capfirst }} {{ broadcast.scheduled_at|time:"H:i" }}
-                {% else %}Not sent{% endif %}
+                {% else %}{% translate "Not sent" %}{% endif %}
             </td>
         </tr>
         {% endwith %}
@@ -77,9 +77,14 @@ page is where the live figures are computed, and it writes them back here.
 </div>
 </div>
 {% elif q or filters.status or filters.channel %}
-{% include "components/empty_state.html" with icon="search" title="No broadcasts match" body="Try a different word, or clear the filters." action_label="Clear filters" action_click="clearFilters()" %}
+{% translate "No broadcasts match" as no_match_title %}
+{% translate "Try a different word, or clear the filters." as no_match_body %}
+{% translate "Clear filters" as clear_filters_label %}
+{% include "components/empty_state.html" with icon="search" title=no_match_title body=no_match_body action_label=clear_filters_label action_click="clearFilters()" %}
 {% else %}
-{% include "components/empty_state.html" with icon="broadcasts" title="No broadcasts yet" body="One message to many contacts. Start one with New broadcast." %}
+{% translate "No broadcasts yet" as no_broadcasts_title %}
+{% translate "One message to many contacts. Start one with New broadcast." as no_broadcasts_body %}
+{% include "components/empty_state.html" with icon="broadcasts" title=no_broadcasts_title body=no_broadcasts_body %}
 {% endif %}
 
 {% if truncated %}
@@ -89,6 +94,6 @@ page is where the live figures are computed, and it writes them back here.
   set rather than this page, so they are the way to reach what is not here.
 {% endcomment %}
 <p class="bc-hint mt-2">
-    Showing the {{ page_size }} most recent. Search or filter by status to find an older one.
+    {% blocktranslate %}Showing the {{ page_size }} most recent. Search or filter by status to find an older one.{% endblocktranslate %}
 </p>
 {% endif %}

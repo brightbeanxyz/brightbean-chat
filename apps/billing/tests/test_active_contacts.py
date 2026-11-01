@@ -204,7 +204,7 @@ class TestTheSendPath:
         with no change of their own."""
         from apps.messaging.codes import Limit, describe
 
-        sentence = describe(Limit.ACTIVE_CONTACTS.value)
+        sentence = str(describe(Limit.ACTIVE_CONTACTS.value))
 
         assert sentence != Limit.ACTIVE_CONTACTS.value
         assert "plan" in sentence.lower()

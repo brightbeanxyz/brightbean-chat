@@ -40,6 +40,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import i18n from "../../i18n";
 import { FieldShell, fieldId, type FieldProps } from "../fields";
 import { useField } from "../FieldContext";
 import { SYSTEM_TOKENS } from "./PlaceholderInput";
@@ -69,23 +70,22 @@ const ALLOWED_ATTRIBUTES: Record<string, Set<string>> = {
 const SAFE_SCHEME = /^(https?:|mailto:)/i;
 
 interface Command {
-  label: string;
-  title: string;
+  key: string;
   /** execCommand name, or a function for the ones that need an argument. */
   run: (exec: (command: string, value?: string) => void) => void;
 }
 
 const COMMANDS: Command[] = [
-  { label: "B", title: "Bold", run: (exec) => exec("bold") },
-  { label: "I", title: "Italic", run: (exec) => exec("italic") },
-  { label: "U", title: "Underline", run: (exec) => exec("underline") },
-  { label: "H", title: "Heading", run: (exec) => exec("formatBlock", "<h2>") },
-  { label: "¶", title: "Paragraph", run: (exec) => exec("formatBlock", "<p>") },
-  { label: "• List", title: "Bulleted list", run: (exec) => exec("insertUnorderedList") },
-  { label: "1. List", title: "Numbered list", run: (exec) => exec("insertOrderedList") },
-  { label: "❝", title: "Quote", run: (exec) => exec("formatBlock", "<blockquote>") },
-  { label: "―", title: "Divider", run: (exec) => exec("insertHorizontalRule") },
-  { label: "Clear", title: "Remove formatting", run: (exec) => exec("removeFormat") },
+  { key: "bold", run: (exec) => exec("bold") },
+  { key: "italic", run: (exec) => exec("italic") },
+  { key: "underline", run: (exec) => exec("underline") },
+  { key: "heading", run: (exec) => exec("formatBlock", "<h2>") },
+  { key: "paragraph", run: (exec) => exec("formatBlock", "<p>") },
+  { key: "bulletedList", run: (exec) => exec("insertUnorderedList") },
+  { key: "numberedList", run: (exec) => exec("insertOrderedList") },
+  { key: "quote", run: (exec) => exec("formatBlock", "<blockquote>") },
+  { key: "divider", run: (exec) => exec("insertHorizontalRule") },
+  { key: "clear", run: (exec) => exec("removeFormat") },
 ];
 
 /**
@@ -244,7 +244,7 @@ export function RichTextEditor(props: FieldProps) {
   );
 
   const link = useCallback(() => {
-    const url = window.prompt("Link to which URL?");
+    const url = window.prompt(i18n.t("richText.linkPrompt"));
     if (url && SAFE_SCHEME.test(url.trim())) {
       exec("createLink", url.trim());
     }
@@ -266,14 +266,14 @@ export function RichTextEditor(props: FieldProps) {
 
   return (
     <FieldShell {...props}>
-      <div className="fb-subgroup" role="toolbar" aria-label="Formatting">
+      <div className="fb-subgroup" role="toolbar" aria-label={i18n.t("richText.toolbarLabel")}>
         {COMMANDS.map((command) => (
           <button
-            key={command.label}
+            key={command.key}
             type="button"
             className="fb-palette-item"
-            title={command.title}
-            aria-label={command.title}
+            title={i18n.t(`richText.commands.${command.key}.title`)}
+            aria-label={i18n.t(`richText.commands.${command.key}.title`)}
             disabled={readOnly}
             // onMouseDown, not onClick: a click moves focus out of the editable
             // surface first, and the browser drops the selection execCommand
@@ -283,28 +283,28 @@ export function RichTextEditor(props: FieldProps) {
               command.run(exec);
             }}
           >
-            {command.label}
+            {i18n.t(`richText.commands.${command.key}.label`)}
           </button>
         ))}
         <button
           type="button"
           className="fb-palette-item"
-          title="Link"
+          title={i18n.t("richText.link")}
           disabled={readOnly}
           onMouseDown={(event) => {
             event.preventDefault();
             link();
           }}
         >
-          Link
+          {i18n.t("richText.link")}
         </button>
         <button
           type="button"
           className="fb-palette-item"
-          title="Insert a contact field"
+          title={i18n.t("richText.insertContactField")}
           // An explicit label because the visible text is punctuation: without
           // it a screen reader announces "brace brace".
-          aria-label="Insert a contact field"
+          aria-label={i18n.t("richText.insertContactField")}
           disabled={readOnly}
           onClick={() => setTokensOpen((open) => !open)}
         >
@@ -313,17 +313,17 @@ export function RichTextEditor(props: FieldProps) {
         <button
           type="button"
           className="fb-palette-item"
-          title="Edit the HTML directly"
-          aria-label="Edit the HTML directly"
+          title={i18n.t("richText.editHtmlDirectly")}
+          aria-label={i18n.t("richText.editHtmlDirectly")}
           aria-pressed={source}
           onClick={() => setSource((on) => !on)}
         >
-          Source
+          {i18n.t("richText.source")}
         </button>
       </div>
 
       {tokensOpen && !readOnly ? (
-        <div className="fb-subgroup" role="listbox" aria-label="Insert a placeholder">
+        <div className="fb-subgroup" role="listbox" aria-label={i18n.t("richText.insertPlaceholder")}>
           {tokens.map((token) => (
             <button
               key={token}
@@ -367,15 +367,14 @@ export function RichTextEditor(props: FieldProps) {
           suppressContentEditableWarning
           role="textbox"
           aria-multiline="true"
-          aria-label="Email body"
+          aria-label={i18n.t("richText.emailBody")}
           onInput={onInput}
           onBlur={onBlur}
           onPaste={onPaste}
         />
       )}
       <p className="fb-field-help">
-        Formatting, links and images. Use the <code>{"{{ }}"}</code> button to insert a contact field;
-        values are escaped when the email is built.
+        {i18n.t("richText.helpPrefix")} <code>{"{{ }}"}</code> {i18n.t("richText.helpSuffix")}
       </p>
     </FieldShell>
   );

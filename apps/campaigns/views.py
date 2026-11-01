@@ -22,6 +22,9 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import QuerySet
 from django.http import HttpResponse
 from django.shortcuts import render
+from django.utils.functional import Promise
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.campaigns import selectors, services
@@ -70,6 +73,20 @@ require_workspace_member = require_workspace_role(WorkspaceRole.VIEWER)
 #: glance; the CRM's bulk action is the answer to "I want fifty of them".
 SUGGESTIONS = 8
 
+#: The window's weekday checkboxes, keyed by ``apps.common.windows.WEEKDAYS``'s
+#: codes. Abbreviated to match the tight checkbox row, and translated here
+#: rather than with ``day.title()`` on the raw "mon"/"tue" codes, which are not
+#: words in every language.
+WEEKDAY_LABELS: dict[str, str | Promise] = {
+    "mon": _("Mon"),
+    "tue": _("Tue"),
+    "wed": _("Wed"),
+    "thu": _("Thu"),
+    "fri": _("Fri"),
+    "sat": _("Sat"),
+    "sun": _("Sun"),
+}
+
 
 def _sequence(request: WorkspaceRequest, sequence_id: str) -> Sequence:
     return get_scoped_object_or_404(Sequence, request.workspace, pk=sequence_id)
@@ -111,7 +128,7 @@ def sequence_list(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         "sequences": sequences,
         "query": query,
         "filters": {"status": statuses},
-        "filter_groups": [{"key": "status", "label": "Status", "options": list(SequenceStatus.choices)}],
+        "filter_groups": [{"key": "status", "label": gettext("Status"), "options": list(SequenceStatus.choices)}],
         "can_edit": _can_edit(request),
     }
     template = "campaigns/_list_rows.html" if request.headers.get("HX-Request") else "campaigns/list.html"
@@ -125,11 +142,11 @@ def sequence_create(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     try:
         sequence = services.create_sequence(request.workspace, name=request.POST.get("name", ""))
     except CampaignsError as exc:
-        return _refused(exc, "Could not create the sequence")
+        return _refused(exc, gettext("Could not create the sequence"))
     return toast_response(
         tone="success",
-        title="Sequence created",
-        body=f"{sequence.name} is ready for its first step.",
+        title=gettext("Sequence created"),
+        body=gettext("%(name)s is ready for its first step.") % {"name": sequence.name},
         events={"sequencesChanged": True},
     )
 
@@ -142,8 +159,8 @@ def sequence_rename(request: WorkspaceRequest, workspace_id: str, sequence_id: s
     try:
         services.rename_sequence(sequence, name=request.POST.get("name", ""))
     except CampaignsError as exc:
-        return _refused(exc, "Could not rename the sequence")
-    return toast_response(tone="success", title="Sequence renamed", events={"sequencesChanged": True})
+        return _refused(exc, gettext("Could not rename the sequence"))
+    return toast_response(tone="success", title=gettext("Sequence renamed"), events={"sequencesChanged": True})
 
 
 @login_required
@@ -154,11 +171,16 @@ def sequence_status(request: WorkspaceRequest, workspace_id: str, sequence_id: s
     try:
         services.set_status(sequence, status=(request.POST.get("status") or "").strip())
     except CampaignsError as exc:
-        return _refused(exc, "Could not change the status")
+        return _refused(exc, gettext("Could not change the status"))
+    titles = {
+        SequenceStatus.ACTIVE: gettext("Sequence activated"),
+        SequenceStatus.DRAFT: gettext("Sequence paused"),
+        SequenceStatus.ARCHIVED: gettext("Sequence archived"),
+    }
     return toast_response(
         tone="success",
-        title=f"Sequence {sequence.get_status_display().lower()}",
-        body="Only active sequences accept new subscribers. People already on it are unaffected.",
+        title=titles.get(SequenceStatus(sequence.status), gettext("Sequence status changed")),
+        body=gettext("Only active sequences accept new subscribers. People already on it are unaffected."),
         events={"sequencesChanged": True},
     )
 
@@ -172,8 +194,8 @@ def sequence_delete(request: WorkspaceRequest, workspace_id: str, sequence_id: s
     services.delete_sequence(sequence)
     return toast_response(
         tone="success",
-        title="Sequence deleted",
-        body=f"{name} and everyone's progress through it.",
+        title=gettext("Sequence deleted"),
+        body=gettext("%(name)s and everyone's progress through it.") % {"name": name},
         events={"sequencesChanged": True},
     )
 
@@ -195,7 +217,7 @@ def _detail_context(request: WorkspaceRequest, sequence: Sequence) -> dict[str, 
         "delay_units": list(DelayUnit.choices),
         # (value, label) pairs for the window's weekday checkboxes, off the
         # shared table rather than a second list of day names in a template.
-        "weekdays": [(day, day.title()) for day in WEEKDAYS],
+        "weekdays": [(day, WEEKDAY_LABELS.get(day, day.title())) for day in WEEKDAYS],
         "status_options": list(SequenceStatus.choices),
         "can_edit": can_edit,
         # Behind `can_edit` because `campaigns/_step_fields.html` — its only
@@ -273,8 +295,8 @@ def step_create(request: WorkspaceRequest, workspace_id: str, sequence_id: str) 
             send_window=_window_from(request),
         )
     except CampaignsError as exc:
-        return _refused(exc, "Could not add the step")
-    return toast_response(tone="success", title="Step added", events={"sequenceStepsChanged": True})
+        return _refused(exc, gettext("Could not add the step"))
+    return toast_response(tone="success", title=gettext("Step added"), events={"sequenceStepsChanged": True})
 
 
 @login_required
@@ -292,8 +314,8 @@ def step_update(request: WorkspaceRequest, workspace_id: str, sequence_id: str, 
             send_window=_window_from(request),
         )
     except CampaignsError as exc:
-        return _refused(exc, "Could not save the step")
-    return toast_response(tone="success", title="Step saved", events={"sequenceStepsChanged": True})
+        return _refused(exc, gettext("Could not save the step"))
+    return toast_response(tone="success", title=gettext("Step saved"), events={"sequenceStepsChanged": True})
 
 
 @login_required
@@ -305,8 +327,8 @@ def step_move(request: WorkspaceRequest, workspace_id: str, sequence_id: str, st
     try:
         services.move_step(step, direction=(request.POST.get("direction") or "").strip())
     except CampaignsError as exc:
-        return _refused(exc, "Could not move the step")
-    return toast_response(tone="success", title="Order updated", events={"sequenceStepsChanged": True})
+        return _refused(exc, gettext("Could not move the step"))
+    return toast_response(tone="success", title=gettext("Order updated"), events={"sequenceStepsChanged": True})
 
 
 @login_required
@@ -317,8 +339,8 @@ def step_delete(request: WorkspaceRequest, workspace_id: str, sequence_id: str, 
     services.delete_step(_step(request, sequence, step_id))
     return toast_response(
         tone="success",
-        title="Step removed",
-        body="Anyone waiting on it moves to whatever took its place.",
+        title=gettext("Step removed"),
+        body=gettext("Anyone waiting on it moves to whatever took its place."),
         events={"sequenceStepsChanged": True},
     )
 
@@ -410,11 +432,11 @@ def subscriber_add(request: WorkspaceRequest, workspace_id: str, sequence_id: st
     try:
         services.subscribe(sequence, contact, source="manual")
     except CampaignsError as exc:
-        return _refused(exc, "Could not subscribe that contact")
+        return _refused(exc, gettext("Could not subscribe that contact"))
     return toast_response(
         tone="success",
-        title="Contact subscribed",
-        body=f"{contact.display_name} starts at step 1.",
+        title=gettext("Contact subscribed"),
+        body=gettext("%(name)s starts at step 1.") % {"name": contact.display_name},
         events={"sequenceSubscribersChanged": True, "sequenceStepsChanged": True},
     )
 
@@ -430,7 +452,7 @@ def subscriber_remove(
     services.unsubscribe(sequence, enrollment.contact)
     return toast_response(
         tone="success",
-        title="Contact unsubscribed",
-        body="Future steps are cancelled. Anything already running finishes.",
+        title=gettext("Contact unsubscribed"),
+        body=gettext("Future steps are cancelled. Anything already running finishes."),
         events={"sequenceSubscribersChanged": True, "sequenceStepsChanged": True},
     )

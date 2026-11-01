@@ -31,6 +31,8 @@ from typing import Any
 
 from django.apps import apps as django_apps
 from django.dispatch import Signal
+from django.utils.functional import Promise
+from django.utils.translation import gettext_lazy as _
 
 __all__ = [
     "PUBLISHABLE_FIELDS",
@@ -84,14 +86,18 @@ PUBLISHABLE_FIELDS: frozenset[str] = frozenset({"source", "platform", "preview",
 
 #: Human copy for the settings page, kept beside the names so a new event
 #: cannot be offered without one.
-EVENT_LABELS: dict[str, str] = {
-    "contact.created": "Contact created",
-    "contact.tag_added": "Tag added to a contact",
-    "message.received": "Inbound message received",
-    "execution.completed": "Flow execution completed",
-    "sequence.subscribed": "Contact subscribed to a sequence",
-    "sequence.unsubscribed": "Contact unsubscribed from a sequence",
-    "broadcast.finished": "Broadcast finished",
+#: Human labels for the webhook subscription checkboxes (and the API docs'
+#: event table). gettext_lazy: this dict is built once at import, before any
+#: request — see apps.notifications.events for why lazy is what defers the
+#: translation lookup to render time.
+EVENT_LABELS: dict[str, str | Promise] = {
+    "contact.created": _("Contact created"),
+    "contact.tag_added": _("Tag added to a contact"),
+    "message.received": _("Inbound message received"),
+    "execution.completed": _("Flow execution completed"),
+    "sequence.subscribed": _("Contact subscribed to a sequence"),
+    "sequence.unsubscribed": _("Contact unsubscribed from a sequence"),
+    "broadcast.finished": _("Broadcast finished"),
 }
 
 

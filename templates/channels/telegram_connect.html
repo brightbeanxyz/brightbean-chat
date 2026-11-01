@@ -1,5 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 Connect a Telegram bot — the shape all six connect pages share: a hero carrying
 the platform's own mark, the numbered sequence of things to do somewhere else,
@@ -20,7 +20,7 @@ pi-unknown, which is visible.
 Full setup notes live in docs/channels/telegram.md — a note to ourselves, so it
 stays in here rather than on the page.
 {% endcomment %}
-{% block title %}Connect Telegram · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Connect Telegram" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
@@ -30,11 +30,9 @@ stays in here rather than on the page.
     <div class="flex items-start gap-4 mb-7">
         <span class="pi-chip pi-chip-hero {{ platform_key|platform_class }}">{% include "partials/_platform_icon.html" with platform=platform_key size="lg" only %}</span>
         <div class="min-w-0">
-            <h1 class="page-title">Connect a Telegram bot</h1>
+            <h1 class="page-title">{% translate "Connect a Telegram bot" %}</h1>
             <p class="page-lede mt-1.5">
-                Telegram bots are created by talking to BotFather. The token it gives you is the
-                whole credential: anyone holding it can read and send as your bot, so it is stored
-                encrypted and never shown again.
+                {% translate "Telegram bots are created by talking to BotFather. The token it gives you is the whole credential: anyone holding it can read and send as your bot, so it is stored encrypted and never shown again." %}
             </p>
         </div>
     </div>
@@ -47,19 +45,19 @@ stays in here rather than on the page.
     {% if error %}<div class="alert-error">{{ error }}</div>{% endif %}
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-4">Before you paste</h2>
+        <h2 class="section-title mb-4">{% translate "Before you paste" %}</h2>
         <ol class="cn-steps" role="list">
-            <li class="cn-step">Open <code>@BotFather</code> in Telegram and send <code>/newbot</code>.</li>
-            <li class="cn-step">Choose a display name and a username ending in <code>bot</code>.</li>
-            <li class="cn-step">Copy the token it replies with. It looks like <code>123456789:AA…</code>.</li>
+            <li class="cn-step">{% blocktranslate %}Open <code>@BotFather</code> in Telegram and send <code>/newbot</code>.{% endblocktranslate %}</li>
+            <li class="cn-step">{% blocktranslate %}Choose a display name and a username ending in <code>bot</code>.{% endblocktranslate %}</li>
+            <li class="cn-step">{% blocktranslate %}Copy the token it replies with. It looks like <code>123456789:AA…</code>.{% endblocktranslate %}</li>
         </ol>
     </section>
 
     <form class="card p-6 mb-5" method="post">
         {% csrf_token %}
-        <h2 class="section-title mb-4">Paste the token</h2>
+        <h2 class="section-title mb-4">{% translate "Paste the token" %}</h2>
         <div class="field">
-            <label class="field-label" for="bot_token">Bot token</label>
+            <label class="field-label" for="bot_token">{% translate "Bot token" %}</label>
             {% comment %}
             autocomplete="off" and a password input: this value is a live
             credential and must not end up in the browser's saved form data. It
@@ -67,26 +65,26 @@ stays in here rather than on the page.
             and there never will be.
             {% endcomment %}
             <input class="form-input-styled" type="password" id="bot_token" name="bot_token" autocomplete="off" spellcheck="false" required>
-            <p class="field-hint">Pasted once. We verify it with Telegram before saving anything.</p>
+            <p class="field-hint">{% translate "Pasted once. We verify it with Telegram before saving anything." %}</p>
         </div>
         <div class="form-actions">
-            <button type="submit" class="btn-pill-primary">Connect</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Connect" %}</button>
         </div>
     </form>
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-3">What happens next</h2>
+        <h2 class="section-title mb-3">{% translate "What happens next" %}</h2>
         <p class="section-note mb-4">
-            We call <code>getMe</code> to check the token and learn your bot's username, then point
-            Telegram at this deployment with <code>setWebhook</code> and a secret only the two of us
-            know.
+            {% blocktranslate %}We call <code>getMe</code> to check the token and learn your bot's username, then point Telegram at this deployment with <code>setWebhook</code> and a secret only the two of us know.{% endblocktranslate %}
         </p>
-        {% include "partials/_copy_field.html" with label="Deliveries arrive at" value=webhook_url hint="That URL has to be reachable from the public internet over HTTPS with a valid certificate. Telegram will not deliver to anything else. On a local machine, put a tunnel in front of it first. Full setup notes are in docs/channels/telegram.md." only %}
+        {% translate "Deliveries arrive at" as deliveries_at_label %}
+        {% translate "That URL has to be reachable from the public internet over HTTPS with a valid certificate. Telegram will not deliver to anything else. On a local machine, put a tunnel in front of it first. Full setup notes are in docs/channels/telegram.md." as deliveries_at_hint %}
+        {% include "partials/_copy_field.html" with label=deliveries_at_label value=webhook_url hint=deliveries_at_hint only %}
     </section>
 
     <a class="cn-back" href="{{ list_url }}">
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-        Back to channels
+        {% translate "Back to channels" %}
     </a>
 </div>
 {% endwith %}

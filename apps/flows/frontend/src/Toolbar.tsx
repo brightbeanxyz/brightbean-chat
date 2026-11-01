@@ -18,37 +18,39 @@
  * flow cannot start yet.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ApiError } from "./api/client";
 import { TestOnChannel } from "./TestOnChannel";
 import type { ValidationPayload } from "./schema/types";
 import { loadFlow, publishFlow, renameFlow, takeFlowOffline } from "./api/flows";
-import { OFFLINE_HINT, publishView, type PublishAction } from "./publishState";
+import i18n from "./i18n";
+import { offlineHint, publishView, type PublishAction } from "./publishState";
 import { refreshApplies } from "./refreshState";
 import { showToast } from "./toast";
 import type { Autosave } from "./persistence/autosave";
 import { useBuilder, useBuilderStore } from "./store/context";
 import { ProblemsRail } from "./validation/ProblemsRail";
 
-const OFFLINE_CONFIRM =
-  "Set this flow offline? It stops replying straight away, including to people partway through it.";
-
-const BUSY_LABEL: Record<PublishAction, string> = {
-  publish: "Setting live…",
-  enable: "Turning on…",
-  offline: "Setting offline…",
-};
+// i18n.t(), not a module-level table: these labels have to read in whatever
+// language is active *now*, the same reason publishState.ts's own copy does.
+function busyLabel(action: PublishAction): string {
+  return {
+    publish: i18n.t("toolbar.settingLive"),
+    enable: i18n.t("toolbar.turningOn"),
+    offline: i18n.t("toolbar.settingOffline"),
+  }[action];
+}
 
 function stoppedCopy(stopped: number): string {
   if (stopped === 0) {
-    return "Nothing new will start it.";
+    return i18n.t("toolbar.stoppedNone");
   }
-  return stopped === 1
-    ? "1 conversation in progress was stopped."
-    : `${stopped} conversations in progress were stopped.`;
+  return i18n.t("toolbar.stoppedCount", { count: stopped });
 }
 
 export function Toolbar({ autosave }: { autosave: Autosave | null }) {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const save = useBuilder((state) => state.save);
   const canEdit = useBuilder((state) => state.env.canEdit);
@@ -75,9 +77,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       // has not seen publishes the *previous* version — and then reports
       // success, which is worse than doing nothing.
       if (autosave && !(await autosave.flush())) {
-        store.getState().setSave({
-          message: "Not set live: your latest changes could not be saved. Fix the problems listed here and try again.",
-        });
+        store.getState().setSave({ message: t("toolbar.flushFailed") });
         return;
       }
       const result = await publishFlow(store.getState().env);
@@ -99,8 +99,8 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
       // Report the action where the person pressed it, as well as in status.
       showToast({
         tone: "success",
-        title: enablingOnly ? "Triggers turned on" : "Flow published",
-        body: enablingOnly ? "All triggers are now on." : `Version ${result.version.version} is published.`,
+        title: enablingOnly ? t("toolbar.triggersTurnedOn") : t("toolbar.publishedTitle"),
+        body: enablingOnly ? t("toolbar.allTriggersOn") : t("toolbar.publishedBody", { version: result.version.version }),
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 422) {
@@ -108,7 +108,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         if (payload?.validation) {
           store.getState().applyValidation(payload.validation, store.getState().revision);
         }
-        store.getState().setSave({ message: "Not set live: fix the problems listed here and try again." });
+        store.getState().setSave({ message: t("toolbar.publishRejected") });
       } else if (error instanceof ApiError) {
         store.getState().setSave({ message: error.message });
       }
@@ -120,7 +120,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
   const takeOffline = async () => {
     // Asked first because it cannot be taken back: the conversations it stops
     // stay stopped when the flow is set live again.
-    if (!window.confirm(OFFLINE_CONFIRM)) {
+    if (!window.confirm(t("toolbar.offlineConfirm"))) {
       return;
     }
     setBusy("offline");
@@ -140,7 +140,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
           ? { version: result.version, publishedVersion: null, message: null }
           : { publishedVersion: null, message: null },
       );
-      showToast({ tone: "success", title: "Flow is offline", body: stoppedCopy(result.stopped) });
+      showToast({ tone: "success", title: t("toolbar.flowIsOffline"), body: stoppedCopy(result.stopped) });
     } catch (error) {
       if (error instanceof ApiError) {
         store.getState().setSave({ message: error.message });
@@ -173,7 +173,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         {env.listUrl ? (
           <a className="fb-toolbar-back" href={env.listUrl}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
-            Flows
+            {t("toolbar.flows")}
           </a>
         ) : null}
         {env.listUrl ? <span className="fb-toolbar-sep" aria-hidden="true">/</span> : null}
@@ -187,17 +187,17 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
             {view.saveLabel}
           </span>
         ) : (
-          <span className="fb-save-state">Read-only</span>
+          <span className="fb-save-state">{t("toolbar.readOnly")}</span>
         )}
       </div>
 
       <div className="fb-toolbar-actions">
         {canEdit ? (
           <>
-            <button type="button" className="fb-toolbar-icon" aria-label="Undo" title="Undo" disabled={!canUndo} onClick={() => store.getState().undo()}>
+            <button type="button" className="fb-toolbar-icon" aria-label={t("toolbar.undo")} title={t("toolbar.undo")} disabled={!canUndo} onClick={() => store.getState().undo()}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
             </button>
-            <button type="button" className="fb-toolbar-icon" aria-label="Redo" title="Redo" disabled={!canRedo} onClick={() => store.getState().redo()}>
+            <button type="button" className="fb-toolbar-icon" aria-label={t("toolbar.redo")} title={t("toolbar.redo")} disabled={!canRedo} onClick={() => store.getState().redo()}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h2"/></svg>
             </button>
           </>
@@ -206,15 +206,15 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
         <button
           type="button"
           className="fb-toolbar-icon"
-          aria-label={statsVisible ? "Hide stats" : "Show stats"}
-          title={statsVisible ? "Hide stats" : "Show stats"}
+          aria-label={statsVisible ? t("toolbar.hideStats") : t("toolbar.showStats")}
+          title={statsVisible ? t("toolbar.hideStats") : t("toolbar.showStats")}
           aria-pressed={statsVisible}
           onClick={() => store.getState().toggleStats()}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11M10 20V5M16 20v-8M22 20V8"/></svg>
         </button>
 
-        {statsFailed ? <span className="fb-badge fb-badge-warning">Stats unavailable</span> : null}
+        {statsFailed ? <span className="fb-badge fb-badge-warning">{t("toolbar.statsUnavailable")}</span> : null}
 
         {/*
           Editors only. Testing runs the *draft* against a real chat and sends
@@ -236,7 +236,7 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
             title={view.publishHint ?? undefined}
             onClick={() => void (view.action === "offline" ? takeOffline() : publish())}
           >
-            {busy && busy === view.action ? BUSY_LABEL[busy] : view.publishLabel}
+            {busy && busy === view.action ? busyLabel(busy) : view.publishLabel}
           </button>
         ) : null}
         {canEdit && view.secondary === "offline" ? (
@@ -244,10 +244,10 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
             type="button"
             className="btn-pill-secondary btn-pill-sm"
             disabled={busy !== null}
-            title={OFFLINE_HINT}
+            title={offlineHint()}
             onClick={() => void takeOffline()}
           >
-            {busy === "offline" ? BUSY_LABEL.offline : "Set offline"}
+            {busy === "offline" ? busyLabel("offline") : t("toolbar.setOffline")}
           </button>
         ) : null}
 
@@ -264,12 +264,13 @@ export function Toolbar({ autosave }: { autosave: Autosave | null }) {
  * sent — the server would refuse it, and the old name is the better answer.
  */
 function FlowName() {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const flow = useBuilder((state) => state.flow);
   const env = useBuilder((state) => state.env);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const name = flow?.name || env.flowName || "Untitled flow";
+  const name = flow?.name || env.flowName || t("toolbar.untitledFlow");
   const canRename = env.canEdit && Boolean(env.renameUrl);
 
   const commit = async () => {
@@ -288,8 +289,8 @@ function FlowName() {
       store.getState().setFlow(flow);
       showToast({
         tone: "error",
-        title: "Not renamed",
-        body: error instanceof ApiError ? error.message : "The name could not be saved.",
+        title: t("toolbar.notRenamed"),
+        body: error instanceof ApiError ? error.message : t("toolbar.nameNotSaved"),
       });
     }
   };
@@ -298,7 +299,7 @@ function FlowName() {
     return (
       <input
         className="fb-flow-name-input"
-        aria-label="Flow name"
+        aria-label={t("toolbar.flowName")}
         value={draft}
         maxLength={200}
         autoFocus
@@ -318,7 +319,7 @@ function FlowName() {
     <button
       type="button"
       className="fb-flow-name"
-      title="Rename this flow"
+      title={t("toolbar.renameThisFlow")}
       onClick={() => {
         setDraft(name);
         setEditing(true);
@@ -365,6 +366,7 @@ function useDismiss(open: boolean, ref: { current: HTMLElement | null }, close: 
  * refused, because that is the moment someone needs to read it.
  */
 function ProblemsMenu({ errorCount, warningCount }: { errorCount: number; warningCount: number }) {
+  const { t } = useTranslation();
   const message = useBuilder((state) => state.save.message);
   const [open, setOpen] = useState(false);
   const wrapper = useRef<HTMLDivElement>(null);
@@ -379,7 +381,11 @@ function ProblemsMenu({ errorCount, warningCount }: { errorCount: number; warnin
 
   const tone = errorCount > 0 ? "error" : warningCount > 0 ? "warning" : "ok";
   const label =
-    errorCount > 0 ? `${errorCount} to fix` : warningCount > 0 ? `${warningCount} to check` : "Ready";
+    errorCount > 0
+      ? t("toolbar.toFix", { count: errorCount })
+      : warningCount > 0
+        ? t("toolbar.toCheck", { count: warningCount })
+        : t("toolbar.ready");
 
   return (
     <div className="fb-problems-menu" ref={wrapper}>
@@ -394,10 +400,10 @@ function ProblemsMenu({ errorCount, warningCount }: { errorCount: number; warnin
         {label}
       </button>
       {open ? (
-        <div className="fb-problems-popover" role="dialog" aria-label="Problems">
+        <div className="fb-problems-popover" role="dialog" aria-label={t("toolbar.problems")}>
           <ProblemsRail onPick={close} />
           {errorCount === 0 && warningCount === 0 && !message ? (
-            <p className="fb-empty">Nothing to fix. This flow is ready to go live.</p>
+            <p className="fb-empty">{t("toolbar.nothingToFix")}</p>
           ) : null}
         </div>
       ) : null}
@@ -411,6 +417,7 @@ function ProblemsMenu({ errorCount, warningCount }: { errorCount: number; warnin
  * response is a file.
  */
 function OverflowMenu() {
+  const { t } = useTranslation();
   const env = useBuilder((state) => state.env);
   const [open, setOpen] = useState(false);
   const wrapper = useRef<HTMLDivElement>(null);
@@ -425,8 +432,8 @@ function OverflowMenu() {
       <button
         type="button"
         className="fb-toolbar-icon"
-        aria-label="More actions"
-        title="More actions"
+        aria-label={t("toolbar.moreActions")}
+        title={t("toolbar.moreActions")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((was) => !was)}
@@ -436,10 +443,10 @@ function OverflowMenu() {
       {open ? (
         <div className="fb-overflow-menu" role="menu">
           {env.exportUrl ? (
-            <a role="menuitem" href={env.exportUrl} onClick={close}>Download a copy</a>
+            <a role="menuitem" href={env.exportUrl} onClick={close}>{t("toolbar.downloadCopy")}</a>
           ) : null}
           {env.exportBundleUrl ? (
-            <a role="menuitem" href={env.exportBundleUrl} onClick={close}>Download with everything it uses</a>
+            <a role="menuitem" href={env.exportBundleUrl} onClick={close}>{t("toolbar.downloadBundle")}</a>
           ) : null}
         </div>
       ) : null}

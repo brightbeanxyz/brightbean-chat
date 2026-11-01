@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The composer's Alpine component.
 
 Its own file for the reason templates/contacts/_filter_bar_script.html is: it is
@@ -20,6 +20,9 @@ It also does not validate. The server does, through the flow schema
 POST gets the same treatment as this form, which is the only place validation can
 honestly live (SECURITY-BASELINE §7).
 {% endcomment %}
+{% translate "No per-message price is set for this workspace yet." as no_price_hint %}
+{% translate "About" as about_word %}
+{% translate "per message." as per_message_word %}
 <script nonce="{{ request.csp_nonce }}">
   function broadcastComposer(config, savedConfig, savedTag, savedTemplateId, savedVariables) {
     // A stored block -> the editor's working shape, and back. The schema is a
@@ -114,11 +117,11 @@ honestly live (SECURITY-BASELINE §7).
         var template = this.selectedTemplate;
         if (!hint || !template) return '';
         if (!hint.configured) {
-          return 'No per-message price is set for this workspace yet.';
+          return '{{ no_price_hint|escapejs }}';
         }
         // The composer multiplies; apps/channels/segments.py and the cost-hint
         // table both deliberately stop short of a price times a count.
-        return 'About ' + hint[template.category] + ' ' + hint.currency + ' per message.';
+        return '{{ about_word|escapejs }} ' + hint[template.category] + ' ' + hint.currency + ' {{ per_message_word|escapejs }}';
       },
 
       // SPEC §6.6's segment-count preview is NOT computed here. The arithmetic

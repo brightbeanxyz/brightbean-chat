@@ -24,6 +24,7 @@ from typing import Any
 
 from django.conf import settings
 from django.db.models import Sum
+from django.utils.translation import gettext
 
 from apps.media_library.mimes import MediaKind
 
@@ -87,7 +88,11 @@ def _mb(value: int) -> str:
 def check_file_size(kind: str, size: int) -> None:
     limit = max_upload_bytes(kind)
     if size > limit:
-        raise QuotaExceededError(f"That {kind} is {_mb(size)}. The limit for {kind} files is {_mb(limit)}.")
+        label = str(MediaKind(kind).label).lower() if kind in MediaKind.values else kind
+        raise QuotaExceededError(
+            gettext("That %(kind)s is %(size)s. The limit for %(kind)s files is %(limit)s.")
+            % {"kind": label, "size": _mb(size), "limit": _mb(limit)}
+        )
 
 
 def check_workspace_quota(workspace: Any, incoming: int) -> None:
@@ -101,6 +106,9 @@ def check_workspace_quota(workspace: Any, incoming: int) -> None:
     used = used_bytes(workspace)
     if used + max(incoming, 0) > limit:
         raise QuotaExceededError(
-            f"This workspace has used {_mb(used)} of its {_mb(limit)} media allowance. "
-            f"Delete something before uploading {_mb(incoming)}."
+            gettext(
+                "This workspace has used %(used)s of its %(limit)s media allowance. "
+                "Delete something before uploading %(incoming)s."
+            )
+            % {"used": _mb(used), "limit": _mb(limit), "incoming": _mb(incoming)}
         )

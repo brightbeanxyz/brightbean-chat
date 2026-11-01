@@ -164,6 +164,9 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # on. The trailing group is deliberately not anchored to exactly 8 hex
     # characters: a truncated key in a log line is still key material.
     (re.compile(r"\bbb_[A-Za-z0-9_\-]{20,}"), REDACTED),
+    # The platform API's installation-level keys, ``bbp_<secret>_<8 hex>``. A
+    # separate prefix, so ``\bbb_`` above does not see them.
+    (re.compile(r"\bbbp_[A-Za-z0-9_\-]{20,}"), REDACTED),
     # Resend API keys and Svix webhook signing secrets (issue #21). Both reach a
     # log the same way an AWS key does — pasted into a support ticket, or echoed
     # by a provider's own error text — and neither is caught by the key=value

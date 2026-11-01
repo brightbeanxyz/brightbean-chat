@@ -22,6 +22,7 @@ from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.http.response import HttpResponseBase
 from django.shortcuts import render
 from django.urls import reverse
+from django.utils.translation import gettext, ngettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
@@ -215,11 +216,11 @@ def upload(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 
     files = request.FILES.getlist("files")
     if not files:
-        return JsonResponse({"error": "No files were sent."}, status=400)
+        return JsonResponse({"error": gettext("No files were sent.")}, status=400)
 
     max_files = int(settings.MEDIA_MAX_FILES_PER_UPLOAD)
     if len(files) > max_files:
-        return JsonResponse({"error": f"Up to {max_files} files per upload."}, status=400)
+        return JsonResponse({"error": gettext("Up to %(max)s files per upload.") % {"max": max_files}}, status=400)
 
     folder = _folder_or_404(request, request.POST.get("folder"))
 
@@ -241,7 +242,11 @@ def upload(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     if _is_htmx(request):
         response = render(request, "media_library/_asset_grid.html", _grid_context(request, request.POST))
         tone = "warn" if errors else "success"
-        title = f"{len(created)} uploaded" if created else "Nothing uploaded"
+        title = (
+            ngettext("%(count)s uploaded", "%(count)s uploaded", len(created)) % {"count": len(created)}
+            if created
+            else gettext("Nothing uploaded")
+        )
         body = "; ".join(f"{e['filename']}: {e['error']}" for e in errors[:3])
         return _with_trigger(response, _toast(tone, title, body))
 
@@ -266,7 +271,7 @@ def asset_edit(request: WorkspaceRequest, workspace_id: str, asset_id: str) -> H
         title=request.POST.get("title"),
         alt_text=request.POST.get("alt_text"),
     )
-    return toast_response(tone="success", title="Saved", events={"mediaChanged": True})
+    return toast_response(tone="success", title=gettext("Saved"), events={"mediaChanged": True})
 
 
 @login_required
@@ -278,7 +283,7 @@ def asset_move(request: WorkspaceRequest, workspace_id: str, asset_id: str) -> H
     services.move_asset(asset, folder)
     return toast_response(
         tone="success",
-        title="Moved" if folder else "Moved to the library root",
+        title=gettext("Moved") if folder else gettext("Moved to the library root"),
         body=folder.name if folder else "",
         events={"mediaChanged": True},
     )
@@ -293,8 +298,8 @@ def asset_delete(request: WorkspaceRequest, workspace_id: str, asset_id: str) ->
     services.delete_asset(asset)
     return toast_response(
         tone="success",
-        title="Deleted",
-        body=f"{filename} is gone, and every delivery URL for it now fails.",
+        title=gettext("Deleted"),
+        body=gettext("%(name)s is gone, and every delivery URL for it now fails.") % {"name": filename},
         events={"mediaChanged": True},
     )
 
@@ -310,13 +315,13 @@ def asset_delete(request: WorkspaceRequest, workspace_id: str, asset_id: str) ->
 def folder_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     name = request.POST.get("name", "").strip()
     if not name:
-        return _rejected("A folder needs a name.")
+        return _rejected(gettext("A folder needs a name."))
     parent = _folder_or_404(request, request.POST.get("parent"))
     try:
         services.create_folder(workspace=request.workspace, name=name, parent=parent)
     except ValidationError as exc:
         return _rejected(_first_message(exc))
-    return toast_response(tone="success", title="Folder created", events={"mediaChanged": True})
+    return toast_response(tone="success", title=gettext("Folder created"), events={"mediaChanged": True})
 
 
 @login_required
@@ -326,12 +331,12 @@ def folder_rename(request: WorkspaceRequest, workspace_id: str, folder_id: str) 
     folder = get_scoped_object_or_404(MediaFolder, request.workspace, pk=folder_id)
     name = request.POST.get("name", "").strip()
     if not name:
-        return _rejected("A folder needs a name.")
+        return _rejected(gettext("A folder needs a name."))
     try:
         services.rename_folder(folder, name)
     except ValidationError as exc:
         return _rejected(_first_message(exc))
-    return toast_response(tone="success", title="Folder renamed", events={"mediaChanged": True})
+    return toast_response(tone="success", title=gettext("Folder renamed"), events={"mediaChanged": True})
 
 
 @login_required
@@ -360,8 +365,8 @@ def folder_delete(request: WorkspaceRequest, workspace_id: str, folder_id: str) 
 
     return toast_response(
         tone="success",
-        title="Folder deleted",
-        body="Anything inside it moved up one level.",
+        title=gettext("Folder deleted"),
+        body=gettext("Anything inside it moved up one level."),
         events={"mediaChanged": True},
     )
 

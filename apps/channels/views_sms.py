@@ -37,6 +37,7 @@ from django.db import IntegrityError, transaction
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.channels import segments
@@ -230,11 +231,12 @@ def _connect(
     except IntegrityError:
         # Can be another workspace's row. The wording never says which
         # (SECURITY-BASELINE §1).
-        return DUPLICATE_ACCOUNT_ERROR
+        return str(DUPLICATE_ACCOUNT_ERROR)
 
     messages.success(
         request,
-        f"Connected {connection.display_name}. Paste the webhook URL below into Twilio to start receiving messages.",
+        gettext("Connected %(name)s. Paste the webhook URL below into Twilio to start receiving messages.")
+        % {"name": connection.display_name},
     )
     return ""
 
@@ -273,12 +275,15 @@ def sms_settings_update(request: WorkspaceRequest, workspace_id: str) -> HttpRes
 
     _save_settings(row)
     if cost_ok:
-        messages.success(request, "SMS settings saved.")
+        messages.success(request, gettext("SMS settings saved."))
     else:
         messages.warning(
             request,
-            "SMS settings saved, but the price per segment was not a number "
-            f"between 0 and {MAX_SEGMENT_COST} and was left unchanged.",
+            gettext(
+                "SMS settings saved, but the price per segment was not a number "
+                "between 0 and %(max)s and was left unchanged."
+            )
+            % {"max": MAX_SEGMENT_COST},
         )
     return redirect(reverse("channels:sms_settings", kwargs={"workspace_id": workspace_id}))
 

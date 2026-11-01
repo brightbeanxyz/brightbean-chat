@@ -733,6 +733,16 @@ class TestTenancyIntegration:
         assert viewer_ctx["can_create_workspace"] is False
 
     @pytest.mark.django_db
+    def test_single_workspace_mode_hides_the_create_control(self, tenancy, settings):
+        settings.SINGLE_WORKSPACE_MODE = True
+
+        context = navigation_context(
+            _request("/organization/settings/", user=tenancy.owner, org_membership=_org_membership(tenancy.owner))
+        )
+
+        assert context["can_create_workspace"] is False
+
+    @pytest.mark.django_db
     def test_the_logout_control_is_wired_now_that_allauth_is_installed(self, tenancy):
         context = navigation_context(_request("/organization/settings/", user=tenancy.owner))
 

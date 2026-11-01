@@ -8,6 +8,7 @@ Threat model in one paragraph: a self-hosted deployment exposes webhook endpoint
 - Every queryset on tenant data goes through the workspace-scoped base manager (from L1-A). No `.objects.all()` on tenant models in views/APIs.
 - Cross-workspace access to any object returns **404** (never 403 — no existence oracle).
 - Any PR that adds views or API endpoints must extend the IDOR fuzz suite (helper from L1-A): every new endpoint is hit as an authenticated user of a *different* workspace and must 404.
+- The platform API (`/api/platform/v1/`) is authenticated by an installation-level `bbp_` key, so the session sweep cannot reach it. Its stand-in is `apps/api/tests/test_platform_api.py::TestIsolation`: every nested id (workspace, key) is resolved through its parent organization and a foreign one must 404, and a test pins the full list of `platform_v1:*` routes so a new one cannot go unexamined. Its path kwargs are `org_id`/`ws_id`/`key_id`, never `workspace_id`.
 
 ## 2. Untrusted inbound content
 - All platform-delivered content — message text, usernames, profile fields, comment bodies, attachment/media URLs — is attacker-controlled. Escape on render, never `mark_safe`, never render platform-supplied HTML raw.

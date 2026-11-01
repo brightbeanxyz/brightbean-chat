@@ -11,6 +11,7 @@
  * broke" into something a person can act on.
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   children: ReactNode;
@@ -21,13 +22,12 @@ interface State {
 }
 
 export function BuilderFailure({ error }: { error: Error }) {
+  const { t } = useTranslation();
   return (
     <div className="h-full flex items-center justify-center p-8">
       <div className="alert-error max-w-lg">
-        <p className="font-medium">The flow builder stopped working.</p>
-        <p className="mt-1">
-          Reload the page. If it keeps happening, this message helps whoever looks into it:
-        </p>
+        <p className="font-medium">{t("errorBoundary.heading")}</p>
+        <p className="mt-1">{t("errorBoundary.instructions")}</p>
         <p className="fb-problem-code mt-1">{error.message}</p>
       </div>
     </div>

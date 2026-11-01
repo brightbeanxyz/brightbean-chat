@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The repeatable keyword list.
 
 `json_script` is a security control, not a convenience. Keyword text is
@@ -12,21 +12,24 @@ them with strict=True and refuses a length mismatch rather than pairing off a
 truncated list — see apps/flows/triggers/forms.py.
 {% endcomment %}
 {{ config.keywords|default_if_none:""|json_script:"trigger-keyword-rows" }}
+{% translate "Exact" as mode_exact_label %}
+{% translate "Contains" as mode_contains_label %}
+{% translate "Whole word" as mode_any_word_label %}
 <div x-data="{
         rows: JSON.parse(document.getElementById('trigger-keyword-rows').textContent) || [],
-        modes: [['exact', 'Exact'], ['contains', 'Contains'], ['any_word', 'Whole word']],
+        modes: [['exact', '{{ mode_exact_label|escapejs }}'], ['contains', '{{ mode_contains_label|escapejs }}'], ['any_word', '{{ mode_any_word_label|escapejs }}']],
         add() { this.rows.push({ text: '', mode: 'contains' }) },
         remove(index) { this.rows.splice(index, 1) }
      }"
      x-init="if (!rows.length) add()">
 
-    <label class="block text-xs font-medium mb-1" style="color: var(--text-primary);">Keywords</label>
+    <label class="block text-xs font-medium mb-1" style="color: var(--text-primary);">{% translate "Keywords" %}</label>
 
     <template x-for="(row, index) in rows" :key="index">
         <div class="flex items-center gap-1.5 mb-1.5">
             <input type="text" name="keyword_text" x-model="row.text" maxlength="200"
                    class="form-input-styled" style="flex: 1 1 auto;" placeholder="help"
-                   aria-label="Keyword">
+                   aria-label="{% translate 'Keyword' %}">
             <input type="hidden" name="keyword_mode" :value="row.mode">
             <template x-for="mode in modes" :key="mode[0]">
                 <button type="button"
@@ -36,13 +39,12 @@ truncated list — see apps/flows/triggers/forms.py.
                         x-text="mode[1]"></button>
             </template>
             <button type="button" class="btn-icon-round btn-danger-soft"
-                    @click="remove(index)" aria-label="Remove keyword">×</button>
+                    @click="remove(index)" aria-label="{% translate 'Remove keyword' %}">×</button>
         </div>
     </template>
 
-    <button type="button" class="btn-link text-xs" @click="add()">+ Add keyword</button>
+    <button type="button" class="btn-link text-xs" @click="add()">+ {% translate "Add keyword" %}</button>
     <p class="text-xs mt-1" style="color: var(--text-tertiary);">
-        Matching ignores case and surrounding spaces. “Contains” matches inside a word,
-        “whole word” does not.
+        {% translate "Matching ignores case and surrounding spaces. “Contains” matches inside a word, “whole word” does not." %}
     </p>
 </div>

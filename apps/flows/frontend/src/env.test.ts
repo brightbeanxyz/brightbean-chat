@@ -12,6 +12,7 @@ function mount(dataset: Record<string, string>): HTMLElement {
 
 const COMPLETE = {
   "flow-id": "flow-1",
+  locale: "en",
   "can-edit": "true",
   "detail-url": "/w/ws/api/flows/flow-1/",
   "publish-url": "/w/ws/api/flows/flow-1/publish/",
@@ -26,6 +27,7 @@ describe("reading the mount div", () => {
   it("parses every URL the view hands over", () => {
     expect(readEnv(mount(COMPLETE))).toEqual({
       flowId: "flow-1",
+      locale: "en",
       canEdit: true,
       detailUrl: "/w/ws/api/flows/flow-1/",
       publishUrl: "/w/ws/api/flows/flow-1/publish/",

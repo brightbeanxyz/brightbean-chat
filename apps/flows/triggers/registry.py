@@ -21,6 +21,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from django.utils.functional import Promise
+from django.utils.translation import gettext_lazy as _
+
 from apps.flows.triggers import schema as trigger_schema
 from apps.flows.triggers.types import PLATFORMS_FOR_TYPE, TriggerType
 
@@ -41,8 +44,8 @@ class TriggerSpec:
     #: What this is called on screen. Copy, not contract — the stored value is
     #: ``type``, which migrations and the API pin; nothing asserts these, so
     #: "Ref URL / QR" could become "Link or QR code" without a migration.
-    label: str
-    description: str
+    label: str | Promise
+    description: str | Promise
     #: SPEC §10's "Channels" column. Empty means the type is not delivered by a
     #: platform at all, which is a different thing from "every platform".
     platforms: frozenset[str]
@@ -70,7 +73,7 @@ class TriggerSpec:
     #: app granted the field later needs no code — but a picker that offers it
     #: silently is a picker that sells a flow which never runs. Anything that
     #: lets somebody choose a trigger type shows this sentence beside it.
-    unavailable: str = ""
+    unavailable: str | Promise = ""
 
 
 TRIGGER_TYPES: dict[str, TriggerSpec] = {}
@@ -96,8 +99,8 @@ def bindable_types() -> tuple[str, ...]:
 
 def _spec(
     trigger_type: str,
-    label: str,
-    description: str,
+    label: str | Promise,
+    description: str | Promise,
     config: dict[str, Any],
     **extra: Any,
 ) -> TriggerSpec:
@@ -114,8 +117,8 @@ def _spec(
 register_trigger_type(
     _spec(
         TriggerType.KEYWORD,
-        "Keyword",
-        "Runs when an incoming message matches one of these words.",
+        _("Keyword"),
+        _("Runs when an incoming message matches one of these words."),
         trigger_schema.KEYWORD,
         default_config=lambda: {"keywords": []},
     )
@@ -123,8 +126,8 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.COMMENT,
-        "Comment",
-        "Runs when someone comments on a post, and replies to them privately.",
+        _("Comment"),
+        _("Runs when someone comments on a post, and replies to them privately."),
         trigger_schema.COMMENT,
         default_config=lambda: {
             "post_scope": "all",
@@ -141,16 +144,16 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.STORY_MENTION,
-        "Story mention",
-        "Runs when someone mentions this account in their story.",
+        _("Story mention"),
+        _("Runs when someone mentions this account in their story."),
         trigger_schema.STORY_MENTION,
     )
 )
 register_trigger_type(
     _spec(
         TriggerType.STORY_REPLY,
-        "Story reply",
-        "Runs when someone replies to one of this account's stories.",
+        _("Story reply"),
+        _("Runs when someone replies to one of this account's stories."),
         trigger_schema.STORY_REPLY,
         default_config=lambda: {"keywords": []},
     )
@@ -158,10 +161,10 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.FOLLOW,
-        "New follower",
-        "Runs when someone follows this account.",
+        _("New follower"),
+        _("Runs when someone follows this account."),
         trigger_schema.FOLLOW,
-        unavailable=(
+        unavailable=_(
             "Instagram does not tell apps about new followers yet, so this trigger "
             "will not run. It is here so it starts working on its own if Instagram "
             "opens that up."
@@ -171,8 +174,8 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.REF_URL,
-        "Link or QR code",
-        "Runs when someone arrives through a link or QR code carrying this reference.",
+        _("Link or QR code"),
+        _("Runs when someone arrives through a link or QR code carrying this reference."),
         trigger_schema.REF_URL,
         default_config=lambda: {"ref": ""},
     )
@@ -180,8 +183,8 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.DEFAULT_REPLY,
-        "Nothing else matched",
-        "Runs when nothing else matched. At most once per contact per day.",
+        _("Nothing else matched"),
+        _("Runs when nothing else matched. At most once per contact per day."),
         trigger_schema.DEFAULT_REPLY,
         stage_only=True,
     )
@@ -189,16 +192,16 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.WELCOME,
-        "Welcome",
-        "Runs the first time someone opens a conversation.",
+        _("Welcome"),
+        _("Runs the first time someone opens a conversation."),
         trigger_schema.WELCOME,
     )
 )
 register_trigger_type(
     _spec(
         TriggerType.RULE,
-        "Something happens here",
-        "Runs when a contact gets a tag or a field changes.",
+        _("Something happens here"),
+        _("Runs when a contact gets a tag or a field changes."),
         trigger_schema.RULE,
         bindable=False,
     )
@@ -206,8 +209,8 @@ register_trigger_type(
 register_trigger_type(
     _spec(
         TriggerType.API,
-        "Another system",
-        "Runs only when the API asks for it.",
+        _("Another system"),
+        _("Runs only when the API asks for it."),
         trigger_schema.API,
         bindable=False,
         entrypoint_only=True,

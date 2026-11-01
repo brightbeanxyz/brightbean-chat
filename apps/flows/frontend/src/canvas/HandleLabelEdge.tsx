@@ -21,6 +21,7 @@
  */
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, useReactFlow, type EdgeProps } from "@xyflow/react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { nodeSpec } from "../schema/artifact";
 import { handleLabel, sourceHandlesFor } from "../schema/handles";
@@ -48,6 +49,7 @@ export function HandleLabelEdge({
   style,
   selected,
 }: EdgeProps) {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const config = useBuilder((state) => state.config[source]);
   const issues = useBuilder((state) => state.validation.byEdge[id]);
@@ -135,8 +137,8 @@ export function HandleLabelEdge({
               <button
                 type="button"
                 className="fb-edge-insert-button"
-                aria-label="Add a step here"
-                title="Add a step here"
+                aria-label={t("canvas.addStepHere")}
+                title={t("canvas.addStepHere")}
                 aria-haspopup="menu"
                 aria-expanded={open}
                 onClick={() => setOpen((was) => !was)}

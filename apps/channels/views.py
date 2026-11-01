@@ -32,7 +32,10 @@ from django.db.models import Max
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.functional import Promise
 from django.utils.timesince import timesince
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.channels.capabilities import capabilities_for
@@ -81,23 +84,23 @@ CONNECT_FLOW_ISSUES: dict[str, str] = {
 #: continuations of "Telegram — set it up — …", so they read correctly only in
 #: that one line of markup; the moment the page grew a card layout they became
 #: lowercase sentences under a heading.
-CONNECT_HINTS: dict[str, str] = {
-    Platform.TELEGRAM: "Paste a BotFather token and we do the rest.",
-    Platform.INSTAGRAM: "Sign in with the Instagram account and grant the messaging permissions.",
-    Platform.WHATSAPP: "Paste your Cloud API ids and system user token; we verify them with Meta first.",
-    Platform.MESSENGER: "Sign in with Facebook and pick the page to connect.",
-    Platform.SMS: "Paste your Twilio account SID, auth token and number.",
-    Platform.EMAIL: "Pick SMTP, Resend or SES; we check the credentials before saving them.",
+CONNECT_HINTS: dict[str, str | Promise] = {
+    Platform.TELEGRAM: _("Paste a BotFather token and we do the rest."),
+    Platform.INSTAGRAM: _("Sign in with the Instagram account and grant the messaging permissions."),
+    Platform.WHATSAPP: _("Paste your Cloud API ids and system user token; we verify them with Meta first."),
+    Platform.MESSENGER: _("Sign in with Facebook and pick the page to connect."),
+    Platform.SMS: _("Paste your Twilio account SID, auth token and number."),
+    Platform.EMAIL: _("Pick SMTP, Resend or SES; we check the credentials before saving them."),
 }
 
 #: Extra settings pages a platform brings with it, as ``(label, route)`` pairs.
 #: A dict rather than a per-platform ``if`` in the template, for the same reason
 #: ``CONNECT_ROUTES`` is one: the next adapter adds a line here instead of
 #: teaching the list page about itself.
-PLATFORM_EXTRA_LINKS: dict[str, tuple[tuple[str, str], ...]] = {
+PLATFORM_EXTRA_LINKS: dict[str, tuple[tuple[str | Promise, str], ...]] = {
     Platform.WHATSAPP: (
-        ("Message templates", "channels:whatsapp_templates"),
-        ("Cost estimates", "channels:whatsapp_cost_hints"),
+        (_("Message templates"), "channels:whatsapp_templates"),
+        (_("Cost estimates"), "channels:whatsapp_cost_hints"),
     ),
 }
 
@@ -398,7 +401,7 @@ def connection_set_status(request: WorkspaceRequest, workspace_id: str, connecti
     # time — the shape every half-enforced limit bug takes.
     turning_on = status != ConnectionStatus.DISABLED and connection.status == ConnectionStatus.DISABLED
     if status not in SETTABLE_STATUSES:
-        messages.error(request, "That is not a status you can set by hand.")
+        messages.error(request, gettext("That is not a status you can set by hand."))
     else:
         # The count and the status change are one critical section when the
         # change is a re-enable: two admins switching channels back on at the
@@ -411,7 +414,9 @@ def connection_set_status(request: WorkspaceRequest, workspace_id: str, connecti
                 connection.status = status
                 connection.save(update_fields=["status", "updated_at"])
                 messages.success(
-                    request, f"{connection.display_name} is now {connection.get_status_display().lower()}."
+                    request,
+                    gettext("%(name)s is now %(status)s.")
+                    % {"name": connection.display_name, "status": connection.get_status_display().lower()},
                 )
     return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
 
@@ -455,7 +460,7 @@ def connection_delete(request: WorkspaceRequest, workspace_id: str, connection_i
     name = connection.display_name
     _notify_disconnect(connection)
     connection.delete()
-    messages.success(request, f"Disconnected {name}.")
+    messages.success(request, gettext("Disconnected %(name)s.") % {"name": name})
     return redirect(reverse("channels:list", kwargs={"workspace_id": workspace_id}))
 
 

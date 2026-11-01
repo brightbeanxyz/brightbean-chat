@@ -42,6 +42,8 @@ by accident.
 from dataclasses import dataclass
 from typing import Any
 
+from django.utils.translation import gettext
+
 from apps.contacts import conditions
 from apps.flows.triggers import keywords as keyword_matching
 from apps.flows.triggers.schema import MAX_KEYWORD_CHARS, MAX_KEYWORDS
@@ -226,12 +228,12 @@ def validate_condition(workspace: Any, condition_json: Any) -> dict[str, Any]:
     import json
 
     if not isinstance(condition_json, dict):
-        raise RuleValidationError("A rule condition must be an object.")
+        raise RuleValidationError(gettext("A rule condition must be an object."))
     unknown = sorted(set(condition_json) - _CONDITION_KEYS)
     if unknown:
-        raise RuleValidationError(f"Unknown condition keys: {', '.join(unknown)}.")
+        raise RuleValidationError(gettext("Unknown condition keys: %(keys)s.") % {"keys": ", ".join(unknown)})
     if len(json.dumps(condition_json).encode("utf-8")) > MAX_CONDITION_BYTES:
-        raise RuleValidationError("That condition is too large.")
+        raise RuleValidationError(gettext("That condition is too large."))
 
     document: dict[str, Any] = {}
 
@@ -257,7 +259,7 @@ def validate_condition(workspace: Any, condition_json: Any) -> dict[str, Any]:
         # is exactly that — so "label every inbound message in the workspace"
         # would otherwise be one accidental save away.
         raise RuleValidationError(
-            "A rule needs at least one condition: a channel, a keyword or something about the contact."
+            gettext("A rule needs at least one condition: a channel, a keyword or something about the contact.")
         )
     return document
 
@@ -272,30 +274,30 @@ def validate_actions(workspace: Any, actions_json: Any) -> list[dict[str, Any]]:
     from apps.inbox.models import ConversationLabel
 
     if not isinstance(actions_json, list):
-        raise RuleValidationError("Rule actions must be a list.")
+        raise RuleValidationError(gettext("Rule actions must be a list."))
     if not actions_json:
-        raise RuleValidationError("A rule needs at least one action.")
+        raise RuleValidationError(gettext("A rule needs at least one action."))
     if len(actions_json) > MAX_ACTIONS:
-        raise RuleValidationError(f"A rule may have at most {MAX_ACTIONS} actions.")
+        raise RuleValidationError(gettext("A rule may have at most %(max)s actions.") % {"max": MAX_ACTIONS})
 
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for item in actions_json:
         if not isinstance(item, dict):
-            raise RuleValidationError("Each action must be an object.")
+            raise RuleValidationError(gettext("Each action must be an object."))
         kind = item.get("type")
         if kind not in ACTION_TYPES:
-            raise RuleValidationError(f"Unknown action {kind!r}.")
+            raise RuleValidationError(gettext("Unknown action %(kind)r.") % {"kind": kind})
         if kind == "add_label":
             label_id = str(item.get("label_id") or "")
             if not ConversationLabel.objects.for_workspace(workspace).filter(pk=_uuid(label_id)).exists():
-                raise RuleValidationError("That label no longer exists.")
+                raise RuleValidationError(gettext("That label no longer exists."))
             action = {"type": kind, "label_id": label_id}
             fingerprint = f"add_label:{label_id}"
         elif kind == "assign_to_member":
             user_id = str(item.get("user_id") or "")
             if not _is_member(workspace, user_id):
-                raise RuleValidationError("That person is not a member of this workspace.")
+                raise RuleValidationError(gettext("That person is not a member of this workspace."))
             action = {"type": kind, "user_id": user_id}
             # One assignee, whichever action list order says. Two would be a rule
             # whose outcome depended on which one ran last.
@@ -304,7 +306,7 @@ def validate_actions(workspace: Any, actions_json: Any) -> list[dict[str, Any]]:
             action = {"type": kind}
             fingerprint = kind
         if fingerprint in seen:
-            raise RuleValidationError("That rule repeats an action.")
+            raise RuleValidationError(gettext("That rule repeats an action."))
         seen.add(fingerprint)
         out.append(action)
     return out
@@ -319,20 +321,20 @@ def _channel(value: Any) -> dict[str, Any]:
     if not value:
         return {}
     if not isinstance(value, dict):
-        raise RuleValidationError("The channel condition must be an object.")
+        raise RuleValidationError(gettext("The channel condition must be an object."))
     unknown = sorted(set(value) - _CHANNEL_KEYS)
     if unknown:
-        raise RuleValidationError(f"Unknown channel keys: {', '.join(unknown)}.")
+        raise RuleValidationError(gettext("Unknown channel keys: %(keys)s.") % {"keys": ", ".join(unknown)})
 
     from apps.common.platforms import Platform
 
     platforms = _strings(value.get("platforms"))
     for platform in platforms:
         if platform not in Platform.values:
-            raise RuleValidationError(f"Unknown platform {platform!r}.")
+            raise RuleValidationError(gettext("Unknown platform %(platform)r.") % {"platform": platform})
     connection_ids = _strings(value.get("connection_ids"))
     if len(connection_ids) > MAX_CONNECTIONS:
-        raise RuleValidationError("Too many connections in one rule.")
+        raise RuleValidationError(gettext("Too many connections in one rule."))
 
     out: dict[str, Any] = {}
     if platforms:
@@ -346,23 +348,23 @@ def _keywords(value: Any) -> list[dict[str, str]]:
     if not value:
         return []
     if not isinstance(value, list):
-        raise RuleValidationError("Keywords must be a list.")
+        raise RuleValidationError(gettext("Keywords must be a list."))
     if len(value) > MAX_KEYWORDS:
-        raise RuleValidationError(f"A rule may have at most {MAX_KEYWORDS} keywords.")
+        raise RuleValidationError(gettext("A rule may have at most %(max)s keywords.") % {"max": MAX_KEYWORDS})
 
     seen: set[str] = set()
     out: list[dict[str, str]] = []
     for item in value:
         if not isinstance(item, dict):
-            raise RuleValidationError("Each keyword must be an object.")
+            raise RuleValidationError(gettext("Each keyword must be an object."))
         unknown = sorted(set(item) - _KEYWORD_KEYS)
         if unknown:
-            raise RuleValidationError(f"Unknown keyword keys: {', '.join(unknown)}.")
+            raise RuleValidationError(gettext("Unknown keyword keys: %(keys)s.") % {"keys": ", ".join(unknown)})
         text = (item.get("text") or "").strip() if isinstance(item.get("text"), str) else ""
         if not text:
             continue
         if len(text) > MAX_KEYWORD_CHARS:
-            raise RuleValidationError("That keyword is too long.")
+            raise RuleValidationError(gettext("That keyword is too long."))
         raw_mode = item.get("mode")
         mode = raw_mode if isinstance(raw_mode, str) and raw_mode in _KEYWORD_MODES else "contains"
         # Deduped case-insensitively, like the trigger form: two keywords

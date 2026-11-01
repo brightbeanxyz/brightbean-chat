@@ -148,6 +148,10 @@ NOT_TENANT_DATA: dict[str, str] = {
     "members.OrgMembership": "Defines who belongs to an organization — the input to scoping.",
     "members.WorkspaceMembership": "Defines who belongs to a workspace, likewise.",
     "members.Invitation": "Organization-level (SPEC §4.1), and read by token before any workspace is known.",
+    "api.PlatformApiKey": (
+        "An installation-level credential for the platform API: it provisions organizations, so it "
+        "sits above every tenant and has no workspace by design."
+    ),
     "credentials.PlatformCredential": (
         "The org-level half of the credential-resolution chain: one row can serve every workspace "
         "in the organization, which is the point of it."

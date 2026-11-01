@@ -28,6 +28,7 @@ from typing import Any
 
 from django.conf import settings
 from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 from apps.common.scoping import WorkspaceScopedModel
 from apps.contacts.errors import WorkspaceMismatchError
@@ -64,10 +65,10 @@ class FlowStatus(models.TextChoices):
     as a draft somebody never finished.
     """
 
-    DRAFT = "draft", "Draft"
-    ACTIVE = "active", "Active"
-    OFFLINE = "offline", "Offline"
-    ARCHIVED = "archived", "Archived"
+    DRAFT = "draft", _("Draft")
+    ACTIVE = "active", _("Active")
+    OFFLINE = "offline", _("Offline")
+    ARCHIVED = "archived", _("Archived")
 
 
 class Flow(WorkspaceScopedModel):

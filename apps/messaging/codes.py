@@ -21,6 +21,9 @@ Four vocabularies, kept apart because they answer different questions:
 
 from enum import StrEnum
 
+from django.utils.functional import Promise
+from django.utils.translation import gettext_lazy as _
+
 __all__ = ["Denial", "Failure", "Grant", "Limit", "REASON_COPY", "describe"]
 
 
@@ -85,34 +88,41 @@ class Limit(StrEnum):
 
 #: One sentence per code, for the inbox and the flow-run log. Keyed by the raw
 #: string so a stored value from an older release still resolves.
-REASON_COPY: dict[str, str] = {
-    Grant.NO_WINDOW: "This platform has no messaging window.",
-    Grant.IN_WINDOW: "The contact messaged recently, so the window is open.",
-    Grant.HUMAN_AGENT: "Sent under the human-agent allowance, available to inbox replies only.",
-    Grant.TAG_SUPPLIED: "Sent outside the window under an approved message tag.",
-    Grant.TEMPLATE_SUPPLIED: "Sent outside the window using an approved template.",
-    Denial.OPTED_OUT: "This contact opted out of messages on this channel.",
-    Denial.CONTACT_DELETED: "This contact has been deleted.",
-    Denial.NO_OPT_IN: "This contact has never given permission to message them on this channel.",
-    Denial.NO_IDENTITY: "There is no address for this contact on this channel.",
-    Denial.NO_CONNECTION: "This address was captured before a channel connection existed.",
-    Denial.BROADCAST_NOT_ALLOWED: "This platform does not permit broadcasts.",
-    Denial.OUTSIDE_WINDOW: "The messaging window has closed and this platform offers no way to reopen it.",
-    Limit.ACTIVE_CONTACTS: "Your plan's monthly contact limit has been reached, so this did not go out.",
-    Denial.NEEDS_TEMPLATE: "Outside the messaging window this platform requires an approved template.",
-    Denial.NEEDS_TAG: "Outside the messaging window this platform requires an approved message tag.",
-    Failure.NO_ADAPTER: "No adapter is installed for this platform.",
-    Failure.PROVIDER_REJECTED: "The platform rejected the message.",
-    Failure.PROVIDER_UNAVAILABLE: "The platform could not be reached.",
-    Failure.RATE_LIMITED: "The platform is throttling this connection.",
-    Failure.RATE_DEFERRED: "Waiting for this connection's send rate to allow another message.",
-    Failure.RETRIES_EXHAUSTED: "Gave up after retrying this send.",
-    Failure.RETRY_UNSCHEDULABLE: "The send failed and another attempt could not be scheduled.",
-    Failure.WITHDRAWN: "The work that queued this message was cancelled before it was sent.",
+#:
+#: Lazy-translated: every UI surface that calls :func:`describe` — the inbox
+#: thread, its toasts, broadcast skip reasons, notification bodies — wants the
+#: recipient's language. ``apps.api.routers.messages`` is the one caller that
+#: must not get a translated sentence (SPEC §17's ``message`` field is a stable,
+#: English log line by contract — see ``apps.api.errors``); it resolves this
+#: same dict under ``translation.override("en")`` instead of forking the copy.
+REASON_COPY: dict[str, str | Promise] = {
+    Grant.NO_WINDOW: _("This platform has no messaging window."),
+    Grant.IN_WINDOW: _("The contact messaged recently, so the window is open."),
+    Grant.HUMAN_AGENT: _("Sent under the human-agent allowance, available to inbox replies only."),
+    Grant.TAG_SUPPLIED: _("Sent outside the window under an approved message tag."),
+    Grant.TEMPLATE_SUPPLIED: _("Sent outside the window using an approved template."),
+    Denial.OPTED_OUT: _("This contact opted out of messages on this channel."),
+    Denial.CONTACT_DELETED: _("This contact has been deleted."),
+    Denial.NO_OPT_IN: _("This contact has never given permission to message them on this channel."),
+    Denial.NO_IDENTITY: _("There is no address for this contact on this channel."),
+    Denial.NO_CONNECTION: _("This address was captured before a channel connection existed."),
+    Denial.BROADCAST_NOT_ALLOWED: _("This platform does not permit broadcasts."),
+    Denial.OUTSIDE_WINDOW: _("The messaging window has closed and this platform offers no way to reopen it."),
+    Limit.ACTIVE_CONTACTS: _("Your plan's monthly contact limit has been reached, so this did not go out."),
+    Denial.NEEDS_TEMPLATE: _("Outside the messaging window this platform requires an approved template."),
+    Denial.NEEDS_TAG: _("Outside the messaging window this platform requires an approved message tag."),
+    Failure.NO_ADAPTER: _("No adapter is installed for this platform."),
+    Failure.PROVIDER_REJECTED: _("The platform rejected the message."),
+    Failure.PROVIDER_UNAVAILABLE: _("The platform could not be reached."),
+    Failure.RATE_LIMITED: _("The platform is throttling this connection."),
+    Failure.RATE_DEFERRED: _("Waiting for this connection's send rate to allow another message."),
+    Failure.RETRIES_EXHAUSTED: _("Gave up after retrying this send."),
+    Failure.RETRY_UNSCHEDULABLE: _("The send failed and another attempt could not be scheduled."),
+    Failure.WITHDRAWN: _("The work that queued this message was cancelled before it was sent."),
 }
 
 
-def describe(code: str) -> str:
+def describe(code: str) -> str | Promise:
     """The sentence for ``code``, or the code itself when nothing is registered.
 
     Falls back rather than raising: this runs on a render path, and a code from

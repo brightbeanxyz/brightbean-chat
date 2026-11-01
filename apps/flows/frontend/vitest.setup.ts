@@ -11,6 +11,12 @@ import "@testing-library/jest-dom/vitest";
 
 import { afterEach } from "vitest";
 
+// Initialises i18next with every locale's resources (see src/i18n/index.ts),
+// so every test's useTranslation() calls resolve without a per-test provider.
+// The default language is English, which is what every existing assertion on
+// rendered copy already expects — locale-switching itself gets its own test.
+import "./src/i18n";
+
 /** Roughly a laptop viewport; React Flow only needs it to be non-zero. */
 const PANE = { width: 1200, height: 800 };
 

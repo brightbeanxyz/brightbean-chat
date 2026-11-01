@@ -38,6 +38,8 @@ cannot be driven deeper than that cap.
 import re
 from typing import Any
 
+from django.utils.translation import gettext, ngettext
+
 from apps.flows.schema.issues import Issue
 
 __all__ = [
@@ -128,17 +130,25 @@ def validate_instance(
     if types is not None:
         expected = types if isinstance(types, list) else [types]
         if not any(_type_matches(str(t), value) for t in expected):
-            add(CODE_INVALID_VALUE, f"Expected {' or '.join(str(t) for t in expected)}.", path)
+            add(
+                CODE_INVALID_VALUE,
+                gettext("Expected %(types)s.") % {"types": " or ".join(str(t) for t in expected)},
+                path,
+            )
             # Every further keyword assumes the type held; stop here so one
             # wrong type does not produce a cascade of unrelated complaints.
             return issues
 
     if "const" in schema and value != schema["const"]:
-        add(CODE_INVALID_VALUE, f"Must be {schema['const']!r}.", path)
+        add(CODE_INVALID_VALUE, gettext("Must be %(value)r.") % {"value": schema["const"]}, path)
 
     enum = schema.get("enum")
     if isinstance(enum, list) and value not in enum:
-        add(CODE_INVALID_VALUE, f"Must be one of: {', '.join(repr(option) for option in enum)}.", path)
+        add(
+            CODE_INVALID_VALUE,
+            gettext("Must be one of: %(options)s.") % {"options": ", ".join(repr(option) for option in enum)},
+            path,
+        )
 
     if isinstance(value, str):
         issues.extend(_check_string(schema, value, path, node_id))
@@ -159,25 +169,23 @@ def _issue(code: str, message: str, path: str, node_id: str | None) -> Issue:
     return Issue(code=code, message=message, stage="document", node_id=node_id, path=path)
 
 
-def _s(count: int) -> str:
-    """ "" or "s". These sentences sit beside the field they are about, where
-    "1 character(s)" is the kind of thing that makes a product feel unfinished."""
-    return "" if count == 1 else "s"
-
-
 def _check_string(schema: dict[str, Any], value: str, path: str, node_id: str | None) -> list[Issue]:
     issues: list[Issue] = []
     minimum = schema.get("minLength")
     maximum = schema.get("maxLength")
     if isinstance(minimum, int) and len(value) < minimum:
-        issues.append(
-            _issue(CODE_INVALID_VALUE, f"Too short: {minimum} character{_s(minimum)} at least.", path, node_id)
-        )
+        message = ngettext(
+            "Too short: %(count)s character at least.", "Too short: %(count)s characters at least.", minimum
+        ) % {"count": minimum}
+        issues.append(_issue(CODE_INVALID_VALUE, message, path, node_id))
     if isinstance(maximum, int) and len(value) > maximum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Too long: {maximum} character{_s(maximum)} at most.", path, node_id))
+        message = ngettext(
+            "Too long: %(count)s character at most.", "Too long: %(count)s characters at most.", maximum
+        ) % {"count": maximum}
+        issues.append(_issue(CODE_INVALID_VALUE, message, path, node_id))
     expression = schema.get("pattern")
     if isinstance(expression, str) and not _pattern(expression).search(value):
-        issues.append(_issue(CODE_INVALID_VALUE, "Does not match the required format.", path, node_id))
+        issues.append(_issue(CODE_INVALID_VALUE, gettext("Does not match the required format."), path, node_id))
     return issues
 
 
@@ -186,9 +194,13 @@ def _check_number(schema: dict[str, Any], value: float, path: str, node_id: str 
     minimum = schema.get("minimum")
     maximum = schema.get("maximum")
     if isinstance(minimum, int | float) and value < minimum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Must be at least {minimum}.", path, node_id))
+        issues.append(
+            _issue(CODE_INVALID_VALUE, gettext("Must be at least %(minimum)s.") % {"minimum": minimum}, path, node_id)
+        )
     if isinstance(maximum, int | float) and value > maximum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Must be at most {maximum}.", path, node_id))
+        issues.append(
+            _issue(CODE_INVALID_VALUE, gettext("Must be at most %(maximum)s.") % {"maximum": maximum}, path, node_id)
+        )
     return issues
 
 
@@ -199,9 +211,11 @@ def _check_array(
     minimum = schema.get("minItems")
     maximum = schema.get("maxItems")
     if isinstance(minimum, int) and len(value) < minimum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"Add at least {minimum} more.", path, node_id))
+        issues.append(
+            _issue(CODE_INVALID_VALUE, gettext("Add at least %(minimum)s more.") % {"minimum": minimum}, path, node_id)
+        )
     if isinstance(maximum, int) and len(value) > maximum:
-        issues.append(_issue(CODE_INVALID_VALUE, f"{maximum} at most.", path, node_id))
+        issues.append(_issue(CODE_INVALID_VALUE, gettext("%(maximum)s at most.") % {"maximum": maximum}, path, node_id))
     items = schema.get("items")
     if isinstance(items, dict):
         for index, item in enumerate(value):
@@ -223,7 +237,7 @@ def _check_object(
                 issues.append(
                     _issue(
                         CODE_MISSING_REQUIRED,
-                        f"{name!r} is required.",
+                        gettext("%(name)r is required.") % {"name": name},
                         f"{path}.{name}" if path else str(name),
                         node_id,
                     )
@@ -235,7 +249,8 @@ def _check_object(
                 issues.append(
                     _issue(
                         CODE_UNKNOWN_KEY,
-                        f"{name!r} is not a recognised key here. Allowed: {', '.join(sorted(properties)) or 'none'}.",
+                        gettext("%(name)r is not a recognised key here. Allowed: %(allowed)s.")
+                        % {"name": name, "allowed": ", ".join(sorted(properties)) or gettext("none")},
                         f"{path}.{name}" if path else str(name),
                         node_id,
                     )
@@ -282,7 +297,8 @@ def _check_variants(
         return [
             _issue(
                 CODE_INVALID_VALUE,
-                f"Matches {matched} of the allowed alternatives; exactly one may apply.",
+                gettext("Matches %(matched)s of the allowed alternatives; exactly one may apply.")
+                % {"matched": matched},
                 path,
                 node_id,
             )
@@ -305,9 +321,9 @@ def _select_variant(
         return {}
     at = f"{path}.{prop}" if path else prop
     if prop not in value:
-        return [_issue(CODE_MISSING_REQUIRED, f"{prop!r} is required.", at, node_id)]
+        return [_issue(CODE_MISSING_REQUIRED, gettext("%(prop)r is required.") % {"prop": prop}, at, node_id)]
     key = value[prop]
     if not isinstance(key, str) or key not in mapping:
         allowed = ", ".join(repr(option) for option in sorted(mapping))
-        return [_issue(CODE_INVALID_VALUE, f"Must be one of: {allowed}.", at, node_id)]
+        return [_issue(CODE_INVALID_VALUE, gettext("Must be one of: %(allowed)s.") % {"allowed": allowed}, at, node_id)]
     return _resolve({"$ref": mapping[key]}, defs)

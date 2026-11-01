@@ -23,6 +23,7 @@ import { toGraph } from "../store/serialize";
 import { graphByteLength } from "../store/serialize";
 import { saveGraph } from "../api/flows";
 import { ApiError } from "../api/client";
+import i18n from "../i18n";
 import type { ValidationPayload } from "../schema/types";
 
 export const DEBOUNCE_MS = 2000;
@@ -70,7 +71,7 @@ export function installAutosave(store: BuilderStore): Autosave {
     if (graphByteLength(graph) > state.limits.max_graph_bytes) {
       store.getState().setSave({
         state: "rejected",
-        message: `This flow is too big to save (the limit is ${Math.round(state.limits.max_graph_bytes / 1024)} KB).`,
+        message: i18n.t("autosave.tooBig", { limitKb: Math.round(state.limits.max_graph_bytes / 1024) }),
         issues: [],
       });
       return;
@@ -94,7 +95,7 @@ export function installAutosave(store: BuilderStore): Autosave {
       // unhandled rejection and the user would watch "Saving…" forever, which
       // is precisely the case the retry ladder below exists for.
       handleFailure(
-        error instanceof ApiError ? error : new ApiError(0, "network_error", "The network request failed."),
+        error instanceof ApiError ? error : new ApiError(0, "network_error", i18n.t("autosave.networkFailed")),
         revision,
       );
     }
@@ -110,7 +111,7 @@ export function installAutosave(store: BuilderStore): Autosave {
       }
       store.getState().setSave({
         state: "rejected",
-        message: "This change cannot be saved. Fix the problems listed here and it will save automatically.",
+        message: i18n.t("autosave.cannotBeSaved"),
         issues: payload?.validation?.errors ?? [],
       });
       attempt = 0;
@@ -130,7 +131,7 @@ export function installAutosave(store: BuilderStore): Autosave {
     }
 
     // Transport or 5xx: the graph is still in the store, so keep trying.
-    store.getState().setSave({ state: "error", message: `${error.message} Retrying…`, issues: [] });
+    store.getState().setSave({ state: "error", message: i18n.t("autosave.retrying", { message: error.message }), issues: [] });
     const delay = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)] ?? 30000;
     attempt += 1;
     schedule(delay);

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 The flow list. Everything below the toolbar is the _list_rows.html partial, so
 the list has exactly one renderer: the filters fetch it, and every mutation
@@ -24,7 +24,7 @@ tokens rather than from utility palettes, which is what keeps the white-label
 swap in styles.css meaningful.
 {% endcomment %}
 
-{% block title %}Flows · BrightBean Chat{% endblock %}
+{% block title %}{% translate "Flows" %} · BrightBean Chat{% endblock %}
 
 {% block sub_nav %}{% include "partials/_sub_nav.html" with groups=flow_tab_groups %}{% endblock %}
 {% block alpine_components %}{{ block.super }}{% include "partials/_list_behaviours.html" %}{% endblock %}
@@ -47,15 +47,15 @@ swap in styles.css meaningful.
 
     <div class="page-header">
         <div class="page-header-text">
-            <h1 class="page-title">Flows</h1>
+            <h1 class="page-title">{% translate "Flows" %}</h1>
             <p class="page-lede">
-                A flow replies for you when something happens: a comment, a keyword, a reply to your story.
+                {% translate "A flow replies for you when something happens: a comment, a keyword, a reply to your story." %}
             </p>
         </div>
         {% if can_edit %}
         <div class="page-header-actions">
             <button type="button" class="btn-pill-primary" @click="$modal('new-flow')">
-                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} New flow
+                {% include "partials/_nav_icon.html" with name="plus" icon_size=16 %} {% translate "New flow" %}
             </button>
         </div>
         {% endif %}
@@ -67,7 +67,8 @@ swap in styles.css meaningful.
       name — a template and a file each bring their own — so the field and the
       button follow the choice, and the button says what it is about to do.
     {% endcomment %}
-    {% modal "new-flow" title="New flow" close_on="flowsChanged" %}
+    {% translate "New flow" as new_flow_title %}
+    {% modal "new-flow" title=new_flow_title close_on="flowsChanged" %}
     {% comment %}
       The modal resets its forms as it opens (partials/_modal_behaviours.html),
       which puts the radios back to their `checked` default but not the Alpine
@@ -77,14 +78,14 @@ swap in styles.css meaningful.
           x-data="{ start: 'blank' }" @reset="start = 'blank'">
         <div class="bb-modal-body">
             <fieldset class="field">
-                <legend class="field-label">Start from</legend>
+                <legend class="field-label">{% translate "Start from" %}</legend>
                 <div class="option-cards">
                     <label class="option-card">
                         <input type="radio" name="start" value="blank" x-model="start" checked>
                         <span class="option-card-icon">{% include "partials/_nav_icon.html" with name="plus" icon_size=18 %}</span>
                         <span class="option-card-body">
-                            <span class="option-card-title">Blank</span>
-                            <span class="option-card-text">A first message to build on</span>
+                            <span class="option-card-title">{% translate "Blank" %}</span>
+                            <span class="option-card-text">{% translate "A first message to build on" %}</span>
                         </span>
                         <span class="option-card-radio" aria-hidden="true"></span>
                     </label>
@@ -92,8 +93,8 @@ swap in styles.css meaningful.
                         <input type="radio" name="start" value="template" x-model="start">
                         <span class="option-card-icon">{% include "partials/_nav_icon.html" with name="grid" icon_size=18 %}</span>
                         <span class="option-card-body">
-                            <span class="option-card-title">A template</span>
-                            <span class="option-card-text">Ready-made, with the words to change</span>
+                            <span class="option-card-title">{% translate "A template" %}</span>
+                            <span class="option-card-text">{% translate "Ready-made, with the words to change" %}</span>
                         </span>
                         <span class="option-card-radio" aria-hidden="true"></span>
                     </label>
@@ -101,26 +102,26 @@ swap in styles.css meaningful.
                         <input type="radio" name="start" value="import" x-model="start">
                         <span class="option-card-icon">{% include "partials/_nav_icon.html" with name="upload" icon_size=18 %}</span>
                         <span class="option-card-body">
-                            <span class="option-card-title">A file</span>
-                            <span class="option-card-text">A flow downloaded from BrightBean</span>
+                            <span class="option-card-title">{% translate "A file" %}</span>
+                            <span class="option-card-text">{% translate "A flow downloaded from BrightBean" %}</span>
                         </span>
                         <span class="option-card-radio" aria-hidden="true"></span>
                     </label>
                 </div>
             </fieldset>
             <div class="field" x-show="start === 'blank'">
-                <label class="field-label" for="new-flow-name">What is this flow called?</label>
+                <label class="field-label" for="new-flow-name">{% translate "What is this flow called?" %}</label>
                 <input class="form-input-styled" id="new-flow-name" type="text" name="name" maxlength="200"
-                       :required="start === 'blank'" autofocus placeholder="Comment to DM">
+                       :required="start === 'blank'" autofocus placeholder="{% translate 'Comment to DM' %}">
             </div>
         </div>
         <div class="bb-modal-actions">
-            <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-            <button type="submit" class="btn-pill-primary" x-show="start === 'blank'">Create flow</button>
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary" x-show="start === 'blank'">{% translate "Create flow" %}</button>
             <a class="btn-pill-primary" x-show="start === 'template'" x-cloak
-               href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">Choose a template</a>
+               href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">{% translate "Choose a template" %}</a>
             <a class="btn-pill-primary" x-show="start === 'import'" x-cloak
-               href="{% url 'flows:import_start' workspace_id=request.workspace.id %}">Upload a file</a>
+               href="{% url 'flows:import_start' workspace_id=request.workspace.id %}">{% translate "Upload a file" %}</a>
         </div>
     </form>
     {% endmodal %}
@@ -136,10 +137,11 @@ swap in styles.css meaningful.
           hx-swap="innerHTML"
           hx-trigger="input changed delay:300ms from:#flow-search, filters-changed"
           @submit.prevent>
+        {% translate "Search flows" as search_flows_label %}
         <label class="search-field w-full sm:w-64">
             {% include "partials/_nav_icon.html" with name="search" icon_size=16 %}
-            <input type="search" id="flow-search" name="q" x-model="q" placeholder="Search flows"
-                   class="search-input" aria-label="Search flows">
+            <input type="search" id="flow-search" name="q" x-model="q" placeholder="{{ search_flows_label }}"
+                   class="search-input" aria-label="{{ search_flows_label }}">
         </label>
         {% comment %}
           One Filter button for status and folder (HANDOFF §2.2), replacing the
@@ -155,13 +157,13 @@ swap in styles.css meaningful.
     <section class="card p-[22px] mb-7">
         <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
             <div>
-                <h2 class="section-title">Start from a template</h2>
+                <h2 class="section-title">{% translate "Start from a template" %}</h2>
                 <p class="text-[13px] mt-1" style="color: var(--text-tertiary);">
-                    {{ template_total }} ready-made flow{{ template_total|pluralize }}. Pick one and change the words to suit you.
+                    {% blocktranslate count count=template_total %}{{ count }} ready-made flow. Pick one and change the words to suit you.{% plural %}{{ count }} ready-made flows. Pick one and change the words to suit you.{% endblocktranslate %}
                 </p>
             </div>
             <a class="btn-pill-secondary btn-pill-sm flex-shrink-0"
-               href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">Browse all {{ template_total }}</a>
+               href="{% url 'flows:template_gallery' workspace_id=request.workspace.id %}">{% blocktranslate with count=template_total %}Browse all {{ count }}{% endblocktranslate %}</a>
         </div>
         <div class="tpl-grid">
             {% comment %}

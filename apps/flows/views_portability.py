@@ -41,7 +41,9 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.functional import Promise
 from django.utils.text import slugify
+from django.utils.translation import gettext, ngettext
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from apps.campaigns.errors import CampaignsError
@@ -131,7 +133,7 @@ def import_start(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
 
     upload = request.FILES.get("file")
     if upload is None:
-        return _upload_failed(request, workspace_id, ["Choose a flow template file to import."])
+        return _upload_failed(request, workspace_id, [gettext("Choose a flow template file to import.")])
     # ``size`` is Optional on an UploadedFile, and a missing one is not a licence
     # to skip the cap: it falls through to zero here and the cap is applied again
     # to the bytes themselves in ``parse``, which is the one that cannot be lied to.
@@ -140,7 +142,10 @@ def import_start(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
         return _upload_failed(
             request,
             workspace_id,
-            [f"That file is {size} bytes; the limit is {MAX_DOCUMENT_BYTES} bytes."],
+            [
+                gettext("That file is %(size)s bytes; the limit is %(max)s bytes.")
+                % {"size": size, "max": MAX_DOCUMENT_BYTES}
+            ],
         )
 
     document, issues = portability.parse_and_validate(upload.read())
@@ -234,7 +239,10 @@ def template_start(request: WorkspaceRequest, workspace_id: str, template_slug: 
             path.name,
             "; ".join(issue.message for issue in issues[:5]),
         )
-        errors = [f"{path.name} could not be read. This is a problem with the template, not with you."]
+        errors = [
+            gettext("%(name)s could not be read. This is a problem with the template, not with you.")
+            % {"name": path.name}
+        ]
         return render(
             request,
             "flows/template_gallery.html",
@@ -338,8 +346,8 @@ def _source_label(record: FlowImport) -> str:
         path = library.template_for_slug(filename[: -len(".json")])
         card = library.template_card(path) if path is not None else None
         if card is not None:
-            return f"From the {card.name} template."
-    return f"From {filename}." if filename else "From an uploaded file."
+            return gettext("From the %(name)s template.") % {"name": card.name}
+    return gettext("From %(filename)s.") % {"filename": filename} if filename else gettext("From an uploaded file.")
 
 
 def _apply_and_redirect(request: WorkspaceRequest, workspace_id: str, record: FlowImport) -> HttpResponse:
@@ -356,11 +364,11 @@ def _apply_and_redirect(request: WorkspaceRequest, workspace_id: str, record: Fl
         return _redirect_to_review(workspace_id, record)
     except (portability.ImportRefusedError, ContactsError, CampaignsError) as exc:
         logger.info("Workspace %s could not apply import %s: %s", request.workspace.pk, record.pk, exc)
-        messages.error(request, f"Nothing was imported. {exc}")
+        messages.error(request, gettext("Nothing was imported. %(exc)s") % {"exc": exc})
         return _redirect_to_review(workspace_id, record)
 
     if flows is None:
-        messages.info(request, "This file has already been imported.")
+        messages.info(request, gettext("This file has already been imported."))
         return redirect("flows:list", workspace_id=workspace_id)
 
     record.refresh_from_db()
@@ -389,14 +397,17 @@ def _imported_body(count: int) -> str:
     that is where :func:`_apply_and_redirect` leaves them.
     """
     if count == 1:
-        return (
+        return gettext(
             "Imported as a draft, with its trigger switched off. Read the messages below, "
             "then switch the trigger on and set it live."
         )
-    return (
-        f"{count} flows arrived as drafts, with their triggers switched off. "
-        f"Open each one to read the messages before anything goes live."
-    )
+    return ngettext(
+        "%(count)s flow arrived as a draft, with its triggers switched off. "
+        "Open it to read the messages before anything goes live.",
+        "%(count)s flows arrived as drafts, with their triggers switched off. "
+        "Open each one to read the messages before anything goes live.",
+        count,
+    ) % {"count": count}
 
 
 def _review_context(
@@ -557,7 +568,7 @@ def _options(workspace: Any, lists: dict[str, list[dict[str, Any]]], requirement
     return []
 
 
-def _field_types() -> list[tuple[str, str]]:
+def _field_types() -> list[tuple[str, str | Promise]]:
     """The types a "create it" answer may pick for a new custom field.
 
     Read off the model's own choices so the wizard cannot offer one
@@ -612,7 +623,9 @@ def import_confirm(request: WorkspaceRequest, workspace_id: str, flow_import_id:
     """
     record = get_scoped_object_or_404(FlowImport, request.workspace, pk=flow_import_id)
     if record.status == FlowImportStatus.APPLIED:
-        return toast_response(tone="info", title="Already imported", body="This file has already been imported.")
+        return toast_response(
+            tone="info", title=gettext("Already imported"), body=gettext("This file has already been imported.")
+        )
 
     try:
         # ``confirm_import`` takes the row's lock and commits the flows and the
@@ -620,9 +633,9 @@ def import_confirm(request: WorkspaceRequest, workspace_id: str, flow_import_id:
         # The check above is only a cheap early exit; it is not the guard.
         flows = portability.confirm_import(record, user=request.user)
     except portability.ImportNotReadyError as exc:
-        return toast_response(tone="error", title="Not ready to import", body=_first_problem(exc.plan))
+        return toast_response(tone="error", title=gettext("Not ready to import"), body=_first_problem(exc.plan))
     except portability.ImportRefusedError as exc:
-        return toast_response(tone="error", title="Nothing was imported", body=str(exc))
+        return toast_response(tone="error", title=gettext("Nothing was imported"), body=str(exc))
     except (ContactsError, CampaignsError) as exc:
         # The dry run checks every name and type before we get here, so this is
         # the narrow race: something the mapping named was created, renamed or
@@ -631,19 +644,21 @@ def import_confirm(request: WorkspaceRequest, workspace_id: str, flow_import_id:
         logger.info("Workspace %s could not apply import %s: %s", request.workspace.pk, record.pk, exc)
         return toast_response(
             tone="error",
-            title="Nothing was imported",
-            body=f"{exc} Re-check your answers and try again.",
+            title=gettext("Nothing was imported"),
+            body=gettext("%(exc)s Re-check your answers and try again.") % {"exc": exc},
         )
 
     if flows is None:
         # Somebody else confirmed it between the check above and the lock.
-        return toast_response(tone="info", title="Already imported", body="This file has already been imported.")
+        return toast_response(
+            tone="info", title=gettext("Already imported"), body=gettext("This file has already been imported.")
+        )
 
     record.refresh_from_db()
     logger.info("Workspace %s imported %s flow(s) from %r", request.workspace.pk, len(flows), record.original_filename)
     return toast_response(
         tone="success",
-        title="Imported as drafts",
+        title=gettext("Imported as drafts"),
         body=_imported_body(len(flows)),
         events={"flowsChanged": True, "flowImportApplied": True},
     )
@@ -652,10 +667,10 @@ def import_confirm(request: WorkspaceRequest, workspace_id: str, flow_import_id:
 def _first_problem(plan: portability.ImportPlan) -> str:
     unanswered = plan.unanswered
     if not unanswered:  # pragma: no cover - ImportNotReadyError implies at least one
-        return "Something still has to be answered."
+        return gettext("Something still has to be answered.")
     first = unanswered[0]
     label = first.requirement.name or first.requirement.key
-    return f"{label}: {first.problem}"
+    return gettext("%(label)s: %(problem)s") % {"label": label, "problem": first.problem}
 
 
 @login_required
@@ -665,6 +680,8 @@ def import_discard(request: WorkspaceRequest, workspace_id: str, flow_import_id:
     """Throw the upload away. Applied imports are kept as the record of what ran."""
     record = get_scoped_object_or_404(FlowImport, request.workspace, pk=flow_import_id)
     if record.status == FlowImportStatus.APPLIED:
-        return toast_response(tone="info", title="Already imported", body="An applied import is kept as a record.")
+        return toast_response(
+            tone="info", title=gettext("Already imported"), body=gettext("An applied import is kept as a record.")
+        )
     record.delete()
-    return toast_response(tone="info", title="Import discarded", events={"flowImportDiscarded": True})
+    return toast_response(tone="info", title=gettext("Import discarded"), events={"flowImportDiscarded": True})

@@ -26,6 +26,9 @@ class Organization(BaseModel):
     name = models.CharField(max_length=100)
     logo_url = models.URLField(blank=True, default="")
     default_timezone = models.CharField(max_length=63, default="UTC")
+    #: The caller's own id for this tenant (set by the platform API), so a retried
+    #: provisioning request finds the organization instead of creating a second.
+    external_id = models.CharField(max_length=128, null=True, blank=True, unique=True)
 
     # Deletion workflow: a request starts a grace period, a sweep (or an
     # immediate confirm) calls hard_delete. ``deleted_at`` is the tombstone for
@@ -41,6 +44,11 @@ class Organization(BaseModel):
 
     def __str__(self) -> str:
         return self.name
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        # "" would collide on the unique column; NULL does not (admin forms post "").
+        self.external_id = (self.external_id or "").strip() or None
+        super().save(*args, **kwargs)
 
     @property
     def is_deletion_pending(self) -> bool:

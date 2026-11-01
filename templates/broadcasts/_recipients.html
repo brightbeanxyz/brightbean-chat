@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 One page of recipients, filtered by outcome. Bounded to a hundred rows: a
 ten-thousand-recipient broadcast has a counter for the whole and a list for the
 part an operator can act on.
@@ -13,12 +13,14 @@ template value (SECURITY-BASELINE §2).
       hx-target="#broadcast-recipients"
       hx-swap="innerHTML"
       hx-trigger="change">
-    <label for="recipient-status" class="bc-hint">Show</label>
+    <label for="recipient-status" class="bc-hint">{% translate "Show" %}</label>
+    <span class="bb-filter-select-wrap">
     <select id="recipient-status" name="status" class="bb-filter-select">
         {% for value, label in status_options %}
         <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
     </select>
+    </span>
 </form>
 
 <table class="w-full text-sm">
@@ -39,13 +41,13 @@ template value (SECURITY-BASELINE §2).
                         {{ row.contact.first_name }} {{ row.contact.last_name }}
                     </a>
                 {% else %}
-                    <span class="muted">Erased contact</span>
+                    <span class="muted">{% translate "Erased contact" %}</span>
                 {% endif %}
             </td>
             <td class="py-1 text-right" style="color: var(--text-secondary);">{{ row.reason_label }}</td>
         </tr>
         {% empty %}
-        <tr><td class="py-4 text-center" style="color: var(--text-tertiary);">Nobody in this group.</td></tr>
+        <tr><td class="py-4 text-center" style="color: var(--text-tertiary);">{% translate "Nobody in this group." %}</td></tr>
         {% endfor %}
     </tbody>
 </table>

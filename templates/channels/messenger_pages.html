@@ -1,6 +1,7 @@
 {% extends "layouts/workspace_settings.html" %}
-{% block title %}Choose a page · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title mb-4">Choose a page to connect</h1>{% endblock %}
+{% load i18n %}
+{% block title %}{% translate "Choose a page" %} · BrightBean Chat{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">{% translate "Choose a page to connect" %}</h1>{% endblock %}
 
 {% block content %}
   {% if error %}
@@ -9,8 +10,7 @@
 
   {% if pages %}
     <p class="muted">
-      These are the Facebook pages you just granted access to. Connecting one
-      subscribes it to this deployment's webhook and sets its Get Started button.
+      {% translate "These are the Facebook pages you just granted access to. Connecting one subscribes it to this deployment's webhook and sets its Get Started button." %}
     </p>
     <form method="post">
       {% csrf_token %}
@@ -25,16 +25,14 @@
           </li>
         {% endfor %}
       </ul>
-      <button type="submit">Connect this page</button>
+      <button type="submit">{% translate "Connect this page" %}</button>
     </form>
   {% else %}
     <p class="muted">
-      That Facebook account granted no pages. Facebook Login for Business asks
-      which pages to share during sign-in. Start again and pick at least one,
-      or check that you are an admin of the page you meant.
+      {% translate "That Facebook account granted no pages. Facebook Login for Business asks which pages to share during sign-in. Start again and pick at least one, or check that you are an admin of the page you meant." %}
     </p>
-    <p><a href="{{ connect_url }}">Start again</a></p>
+    <p><a href="{{ connect_url }}">{% translate "Start again" %}</a></p>
   {% endif %}
 
-  <p><a href="{{ list_url }}">Back to channels</a></p>
+  <p><a href="{{ list_url }}">{% translate "Back to channels" %}</a></p>
 {% endblock %}

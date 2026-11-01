@@ -495,6 +495,8 @@ OpenAPI document at `/api/v1/openapi.json`; the human reference is served at
 - `GET /api/v1/flows`, `GET /api/v1/tags`, `GET /api/v1/fields`
 - Rate limit 10 req/s per key (in-Postgres sliding window is fine at this scale).
 
+A separate **platform API** at `/api/platform/v1/` provisions tenants (organizations, users, workspaces, workspace keys) for the system that runs the installation. It authenticates with installation-level `bbp_` keys issued by management command and is written up in [`docs/api/platform-v1.md`](api/platform-v1.md). Invitations are not part of it.
+
 Outbound webhooks: HMAC-SHA256 signature header `X-BrightBean-Signature` over `<timestamp>.<raw body>` with the endpoint secret, with the timestamp repeated in `X-BrightBean-Timestamp`; retries via queue (same backoff), auto-disable after 100 consecutive failures with admin notification.
 
 **Naming.** The header and the key prefix were `X-OpenChat-Signature` and `oc_` while "OpenChat" was the working title. They ship as `X-BrightBean-Signature` and `bb_`: §22 keeps internal naming grep-friendly, but a signature header and a key prefix are neither internal nor changeable — an integrator copies both into their own verifier, and a rename after v1 breaks every one of them. Decided with issue #25.

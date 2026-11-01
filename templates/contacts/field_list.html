@@ -3,48 +3,50 @@
 Custom fields, in the shape contacts/tag_list.html established: the create form
 is a modal, opened by id from the header and from the empty state.
 {% endcomment %}
-{% load common_extras %}
-{% block title %}Custom fields · BrightBean Chat{% endblock %}
+{% load common_extras i18n %}
+{% block title %}{% translate "Custom fields" %} · BrightBean Chat{% endblock %}
 {% block content_wrap %}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1060px] w-full">
     <div class="page-header">
         <div class="page-header-text">
-            <h1 class="page-title">Custom fields</h1>
+            <h1 class="page-title">{% translate "Custom fields" %}</h1>
             <p class="page-lede">
-                An extra detail you keep on a contact that is not already built in: a size, a
-                booking date, a plan. Flows fill them in and filters can search on them.
+                {% translate "An extra detail you keep on a contact that is not already built in: a size, a booking date, a plan. Flows fill them in and filters can search on them." %}
             </p>
         </div>
-        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-field')">{% include "partials/_nav_icon.html" with name="fields" icon_size=16 %} New field</button>
+        <button type="button" class="btn-pill-primary flex-shrink-0" @click="$modal('new-field')">{% include "partials/_nav_icon.html" with name="fields" icon_size=16 %} {% translate "New field" %}</button>
     </div>
 
-    {% modal "new-field" title="New field" close_on="fieldsChanged" %}
+    {% translate "New field" as new_field_title %}
+    {% translate "Plan" as new_field_placeholder %}
+    {% modal "new-field" title=new_field_title close_on="fieldsChanged" %}
     <form hx-post="{% url 'contacts:field_create' workspace_id=request.workspace.id %}">
         <div class="bb-modal-body">
             <div class="field">
-                <label class="field-label" for="new-field-name">What is the field called?</label>
-                <input class="form-input-styled" id="new-field-name" type="text" name="name" maxlength="100" required autofocus placeholder="Plan">
+                <label class="field-label" for="new-field-name">{% translate "What is the field called?" %}</label>
+                <input class="form-input-styled" id="new-field-name" type="text" name="name" maxlength="100" required autofocus placeholder="{{ new_field_placeholder }}">
             </div>
             <div class="field">
-                <label class="field-label" for="new-field-type">Type</label>
+                <label class="field-label" for="new-field-type">{% translate "Type" %}</label>
+                <span class="bb-select-wrap">
                 <select class="form-input-styled bb-select" id="new-field-type" name="field_type" required>
                     {% for value, label in field_types %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
                 </select>
-                <span class="field-hint">Fixed once the field exists. It decides how a filter can compare it.</span>
+                </span>
+                <span class="field-hint">{% translate "Fixed once the field exists. It decides how a filter can compare it." %}</span>
             </div>
         </div>
         <div class="bb-modal-actions">
-            <button type="button" class="btn-pill-secondary" @click="close()">Cancel</button>
-            <button type="submit" class="btn-pill-primary">Create field</button>
+            <button type="button" class="btn-pill-secondary" @click="close()">{% translate "Cancel" %}</button>
+            <button type="submit" class="btn-pill-primary">{% translate "Create field" %}</button>
         </div>
     </form>
     {% endmodal %}
 
     <p class="section-note mb-5">
-        Pick the type carefully: it is fixed once the field exists, and it decides how a filter can
-        compare it.
+        {% translate "Pick the type carefully: it is fixed once the field exists, and it decides how a filter can compare it." %}
     </p>
 
     {% include "contacts/_field_rows.html" %}

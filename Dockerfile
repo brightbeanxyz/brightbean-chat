@@ -113,6 +113,27 @@ COPY --from=frontend --chown=app:app /app/apps/flows/static/flows/builder /app/a
 RUN mkdir -p /app/staticfiles /app/media \
     && chown app:app /app /app/staticfiles /app/media
 
+# .po files are source (locale/, committed); .mo is what gettext actually
+# reads at runtime, and is gitignored like every other build artefact here —
+# so it has to be compiled into the image rather than assumed to exist on
+# whatever machine ran `docker build`. gettext (msgfmt) is not on this slim
+# base and is not needed once compilemessages has run, so it is installed,
+# used and purged in the same layer — the .mo output survives, the compiler
+# that made it does not (SECURITY-BASELINE §10: nothing in the runtime image
+# that build time did not strictly need). Root, and before `USER app` below,
+# because apt needs it; the .mo files it writes land world-readable, which is
+# all the app user needs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gettext \
+    && DJANGO_SETTINGS_MODULE=config.settings.production \
+       SECRET_KEY=collectstatic-build-placeholder \
+       ENCRYPTION_KEY_SALT=collectstatic-build-placeholder \
+       ALLOWED_HOSTS=localhost \
+       DJANGO_ENV_FILE=/nonexistent \
+       python manage.py compilemessages \
+    && apt-get purge -y --auto-remove gettext \
+    && rm -rf /var/lib/apt/lists/*
+
 USER app
 
 # Static files are baked in so the container needs no writable volume for

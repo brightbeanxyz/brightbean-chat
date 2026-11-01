@@ -23,6 +23,7 @@ Production settings require real secrets and disable `DEBUG`.
 - [Storage, when web and worker are separate](#storage-when-web-and-worker-are-separate)
 - [Railway](#railway)
 - [Running without a worker (tick mode)](#running-without-a-worker-tick-mode)
+- [Platform API](#platform-api)
 - [Environment variables](#environment-variables)
 - [Backups](#backups)
 - [Upgrades](#upgrades)
@@ -181,6 +182,12 @@ forgotten password without it, and invitations never arrive. This is the
 deployment's own [account email](../README.md#account-email), not the email
 channel you message contacts through, which is connected per workspace in the
 app ([Email](channels/email.md)).
+
+To keep the installation closed, set `SIGNUP=invite` in `.env`. Then the form
+above is only for people arriving from an invitation, so create the first
+account from the shell instead: `docker compose exec web python manage.py
+createsuperuser` (its organization and workspace are created on the first visit
+to `/`), or provision tenants through the [platform API](api/platform-v1.md).
 
 ---
 
@@ -625,6 +632,28 @@ command (55-second budget, sized for a once-a-minute cron).
 
 ---
 
+## Platform API
+
+If another system provisions tenants on this installation (organizations, their
+people, workspaces and workspace keys), give it a platform key:
+
+```bash
+docker compose exec web python manage.py create_platform_key --name zirek-prod
+```
+
+The `bbp_…` token is printed once on stdout and cannot be recovered; the id is
+printed on stderr. Run the command in a terminal you control, not where stdout is
+captured (CI logs, log shippers), and store the token as a secret. Revoke with
+`python manage.py revoke_platform_key <id>`. The key reaches every organization
+on the installation, so keep it out of workspace tooling and logs.
+
+The people it creates have no password and no invitation: they sign in through
+single sign-on, which needs `OIDC_LINK_BY_EMAIL` on (the default) and an
+`APP_URL` the provider's redirect URI matches. Reference:
+[`api/platform-v1.md`](api/platform-v1.md).
+
+---
+
 ## Environment variables
 
 [`deploy/env.prod.example`](../deploy/env.prod.example) is the production
@@ -669,6 +698,14 @@ deployment actually decides:
 | `EMAIL_HOST` and friends | SMTP for the deployment's own account email: password reset, address verification, invitations and notifications. STARTTLS only, so port 587. Not used by the email channel, which has its own credentials per connection. |
 | `STORAGE_BACKEND` / `S3_*` | `local` (a shared volume) or `s3` (S3, R2, B2, MinIO). `local` requires the web and worker processes to share a filesystem, which is true of the compose stack and of no PaaS — see [Storage](#storage-when-web-and-worker-are-separate). |
 | `SENTRY_DSN` | Optional error reporting; empty disables it. |
+| `SIGNUP` | `open` (default): anyone can create an account at `/accounts/signup/` or with Google, and gets an organization of their own. `invite`: an account can only be created by someone holding a valid organization invitation (the link in the invitation email) and signing up with the invited address, by form or Google; the account and the invitation are accepted together, so a link that was already used yields nothing. The address is not verified, so until it is used the link itself is the credential: whoever holds it can claim the invitation. Everyone else sees "Sign up is closed". Accounts made with `createsuperuser`, the Django admin or the [platform API](api/platform-v1.md) are not signups and are unaffected. Single sign-on keeps its own `OIDC_SIGNUP`; with `SIGNUP=invite` even `OIDC_SIGNUP=open` needs an invitation. |
+| `OIDC_ISSUER` / `_CLIENT_ID` / `_CLIENT_SECRET` | Single sign-on through any OpenID Connect provider (PKCE). All three or none. Register the client with redirect URI `<APP_URL>/accounts/oidc/sso/login/callback/`. The issuer's origin is added to the CSP `form-action` list. |
+| `OIDC_NAME` | The button label ("Continue with …"). Default "Single sign-on". |
+| `SINGLE_WORKSPACE_MODE` | Default off. One workspace per organization, created together with the organization: the *New workspace* control disappears, and creating or archiving a workspace is refused in the web UI and the [platform API](api/platform-v1.md) (`409 single_workspace` on create). Restoring stays possible only for an organization with no active workspace. Organizations that already have several keep them. |
+| `OIDC_SIGNUP` | `invite` (default): an identity already linked signs in, and a new one is created only to accept an invitation sent to the same provider-verified address, never with an organization of its own. `open`: every new identity gets its own organization, as Google sign-in does. |
+| `OIDC_LINK_BY_EMAIL` | Default on: a person with a local account signs in with SSO when the provider vouches for the same address, and the identity is linked. A local account whose address was never verified has its password removed on that first sign-in (allauth's protection against pre-registering someone else's address); reset it by email if you still want one. |
+| `OIDC_TRUST_EMAIL` | Treat the provider's email as verified when it sends no `email_verified` claim (Microsoft Entra, for one). Only for a provider that does not let users type their own address. |
+| `OIDC_TOKEN_AUTH_METHOD` | `client_secret_basic` or `client_secret_post`. Empty follows the provider's discovery document. |
 
 ---
 

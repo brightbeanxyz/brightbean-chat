@@ -15,6 +15,8 @@ thing the AGPL promise actually forbids.
 
 from typing import Any
 
+from django.utils.translation import gettext
+
 from apps.billing import plans
 from apps.billing.entitlements import billing_enabled, plan_key, usage_for
 from apps.billing.models import BillingCustomer
@@ -67,11 +69,11 @@ def _usage_rows(usage: Any) -> list[dict[str, Any]]:
         # vocabulary, rendered by templates/partials/_nav_icon.html. Reusing
         # them rather than inventing five more means a nav icon and a usage icon
         # for the same thing can never drift apart.
-        ("contacts", "Contacts reached this month", usage.active_contacts, usage.active_contacts_limit),
-        ("channels", "Channels connected", usage.channels, usage.channels_limit),
-        ("flows", "Active automations", usage.automations, usage.automations_limit),
-        ("users", "Users", usage.seats, usage.seats_limit),
-        ("grid", "Workspaces", usage.workspaces, usage.workspaces_limit),
+        ("contacts", gettext("Contacts reached this month"), usage.active_contacts, usage.active_contacts_limit),
+        ("channels", gettext("Channels connected"), usage.channels, usage.channels_limit),
+        ("flows", gettext("Active automations"), usage.automations, usage.automations_limit),
+        ("users", gettext("Users"), usage.seats, usage.seats_limit),
+        ("grid", gettext("Workspaces"), usage.workspaces, usage.workspaces_limit),
     ]
     return [
         {

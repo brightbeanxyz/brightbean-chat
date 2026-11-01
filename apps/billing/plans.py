@@ -34,6 +34,9 @@ read "0 of 9223372036854775807 used".
 
 from dataclasses import dataclass
 
+from django.utils.functional import Promise
+from django.utils.translation import gettext_lazy as _
+
 
 class PlanKey:
     """The two plan identifiers. Stored on nothing — derived, always."""
@@ -105,26 +108,28 @@ class Price:
     every page load; ``docs/billing.md`` carries the warning instead.
     """
 
+    #: A currency amount, never translated — "$15" reads the same regardless
+    #: of locale.
     amount: str
-    cadence: str
-    note: str
+    cadence: str | Promise
+    note: str | Promise
 
 
 #: Free. One price, and it never changes.
-FREE_PRICE = Price(amount="$0", cadence="", note="Free forever")
+FREE_PRICE = Price(amount="$0", cadence="", note=_("Free forever"))
 
 #: Paid, per interval. Yearly is quoted *per month* so the comparison is like
 #: for like — a reader seeing "$144" next to "$15" has to do arithmetic before
 #: they can tell whether it is cheaper.
 PAID_PRICES: dict[str, Price] = {
-    "monthly": Price(amount="$15", cadence="/month", note="Billed monthly"),
-    "yearly": Price(amount="$12", cadence="/month", note="Billed yearly, $144 up front"),
+    "monthly": Price(amount="$15", cadence=_("/month"), note=_("Billed monthly")),
+    "yearly": Price(amount="$12", cadence=_("/month"), note=_("Billed yearly, $144 up front")),
 }
 
 #: $180 a year against $144. Exact, so it is stated as a number rather than as
 #: "two months free", which would be 2.4 and is the kind of rounding a reader
 #: checks.
-YEARLY_SAVING = "Save 20%"
+YEARLY_SAVING = _("Save 20%")
 
 
 @dataclass(frozen=True)
@@ -143,7 +148,7 @@ class Feature:
     """
 
     icon: str
-    text: str
+    text: str | Promise
 
 
 @dataclass(frozen=True)
@@ -151,8 +156,8 @@ class PlanCopy:
     """The English for one column of the comparison table."""
 
     key: str
-    name: str
-    tagline: str
+    name: str | Promise
+    tagline: str | Promise
     features: tuple[Feature, ...]
     #: One price, or None when the column carries an interval toggle instead.
     price: Price | None = None
@@ -173,31 +178,31 @@ class PlanCopy:
 PLAN_COPY: tuple[PlanCopy, ...] = (
     PlanCopy(
         key=PlanKey.FREE,
-        name="Free",
-        tagline="Enough to prove it works.",
+        name=_("Free"),
+        tagline=_("Enough to prove it works."),
         price=FREE_PRICE,
         features=(
-            Feature("contacts", "25 contacts a month"),
-            Feature("channels", "2 channels"),
-            Feature("flows", "4 active automations"),
-            Feature("user", "1 user"),
-            Feature("inbox", "Shared inbox, labels and reminders"),
-            Feature("tag", "Contacts, tags and segments"),
+            Feature("contacts", _("25 contacts a month")),
+            Feature("channels", _("2 channels")),
+            Feature("flows", _("4 active automations")),
+            Feature("user", _("1 user")),
+            Feature("inbox", _("Shared inbox, labels and reminders")),
+            Feature("tag", _("Contacts, tags and segments")),
         ),
     ),
     PlanCopy(
         key=PlanKey.PAID,
-        name="Pro Chat",
-        tagline="Everything, with nothing counted.",
+        name=_("Pro Chat"),
+        tagline=_("Everything, with nothing counted."),
         features=(
-            Feature("contacts", "Unlimited contacts"),
-            Feature("channels", "Every channel"),
-            Feature("flows", "Unlimited automations"),
-            Feature("sequences", "Unlimited sequences and broadcasts"),
-            Feature("users", "Unlimited users"),
-            Feature("inbox", "Shared inbox, labels and reminders"),
-            Feature("tag", "Contacts, tags and segments"),
-            Feature("key", "Public API and outbound webhooks"),
+            Feature("contacts", _("Unlimited contacts")),
+            Feature("channels", _("Every channel")),
+            Feature("flows", _("Unlimited automations")),
+            Feature("sequences", _("Unlimited sequences and broadcasts")),
+            Feature("users", _("Unlimited users")),
+            Feature("inbox", _("Shared inbox, labels and reminders")),
+            Feature("tag", _("Contacts, tags and segments")),
+            Feature("key", _("Public API and outbound webhooks")),
         ),
         show_logo=True,
     ),

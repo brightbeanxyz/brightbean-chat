@@ -50,6 +50,9 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.utils.functional import Promise
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.broadcasts import audience as audience_module
@@ -98,12 +101,12 @@ STEPS: tuple[str, ...] = ("channel", "audience", "content", "schedule", "review"
 #: What each step is called on screen. The names above are the wire format and
 #: pick a template; these are the reader's words, and "content" is the one that
 #: differs — nobody composing a broadcast thinks of it as content.
-STEP_LABELS: dict[str, str] = {
-    "channel": "Channel",
-    "audience": "Audience",
-    "content": "Message",
-    "schedule": "Schedule",
-    "review": "Review",
+STEP_LABELS: dict[str, str | Promise] = {
+    "channel": _("Channel"),
+    "audience": _("Audience"),
+    "content": _("Message"),
+    "schedule": _("Schedule"),
+    "review": _("Review"),
 }
 
 #: How many broadcasts the list shows at once. The search and status filters
@@ -158,10 +161,10 @@ def _filter_groups(request: WorkspaceRequest) -> list[dict[str, Any]]:
         .order_by("platform", "display_name")
     )
     return [
-        {"key": "status", "label": "Status", "options": list(BroadcastStatus.choices)},
+        {"key": "status", "label": gettext("Status"), "options": list(BroadcastStatus.choices)},
         {
             "key": "channel",
-            "label": "Channel",
+            "label": gettext("Channel"),
             "options": [{"value": c.pk, "label": c.display_name, "icon": c.platform} for c in connections],
         },
     ]
@@ -212,13 +215,13 @@ def broadcast_rows(request: WorkspaceRequest, workspace_id: str) -> HttpResponse
 def broadcast_create(request: WorkspaceRequest, workspace_id: str) -> HttpResponse:
     """Start a draft on one connection and open the composer on it."""
     connection = _connection(request, request.POST.get("connection_id"))
-    name = (request.POST.get("name") or "").strip() or "Untitled broadcast"
+    name = (request.POST.get("name") or "").strip() or gettext("Untitled broadcast")
     try:
         broadcast = services.create_broadcast(
             workspace=request.workspace, name=name, connection=connection, user=request.user
         )
     except services.BroadcastError as exc:
-        return toast_response(tone="error", title="Could not create it", body=str(exc))
+        return toast_response(tone="error", title=gettext("Could not create it"), body=str(exc))
     return _redirect(reverse("broadcasts:compose", kwargs={"workspace_id": workspace_id, "broadcast_id": broadcast.pk}))
 
 
@@ -298,20 +301,20 @@ def _wizard_context(request: WorkspaceRequest, broadcast: Broadcast, step: str, 
         "checks": [
             {
                 "ok": preview is not None,
-                "label": f"Opted-out contacts excluded ({opted_out})"
+                "label": gettext("Opted-out contacts excluded (%(count)s)") % {"count": opted_out}
                 if preview is not None
-                else "Opted-out contacts excluded",
+                else gettext("Opted-out contacts excluded"),
             },
             {
                 "ok": connection is not None and any(c.pk == connection.pk for c in connections),
-                "label": "Channel allows broadcasts",
+                "label": gettext("Channel allows broadcasts"),
             },
-            {"ok": bool(broadcast.target_filter_json), "label": "Audience selected"},
+            {"ok": bool(broadcast.target_filter_json), "label": gettext("Audience selected")},
             {
                 "ok": broadcast.flow_id is not None or broadcast.whatsapp_template_id is not None,
-                "label": "Message written",
+                "label": gettext("Message written"),
             },
-            {"ok": broadcast.send_time_chosen, "label": "Send time chosen"},
+            {"ok": broadcast.send_time_chosen, "label": gettext("Send time chosen")},
         ],
     }
     if step == "audience":
@@ -487,10 +490,15 @@ def send(request: WorkspaceRequest, workspace_id: str, broadcast_id: str) -> Htt
         # The button is disabled until every step is answered; this is the same
         # rule for a POST that did not come from it. An unanswered Schedule step
         # in particular would otherwise read its null as "send now".
-        return _refused(request, broadcast, "review", ValueError("Finish the steps marked in the summary first."))
+        return _refused(
+            request, broadcast, "review", ValueError(gettext("Finish the steps marked in the summary first."))
+        )
     if broadcast.scheduled_at is not None and broadcast.scheduled_at < timezone.now():
         return _refused(
-            request, broadcast, "review", ValueError("The time you picked has passed. Choose a new one under Schedule.")
+            request,
+            broadcast,
+            "review",
+            ValueError(gettext("The time you picked has passed. Choose a new one under Schedule.")),
         )
     try:
         services.schedule_broadcast(broadcast, when=broadcast.scheduled_at)
@@ -733,11 +741,11 @@ def broadcast_cancel(request: WorkspaceRequest, workspace_id: str, broadcast_id:
     try:
         services.cancel_broadcast(broadcast)
     except services.BroadcastError as exc:
-        return toast_response(tone="error", title="Could not cancel it", body=str(exc))
+        return toast_response(tone="error", title=gettext("Could not cancel it"), body=str(exc))
     return toast_response(
         tone="success",
-        title="Broadcast cancelled",
-        body="Sends that had not gone out yet were stopped.",
+        title=gettext("Broadcast cancelled"),
+        body=gettext("Sends that had not gone out yet were stopped."),
         events={"broadcastChanged": True},
     )
 
@@ -750,7 +758,7 @@ def broadcast_duplicate(request: WorkspaceRequest, workspace_id: str, broadcast_
     try:
         copy = services.duplicate_broadcast(broadcast, user=request.user)
     except services.BroadcastError as exc:
-        return toast_response(tone="error", title="Could not duplicate it", body=str(exc))
+        return toast_response(tone="error", title=gettext("Could not duplicate it"), body=str(exc))
     return _redirect(reverse("broadcasts:compose", kwargs={"workspace_id": workspace_id, "broadcast_id": copy.pk}))
 
 
@@ -762,8 +770,8 @@ def broadcast_delete(request: WorkspaceRequest, workspace_id: str, broadcast_id:
     try:
         services.delete_broadcast(broadcast)
     except services.BroadcastError as exc:
-        return toast_response(tone="error", title="Could not delete it", body=str(exc))
-    return toast_response(tone="success", title="Broadcast deleted", events={"broadcastsChanged": True})
+        return toast_response(tone="error", title=gettext("Could not delete it"), body=str(exc))
+    return toast_response(tone="success", title=gettext("Broadcast deleted"), events={"broadcastsChanged": True})
 
 
 # ---------------------------------------------------------------------------
@@ -822,15 +830,15 @@ def _json_field(request: WorkspaceRequest, name: str) -> dict[str, Any]:
     """
     raw = request.POST.get(name) or ""
     if len(raw.encode("utf-8")) > MAX_CONFIG_BYTES:
-        raise ValueError("That message is too large to store.")
+        raise ValueError(gettext("That message is too large to store."))
     if not raw:
         return {}
     try:
         parsed = json.loads(raw)
     except ValueError as exc:
-        raise ValueError("That message could not be read.") from exc
+        raise ValueError(gettext("That message could not be read.")) from exc
     if not isinstance(parsed, dict):
-        raise ValueError("That message could not be read.")
+        raise ValueError(gettext("That message could not be read."))
     return parsed
 
 
@@ -847,11 +855,11 @@ def _when(request: WorkspaceRequest) -> Any:
     raw = (request.POST.get("scheduled_at") or "").strip()
     parsed = parse_datetime(raw) if raw else None
     if parsed is None:
-        raise ValueError("Pick a date and time to send.")
+        raise ValueError(gettext("Pick a date and time to send."))
     if timezone.is_naive(parsed):
         parsed = timezone.make_aware(parsed, _workspace_tz(request))
     if parsed < timezone.now():
-        raise ValueError("That time has already passed.")
+        raise ValueError(gettext("That time has already passed."))
     return parsed
 
 

@@ -9,25 +9,27 @@ settings page, and duplicating them beside this control was the named failure
 mode for this issue. This attaches and detaches, which is what a contact page is
 for.
 {% endcomment %}
+{% load i18n %}
 <section class="crm-panel" id="contact-tag-chips"
          hx-get="{% url 'contacts:tags' workspace_id=request.workspace.id contact_id=contact.id %}"
          hx-trigger="contactTagsChanged from:body"
          hx-swap="outerHTML">
-  <h2>Tags</h2>
+  <h2>{% translate "Tags" %}</h2>
 
   <div class="crm-chips">
     {% for tag in contact_tags %}
       <span class="crm-chip">
         {{ tag.name }}
         {% if can_edit_contacts %}
+          {% blocktranslate asvar remove_tag_label with name=tag.name %}Remove {{ name }}{% endblocktranslate %}
           <button type="button" class="crm-chip-remove"
-                  aria-label="Remove {{ tag.name }}"
+                  aria-label="{{ remove_tag_label }}"
                   hx-post="{% url 'contacts:tag_remove' workspace_id=request.workspace.id contact_id=contact.id tag_id=tag.id %}"
                   hx-swap="none">&times;</button>
         {% endif %}
       </span>
     {% empty %}
-      <span class="muted text-xs">No tags yet.</span>
+      <span class="muted text-xs">{% translate "No tags yet." %}</span>
     {% endfor %}
   </div>
 
@@ -38,9 +40,10 @@ for.
       view enforces that split, and `_tag_suggestions.html` only renders the
       "create" affordance for a `manage_crm` holder, so the two agree.
     {% endcomment %}
+    {% translate "Find or add a tag" as tag_search_placeholder %}
     <div class="crm-typeahead mt-2">
-      <label for="tag-search" class="sr-only">Find a tag</label>
-      <input type="search" id="tag-search" name="q" placeholder="Find or add a tag" maxlength="100"
+      <label for="tag-search" class="sr-only">{% translate "Find a tag" %}</label>
+      <input type="search" id="tag-search" name="q" placeholder="{{ tag_search_placeholder }}" maxlength="100"
              hx-get="{% url 'contacts:tag_suggest' workspace_id=request.workspace.id contact_id=contact.id %}"
              hx-trigger="input changed delay:200ms, focus"
              hx-target="#tag-suggestions"

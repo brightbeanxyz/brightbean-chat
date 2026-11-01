@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db import transaction
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
+from django.utils.translation import gettext
 
 from apps.billing import stripe_client
 from apps.billing.models import BillingCustomer
@@ -49,13 +50,13 @@ def price_id_for(interval: str) -> str:
     four lines.
     """
     if interval not in INTERVALS:
-        raise BillingError("Choose a monthly or yearly plan.")
+        raise BillingError(gettext("Choose a monthly or yearly plan."))
     configured = {
         "monthly": (settings.STRIPE_PRICE_ID_MONTHLY or "").strip(),
         "yearly": (settings.STRIPE_PRICE_ID_YEARLY or "").strip(),
     }[interval]
     if not configured:
-        raise BillingError("That plan is not available right now.")
+        raise BillingError(gettext("That plan is not available right now."))
     return configured
 
 
@@ -100,7 +101,7 @@ def get_or_create_customer(organization: Any, *, email: str, name: str) -> Billi
     customer = stripe_client.create_customer(organization_id=organization.pk, email=email, name=name)
     customer_id = str(getattr(customer, "id", "") or "")
     if not customer_id:
-        raise BillingError("We could not start checkout. Try again in a minute.")
+        raise BillingError(gettext("We could not start checkout. Try again in a minute."))
 
     with transaction.atomic():
         row, created = BillingCustomer.objects.get_or_create(
@@ -125,7 +126,7 @@ def start_checkout(organization: Any, *, interval: str, email: str, name: str) -
     # to come back later.
     existing = BillingCustomer.objects.filter(organization=organization).first()
     if existing is not None and _checkout_in_flight(existing):
-        raise BillingError("A checkout is already open. Finish it, or wait a minute and try again.")
+        raise BillingError(gettext("A checkout is already open. Finish it, or wait a minute and try again."))
 
     row = get_or_create_customer(organization, email=email, name=name)
 
@@ -141,7 +142,7 @@ def start_checkout(organization: Any, *, interval: str, email: str, name: str) -
     # PENDING_CHECKOUT_MINUTES the reconcile job has asked Stripe what is true
     # and cleared it, so the same bound serves both.
     if _checkout_in_flight(row):
-        raise BillingError("A checkout is already open. Finish it, or wait a minute and try again.")
+        raise BillingError(gettext("A checkout is already open. Finish it, or wait a minute and try again."))
 
     session = stripe_client.create_checkout_session(
         customer_id=row.stripe_customer_id,
@@ -169,7 +170,7 @@ def open_portal(organization: Any) -> str:
     """
     row = BillingCustomer.objects.filter(organization=organization).first()
     if row is None or not row.stripe_customer_id:
-        raise BillingError("There is no billing account to manage yet.")
+        raise BillingError(gettext("There is no billing account to manage yet."))
 
     session = stripe_client.create_portal_session(
         customer_id=row.stripe_customer_id,
@@ -203,7 +204,7 @@ def _stripe_url(session: Any) -> str:
     host = parsed.hostname or ""
     if parsed.scheme != "https" or not (host == "stripe.com" or host.endswith(STRIPE_HOST_SUFFIX)):
         logger.error("Stripe returned an unusable redirect URL for host %r", host)
-        raise BillingError("We could not start checkout. Try again in a minute.")
+        raise BillingError(gettext("We could not start checkout. Try again in a minute."))
     return url
 
 

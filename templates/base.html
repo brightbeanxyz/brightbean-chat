@@ -1,5 +1,5 @@
-{% load static %}<!DOCTYPE html>
-<html lang="en" {% block html_style %}{% endblock %}>
+{% load i18n static common_extras %}<!DOCTYPE html>
+<html lang="{{ LANGUAGE_CODE }}" {% theme_attrs %} {% block html_style %}{% endblock %}>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -174,7 +174,7 @@
         {% endcomment %}
         <div class="mobile-topbar">
             <button type="button" class="sidebar-toggle" @click="mobileMenuOpen = !mobileMenuOpen"
-                    title="Toggle menu" aria-label="Toggle menu"
+                    title="{% translate 'Toggle menu' %}" aria-label="{% translate 'Toggle menu' %}"
                     :aria-expanded="mobileMenuOpen ? 'true' : 'false'">
                 <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% load common_extras %}
-{% block title %}Notifications · BrightBean Chat{% endblock %}
+{% load common_extras i18n %}
+{% block title %}{% translate "Notifications" %} · BrightBean Chat{% endblock %}
 
-{% block page_header %}<h1 class="page-title">Notifications</h1>{% endblock %}
+{% block page_header %}<h1 class="page-title">{% translate "Notifications" %}</h1>{% endblock %}
 
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
     <p class="text-sm" style="color: var(--text-secondary);">
-        {% if unread_notification_count %}{{ unread_notification_count }} unread{% else %}All caught up{% endif %}
+        {% if unread_notification_count %}{% blocktranslate count count=unread_notification_count %}{{ count }} unread{% plural %}{{ count }} unread{% endblocktranslate %}{% else %}{% translate "All caught up" %}{% endif %}
     </p>
     <div class="flex items-center gap-3">
         {% comment %}
@@ -22,13 +22,13 @@
                     <input type="checkbox" role="switch" name="email_enabled" {% if email_enabled %}checked{% endif %}>
                     <span class="switch-track"></span>
                 </span>
-                <span>Email me</span>
+                <span>{% translate "Email me" %}</span>
             </label>
         </form>
         {% if unread_notification_count %}
         <button type="button" class="btn-pill-secondary btn-pill-sm"
                 hx-post="{% url 'notifications:mark_all_read' %}"
-                hx-swap="none">Mark all read</button>
+                hx-swap="none">{% translate "Mark all read" %}</button>
         {% endif %}
     </div>
 </div>
@@ -48,7 +48,7 @@
       hx-get="{% url 'notifications:list' %}" hx-target="#notification-history" hx-swap="innerHTML"
       hx-trigger="filters-changed" @submit.prevent>
     <input type="hidden" name="read_state" x-model="readState">
-    <div class="tabs tabs-inline" role="tablist" aria-label="Read state">
+    <div class="tabs tabs-inline" role="tablist" aria-label="{% translate 'Read state' %}">
         {% for value, label in read_states %}
         <button type="button" role="tab" class="tab" aria-controls="notification-history"
                 :aria-selected="readState === '{{ value }}' ? 'true' : 'false'"

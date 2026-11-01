@@ -21,6 +21,9 @@ from django.contrib.auth.decorators import login_required
 from django.http import Http404, HttpResponse
 from django.shortcuts import render
 from django.urls import NoReverseMatch, reverse
+from django.utils.functional import Promise
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.common.htmx import toast_response
@@ -59,13 +62,13 @@ _QR_FORMATS = {"svg": ("image/svg+xml", qr.render_svg), "png": ("image/png", qr.
 
 #: SPEC §10's rule events, with copy. Read off the schema so the form and the
 #: validator cannot offer different lists.
-_RULE_EVENTS: list[tuple[str, str]] = [
-    ("tag_added", "A tag is added"),
-    ("tag_removed", "A tag is removed"),
-    ("field_changed", "A field changes"),
-    ("sequence_subscribed", "Subscribed to a sequence"),
-    ("sequence_unsubscribed", "Unsubscribed from a sequence"),
-    ("contact_created", "A contact is created"),
+_RULE_EVENTS: list[tuple[str, str | Promise]] = [
+    ("tag_added", _("A tag is added")),
+    ("tag_removed", _("A tag is removed")),
+    ("field_changed", _("A field changes")),
+    ("sequence_subscribed", _("Subscribed to a sequence")),
+    ("sequence_unsubscribed", _("Unsubscribed from a sequence")),
+    ("contact_created", _("A contact is created")),
 ]
 
 
@@ -104,7 +107,9 @@ def trigger_form(request: WorkspaceRequest, workspace_id: str, flow_id: str) -> 
     trigger_type = trigger.type if trigger is not None else (request.GET.get("type") or TriggerType.KEYWORD)
     spec = spec_for(trigger_type)
     if spec is None:
-        return toast_response(tone="error", title="Unknown trigger type", body="Pick one from the list.")
+        return toast_response(
+            tone="error", title=gettext("Unknown trigger type"), body=gettext("Pick one from the list.")
+        )
 
     context = _panel_context(request, flow)
     context.update(_form_context(request, flow, trigger, trigger_type))
@@ -201,17 +206,19 @@ def trigger_create(request: WorkspaceRequest, workspace_id: str, flow_id: str) -
     trigger_type = (request.POST.get("type") or "").strip()
     spec = spec_for(trigger_type)
     if spec is None:
-        return toast_response(tone="error", title="Unknown trigger type", body="Pick one from the list.")
+        return toast_response(
+            tone="error", title=gettext("Unknown trigger type"), body=gettext("Pick one from the list.")
+        )
 
     try:
         config = _config_from(request, trigger_type)
     except forms.KeywordMismatchError as exc:
-        return toast_response(tone="error", title="Keywords did not save", body=str(exc))
+        return toast_response(tone="error", title=gettext("Keywords did not save"), body=str(exc))
     except ConditionError as exc:
         # A rule trigger's filter document, refused by the condition engine
         # before it could be stored. Its messages name keys and never echo
         # values, so it is safe to show verbatim.
-        return toast_response(tone="error", title="That filter is not valid", body=str(exc))
+        return toast_response(tone="error", title=gettext("That filter is not valid"), body=str(exc))
 
     refused = _refuse_duplicate_ref(flow, trigger_type, config)
     if refused is not None:
@@ -226,7 +233,7 @@ def trigger_create(request: WorkspaceRequest, workspace_id: str, flow_id: str) -
         )
     except services.TriggerValidationError as exc:
         return _refusal(exc)
-    return toast_response(tone="success", title="Trigger added", events={"triggersChanged": True})
+    return toast_response(tone="success", title=gettext("Trigger added"), events={"triggersChanged": True})
 
 
 @login_required
@@ -237,17 +244,17 @@ def trigger_update(request: WorkspaceRequest, workspace_id: str, flow_id: str, t
     trigger = get_scoped_object_or_404(Trigger, request.workspace, pk=trigger_id, flow=flow)
     spec = spec_for(trigger.type)
     if spec is None:  # pragma: no cover - a stored type with no spec
-        return toast_response(tone="error", title="Unknown trigger type")
+        return toast_response(tone="error", title=gettext("Unknown trigger type"))
 
     try:
         config = _config_from(request, trigger.type)
     except forms.KeywordMismatchError as exc:
-        return toast_response(tone="error", title="Keywords did not save", body=str(exc))
+        return toast_response(tone="error", title=gettext("Keywords did not save"), body=str(exc))
     except ConditionError as exc:
         # A rule trigger's filter document, refused by the condition engine
         # before it could be stored. Its messages name keys and never echo
         # values, so it is safe to show verbatim.
-        return toast_response(tone="error", title="That filter is not valid", body=str(exc))
+        return toast_response(tone="error", title=gettext("That filter is not valid"), body=str(exc))
 
     refused = _refuse_duplicate_ref(flow, trigger.type, config, exclude=trigger)
     if refused is not None:
@@ -262,7 +269,7 @@ def trigger_update(request: WorkspaceRequest, workspace_id: str, flow_id: str, t
         )
     except services.TriggerValidationError as exc:
         return _refusal(exc)
-    return toast_response(tone="success", title="Trigger saved", events={"triggersChanged": True})
+    return toast_response(tone="success", title=gettext("Trigger saved"), events={"triggersChanged": True})
 
 
 @login_required
@@ -274,7 +281,7 @@ def trigger_toggle(request: WorkspaceRequest, workspace_id: str, flow_id: str, t
     services.set_enabled(trigger, not trigger.enabled)
     return toast_response(
         tone="success",
-        title="Trigger enabled" if trigger.enabled else "Trigger paused",
+        title=gettext("Trigger enabled") if trigger.enabled else gettext("Trigger paused"),
         events={"triggersChanged": True},
     )
 
@@ -289,7 +296,7 @@ def trigger_move(request: WorkspaceRequest, workspace_id: str, flow_id: str, tri
         services.move_trigger(trigger, direction=(request.POST.get("direction") or "").strip())
     except services.TriggerValidationError as exc:
         return _refusal(exc)
-    return toast_response(tone="success", title="Order updated", events={"triggersChanged": True})
+    return toast_response(tone="success", title=gettext("Order updated"), events={"triggersChanged": True})
 
 
 @login_required
@@ -299,7 +306,7 @@ def trigger_delete(request: WorkspaceRequest, workspace_id: str, flow_id: str, t
     flow = get_scoped_object_or_404(Flow, request.workspace, pk=flow_id)
     trigger = get_scoped_object_or_404(Trigger, request.workspace, pk=trigger_id, flow=flow)
     services.delete_trigger(trigger)
-    return toast_response(tone="success", title="Trigger removed", events={"triggersChanged": True})
+    return toast_response(tone="success", title=gettext("Trigger removed"), events={"triggersChanged": True})
 
 
 @login_required
@@ -338,7 +345,7 @@ def trigger_qr(
     wanted = (request.GET.get("format") or "svg").lower()
     chosen = _QR_FORMATS.get(wanted)
     if chosen is None:
-        return HttpResponse("Unsupported format.", status=400, content_type="text/plain")
+        return HttpResponse(gettext("Unsupported format."), status=400, content_type="text/plain")
     content_type, render_code = chosen
 
     response = HttpResponse(render_code(link.url), content_type=content_type)
@@ -399,7 +406,7 @@ def _duplicate_stage_labels(rows: list[Trigger]) -> list[str]:
     for trigger_type, count in seen.items():
         if count > 1:
             spec = spec_for(trigger_type)
-            labels.append(spec.label if spec is not None else trigger_type)
+            labels.append(str(spec.label) if spec is not None else trigger_type)
     return sorted(labels)
 
 
@@ -449,12 +456,12 @@ def _refuse_duplicate_ref(
     if ref and services.duplicate_refs(flow, ref, exclude=exclude):
         return toast_response(
             tone="error",
-            title="That reference is taken",
-            body=f"Another trigger in this workspace already uses “{ref}”.",
+            title=gettext("That reference is taken"),
+            body=gettext("Another trigger in this workspace already uses “%(ref)s”.") % {"ref": ref},
         )
     return None
 
 
 def _refusal(error: services.TriggerValidationError) -> HttpResponse:
     first = error.issues[0].message if error.issues else str(error)
-    return toast_response(tone="error", title="Trigger not saved", body=first)
+    return toast_response(tone="error", title=gettext("Trigger not saved"), body=first)

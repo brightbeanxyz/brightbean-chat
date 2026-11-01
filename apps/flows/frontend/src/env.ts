@@ -8,6 +8,8 @@
 
 export interface BuilderEnv {
   flowId: string;
+  /** Django's active language (LANGUAGE_CODE), so the builder's own i18n matches it. */
+  locale: string;
   canEdit: boolean;
   detailUrl: string;
   publishUrl: string;
@@ -53,6 +55,7 @@ function required(mount: HTMLElement, key: keyof DOMStringMap): string {
 export function readEnv(mount: HTMLElement): BuilderEnv {
   return {
     flowId: required(mount, "flowId"),
+    locale: mount.dataset["locale"] ?? "",
     // Django's `yesno` writes the literal string "false", which is truthy in
     // JavaScript. Comparing against "true" is the only safe reading, and
     // getting it wrong hands a Viewer a fully editable canvas whose every save

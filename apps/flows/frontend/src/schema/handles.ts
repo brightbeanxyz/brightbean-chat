@@ -9,6 +9,7 @@
  * original in step, and note that the "id must be a string" clause below is
  * part of that contract, not a defensive nicety.
  */
+import i18n from "../i18n";
 import { nodeSpec } from "./artifact";
 import type { NodeTypeSpec } from "./types";
 
@@ -62,13 +63,13 @@ export function handleLabel(handle: string, config: unknown): string {
     case "default":
       return "";
     case "timeout":
-      return "Timeout";
+      return i18n.t("handles.timeout");
     case "error":
-      return "Error";
+      return i18n.t("handles.error");
     case "cond:true":
-      return "Yes";
+      return i18n.t("handles.yes");
     case "cond:false":
-      return "No";
+      return i18n.t("handles.no");
     // The trigger card's one edge. Unlabelled: the card it leaves already says
     // "When", and the step it reaches is badged "Starts here", so a word on the
     // line between them would be the third telling. Not a graph handle — see

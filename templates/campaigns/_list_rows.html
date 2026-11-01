@@ -1,4 +1,4 @@
-{% load humanize %}{% comment %}
+{% load humanize i18n %}{% comment %}
 The sequence table. Rendered both inside list.html and on its own for every HTMX
 refresh — one renderer, so a filtered view and a post-mutation refresh can never
 disagree about what a row looks like.
@@ -6,9 +6,14 @@ disagree about what a row looks like.
 <div data-result-count="{{ sequences|length }}" hidden></div>
 {% if not sequences %}
 {% if query or filters.status %}
-{% include "components/empty_state.html" with icon="search" title="No sequences match" body="Nothing matches these filters. Try a different word, or clear them." action_label="Clear filters" action_click="clearFilters()" %}
+{% translate "No sequences match" as no_match_title %}
+{% translate "Nothing matches these filters. Try a different word, or clear them." as no_match_body %}
+{% translate "Clear filters" as clear_filters_label %}
+{% include "components/empty_state.html" with icon="search" title=no_match_title body=no_match_body action_label=clear_filters_label action_click="clearFilters()" %}
 {% else %}
-{% include "components/empty_state.html" with icon="sequences" title="No sequences here yet" body="Create one above, add a step, then subscribe contacts from a flow, a rule or the contact list." %}
+{% translate "No sequences here yet" as no_sequences_title %}
+{% translate "Create one above, add a step, then subscribe contacts from a flow, a rule or the contact list." as no_sequences_body %}
+{% include "components/empty_state.html" with icon="sequences" title=no_sequences_title body=no_sequences_body %}
 {% endif %}
 {% else %}
 {% comment %}
@@ -22,12 +27,12 @@ disagree about what a row looks like.
 <table class="data-table">
     <thead>
         <tr>
-            <th scope="col">Sequence</th>
-            <th scope="col">Steps</th>
-            <th scope="col" class="is-num">Active</th>
-            <th scope="col">Completion</th>
-            <th scope="col">Status</th>
-            <th scope="col"><span class="sr-only">Actions</span></th>
+            <th scope="col">{% translate "Sequence" %}</th>
+            <th scope="col">{% translate "Steps" %}</th>
+            <th scope="col" class="is-num">{% translate "Active" %}</th>
+            <th scope="col">{% translate "Completion" %}</th>
+            <th scope="col">{% translate "Status" %}</th>
+            <th scope="col"><span class="sr-only">{% translate "Actions" %}</span></th>
         </tr>
     </thead>
     {% for sequence in sequences %}
@@ -36,52 +41,57 @@ disagree about what a row looks like.
             <td>
                 <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
                    class="data-table-title">{{ sequence.name }}</a>
-                <p class="data-table-meta">Updated {{ sequence.updated_at|naturaltime }}</p>
+                <p class="data-table-meta">{% blocktranslate with when=sequence.updated_at|naturaltime %}Updated {{ when }}{% endblocktranslate %}</p>
             </td>
             <td class="whitespace-nowrap">
                 {% if sequence.step_count %}
                 <span class="step-dots mr-1.5" aria-hidden="true">{% for _ in sequence.step_dots %}<span></span>{% endfor %}</span>
                 {% endif %}
-                <span style="color: var(--text-secondary);">{{ sequence.step_count }} step{{ sequence.step_count|pluralize }}</span>
+                <span style="color: var(--text-secondary);">{% blocktranslate count count=sequence.step_count %}{{ count }} step{% plural %}{{ count }} steps{% endblocktranslate %}</span>
             </td>
             <td class="is-num font-semibold">{{ sequence.subscriber_count }}</td>
             <td style="min-width: 9rem;">
                 {% if sequence.enrolled_count %}
                 {% widthratio sequence.completed_count sequence.enrolled_count 100 as percent %}
-                <div class="meter" role="img" aria-label="{{ percent }}% complete"><div class="meter-fill meter-success" style="width: {{ percent }}%;"></div></div>
-                <p class="meter-label">{{ percent }}% complete</p>
+                {% blocktranslate asvar percent_complete %}{{ percent }}% complete{% endblocktranslate %}
+                <div class="meter" role="img" aria-label="{{ percent_complete }}"><div class="meter-fill meter-success" style="width: {{ percent }}%;"></div></div>
+                <p class="meter-label">{{ percent_complete }}</p>
                 {% else %}
                 <div class="meter" aria-hidden="true"></div>
-                <p class="meter-label">Nobody yet</p>
+                <p class="meter-label">{% translate "Nobody yet" %}</p>
                 {% endif %}
             </td>
             <td>
+                {% translate "Active" as active_label %}
+                {% translate "Archived" as archived_label %}
+                {% translate "Draft" as draft_label %}
                 {% if sequence.status == "active" %}
-                {% include "components/status_pill.html" with tone="success" label="Active" %}
+                {% include "components/status_pill.html" with tone="success" label=active_label %}
                 {% elif sequence.status == "archived" %}
-                <span class="status-pill status-pill-archived"><span class="status-pill-dot" aria-hidden="true"></span>Archived</span>
+                <span class="status-pill status-pill-archived"><span class="status-pill-dot" aria-hidden="true"></span>{{ archived_label }}</span>
                 {% else %}
-                {% include "components/status_pill.html" with tone="neutral" label="Draft" %}
+                {% include "components/status_pill.html" with tone="neutral" label=draft_label %}
                 {% endif %}
             </td>
             <td class="whitespace-nowrap text-right">
                 <a href="{% url 'campaigns:detail' workspace_id=request.workspace.id sequence_id=sequence.id %}"
-                   class="btn-pill-secondary btn-pill-sm">{% if can_edit %}Open{% else %}View{% endif %}</a>
+                   class="btn-pill-secondary btn-pill-sm">{% if can_edit %}{% translate "Open" %}{% else %}{% translate "View" %}{% endif %}</a>
                 {% if can_edit %}
+                {% blocktranslate asvar more_actions_label with name=sequence.name %}More actions for {{ name }}{% endblocktranslate %}
                 <button type="button" class="btn-icon-round ml-1 align-middle" @click="openMenu($event)"
-                        aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ sequence.name }}">
+                        aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ more_actions_label }}">
                     <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
                 </button>
                 <div x-show="menuOpen" x-cloak @click.away="menuOpen = false"
                      :style="`top:${menuTop}px; left:${menuLeft}px;`"
                      class="row-menu-panel fixed z-50 w-[200px] text-left" role="menu">
                     <button type="button" class="row-menu-item" role="menuitem"
-                            @click="renaming = true; menuOpen = false">Rename</button>
+                            @click="renaming = true; menuOpen = false">{% translate "Rename" %}</button>
                     <div class="row-menu-sep"></div>
                     <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem"
                             hx-post="{% url 'campaigns:delete' workspace_id=request.workspace.id sequence_id=sequence.id %}"
                             hx-swap="none" @click="menuOpen = false"
-                            hx-confirm="Delete “{{ sequence.name }}”? Everyone's progress through it goes with it.">Delete</button>
+                            hx-confirm="{% blocktranslate with name=sequence.name %}Delete “{{ name }}”? Everyone's progress through it goes with it.{% endblocktranslate %}">{% translate "Delete" %}</button>
                 </div>
                 {% endif %}
             </td>
@@ -95,9 +105,9 @@ disagree about what a row looks like.
                       @htmx:after-request="renaming = false">
                     {% csrf_token %}
                     <input type="text" name="name" value="{{ sequence.name }}" maxlength="200" required
-                           class="form-input-styled" style="width: 16rem;" aria-label="Sequence name">
-                    <button type="submit" class="btn-pill-primary btn-pill-sm">Save</button>
-                    <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
+                           class="form-input-styled" style="width: 16rem;" aria-label="{% translate 'Sequence name' %}">
+                    <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save" %}</button>
+                    <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">{% translate "Cancel" %}</button>
                 </form>
             </td>
         </tr>

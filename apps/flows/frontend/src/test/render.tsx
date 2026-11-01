@@ -11,6 +11,7 @@ import type { FlowDetail } from "../schema/types";
 
 export const TEST_ENV: BuilderEnv = {
   flowId: "flow-1",
+  locale: "en",
   canEdit: true,
   detailUrl: "/w/ws/api/flows/flow-1/",
   publishUrl: "/w/ws/api/flows/flow-1/publish/",

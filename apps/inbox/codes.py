@@ -11,6 +11,9 @@ than by widening another app's table for a case that app cannot cause.
 so callers need only one function.
 """
 
+from django.utils.functional import Promise
+from django.utils.translation import gettext_lazy as _
+
 from apps.messaging.codes import describe
 
 __all__ = ["EMPTY_BODY", "describe_inbox_failure"]
@@ -20,11 +23,22 @@ __all__ = ["EMPTY_BODY", "describe_inbox_failure"]
 #: terminal either way — no number of retries gives it something to send.
 EMPTY_BODY = "empty_body"
 
-_COPY: dict[str, str] = {
-    EMPTY_BODY: "That scheduled reply had nothing left to send.",
+_COPY: dict[str, str | Promise] = {
+    EMPTY_BODY: _("That scheduled reply had nothing left to send."),
 }
 
 
-def describe_inbox_failure(code: str) -> str:
-    """The sentence for ``code``, from this app's table or messaging's."""
-    return _COPY.get(code) or describe(code)
+def describe_inbox_failure(code: str) -> str | Promise:
+    """The sentence for ``code``, from this app's table or messaging's.
+
+    Stays lazy when this table has an entry, rather than resolving with
+    ``str()``. A scheduled reply's failure handler (``apps.inbox.handlers._fail``)
+    calls this in a queue worker, before the notification it feeds ever reaches
+    ``apps.notifications.engine.notify``'s per-recipient ``translation.override``
+    — resolving here would freeze the sentence in whichever language happened to
+    be active in the worker process, not the recipient's. ``str.format_map``
+    resolves a lazy value itself, fresh, at the point a notification's title/body
+    template is filled — see ``apps.notifications.events._format``.
+    """
+    copy = _COPY.get(code)
+    return copy if copy else describe(code)

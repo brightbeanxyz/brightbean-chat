@@ -25,17 +25,33 @@ creates exactly a user, so no test needs a teardown helper.
 import logging
 from typing import Any
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 logger = logging.getLogger(__name__)
 
+
+class ExternalIdInUseError(ValueError):
+    """Another organization already carries this ``external_id``."""
+
+
 DEFAULT_ORG_NAME = "My Organization"
 DEFAULT_WORKSPACE_NAME = "My Workspace"
+DEFAULT_WORKSPACE_DESCRIPTION = "Your default workspace. Rename it anytime."
 
 
 @transaction.atomic
-def provision_organization_and_workspace(user: Any) -> Any:
+def provision_organization_and_workspace(
+    user: Any,
+    *,
+    org_name: str = DEFAULT_ORG_NAME,
+    workspace_name: str = DEFAULT_WORKSPACE_NAME,
+    external_id: str | None = None,
+    workspace_description: str = DEFAULT_WORKSPACE_DESCRIPTION,
+) -> Any:
     """Give ``user`` an organization, a workspace and owner/admin roles.
+
+    The names and ``external_id`` are for callers that provision on someone's
+    behalf (the platform API); self-service signup takes the defaults.
 
     Idempotent: a user who already belongs to an organization is left alone, so
     every caller can be unconditional.
@@ -61,7 +77,16 @@ def provision_organization_and_workspace(user: Any) -> Any:
     if existing:
         return existing.organization
 
-    org = Organization.objects.create(name=DEFAULT_ORG_NAME, default_timezone="UTC")
+    external_id = external_id or None
+    try:
+        with transaction.atomic():
+            org = Organization.objects.create(name=org_name, default_timezone="UTC", external_id=external_id)
+    except IntegrityError as exc:
+        if external_id is None:
+            raise
+        # A domain answer instead of a bare constraint error: the caller can tell
+        # "that id is taken" (and look the organization up) from a real failure.
+        raise ExternalIdInUseError(external_id) from exc
     OrgMembership.objects.create(
         user=user,
         organization=org,
@@ -70,8 +95,8 @@ def provision_organization_and_workspace(user: Any) -> Any:
     )
     workspace = Workspace.objects.create(
         organization=org,
-        name=DEFAULT_WORKSPACE_NAME,
-        description="Your default workspace. Rename it anytime.",
+        name=workspace_name,
+        description=workspace_description,
     )
     WorkspaceMembership.objects.create(user=user, workspace=workspace, workspace_role=WorkspaceRole.ADMIN)
 
@@ -92,3 +117,89 @@ def ensure_provisioned(user: Any) -> None:
         return
     logger.info("Provisioning a default organization for user %s on first visit", user.pk)
     provision_organization_and_workspace(user)
+
+
+def pending_invitation(request: Any) -> Any:
+    """The unaccepted, unexpired invitation whose token the session holds, or None.
+
+    Read-only: the token stays in the session until the signup that uses it
+    succeeds, so a refusal does not cost the visitor their invitation.
+    """
+    from apps.members.models import Invitation
+    from apps.members.signals_keys import PENDING_INVITE_SESSION_KEY
+
+    token = request.session.get(PENDING_INVITE_SESSION_KEY) if request is not None else None
+    invitation = Invitation.objects.for_token(token).filter(accepted_at__isnull=True).first() if token else None
+    return None if invitation is None or invitation.is_expired else invitation
+
+
+def signup_is_open(request: Any) -> bool:
+    """Whether this visitor may create an account: always under ``SIGNUP=open``,
+    otherwise only while their session holds a valid invitation. ``or`` order
+    matters: an open installation never queries."""
+    from django.conf import settings
+
+    return settings.SIGNUP == "open" or pending_invitation(request) is not None
+
+
+def is_sso(sociallogin: Any) -> bool:
+    """Whether this social login came through the single sign-on provider."""
+    from django.conf import settings
+
+    return sociallogin.account.provider == settings.OIDC_PROVIDER_ID
+
+
+def is_invite_only(sociallogin: Any = None) -> bool:
+    """Whether a new account here is created only to honour an invitation.
+
+    ``SIGNUP=invite`` says so for every signup (pass ``None`` for the local
+    form); ``OIDC_SIGNUP=invite`` says so for single sign-on alone. These are
+    the signups that get the strict path: the user and the invitation are
+    accepted in one transaction, and the address must be the invited one."""
+    from django.conf import settings
+
+    if settings.SIGNUP == "invite":
+        return True
+    return sociallogin is not None and is_sso(sociallogin) and settings.OIDC_SIGNUP == "invite"
+
+
+class InvalidEmailError(ValueError):
+    """The address is not a valid email."""
+
+
+def get_or_create_user(email: str, name: str = "") -> tuple[Any, bool]:
+    """The account for ``email`` and whether this call created it.
+
+    Addresses are matched case-insensitively and stored lower-case: the column is
+    unique but case-sensitive, so ``Ada@x.test`` and ``ada@x.test`` would
+    otherwise be two people. A created account has an unusable password and
+    signs in through SSO, a password reset or an invitation.
+
+    Raises :class:`InvalidEmailError` for a malformed address. Callers that go on
+    to do more should wrap this in their own ``transaction.atomic``, so a later
+    refusal does not leave the new account behind.
+    """
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+    from django.db import IntegrityError
+
+    from apps.accounts.models import User
+
+    email = (email or "").strip().lower()
+    try:
+        validate_email(email)
+    except ValidationError as exc:
+        raise InvalidEmailError("That is not a valid email address.") from exc
+    user = User.objects.filter(email__iexact=email).first()
+    if user is not None:
+        return user, False
+    try:
+        with transaction.atomic():
+            return User.objects.create_user(email=email, name=(name or "").strip()[:255]), True
+    except IntegrityError:
+        # A concurrent request may have created it between our read and insert.
+        # Any other integrity failure is not ours to hide.
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
+            raise
+        return user, False

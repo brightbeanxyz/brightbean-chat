@@ -8,6 +8,7 @@ two seconds for as long as somebody leaves the tab open.
 `importChanged` also refreshes it, so pressing "Check the file" or "Import"
 redraws this panel without a reload.
 {% endcomment %}
+{% load i18n %}
 <section class="crm-panel" id="import-progress"
          hx-get="{% url 'contacts:import_progress' workspace_id=request.workspace.id import_id=run.id %}"
          hx-trigger="importChanged from:body{% if run.is_running %}, every 2s{% endif %}"
@@ -16,7 +17,7 @@ redraws this panel without a reload.
   <div class="flex items-center justify-between gap-3">
     <h2 class="mb-0">{{ run.get_status_display }}</h2>
     {% if run.total_rows %}
-      <span class="muted text-xs">{{ run.processed_rows }} of {{ run.total_rows }} rows</span>
+      <span class="muted text-xs">{% blocktranslate with processed=run.processed_rows total=run.total_rows %}{{ processed }} of {{ total }} rows{% endblocktranslate %}</span>
     {% endif %}
   </div>
 
@@ -28,17 +29,19 @@ redraws this panel without a reload.
   {% endif %}
 
   <p class="text-xs mt-2">
-    {{ run.created_count }} created · {{ run.updated_count }} updated ·
-    {{ run.skipped_count }} skipped · {{ run.error_count }} error{{ run.error_count|pluralize }}
+    {% blocktranslate with count=run.created_count %}{{ count }} created{% endblocktranslate %} ·
+    {% blocktranslate with count=run.updated_count %}{{ count }} updated{% endblocktranslate %} ·
+    {% blocktranslate with count=run.skipped_count %}{{ count }} skipped{% endblocktranslate %} ·
+    {% blocktranslate count count=run.error_count %}{{ count }} error{% plural %}{{ count }} errors{% endblocktranslate %}
     {% if run.status == "validated" %}
-      <br><span class="muted">Nothing has been written yet. These are the numbers the import would produce.</span>
+      <br><span class="muted">{% translate "Nothing has been written yet. These are the numbers the import would produce." %}</span>
     {% endif %}
   </p>
 
   {% if run.errors %}
-    <h3 class="mt-3">Rows that will not import</h3>
+    <h3 class="mt-3">{% translate "Rows that will not import" %}</h3>
     <table>
-      <thead><tr><th>Row</th><th>Column</th><th>Problem</th></tr></thead>
+      <thead><tr><th>{% translate "Row" %}</th><th>{% translate "Column" %}</th><th>{% translate "Problem" %}</th></tr></thead>
       <tbody>
         {% for error in run.errors|slice:":20" %}
           <tr>
@@ -50,24 +53,25 @@ redraws this panel without a reload.
       </tbody>
     </table>
     {% if run.error_count > 20 %}
-      <p class="muted text-xs">Showing 20 of {{ run.error_count }}. Download the report for the rest.</p>
+      <p class="muted text-xs">{% blocktranslate with count=run.error_count %}Showing 20 of {{ count }}. Download the report for the rest.{% endblocktranslate %}</p>
     {% endif %}
     {% if run.errors_truncated %}
       <p class="muted text-xs">
-        Only the first {{ run.errors|length }} row errors were stored; the remaining
-        {{ run.hidden_error_count }} were counted but not recorded.
+        {% blocktranslate with shown=run.errors|length hidden=run.hidden_error_count %}Only the first {{ shown }} row errors were stored; the remaining
+        {{ hidden }} were counted but not recorded.{% endblocktranslate %}
       </p>
     {% endif %}
-    <p><a href="{% url 'contacts:import_report' workspace_id=request.workspace.id import_id=run.id %}">Download the report (CSV)</a></p>
+    <p><a href="{% url 'contacts:import_report' workspace_id=request.workspace.id import_id=run.id %}">{% translate "Download the report (CSV)" %}</a></p>
   {% endif %}
 
   {% if run.status == "validated" %}
+    {% blocktranslate asvar import_confirm with count=run.total_rows %}Import {{ count }} row(s) now?{% endblocktranslate %}
     <form class="mt-3"
           hx-post="{% url 'contacts:import_run' workspace_id=request.workspace.id import_id=run.id %}"
           hx-swap="none"
-          hx-confirm="Import {{ run.total_rows }} row(s) now?">
-      <button type="submit" class="btn-pill-primary btn-pill-sm">Import for real</button>
-      <span class="muted text-xs">Rows listed above are skipped; everything else is written.</span>
+          hx-confirm="{{ import_confirm }}">
+      <button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Import for real" %}</button>
+      <span class="muted text-xs">{% translate "Rows listed above are skipped; everything else is written." %}</span>
     </form>
   {% endif %}
 </section>

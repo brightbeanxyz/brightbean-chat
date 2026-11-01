@@ -6,12 +6,15 @@
  * fine for six nodes laid out neatly and hopeless for a graph somebody dragged
  * around — a step could be off-screen with nothing saying it existed.
  */
+import { useTranslation } from "react-i18next";
+
 import { nodeSpec } from "../schema/artifact";
 import { plainKind } from "../schema/plain";
 import { useBuilder, useBuilderStore } from "../store/context";
 import { titleOf } from "./title";
 
 export function StepList() {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const order = useBuilder((state) => state.nodeOrder);
   const nodeType = useBuilder((state) => state.nodeType);
@@ -45,8 +48,8 @@ export function StepList() {
                 <span className="fb-steplist-title block truncate">{titleOf(type, config[id])}</span>
               </span>
               {broken ? (
-                <span className="fb-step-flag" title="This step needs something before the flow can go live">
-                  Needs a fix
+                <span className="fb-step-flag" title={t("stepList.needsFixTitle")}>
+                  {t("stepList.needsFix")}
                 </span>
               ) : null}
             </button>

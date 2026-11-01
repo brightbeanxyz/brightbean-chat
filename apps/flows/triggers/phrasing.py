@@ -23,6 +23,9 @@ place to discover that a migration landed without copy.
 
 from typing import Any
 
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
+
 from apps.flows.triggers.types import TriggerType
 
 __all__ = ["CAVEATS", "MAX_QUOTED_KEYWORDS", "describe_trigger", "describe_triggers", "sentence_case"]
@@ -33,17 +36,17 @@ __all__ = ["CAVEATS", "MAX_QUOTED_KEYWORDS", "describe_trigger", "describe_trigg
 MAX_QUOTED_KEYWORDS = 3
 
 #: One phrase per trigger type, written to follow "This flow runs…".
-_PHRASES: dict[str, str] = {
-    TriggerType.KEYWORD: "when someone sends a keyword",
-    TriggerType.COMMENT: "when someone comments on a post",
-    TriggerType.STORY_MENTION: "when someone mentions you in a story",
-    TriggerType.STORY_REPLY: "when someone replies to your story",
-    TriggerType.FOLLOW: "when someone follows you",
-    TriggerType.REF_URL: "when someone opens your link or scans your QR code",
-    TriggerType.DEFAULT_REPLY: "when nothing else matches",
-    TriggerType.WELCOME: "when someone messages you for the first time",
-    TriggerType.RULE: "when a message matches your rules",
-    TriggerType.API: "when another system asks it to",
+_PHRASES: dict[str, Any] = {
+    TriggerType.KEYWORD: _("when someone sends a keyword"),
+    TriggerType.COMMENT: _("when someone comments on a post"),
+    TriggerType.STORY_MENTION: _("when someone mentions you in a story"),
+    TriggerType.STORY_REPLY: _("when someone replies to your story"),
+    TriggerType.FOLLOW: _("when someone follows you"),
+    TriggerType.REF_URL: _("when someone opens your link or scans your QR code"),
+    TriggerType.DEFAULT_REPLY: _("when nothing else matches"),
+    TriggerType.WELCOME: _("when someone messages you for the first time"),
+    TriggerType.RULE: _("when a message matches your rules"),
+    TriggerType.API: _("when another system asks it to"),
 }
 
 
@@ -60,8 +63,8 @@ _PHRASES: dict[str, str] = {
 #: ``TriggerSpec.unavailable`` says the same thing at the length a form can
 #: afford. This one has to survive a truncated meta line beside "edited 2 hours
 #: ago", and must still stop a reader, because the pill above it says "Live".
-CAVEATS: dict[str, str] = {
-    TriggerType.FOLLOW: "Instagram does not support new-follower triggers yet, so it will not run.",
+CAVEATS: dict[str, Any] = {
+    TriggerType.FOLLOW: _("Instagram does not support new-follower triggers yet, so it will not run."),
 }
 
 
@@ -82,10 +85,13 @@ def _quoted_keywords(config: dict[str, Any]) -> str:
     if not words:
         return ""
     if len(words) > MAX_QUOTED_KEYWORDS:
-        return f"“{words[0]}” and {len(words) - 1} more"
+        return gettext("“%(word)s” and %(count)s more") % {"word": words[0], "count": len(words) - 1}
     if len(words) == 1:
         return f"“{words[0]}”"
-    return ", ".join(f"“{word}”" for word in words[:-1]) + f" or “{words[-1]}”"
+    return gettext("%(list)s or “%(last)s”") % {
+        "list": ", ".join(f"“{word}”" for word in words[:-1]),
+        "last": words[-1],
+    }
 
 
 def describe_trigger(trigger: Any) -> str:
@@ -99,16 +105,16 @@ def describe_trigger(trigger: Any) -> str:
     if phrase is None:
         # A type added without copy. Its enum label is wrong in register but
         # right in substance, which beats an empty line on a list page.
-        return f"when a {trigger.get_type_display().lower()} trigger fires"
+        return gettext("when a %(type)s trigger fires") % {"type": trigger.get_type_display().lower()}
 
     config = trigger.config_json if isinstance(trigger.config_json, dict) else {}
     quoted = _quoted_keywords(config)
     if quoted and trigger.type == TriggerType.KEYWORD:
-        phrase = f"when someone sends {quoted}"
+        phrase = gettext("when someone sends %(quoted)s") % {"quoted": quoted}
     elif quoted and trigger.type == TriggerType.COMMENT:
-        phrase = f"when someone comments {quoted}"
+        phrase = gettext("when someone comments %(quoted)s") % {"quoted": quoted}
 
-    return phrase
+    return str(phrase)
 
 
 def sentence_case(phrase: str) -> str:
@@ -134,15 +140,21 @@ def describe_triggers(triggers: list[Any]) -> str:
     """
     enabled = [t for t in triggers if getattr(t, "enabled", True)]
     if not enabled:
-        return "No trigger yet, so it will not run until you add one"
+        return gettext("No trigger yet, so it will not run until you add one")
     if len(enabled) == 1:
         sentence = sentence_case(describe_trigger(enabled[0]))
     elif len(enabled) == 2:
-        sentence = f"{sentence_case(describe_trigger(enabled[0]))}, or {describe_trigger(enabled[1])}"
+        sentence = gettext("%(first)s, or %(second)s") % {
+            "first": sentence_case(describe_trigger(enabled[0])),
+            "second": describe_trigger(enabled[1]),
+        }
     else:
-        sentence = f"{sentence_case(describe_trigger(enabled[0]))}, and {len(enabled) - 1} other triggers"
+        sentence = gettext("%(first)s, and %(count)s other triggers") % {
+            "first": sentence_case(describe_trigger(enabled[0])),
+            "count": len(enabled) - 1,
+        }
 
     # Appended once, however many triggers there are, and de-duplicated: two
     # trigger types blocked for the same reason should say it once.
-    notes = dict.fromkeys(note for t in enabled if (note := CAVEATS.get(t.type)))
+    notes = dict.fromkeys(str(note) for t in enabled if (note := CAVEATS.get(t.type)))
     return " ".join([sentence + "." if notes else sentence, *notes])

@@ -228,6 +228,20 @@ class TestGuidedFlowsAreDescribed:
             f"list renders 'set it up — ' with nothing after the dash."
         )
 
+    def test_hints_and_extra_links_are_translated(self) -> None:
+        """CONNECT_HINTS and PLATFORM_EXTRA_LINKS are gettext_lazy, not plain
+        strings — the settings/channels/ page's per-platform intro sentence and
+        its WhatsApp-only "Message templates"/"Cost estimates" links."""
+        from django.utils.translation import override
+
+        from apps.channels.models import Platform
+        from apps.channels.views import CONNECT_HINTS, PLATFORM_EXTRA_LINKS
+
+        with override("ru"):
+            assert str(CONNECT_HINTS[Platform.TELEGRAM]) == "Вставьте токен BotFather, остальное сделаем мы."
+            links = dict(PLATFORM_EXTRA_LINKS[Platform.WHATSAPP])
+            assert {str(label) for label in links} == {"Шаблоны сообщений", "Оценки стоимости"}
+
     def test_a_platform_with_a_flow_no_longer_names_an_issue(self) -> None:
         """The two tables are opposites: a platform leaves CONNECT_FLOW_ISSUES on
         the day its connect view lands, or the page offers the flow and tells the

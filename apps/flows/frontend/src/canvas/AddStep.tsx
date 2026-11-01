@@ -18,6 +18,7 @@
  */
 import { useReactFlow } from "@xyflow/react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { FALLBACK_GROUP, GROUPS, NODE_TYPES, groupOf } from "../schema/artifact";
 import { GROUP_PHRASE } from "../schema/plain";
@@ -35,6 +36,7 @@ function nextPosition(positions: readonly { x: number; y: number }[]) {
 }
 
 export function AddStep() {
+  const { t } = useTranslation();
   const store = useBuilderStore();
   const canEdit = useBuilder((state) => state.env.canEdit);
   const [open, setOpen] = useState(false);
@@ -91,7 +93,7 @@ export function AddStep() {
         aria-expanded={open}
         onClick={() => setOpen((was) => !was)}
       >
-        <span aria-hidden="true">+</span> Add a step
+        <span aria-hidden="true">+</span> {t("addStep.button")}
       </button>
     </div>
   );
@@ -114,6 +116,7 @@ export function StepMenu({
   filter?: (type: string) => boolean;
   className?: string;
 }) {
+  const { t } = useTranslation();
   const known = new Set(GROUPS.map((group) => group.key));
   const drawers = GROUPS.map((group) => ({
     ...group,
@@ -127,7 +130,7 @@ export function StepMenu({
   })).filter((drawer) => drawer.types.length > 0);
 
   return (
-    <div className={className} role="menu" aria-label="Kinds of step">
+    <div className={className} role="menu" aria-label={t("addStep.menuLabel")}>
       {drawers.map((drawer) => (
         <div key={drawer.key}>
           <p className="fb-addstep-group">{drawer.phrase}</p>

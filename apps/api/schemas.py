@@ -28,9 +28,11 @@ from typing import Any
 from uuid import UUID
 
 from ninja import Schema
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 __all__ = [
+    "ApiKeyIssue",
+    "ApiKeyIssued",
     "ContactCreate",
     "ContactOut",
     "ContactUpdate",
@@ -42,10 +44,16 @@ __all__ = [
     "FlowStartOut",
     "MessageOut",
     "MessageSend",
+    "OrganizationCreate",
+    "OrganizationOut",
     "Page",
     "StrictSchema",
     "TagAdd",
     "TagOut",
+    "UserAdd",
+    "UserAdded",
+    "WorkspaceCreate",
+    "WorkspaceOut",
 ]
 
 
@@ -268,3 +276,67 @@ class MessageOut(Schema):
     source: str
     error: str = ""
     created_at: dt.datetime
+
+
+# --- Platform API (``/api/platform/v1/``) -------------------------------------
+
+
+# Limits mirror the columns they end up in. Over-long input is a 422 here
+# rather than being truncated further down and reported back as success.
+class OrganizationCreate(StrictSchema):
+    name: str = Field(max_length=100)
+    external_id: str | None = Field(default=None, max_length=128)
+    owner_email: str = Field(max_length=254)
+    owner_name: str = Field(default="", max_length=255)
+    workspace_name: str = Field(default="", max_length=100)
+
+
+class WorkspaceOut(Schema):
+    id: UUID
+    name: str
+    is_archived: bool
+
+
+class OrganizationOut(Schema):
+    id: UUID
+    name: str
+    external_id: str | None
+    workspaces: list[WorkspaceOut]
+    member_count: int
+
+
+class WorkspaceCreate(StrictSchema):
+    name: str = Field(max_length=100)
+
+
+class WorkspaceAssignmentIn(StrictSchema):
+    workspace_id: UUID
+    role: str
+
+
+class UserAdd(StrictSchema):
+    email: str = Field(max_length=254)
+    name: str = Field(default="", max_length=255)
+    org_role: str = "member"
+    workspaces: list[WorkspaceAssignmentIn] = []
+
+
+class UserAdded(Schema):
+    id: UUID
+    email: str
+    name: str
+    org_role: str
+    user_created: bool
+
+
+class ApiKeyIssue(StrictSchema):
+    name: str = Field(max_length=100)
+    scopes: list[str]
+
+
+class ApiKeyIssued(Schema):
+    id: UUID
+    name: str
+    scopes: list[str]
+    lookup_prefix: str
+    token: str

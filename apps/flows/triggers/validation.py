@@ -13,6 +13,8 @@ exception would be a 500 on a form somebody typed into.
 
 from typing import Any
 
+from django.utils.translation import gettext
+
 from apps.common.jsonsize import jsonb_byte_size
 from apps.flows.schema.envelope import json_depth
 from apps.flows.schema.issues import Issue
@@ -65,10 +67,10 @@ def validate_config(trigger_type: str, config: Any, *, known_size: int | None = 
     """
     spec = spec_for(trigger_type)
     if spec is None:
-        return [_issue(f"{trigger_type!r} is not a trigger type.", path="type")]
+        return [_issue(gettext("%(type)r is not a trigger type.") % {"type": trigger_type}, path="type")]
 
     if not isinstance(config, dict):
-        return [_issue("A trigger's configuration has to be an object.", path="config")]
+        return [_issue(gettext("A trigger's configuration has to be an object."), path="config")]
 
     if known_size is None or known_size > MAX_TRIGGER_CONFIG_BYTES:
         size = config_byte_size(config)
@@ -78,17 +80,26 @@ def validate_config(trigger_type: str, config: Any, *, known_size: int | None = 
             # refuse at any length.
             return [
                 _issue(
-                    "The configuration holds a value that cannot be stored as JSON.",
+                    gettext("The configuration holds a value that cannot be stored as JSON."),
                     path="config",
                 )
             ]
         if size > MAX_TRIGGER_CONFIG_BYTES:
             return [
-                _issue(f"The configuration is {size} bytes; the limit is {MAX_TRIGGER_CONFIG_BYTES}.", path="config")
+                _issue(
+                    gettext("The configuration is %(size)s bytes; the limit is %(max)s.")
+                    % {"size": size, "max": MAX_TRIGGER_CONFIG_BYTES},
+                    path="config",
+                )
             ]
 
     if json_depth(config, limit=MAX_TRIGGER_CONFIG_DEPTH) > MAX_TRIGGER_CONFIG_DEPTH:
-        return [_issue(f"The configuration nests deeper than {MAX_TRIGGER_CONFIG_DEPTH} levels.", path="config")]
+        return [
+            _issue(
+                gettext("The configuration nests deeper than %(max)s levels.") % {"max": MAX_TRIGGER_CONFIG_DEPTH},
+                path="config",
+            )
+        ]
 
     return validate_instance(spec.config, config, path="config", defs=all_defs())
 

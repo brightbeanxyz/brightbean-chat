@@ -28,8 +28,11 @@ from datetime import datetime
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
+from django.utils.translation import pgettext_lazy
 
 from apps.common.encryption import EncryptedTextField
+from apps.common.models import BaseModel
 from apps.common.scoping import WorkspaceScopedModel
 
 __all__ = [
@@ -37,6 +40,7 @@ __all__ = [
     "ApiScope",
     "DeliveryStatus",
     "OutboundWebhook",
+    "PlatformApiKey",
     "WebhookDelivery",
 ]
 
@@ -71,9 +75,13 @@ class ApiScope(models.TextChoices):
     the issuance form from this enum intersected with ``SCOPE_PERMISSIONS``.
     """
 
-    READ = "read", "Read"
-    WRITE = "write", "Write"
-    ERASE = "erase", "Erase"
+    # pgettext_lazy, not _(): "Read" bare collides with the inbox delivery-status
+    # tooltip's own "Read" msgid (templates/inbox/_thread_body.html) — same
+    # English word, different sense ("read access" vs. "this message was read"),
+    # and a shared msgid meant both had to share one translation.
+    READ = "read", pgettext_lazy("api scope", "Read")
+    WRITE = "write", _("Write")
+    ERASE = "erase", _("Erase")
 
 
 class DeliveryStatus(models.TextChoices):
@@ -84,9 +92,9 @@ class DeliveryStatus(models.TextChoices):
     retrying a private-range target just repeats the same refusal.
     """
 
-    SUCCEEDED = "succeeded", "Succeeded"
-    FAILED = "failed", "Failed"
-    BLOCKED = "blocked", "Blocked"
+    SUCCEEDED = "succeeded", _("Succeeded")
+    FAILED = "failed", _("Failed")
+    BLOCKED = "blocked", _("Blocked")
 
 
 def generate_webhook_secret() -> str:
@@ -166,11 +174,45 @@ class ApiKey(WorkspaceScopedModel):
         Over the digests rather than the raw values, so the comparison is over
         fixed-length data whatever the caller sent.
         """
-        from apps.api.keys import digest_for
+        from apps.api.keys import verify
 
-        if not secret or not self.token_digest:
-            return False
-        return secrets.compare_digest(digest_for(secret), self.token_digest)
+        return verify(secret, self.token_digest)
+
+
+class PlatformApiKey(BaseModel):
+    """An installation-level credential for the platform API (``bbp_…``).
+
+    Not workspace-scoped on purpose: it provisions organizations, so it sits
+    above every tenant. That is why it is its own table rather than a nullable
+    ``ApiKey.workspace`` — every IDOR check on ``ApiKey`` leans on the column
+    being set. Digest only, like ``ApiKey``; issued and revoked from the command
+    line, never through a page.
+    """
+
+    #: Set on the instance ``issue_platform_key`` returns, nowhere else.
+    raw_token: str | None = None
+
+    name = models.CharField(max_length=100)
+    lookup_prefix = models.CharField(max_length=16, db_index=True)
+    token_digest = models.CharField(max_length=64, unique=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        db_table = "api_platform_api_key"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.name} (bbp_…{self.lookup_prefix})"
+
+    @property
+    def is_active(self) -> bool:
+        return self.revoked_at is None
+
+    def matches(self, secret: str) -> bool:
+        from apps.api.keys import verify
+
+        return verify(secret, self.token_digest)
 
 
 class OutboundWebhook(WorkspaceScopedModel):
@@ -265,7 +307,7 @@ class WebhookDelivery(WorkspaceScopedModel):
         return self.status == DeliveryStatus.SUCCEEDED
 
 
-def touch_last_used(api_key: ApiKey, *, now: datetime | None = None) -> None:
+def touch_last_used(api_key: ApiKey | PlatformApiKey, *, now: datetime | None = None) -> None:
     """Stamp ``last_used_at``, debounced to one write per minute per key.
 
     Without the debounce every authenticated request writes a row, which turns a
@@ -277,6 +319,9 @@ def touch_last_used(api_key: ApiKey, *, now: datetime | None = None) -> None:
     if previous is not None and (moment - previous).total_seconds() < 60:
         return
     api_key.last_used_at = moment
+    if isinstance(api_key, PlatformApiKey):
+        PlatformApiKey.objects.filter(pk=api_key.pk).update(last_used_at=moment)
+        return
     # Scoped, even though the row was found unscoped a moment ago: by this point
     # the key has named its workspace, so there is no reason to reach for the
     # escape hatch a second time.

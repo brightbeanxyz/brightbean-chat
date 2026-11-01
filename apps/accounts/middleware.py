@@ -36,6 +36,7 @@ account is out of scope here.
 
 from collections.abc import Callable
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 
 from apps.common.net import get_client_ip
@@ -79,3 +80,37 @@ class AuthRateLimitMiddleware:
             window_seconds=AUTH_RATE_WINDOW,
         )
         return hit(key, limit=AUTH_RATE_LIMIT, window_seconds=AUTH_RATE_WINDOW)
+
+
+class LanguagePreferenceMiddleware:
+    """Make a signed-in user's stored language win over their browser's.
+
+    Modern Django's ``LocaleMiddleware`` resolves the active language from
+    ``request.COOKIES`` (and, failing that, ``Accept-Language``) only — there is
+    no session-based hook left to carry a preference forward the way older
+    Django versions did with ``LANGUAGE_SESSION_KEY``, which this project's
+    Django version has removed entirely.
+
+    So this reads the preference off the account instead of trying to persist
+    it into a cookie at login: it runs every request, straight from
+    ``request.user.language`` (``apps.accounts.models.User``), and overwrites
+    whatever the browser sent before ``LocaleMiddleware`` gets to look —
+    correct on a new device with no cookie yet, and correct on the family
+    computer where somebody else's cookie is sitting in the jar. A blank
+    preference (the field's default) changes nothing, so ``LocaleMiddleware``
+    falls through to the cookie / ``Accept-Language`` exactly as it would with
+    this middleware absent.
+
+    Placed after ``AuthenticationMiddleware`` (it needs ``request.user``) and
+    before ``LocaleMiddleware`` (it needs to win the race) in
+    ``config/settings/base.py``'s ``MIDDLEWARE``.
+    """
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]) -> None:
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False) and user.language:
+            request.COOKIES[settings.LANGUAGE_COOKIE_NAME] = user.language
+        return self.get_response(request)

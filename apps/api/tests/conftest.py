@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from apps.api import keys as key_tokens
-from apps.api.models import ApiKey, OutboundWebhook
+from apps.api.models import ApiKey, OutboundWebhook, PlatformApiKey
 
 
 def make_key(workspace: Any, *, scopes: tuple[str, ...] = ("read", "write"), name: str = "test key") -> tuple[Any, str]:
@@ -34,6 +34,13 @@ def make_key(workspace: Any, *, scopes: tuple[str, ...] = ("read", "write"), nam
         token_digest=minted.token_digest,
     )
     return api_key, minted.plaintext
+
+
+def make_platform_key(*, name: str = "test platform key") -> tuple[Any, str]:
+    """A ``PlatformApiKey`` plus its plaintext."""
+    minted = key_tokens.mint(key_tokens.PLATFORM_TOKEN_PREFIX)
+    key = PlatformApiKey.objects.create(name=name, lookup_prefix=minted.lookup_prefix, token_digest=minted.token_digest)
+    return key, minted.plaintext
 
 
 def bearer(plaintext: str) -> dict[str, Any]:
@@ -69,3 +76,9 @@ def webhook(db, tenancy):
     endpoint.rotate_secret()
     endpoint.save()
     return endpoint
+
+
+@pytest.fixture
+def platform_auth(db):
+    """Request kwargs that authenticate as a fresh platform key."""
+    return bearer(make_platform_key()[1])

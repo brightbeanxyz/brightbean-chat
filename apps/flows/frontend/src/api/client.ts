@@ -7,6 +7,7 @@
  * `{% csrf_token %}` and hooks htmx's `configRequest` — but that hook covers
  * htmx only, so a React `fetch` has to attach the header itself.
  */
+import i18n from "../i18n";
 
 export class ApiError extends Error {
   constructor(
@@ -23,25 +24,21 @@ export class ApiError extends Error {
 /** A non-JSON answer, which in practice is the login page or an HTML 500. */
 export class SessionExpiredError extends ApiError {
   constructor(status: number) {
-    super(status, "session_expired", "Your session expired. Reload the page to continue editing.");
+    super(status, "session_expired", i18n.t("apiErrors.sessionExpired"));
     this.name = "SessionExpiredError";
   }
 }
 
 export class RequestTimeoutError extends ApiError {
   constructor() {
-    super(0, "timeout", "The request took too long. Retrying\u2026");
+    super(0, "timeout", i18n.t("apiErrors.requestTimeout"));
     this.name = "RequestTimeoutError";
   }
 }
 
 export class MissingCsrfTokenError extends ApiError {
   constructor() {
-    super(
-      0,
-      "missing_csrf_token",
-      "This page has no CSRF token, so nothing can be saved. Reload the page.",
-    );
+    super(0, "missing_csrf_token", i18n.t("apiErrors.missingCsrfToken"));
     this.name = "MissingCsrfTokenError";
   }
 }
@@ -82,15 +79,15 @@ function errorFrom(status: number, payload: unknown): ApiError {
     return new ApiError(status, envelope.code, envelope.message ?? envelope.code, payload);
   }
   if (status === 422) {
-    return new ApiError(status, "validation_failed", "This change cannot be saved.", payload);
+    return new ApiError(status, "validation_failed", i18n.t("apiErrors.validationFailed"), payload);
   }
   if (status === 403) {
-    return new ApiError(status, "forbidden", "You no longer have permission to edit this flow.", payload);
+    return new ApiError(status, "forbidden", i18n.t("apiErrors.forbidden"), payload);
   }
   if (status === 404) {
-    return new ApiError(status, "not_found", "This flow is no longer available.", payload);
+    return new ApiError(status, "not_found", i18n.t("apiErrors.notFound"), payload);
   }
-  return new ApiError(status, "server_error", `The server answered ${status}.`, payload);
+  return new ApiError(status, "server_error", i18n.t("apiErrors.serverError", { status }), payload);
 }
 
 /**

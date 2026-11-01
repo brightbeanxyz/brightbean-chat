@@ -55,6 +55,8 @@ from apps.api import keys as key_tokens
 from apps.api.errors import ApiError, PayloadTooLargeError, RateLimitedError
 from apps.api.models import ApiScope
 from apps.api.ratelimit import (
+    KEY_NAMESPACE,
+    PLATFORM_KEY_NAMESPACE,
     RATE_WINDOW_SECONDS,
     auth_failures_exhausted,
     over_key_limit,
@@ -69,6 +71,7 @@ LOG = logging.getLogger(__name__)
 __all__ = [
     "SCOPE_PERMISSIONS",
     "ApiKeyAuth",
+    "PlatformKeyAuth",
     "Resolution",
     "VirtualMembership",
     "permissions_for_scopes",
@@ -185,8 +188,27 @@ class ApiKeyAuth(HttpBearer):
 
     openapi_scheme = "bearer"
 
+    #: The three things :class:`PlatformKeyAuth` changes; every check between
+    #: them, and their order, is shared.
+    token_prefix = key_tokens.TOKEN_PREFIX
+    rate_namespace = KEY_NAMESPACE
+
+    def _model(self) -> Any:
+        from apps.api.models import ApiKey
+
+        return ApiKey
+
+    def _is_usable(self, candidate: Any) -> bool:
+        return candidate.workspace is not None and not candidate.workspace.is_archived
+
+    def _bind(self, request: HttpRequest, api_key: Any) -> None:
+        bound = cast(ApiRequest, request)
+        bound.api_key = api_key
+        bound.workspace = api_key.workspace
+        bound.workspace_membership = VirtualMembership(permissions_for_scopes(api_key.scopes))
+
     def authenticate(self, request: HttpRequest, token: str) -> Any:
-        from apps.api.models import ApiKey, touch_last_used
+        from apps.api.models import touch_last_used
 
         self._refuse_declared_oversize(request)
 
@@ -200,13 +222,13 @@ class ApiKeyAuth(HttpBearer):
             LOG.debug("Public API bearer refused: client address is over its failed-auth budget.")
             return None
 
-        parsed = key_tokens.parse(token)
+        parsed = key_tokens.parse(token, self.token_prefix)
         if parsed is None:
             record_auth_failure(request)
             return None
         secret, lookup_prefix = parsed
 
-        resolution = self._resolve(ApiKey, secret, lookup_prefix)
+        resolution = self._resolve(self._model(), secret, lookup_prefix)
         if resolution.api_key is None:
             if not resolution.recognised:
                 # Only an unrecognised secret counts as guessing. A key we
@@ -221,15 +243,16 @@ class ApiKeyAuth(HttpBearer):
         # scanning the body.
         self._enforce_body_limits(request)
 
-        if over_key_limit(api_key):
+        if over_key_limit(api_key, namespace=self.rate_namespace):
             raise RateLimitedError(RATE_WINDOW_SECONDS)
 
-        bound = cast(ApiRequest, request)
-        bound.api_key = api_key
-        bound.workspace = api_key.workspace
-        bound.workspace_membership = VirtualMembership(permissions_for_scopes(api_key.scopes))
+        self._bind(request, api_key)
         touch_last_used(api_key)
         return api_key
+
+    def _candidates(self, model: Any, lookup_prefix: str) -> Any:
+        # Cross-tenant by necessity: an API key identifies its own workspace.
+        return model.objects.unscoped().select_related("workspace").filter(lookup_prefix=lookup_prefix)
 
     @staticmethod
     def _refuse_declared_oversize(request: HttpRequest) -> None:
@@ -300,8 +323,7 @@ class ApiKeyAuth(HttpBearer):
         LOG.warning("Public API bearer refused: the request arrived over plain HTTP.")
         return False
 
-    @staticmethod
-    def _resolve(model: Any, secret: str, lookup_prefix: str) -> Resolution:
+    def _resolve(self, model: Any, secret: str, lookup_prefix: str) -> Resolution:
         """Find the usable key a presented secret belongs to.
 
         ``.unscoped()`` because this *is* how the workspace gets resolved: there
@@ -324,16 +346,40 @@ class ApiKeyAuth(HttpBearer):
         window. Either way the answer to this request is a 401 — the distinction
         only decides whether it is also held against the address.
         """
-        candidates = (
-            # Cross-tenant by necessity: an API key identifies its own workspace.
-            model.objects.unscoped().select_related("workspace").filter(lookup_prefix=lookup_prefix)
-        )
+        candidates = self._candidates(model, lookup_prefix)
         for candidate in candidates:
             if not candidate.matches(secret):
                 continue
             if candidate.revoked_at is not None:
                 return Resolution(None, recognised=True)
-            if candidate.workspace is None or candidate.workspace.is_archived:
+            if not self._is_usable(candidate):
                 return Resolution(None, recognised=True)
             return Resolution(candidate, recognised=True)
         return Resolution(None, recognised=False)
+
+
+class PlatformKeyAuth(ApiKeyAuth):
+    """Resolve ``Authorization: Bearer bbp_…`` to an installation-level key.
+
+    The same checks in the same order as :class:`ApiKeyAuth`; only the token
+    shape, the table and what gets attached to the request differ. There is no
+    workspace and no ``VirtualMembership``: a platform key grants whatever its
+    endpoints do, and nothing on the request can be mistaken for a tenant.
+    """
+
+    token_prefix = key_tokens.PLATFORM_TOKEN_PREFIX
+    rate_namespace = PLATFORM_KEY_NAMESPACE
+
+    def _model(self) -> Any:
+        from apps.api.models import PlatformApiKey
+
+        return PlatformApiKey
+
+    def _candidates(self, model: Any, lookup_prefix: str) -> Any:
+        return model.objects.filter(lookup_prefix=lookup_prefix)
+
+    def _is_usable(self, candidate: Any) -> bool:
+        return True
+
+    def _bind(self, request: HttpRequest, api_key: Any) -> None:
+        request.platform_key = api_key  # type: ignore[attr-defined]

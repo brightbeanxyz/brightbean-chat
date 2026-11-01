@@ -39,6 +39,8 @@ from django.db import IntegrityError, transaction
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_GET
 
 from apps.channels import instagram_oauth as oauth
@@ -58,7 +60,10 @@ __all__ = ["instagram_callback", "instagram_connect", "instagram_posts"]
 
 #: Shown when this deployment has no Meta app credentials to start an OAuth flow
 #: with. Names where they go and never a value.
-NO_CREDENTIALS = (
+#:
+#: gettext_lazy: evaluated at import time. Forced to str at the messages.error()
+#: call below, which is where the translation lookup actually happens.
+NO_CREDENTIALS = _(
     "This deployment has no Instagram app credentials yet. Set "
     "PLATFORM_INSTAGRAM_CLIENT_ID and PLATFORM_INSTAGRAM_CLIENT_SECRET in the "
     "environment. See docs/channels/instagram.md."
@@ -68,7 +73,7 @@ NO_CREDENTIALS = (
 #: comes back unusable. Deliberately one message for every reason: the operator's
 #: next step is the same in all of them (start again), and distinguishing them
 #: would be an oracle for which app ids and codes are real.
-REJECTED_MESSAGE = (
+REJECTED_MESSAGE = _(
     "Instagram did not complete the connection. Start again from Settings -> Channels, "
     "and check that this deployment's callback URL is listed in your Meta app."
 )
@@ -99,7 +104,7 @@ def instagram_connect(request: WorkspaceRequest, workspace_id: str) -> HttpRespo
         try:
             client_id, _ = oauth.app_credentials(request.workspace)
         except oauth.InstagramCredentialsMissingError:
-            error = NO_CREDENTIALS
+            error = str(NO_CREDENTIALS)
         else:
             state = oauth.sign_state(workspace_id=request.workspace.pk, user_id=request.user.pk)
             return redirect(oauth.authorize_url(client_id=client_id, state=state))
@@ -157,7 +162,7 @@ def instagram_callback(request: Any) -> HttpResponse:
     if error:
         # The operator pressed Cancel on Meta's screen, or Meta refused. Neither
         # is our failure and neither needs a scary page.
-        messages.info(request, "Instagram was not connected.")
+        messages.info(request, gettext("Instagram was not connected."))
         return redirect(settings_url)
 
     code = (request.GET.get("code") or "").strip()
@@ -207,7 +212,7 @@ def _complete(request: Any, workspace: Any, code: str) -> str:
     try:
         client_id, client_secret = oauth.app_credentials(workspace)
     except oauth.InstagramCredentialsMissingError:
-        return NO_CREDENTIALS
+        return str(NO_CREDENTIALS)
 
     try:
         short_lived, _ = oauth.exchange_code(code=code, client_id=client_id, client_secret=client_secret)
@@ -218,7 +223,7 @@ def _complete(request: Any, workspace: Any, code: str) -> str:
         # is one of the few places a live token exists in plain text, and an
         # APIError's text names the host it came from (SECURITY-BASELINE §5).
         logger.info("Instagram connect: the token exchange failed for workspace %s.", workspace.pk)
-        return REJECTED_MESSAGE
+        return str(REJECTED_MESSAGE)
 
     # The organization's channel limit. See apps/channels/plan.py on why this
     # is called here in all six adapters rather than in one shared service.
@@ -252,17 +257,20 @@ def _complete(request: Any, workspace: Any, code: str) -> str:
     except IntegrityError:
         existing = _reconnect(workspace, profile, token, expires_at)
         if existing is not None:
-            messages.success(request, f"Reconnected {connection.display_name}.")
+            messages.success(request, gettext("Reconnected %(name)s.") % {"name": connection.display_name})
             return ""
         # SPEC §5's unique (platform, external_id) is deployment-wide, so this
         # can be another workspace's row. The wording never says which
         # (SECURITY-BASELINE §1).
-        return DUPLICATE_ACCOUNT_ERROR
+        return str(DUPLICATE_ACCOUNT_ERROR)
 
     messages.success(
         request,
-        f"Connected {connection.display_name}. Subscribe your Meta app to this account's "
-        f"webhook fields to start receiving messages. See docs/channels/instagram.md.",
+        gettext(
+            "Connected %(name)s. Subscribe your Meta app to this account's "
+            "webhook fields to start receiving messages. See docs/channels/instagram.md."
+        )
+        % {"name": connection.display_name},
     )
     return ""
 
@@ -314,7 +322,7 @@ def instagram_posts(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
     )
     context: dict[str, Any] = {"posts": [], "reason": "", "connect_url": ""}
     if connection is None:
-        context["reason"] = "Connect an Instagram account to pick posts from it."
+        context["reason"] = gettext("Connect an Instagram account to pick posts from it.")
         context["connect_url"] = reverse("channels:instagram_connect", kwargs={"workspace_id": workspace_id})
         return render(request, "channels/_instagram_posts.html", context)
 
@@ -322,10 +330,12 @@ def instagram_posts(request: WorkspaceRequest, workspace_id: str) -> HttpRespons
         context["posts"] = instagram.recent_media(connection)
     except APIError:
         logger.info("Instagram post picker: /me/media was refused for connection %s.", connection.pk)
-        context["reason"] = "Instagram would not list this account's posts. Reconnect the channel and try again."
+        context["reason"] = gettext(
+            "Instagram would not list this account's posts. Reconnect the channel and try again."
+        )
     except Exception:
         logger.exception("Instagram post picker failed for connection %s.", connection.pk)
-        context["reason"] = "Instagram's posts could not be loaded just now."
+        context["reason"] = gettext("Instagram's posts could not be loaded just now.")
     if not context["posts"] and not context["reason"]:
-        context["reason"] = "This account has no posts yet."
+        context["reason"] = gettext("This account has no posts yet.")
     return render(request, "channels/_instagram_posts.html", context)

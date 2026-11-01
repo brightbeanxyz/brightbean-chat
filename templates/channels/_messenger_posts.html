@@ -17,13 +17,15 @@ arrives empty and the post simply lists without a link.
 which this fragment is swapped into. An inline `onclick` would be blocked: the
 CSP has no 'unsafe-inline' in script-src (config/settings/base.py).
 {% endcomment %}
+{% load i18n %}
 <div class="rounded-lg border p-2" style="border-color: var(--border);" data-testid="messenger-post-picker">
   {% if reason %}
     <p class="text-xs" style="color: var(--text-secondary);">
       {{ reason }}
-      {% if connect_url %}<a href="{{ connect_url }}">Connect a page</a>.{% endif %}
+      {% if connect_url %}<a href="{{ connect_url }}">{% translate "Connect a page" %}</a>.{% endif %}
     </p>
   {% else %}
+    {% translate "(no text)" as no_text %}
     <ul class="grid grid-cols-1 gap-2">
       {% for post in posts %}
         <li class="flex items-center gap-2">
@@ -31,12 +33,12 @@ CSP has no 'unsafe-inline' in script-src (config/settings/base.py).
                   data-post-id="{{ post.id }}"
                   @click="pick($el.dataset.postId)">
             <span>
-              <span class="block">{{ post.message|default:"(no text)"|truncatechars:64 }}</span>
+              <span class="block">{{ post.message|default:no_text|truncatechars:64 }}</span>
               <span style="color: var(--text-tertiary);">{{ post.created_time }}</span>
             </span>
           </button>
           {% if post.permalink %}
-            <a class="text-xs" href="{{ post.permalink }}" target="_blank" rel="noopener noreferrer">View</a>
+            <a class="text-xs" href="{{ post.permalink }}" target="_blank" rel="noopener noreferrer">{% translate "View" %}</a>
           {% endif %}
         </li>
       {% endfor %}

@@ -23,6 +23,8 @@ from django.core.files.storage import default_storage
 from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils.translation import gettext
+from django.utils.translation import gettext_lazy as _
 
 from apps.common.scoping import WorkspaceScopedModel
 from apps.media_library.mimes import MediaKind
@@ -61,7 +63,7 @@ class MediaFolder(WorkspaceScopedModel):
             models.UniqueConstraint(
                 fields=["workspace", "parent", "name"],
                 name="media_folder_unique_name_per_parent",
-                violation_error_message="A folder with that name already exists here.",
+                violation_error_message=_("A folder with that name already exists here."),
             ),
             # A NULL parent is a NULL in the constraint above, and NULLs never
             # collide in SQL — so without this second constraint the whole root
@@ -71,7 +73,7 @@ class MediaFolder(WorkspaceScopedModel):
                 fields=["workspace", "name"],
                 condition=models.Q(parent__isnull=True),
                 name="media_folder_unique_root_name",
-                violation_error_message="A folder with that name already exists.",
+                violation_error_message=_("A folder with that name already exists."),
             ),
         ]
 
@@ -91,7 +93,9 @@ class MediaFolder(WorkspaceScopedModel):
     def clean(self) -> None:
         super().clean()
         if self.parent is not None and self.parent.depth + 1 >= MAX_FOLDER_DEPTH:
-            raise ValidationError(f"Folders cannot be nested more than {MAX_FOLDER_DEPTH} levels deep.")
+            raise ValidationError(
+                gettext("Folders cannot be nested more than %(max)s levels deep.") % {"max": MAX_FOLDER_DEPTH}
+            )
 
 
 class MediaAsset(WorkspaceScopedModel):

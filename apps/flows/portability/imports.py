@@ -54,6 +54,7 @@ from uuid import UUID
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.translation import gettext
 
 from apps.flows.compat import installed_model
 from apps.flows.models import Flow
@@ -503,7 +504,7 @@ def trigger_choices(document: dict[str, Any], mapping: dict[str, Any] | None = N
                 flow_name=str(flow["name"]),
                 index=index,
                 type=str(trigger["type"]),
-                label=spec.label if spec is not None else str(trigger["type"]),
+                label=str(spec.label) if spec is not None else str(trigger["type"]),
                 platform=_platform_label(str(trigger["platform"])) if trigger.get("platform") else None,
             )
             answer = answers.get(choice.key) or {}
@@ -643,10 +644,9 @@ def _resolve(workspace: Any, requirement: Requirement, answer: dict[str, Any]) -
             resolution.target_id = str(target[0])
             resolution.name = str(target[1])
             return resolution
-        resolution.problem = (
-            f"Pick the {_platform_label(requirement.key)} account this trigger should watch, "
-            f"or choose to let it watch them all."
-        )
+        resolution.problem = gettext(
+            "Pick the %(platform)s account this trigger should watch, or choose to let it watch them all."
+        ) % {"platform": _platform_label(requirement.key)}
         return resolution
 
     if requirement.kind in refs.STRIPPED_KINDS:
@@ -661,19 +661,21 @@ def _resolve(workspace: Any, requirement: Requirement, answer: dict[str, Any]) -
             # the substituted document and fails there — where the trigger it
             # belongs to is dropped, or the graph is stored in a shape the
             # schema refuses and only the next publish finds out.
-            resolution.problem = f"At most {limit} characters."
+            resolution.problem = gettext("At most %(limit)s characters.") % {"limit": limit}
         return resolution
 
     if resolution.action == ACTION_BLANK:
         if not requirement.optional:
-            resolution.problem = f"This {noun} is required for the flow to run."
+            resolution.problem = gettext("This %(noun)s is required for the flow to run.") % {"noun": noun}
             return resolution
         resolution.literal = str(answer.get("value") or "")
         return resolution
 
     if resolution.action == ACTION_CREATE:
         if not requirement.creatable:
-            resolution.problem = f"A {noun} cannot be created from a template; pick an existing one."
+            resolution.problem = gettext("A %(noun)s cannot be created from a template; pick an existing one.") % {
+                "noun": noun
+            }
             return resolution
         return _resolve_create(workspace, resolution, requirement, answer, noun)
 
@@ -687,13 +689,13 @@ def _resolve(workspace: Any, requirement: Requirement, answer: dict[str, Any]) -
                 # "Every connection of a matching platform" is a real answer
                 # (SPEC §5), and it is what an unfilled channel picker means.
                 return resolution
-            resolution.problem = f"Pick a {noun} in this workspace."
+            resolution.problem = gettext("Pick a %(noun)s in this workspace.") % {"noun": noun}
             return resolution
         resolution.target_id = str(target[0])
         resolution.name = str(target[1])
         return resolution
 
-    resolution.problem = f"Choose what this {noun} should become."
+    resolution.problem = gettext("Choose what this %(noun)s should become.") % {"noun": noun}
     return resolution
 
 
@@ -731,13 +733,18 @@ def _resolve_create(
     if requirement.kind != refs.KIND_TAG:
         taken = _find_by_name(workspace, Requirement(kind=requirement.kind, key="", name=resolution.name))
         if taken is not None:
-            resolution.problem = f"A {noun} called “{resolution.name}” already exists. Use the existing one instead."
+            resolution.problem = gettext(
+                "A %(noun)s called “%(name)s” already exists. Use the existing one instead."
+            ) % {
+                "noun": noun,
+                "name": resolution.name,
+            }
             return resolution
 
     if requirement.kind == refs.KIND_CUSTOM_FIELD:
         resolution.literal = str(answer.get("field_type") or requirement.detail or "text")
         if resolution.literal not in _field_type_values():
-            resolution.problem = "That is not a field type."
+            resolution.problem = gettext("That is not a field type.")
     return resolution
 
 
@@ -961,7 +968,10 @@ def _refuse_if_unstorable(flow_name: str, graph: Any) -> None:
 
     issues = validate_graph(graph).document_errors
     if issues:
-        raise ImportRefusedError(f"“{flow_name}” would not be storable after mapping: {issues[0].message}")
+        raise ImportRefusedError(
+            gettext("“%(name)s” would not be storable after mapping: %(issue)s")
+            % {"name": flow_name, "issue": issues[0].message}
+        )
 
 
 def _create(workspace: Any, resolution: Resolution) -> Any:
@@ -1047,8 +1057,12 @@ def _create_triggers(
             # the worst of the three outcomes. The transaction rolls back, so
             # nothing partial survives.
             raise ImportRefusedError(
-                f"The {trigger['type']} trigger on “{entry['name']}” cannot be created here: "
-                + "; ".join(issue.message for issue in exc.issues)
+                gettext("The %(type)s trigger on “%(name)s” cannot be created here: %(issues)s")
+                % {
+                    "type": trigger["type"],
+                    "name": entry["name"],
+                    "issues": "; ".join(issue.message for issue in exc.issues),
+                }
             ) from exc
 
 

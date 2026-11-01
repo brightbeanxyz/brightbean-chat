@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The Triggers drawer's body (issue #11, SPEC §10).
 
 Rendered inside edit.html on first open and re-fetched whole on every
@@ -24,25 +24,26 @@ inside it would be swapped away mid-request.
      class="p-4">
 
     <div class="flex items-center justify-between gap-2 mb-1">
-        <h2 class="text-sm font-semibold" style="color: var(--text-primary);">Triggers</h2>
+        <h2 class="text-sm font-semibold" style="color: var(--text-primary);">{% translate "Triggers" %}</h2>
         <button type="button" class="btn-link text-xs"
-                @click="triggersOpen = false">Close</button>
+                @click="triggersOpen = false">{% translate "Close" %}</button>
     </div>
     <p class="text-xs mb-4" style="color: var(--text-tertiary);">
-        What starts this flow. Lower numbers run first and the first match wins,
-        across every flow in this workspace, not just this one.
+        {% translate "What starts this flow. Lower numbers run first and the first match wins, across every flow in this workspace, not just this one." %}
     </p>
 
     {% for label in duplicate_stage_labels %}
     <div class="alert-error text-xs mb-3">
-        More than one “{{ label }}” trigger is enabled on this flow. Only the one with the
-        lowest number will ever run.
+        {% blocktranslate %}More than one “{{ label }}” trigger is enabled on this flow. Only the one with the
+        lowest number will ever run.{% endblocktranslate %}
     </div>
     {% endfor %}
 
     {% if not triggers %}
     <div class="mb-4">
-    {% include "components/empty_state.html" with icon="flows" title="No triggers yet" body="A published flow with no trigger never runs. Add one below." %}
+    {% translate "No triggers yet" as no_triggers_title %}
+    {% translate "A published flow with no trigger never runs. Add one below." as no_triggers_body %}
+    {% include "components/empty_state.html" with icon="flows" title=no_triggers_title body=no_triggers_body %}
     </div>
     {% else %}
     <div class="card overflow-hidden mb-4">
@@ -63,7 +64,7 @@ inside it would be swapped away mid-request.
     {% endcomment %}
     <details class="mt-2" {% if not triggers %}open{% endif %}>
         <summary class="btn-pill-secondary btn-pill-sm cursor-pointer list-none inline-flex">
-            {% include "partials/_nav_icon.html" with name="plus" icon_size=15 %} Add a trigger
+            {% include "partials/_nav_icon.html" with name="plus" icon_size=15 %} {% translate "Add a trigger" %}
         </summary>
         <div class="option-cards mt-3">
             {% for spec in trigger_types %}
@@ -73,7 +74,7 @@ inside it would be swapped away mid-request.
                     hx-swap="innerHTML">
                 <span class="option-card-body">
                     <span class="option-card-title">{{ spec.label }}</span>
-                    <span class="option-card-text">{% if spec.unavailable %}Not available yet{% else %}{{ spec.description }}{% endif %}</span>
+                    <span class="option-card-text">{% if spec.unavailable %}{% translate "Not available yet" %}{% else %}{{ spec.description }}{% endif %}</span>
                 </span>
             </button>
             {% endfor %}

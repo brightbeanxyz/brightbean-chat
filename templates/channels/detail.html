@@ -1,5 +1,5 @@
 {% extends "layouts/workspace_settings.html" %}
-{% load common_extras %}
+{% load common_extras i18n %}
 {% comment %}
 One connection: what it is, whether it is working, what the platform can carry,
 and the two things you can do to it.
@@ -34,20 +34,20 @@ Never renders the webhook secret — see the views module docstring.
     </div>
 
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-4">This connection</h2>
+        <h2 class="section-title mb-4">{% translate "This connection" %}</h2>
 
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 pb-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Account identifier</span>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Account identifier" %}</span>
             <span class="text-sm" style="color: var(--text-primary);"><code>{{ connection.external_id }}</code></span>
         </div>
         {% if settings_url %}
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 py-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Channel settings</span>
-            <a class="text-sm font-semibold underline underline-offset-2" style="color: var(--text-primary);" href="{{ settings_url }}">{{ label }} settings for this workspace</a>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Channel settings" %}</span>
+            <a class="text-sm font-semibold underline underline-offset-2" style="color: var(--text-primary);" href="{{ settings_url }}">{% blocktranslate with label=label %}{{ label }} settings for this workspace{% endblocktranslate %}</a>
         </div>
         {% endif %}
 
-        <div class="mt-5">{% include "partials/_copy_field.html" with label="Webhook URL" value=webhook_url hint="Where this platform delivers to. It contains the connection's id, so it is unique to this channel." only %}</div>
+        <div class="mt-5">{% translate "Webhook URL" as webhook_url_label %}{% translate "Where this platform delivers to. It contains the connection's id, so it is unique to this channel." as webhook_url_hint %}{% include "partials/_copy_field.html" with label=webhook_url_label value=webhook_url hint=webhook_url_hint only %}</div>
     </section>
 
     {% comment %}
@@ -56,30 +56,30 @@ Never renders the webhook secret — see the views module docstring.
     whose adapter has not shipped.
     {% endcomment %}
     <section class="card p-6 mb-5">
-        <h2 class="section-title mb-4">What this platform carries</h2>
+        <h2 class="section-title mb-4">{% translate "What this platform carries" %}</h2>
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 pb-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Text</span>
-            <span class="text-sm" style="color: var(--text-primary);">Up to {{ capabilities.max_text_len }} characters</span>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Text" %}</span>
+            <span class="text-sm" style="color: var(--text-primary);">{% blocktranslate with max_len=capabilities.max_text_len %}Up to {{ max_len }} characters{% endblocktranslate %}</span>
         </div>
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 py-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Buttons</span>
-            <span class="text-sm" style="color: var(--text-primary);">{% if capabilities.max_buttons %}Up to {{ capabilities.max_buttons }}{% else %}Not supported: buttons become numbered replies{% endif %}</span>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Buttons" %}</span>
+            <span class="text-sm" style="color: var(--text-primary);">{% if capabilities.max_buttons %}{% blocktranslate with max_buttons=capabilities.max_buttons %}Up to {{ max_buttons }}{% endblocktranslate %}{% else %}{% translate "Not supported: buttons become numbered replies" %}{% endif %}</span>
         </div>
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 py-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Quick replies</span>
-            <span class="text-sm" style="color: var(--text-primary);">{% if capabilities.max_quick_replies %}Up to {{ capabilities.max_quick_replies }}{% else %}Not supported: quick replies become numbered replies{% endif %}</span>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Quick replies" %}</span>
+            <span class="text-sm" style="color: var(--text-primary);">{% if capabilities.max_quick_replies %}{% blocktranslate with max_qr=capabilities.max_quick_replies %}Up to {{ max_qr }}{% endblocktranslate %}{% else %}{% translate "Not supported: quick replies become numbered replies" %}{% endif %}</span>
         </div>
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 py-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Carousels</span>
-            <span class="text-sm" style="color: var(--text-primary);">{% if capabilities.gallery %}Supported{% else %}Sent as sequential messages{% endif %}</span>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Carousels" %}</span>
+            <span class="text-sm" style="color: var(--text-primary);">{% if capabilities.gallery %}{% translate "Supported" %}{% else %}{% translate "Sent as sequential messages" %}{% endif %}</span>
         </div>
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 py-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Messaging window</span>
-            <span class="text-sm" style="color: var(--text-primary);">{% if policy.window_hours %}{{ policy.window_hours }} hours after the contact's last message{% else %}None{% endif %}</span>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Messaging window" %}</span>
+            <span class="text-sm" style="color: var(--text-primary);">{% if policy.window_hours %}{% blocktranslate with hours=policy.window_hours %}{{ hours }} hours after the contact's last message{% endblocktranslate %}{% else %}{% translate "None" %}{% endif %}</span>
         </div>
         <div class="card-row flex flex-wrap items-baseline justify-between gap-4 pt-3">
-            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">Broadcasts</span>
-            <span class="text-sm" style="color: var(--text-primary);">{% if policy.broadcast_allowed %}Allowed{% else %}Not allowed on this platform{% endif %}</span>
+            <span class="text-[13px] font-semibold" style="color: var(--text-secondary);">{% translate "Broadcasts" %}</span>
+            <span class="text-sm" style="color: var(--text-primary);">{% if policy.broadcast_allowed %}{% translate "Allowed" %}{% else %}{% translate "Not allowed on this platform" %}{% endif %}</span>
         </div>
     </section>
 
@@ -92,56 +92,48 @@ Never renders the webhook secret — see the views module docstring.
     {% endcomment %}
     <form class="card p-6 mb-5" method="post" action="{% url 'channels:email_credentials' workspace_id=request.workspace.id connection_id=connection.id %}">
         {% csrf_token %}
-        <h2 class="section-title mb-1">Bounce handling</h2>
+        <h2 class="section-title mb-1">{% translate "Bounce handling" %}</h2>
         <p class="section-note mb-5">
-            Both of these can only be set after the channel exists, because the webhook URL above
-            contains its id, so you create the endpoint in your provider first, then paste back what
-            it gives you. Until the relevant one is set, bounce and complaint notifications are
-            ignored rather than trusted.
+            {% translate "Both of these can only be set after the channel exists, because the webhook URL above contains its id, so you create the endpoint in your provider first, then paste back what it gives you. Until the relevant one is set, bounce and complaint notifications are ignored rather than trusted." %}
         </p>
         <div class="field">
-            <label class="field-label" for="signing_secret">Resend signing secret</label>
+            <label class="field-label" for="signing_secret">{% translate "Resend signing secret" %}</label>
             <input class="form-input-styled" type="password" id="signing_secret" name="signing_secret" autocomplete="off" spellcheck="false">
-            <p class="field-hint">From the Resend webhook you pointed at the URL above. Stored encrypted.</p>
+            <p class="field-hint">{% translate "From the Resend webhook you pointed at the URL above. Stored encrypted." %}</p>
         </div>
         <div class="field">
-            <label class="field-label" for="topic_arn">SES bounce topic ARN</label>
+            <label class="field-label" for="topic_arn">{% translate "SES bounce topic ARN" %}</label>
             <input class="form-input-styled" type="text" id="topic_arn" name="topic_arn" spellcheck="false" placeholder="arn:aws:sns:eu-west-1:123456789012:bounces">
-            <p class="field-hint">Only this topic's notifications are accepted.</p>
+            <p class="field-hint">{% translate "Only this topic's notifications are accepted." %}</p>
         </div>
         <div class="form-actions">
-            <button type="submit" class="btn-pill-primary">Save</button>
-            <span class="section-note">Leave a field blank to keep what is already stored.</span>
+            <button type="submit" class="btn-pill-primary">{% translate "Save" %}</button>
+            <span class="section-note">{% translate "Leave a field blank to keep what is already stored." %}</span>
         </div>
     </form>
 
     <form class="card p-6 mb-5" method="post" action="{% url 'channels:send_test_email' workspace_id=request.workspace.id connection_id=connection.id %}">
         {% csrf_token %}
-        <h2 class="section-title mb-1">Send a test email</h2>
+        <h2 class="section-title mb-1">{% translate "Send a test email" %}</h2>
         <p class="section-note mb-5">
-            Sends one real email to your own account address, through this connection, carrying the
-            same <code>List-Unsubscribe</code> headers and footer every other send does, so a
-            provider that strips them shows up here rather than after a campaign.
+            {% blocktranslate %}Sends one real email to your own account address, through this connection, carrying the same <code>List-Unsubscribe</code> headers and footer every other send does, so a provider that strips them shows up here rather than after a campaign.{% endblocktranslate %}
         </p>
-        <button type="submit" class="btn-pill-secondary">Send a test email</button>
+        <button type="submit" class="btn-pill-secondary">{% translate "Send a test email" %}</button>
     </form>
     {% endif %}
 
     <form class="card p-6 mb-5" method="post" action="{% url 'channels:rotate_secret' workspace_id=request.workspace.id connection_id=connection.id %}">
         {% csrf_token %}
-        <h2 class="section-title mb-1">Webhook secret</h2>
+        <h2 class="section-title mb-1">{% translate "Webhook secret" %}</h2>
         <p class="section-note mb-5">
-            Stored encrypted and never displayed again. Rotating issues a new secret immediately, so
-            deliveries carrying the old one are rejected until the platform has the new one. Where
-            the platform accepts it over its own API, as Telegram does, that happens as part of
-            rotating, and the next page says so.
+            {% translate "Stored encrypted and never displayed again. Rotating issues a new secret immediately, so deliveries carrying the old one are rejected until the platform has the new one. Where the platform accepts it over its own API, as Telegram does, that happens as part of rotating, and the next page says so." %}
         </p>
-        <button type="submit" class="btn-pill-secondary" style="color: var(--error-700);">Rotate secret</button>
+        <button type="submit" class="btn-pill-secondary" style="color: var(--error-700);">{% translate "Rotate secret" %}</button>
     </form>
 
     <a class="cn-back" href="{% url 'channels:list' workspace_id=request.workspace.id %}">
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
-        Back to channels
+        {% translate "Back to channels" %}
     </a>
 </div>
 {% endblock %}

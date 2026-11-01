@@ -1,30 +1,29 @@
 {% extends "layouts/workspace_settings.html" %}
-{% block title %}WhatsApp templates · BrightBean Chat{% endblock %}
-{% block page_header %}<h1 class="page-title mb-4">WhatsApp message templates</h1>{% endblock %}
+{% load i18n %}
+{% block title %}{% translate "WhatsApp templates" %} · BrightBean Chat{% endblock %}
+{% block page_header %}<h1 class="page-title mb-4">{% translate "WhatsApp message templates" %}</h1>{% endblock %}
 
 {% block content %}
   <p class="muted">
-    More than 24 hours after a contact's last message, WhatsApp accepts nothing
-    but a template Meta has already approved. Write one here, submit it, and it
-    becomes available to flows and broadcasts once the review comes back.
+    {% translate "More than 24 hours after a contact's last message, WhatsApp accepts nothing but a template Meta has already approved. Write one here, submit it, and it becomes available to flows and broadcasts once the review comes back." %}
   </p>
 
   {% if not connections %}
     <div class="alert-warn">
-      <p>No WhatsApp number is connected yet, so there is nothing to submit a template against.</p>
+      <p>{% translate "No WhatsApp number is connected yet, so there is nothing to submit a template against." %}</p>
     </div>
   {% endif %}
 
   <p>
-    <a href="{{ new_url }}">New template</a> ·
-    <a href="{{ cost_url }}">Cost estimates</a>
-    <span class="muted">({{ cost_hint.currency }}, estimates only, never metered)</span>
+    <a href="{{ new_url }}">{% translate "New template" %}</a> ·
+    <a href="{{ cost_url }}">{% translate "Cost estimates" %}</a>
+    <span class="muted">({{ cost_hint.currency }}, {% translate "estimates only, never metered" %})</span>
   </p>
 
   {% if templates %}
     <table>
       <thead>
-        <tr><th>Name</th><th>Language</th><th>Category</th><th>Number</th><th>Variables</th><th>Status</th><th></th></tr>
+        <tr><th>{% translate "Name" %}</th><th>{% translate "Language" %}</th><th>{% translate "Category" %}</th><th>{% translate "Number" %}</th><th>{% translate "Variables" %}</th><th>{% translate "Status" %}</th><th></th></tr>
       </thead>
       <tbody>
         {% for row in templates %}
@@ -33,14 +32,14 @@
             <td><code>{{ row.template.language }}</code></td>
             <td>
               {{ row.template.get_category_display }}
-              <br /><span class="muted">≈ {{ cost_hint.currency }} {{ row.cost }} per message</span>
+              <br /><span class="muted">{% blocktranslate with currency=cost_hint.currency cost=row.cost %}≈ {{ currency }} {{ cost }} per message{% endblocktranslate %}</span>
             </td>
             <td>{{ row.template.channel_connection.display_name }}</td>
             <td>
               {% if row.slots %}
                 {% for slot in row.slots %}<code>{{ slot }}</code>{% if not forloop.last %} {% endif %}{% endfor %}
               {% else %}
-                <span class="muted">None</span>
+                <span class="muted">{% translate "None" %}</span>
               {% endif %}
             </td>
             <td>
@@ -57,18 +56,18 @@
             </td>
             <td>
               {% if row.template.status == "draft" or row.template.status == "rejected" %}
-                <a href="{% url 'channels:whatsapp_template_edit' workspace_id=request.workspace.id template_id=row.template.id %}">Edit</a>
+                <a href="{% url 'channels:whatsapp_template_edit' workspace_id=request.workspace.id template_id=row.template.id %}">{% translate "Edit" %}</a>
                 <form method="post"
                       action="{% url 'channels:whatsapp_template_submit' workspace_id=request.workspace.id template_id=row.template.id %}">
                   {% csrf_token %}
-                  <button type="submit">Submit for review</button>
+                  <button type="submit">{% translate "Submit for review" %}</button>
                 </form>
               {% endif %}
               <form method="post" x-data
                     @submit="if (!window.confirm('Delete this template? This cannot be undone.')) $event.preventDefault()"
                     action="{% url 'channels:whatsapp_template_delete' workspace_id=request.workspace.id template_id=row.template.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn-danger-link">Delete</button>
+                <button type="submit" class="btn-danger-link">{% translate "Delete" %}</button>
               </form>
             </td>
           </tr>
@@ -76,15 +75,11 @@
       </tbody>
     </table>
   {% else %}
-    <p>No templates yet.</p>
+    <p>{% translate "No templates yet." %}</p>
   {% endif %}
 
-  <h2>What review is like</h2>
+  <h2>{% translate "What review is like" %}</h2>
   <p class="muted">
-    Meta usually answers within minutes, occasionally within a day. BrightBean
-    Chat checks every hour and notifies workspace admins when the answer arrives;
-    a rejected template shows Meta's reason above and can be edited and
-    resubmitted. Marketing templates are reviewed most strictly and cost the most
-    to send.
+    {% translate "Meta usually answers within minutes, occasionally within a day. BrightBean Chat checks every hour and notifies workspace admins when the answer arrives; a rejected template shows Meta's reason above and can be edited and resubmitted. Marketing templates are reviewed most strictly and cost the most to send." %}
   </p>
 {% endblock %}

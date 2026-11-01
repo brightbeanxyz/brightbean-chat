@@ -1,26 +1,21 @@
 {% extends "layouts/workspace_settings.html" %}
-{% block title %}WhatsApp template · BrightBean Chat{% endblock %}
+{% load i18n %}
+{% block title %}{% translate "WhatsApp template" %} · BrightBean Chat{% endblock %}
 {% block page_header %}
-  <h1 class="page-title mb-4">{% if template %}Edit template{% else %}New template{% endif %}</h1>
+  <h1 class="page-title mb-4">{% if template %}{% translate "Edit template" %}{% else %}{% translate "New template" %}{% endif %}</h1>
 {% endblock %}
 
 {% block content %}
   {% if not editable %}
     <div class="alert-warn">
       <p>
-        This template is with Meta, or already approved, so it cannot be edited.
-        the copy under review is the one Meta holds. Delete it and write a new one
-        if it needs to change.
+        {% translate "This template is with Meta, or already approved, so it cannot be edited. The copy under review is the one Meta holds. Delete it and write a new one if it needs to change." %}
       </p>
     </div>
   {% endif %}
 
   <p class="muted">
-    Write the message once and mark the parts that change with
-    <code>{{ open_brace }}1{{ close_brace }}</code>,
-    <code>{{ open_brace }}2{{ close_brace }}</code> and so on. Meta numbers
-    variables per section, so a header's first variable and a body's first
-    variable are two different values.
+    {% blocktranslate %}Write the message once and mark the parts that change with <code>{{ open_brace }}1{{ close_brace }}</code>, <code>{{ open_brace }}2{{ close_brace }}</code> and so on. Meta numbers variables per section, so a header's first variable and a body's first variable are two different values.{% endblocktranslate %}
   </p>
 
   {% comment %}
@@ -39,11 +34,11 @@
     {% csrf_token %}
     {{ form.as_p }}
 
-    <h2>Preview</h2>
-    <div id="template-preview" class="muted"><p>Start typing to see the message.</p></div>
+    <h2>{% translate "Preview" %}</h2>
+    <div id="template-preview" class="muted"><p>{% translate "Start typing to see the message." %}</p></div>
 
-    {% if editable %}<button type="submit" class="btn-pill-primary btn-pill-sm">Save draft</button>{% endif %}
+    {% if editable %}<button type="submit" class="btn-pill-primary btn-pill-sm">{% translate "Save draft" %}</button>{% endif %}
   </form>
 
-  <p><a href="{{ list_url }}">Back to templates</a></p>
+  <p><a href="{{ list_url }}">{% translate "Back to templates" %}</a></p>
 {% endblock %}

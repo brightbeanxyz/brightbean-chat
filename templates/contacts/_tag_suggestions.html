@@ -4,6 +4,7 @@ a name instead, and only appears when the term matches nothing AND the caller
 holds manage_crm — creating a tag changes the workspace's vocabulary, while
 attaching an existing one does not (SPEC §4's edit_contact_fields vs manage_crm).
 {% endcomment %}
+{% load i18n %}
 {% for tag in suggestions %}
   <button type="button" class="crm-suggestion"
           hx-post="{% url 'contacts:tag_add' workspace_id=request.workspace.id contact_id=contact.id %}"
@@ -19,12 +20,13 @@ attaching an existing one does not (SPEC §4's edit_contact_fields vs manage_crm
     attribute — it escapes quotes and angle brackets to \uXXXX, so a tag called
     `"><script>` is a string and not markup.
   {% endcomment %}
+  {% blocktranslate asvar create_tag_label %}Create “{{ term }}”{% endblocktranslate %}
   <button type="button" class="crm-suggestion crm-suggestion-new"
           hx-post="{% url 'contacts:tag_add' workspace_id=request.workspace.id contact_id=contact.id %}"
           hx-vals='{"name": "{{ term|escapejs }}"}'
-          hx-swap="none">Create “{{ term }}”</button>
+          hx-swap="none">{{ create_tag_label }}</button>
 {% elif not suggestions %}
   <p class="muted text-xs mt-1">
-    {% if term %}No tag matches “{{ term }}”.{% else %}Every tag is already on this contact.{% endif %}
+    {% if term %}{% blocktranslate %}No tag matches “{{ term }}”.{% endblocktranslate %}{% else %}{% translate "Every tag is already on this contact." %}{% endif %}
   </p>
 {% endif %}

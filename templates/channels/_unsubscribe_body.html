@@ -1,29 +1,29 @@
+{% load i18n %}
 {% comment %}
 The page body, included from both blocks in the pages below so it renders the
 same whether or not the reader happens to have a session here. Almost nobody
 will: this page is opened from a link in an email.
 {% endcomment %}
 {% if done %}
-  <h2>You have been unsubscribed</h2>
+  <h2>{% translate "You have been unsubscribed" %}</h2>
   {% if already %}
-    <p>{{ address }} was already unsubscribed. Nothing changed.</p>
+    <p>{% blocktranslate with address=address %}{{ address }} was already unsubscribed. Nothing changed.{% endblocktranslate %}</p>
   {% else %}
-    <p>{{ address }} will not receive any more email from this sender.</p>
+    <p>{% blocktranslate with address=address %}{{ address }} will not receive any more email from this sender.{% endblocktranslate %}</p>
   {% endif %}
   <p class="muted">
-    You can close this page. If you unsubscribed by mistake, ask the sender to
-    add you again. For your protection we cannot re-subscribe you from here.
+    {% translate "You can close this page. If you unsubscribed by mistake, ask the sender to add you again. For your protection we cannot re-subscribe you from here." %}
   </p>
 {% elif already %}
-  <h2>Already unsubscribed</h2>
-  <p>{{ address }} is not receiving email from this sender.</p>
-  <p class="muted">You can close this page.</p>
+  <h2>{% translate "Already unsubscribed" %}</h2>
+  <p>{% blocktranslate with address=address %}{{ address }} is not receiving email from this sender.{% endblocktranslate %}</p>
+  <p class="muted">{% translate "You can close this page." %}</p>
 {% else %}
-  <h2>Unsubscribe {{ address }}?</h2>
-  <p>You will stop receiving email from this sender.</p>
+  <h2>{% blocktranslate with address=address %}Unsubscribe {{ address }}?{% endblocktranslate %}</h2>
+  <p>{% translate "You will stop receiving email from this sender." %}</p>
   <form method="post">
     {# No csrf_token: this page is opened from an email by someone with no #}
     {# session here, and the signed token in the URL is the credential.    #}
-    <button type="submit">Unsubscribe</button>
+    <button type="submit">{% translate "Unsubscribe" %}</button>
   </form>
 {% endif %}

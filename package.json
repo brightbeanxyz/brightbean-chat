@@ -22,8 +22,10 @@
     "chart.js": "4.5.1",
     "flatpickr": "4.6.13",
     "htmx.org": "2.0.10",
+    "i18next": "26.4.2",
     "react": "19.2.0",
     "react-dom": "19.2.0",
+    "react-i18next": "17.0.14",
     "sortablejs": "1.15.7",
     "zustand": "4.5.7"
   },
@@ -40,7 +42,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.5",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "overrides": {
     "@tailwindcss/cli": {

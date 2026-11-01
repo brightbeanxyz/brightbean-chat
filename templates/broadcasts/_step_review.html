@@ -1,4 +1,4 @@
-{% load tz %}{% comment %}
+{% load i18n tz %}{% comment %}
 Step 5 — review, and the button that sends (HANDOFF §3, Broadcasts).
 
 One sentence that says what is about to happen, then the button that does it,
@@ -12,16 +12,18 @@ step, rather than sent.
       hx-target="#broadcast-wizard"
       hx-swap="innerHTML">
     {% csrf_token %}
-    <h2 class="wizard-title">Review and {% if broadcast.scheduled_at %}schedule{% else %}send{% endif %}</h2>
+    <h2 class="wizard-title">{% if broadcast.scheduled_at %}{% translate "Review and schedule" %}{% else %}{% translate "Review and send" %}{% endif %}</h2>
     <p class="wizard-lede">
         {% if summary_preview %}
-        <strong style="color: var(--text-primary);">{{ broadcast.name }}</strong> goes to
-        <strong style="color: var(--text-primary);">{{ summary_preview.eligible }} {{ summary_preview.eligible|pluralize:"person,people" }}</strong>
-        on {{ broadcast.channel_connection.display_name }}
-        {% if broadcast.scheduled_at %}on {{ broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:"l j F \a\t H:i" }}{% else %}as soon as you send it{% endif %}.
-        {% if summary_preview.skipped_total %}{{ summary_preview.skipped_total }} more match the audience but will be left out.{% endif %}
+        {% blocktranslate with name=broadcast.name trimmed %}
+        <strong style="color: var(--text-primary);">{{ name }}</strong> goes to
+        {% endblocktranslate %}
+        <strong style="color: var(--text-primary);">{% blocktranslate count counter=summary_preview.eligible %}{{ counter }} person{% plural %}{{ counter }} people{% endblocktranslate %}</strong>
+        {% blocktranslate with channel=broadcast.channel_connection.display_name %}on {{ channel }}{% endblocktranslate %}
+        {% if broadcast.scheduled_at %}{% blocktranslate with when=broadcast.scheduled_at|timezone:request.workspace.effective_timezone|date:"l j F \a\t H:i" %}on {{ when }}{% endblocktranslate %}{% else %}{% translate "as soon as you send it" %}{% endif %}.
+        {% if summary_preview.skipped_total %}{% blocktranslate count counter=summary_preview.skipped_total %}{{ counter }} more matches the audience but will be left out.{% plural %}{{ counter }} more match the audience but will be left out.{% endblocktranslate %}{% endif %}
         {% else %}
-        Choose who it goes to before sending.
+        {% translate "Choose who it goes to before sending." %}
         {% endif %}
     </p>
 
@@ -40,21 +42,21 @@ step, rather than sent.
     {% endcomment %}
     {% if summary_preview %}
     <div class="summary-cards mb-5">
-        <div class="summary-card"><span class="dot dot-success" aria-hidden="true"></span><span class="summary-card-value">{{ summary_preview.eligible }}</span><span class="summary-card-label">will receive it</span></div>
-        <div class="summary-card"><span class="dot dot-neutral" aria-hidden="true"></span><span class="summary-card-value">{{ summary_preview.skipped_total }}</span><span class="summary-card-label">left out</span></div>
+        <div class="summary-card"><span class="dot dot-success" aria-hidden="true"></span><span class="summary-card-value">{{ summary_preview.eligible }}</span><span class="summary-card-label">{% translate "will receive it" %}</span></div>
+        <div class="summary-card"><span class="dot dot-neutral" aria-hidden="true"></span><span class="summary-card-value">{{ summary_preview.skipped_total }}</span><span class="summary-card-label">{% translate "left out" %}</span></div>
     </div>
     {% endif %}
 
     <p class="wizard-hint">
-        {% if broadcast.scheduled_at %}It can be cancelled up to the moment it starts, and while it is sending.{% else %}It starts going out straight away. You can cancel it while it is sending.{% endif %}
+        {% if broadcast.scheduled_at %}{% translate "It can be cancelled up to the moment it starts, and while it is sending." %}{% else %}{% translate "It starts going out straight away. You can cancel it while it is sending." %}{% endif %}
     </p>
 
     {% if not ready %}
-    <div class="alert-warning mt-4" role="status">Finish the steps marked in the summary before sending.</div>
+    <div class="alert-warning mt-4" role="status">{% translate "Finish the steps marked in the summary before sending." %}</div>
     {% endif %}
 
     <div class="wizard-actions">
         {% include "broadcasts/_step_back.html" %}
-        <button type="submit" class="btn-pill-primary" {% if not ready %}disabled{% endif %}>{% if broadcast.scheduled_at %}Schedule broadcast{% else %}Send broadcast{% endif %}</button>
+        <button type="submit" class="btn-pill-primary" {% if not ready %}disabled{% endif %}>{% if broadcast.scheduled_at %}{% translate "Schedule broadcast" %}{% else %}{% translate "Send broadcast" %}{% endif %}</button>
     </div>
 </form>

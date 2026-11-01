@@ -12,8 +12,10 @@ from typing import Any
 from django import template
 from django.template.base import FilterExpression, NodeList, Parser, Token, token_kwargs
 from django.template.context import Context
-from django.utils.html import escape
+from django.utils.html import escape, format_html
 from django.utils.safestring import SafeString, mark_safe
+
+from apps.common.themes import resolve
 
 register = template.Library()
 
@@ -198,6 +200,30 @@ def ui_select(
         "placeholder": placeholder,
         "icon": icon,
     }
+
+
+@register.simple_tag(takes_context=True)
+def theme_attrs(context: template.Context) -> SafeString:
+    """``data-theme`` and ``data-color-mode`` for ``<html>``.
+
+    A tag and not a context processor because it has to work on the 500 page,
+    which ``django.views.defaults.server_error`` renders with a bare
+    ``Context()``: no processors run there and there is no ``request``. With no
+    signed-in user this falls back to the instance defaults, so every root
+    template gets its attributes the same way (tests/test_theme_tokens.py
+    checks that each one calls this).
+
+    Data attributes only, never ``style``: base.html's ``{% block html_style %}``
+    lets a page put its own attributes on ``<html>``, and a second ``style``
+    there would be silently dropped by the browser. tokens.css maps the mode to
+    ``color-scheme``.
+    """
+    user = getattr(context.get("request"), "user", None)
+    if user is not None and user.is_authenticated:
+        theme, mode = resolve(user.theme, user.color_mode)
+    else:
+        theme, mode = resolve("", "")
+    return format_html('data-theme="{}" data-color-mode="{}"', theme.slug, mode)
 
 
 def _filter_groups(groups: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:

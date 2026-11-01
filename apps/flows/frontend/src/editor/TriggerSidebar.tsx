@@ -7,29 +7,29 @@
  * of the canvas, and an index belongs beside the map rather than above the
  * settings of one step.
  */
+import { useTranslation } from "react-i18next";
+
 import { useBuilder } from "../store/context";
 import { StepList } from "./StepList";
 import { TriggerSection } from "./TriggerSection";
 
 export function TriggerSidebar() {
+  const { t } = useTranslation();
   const triggerCount = useBuilder((state) => state.triggers.length);
   const stepCount = useBuilder((state) => state.nodeOrder.length);
 
   return (
-    <aside className="fb-trigger-sidebar" aria-label="Outline">
+    <aside className="fb-trigger-sidebar" aria-label={t("stepEditor.outlineLabel")}>
       <TriggerSection />
       {triggerCount === 0 && stepCount === 0 ? (
         <section className="fb-editor-start">
-          <p className="fb-editor-start-title">Two things make a flow</p>
-          <p className="fb-editor-start-body">
-            Something that starts it, and something it does. Choose what starts it here, then add
-            your first step on the canvas.
-          </p>
+          <p className="fb-editor-start-title">{t("stepEditor.startTitle")}</p>
+          <p className="fb-editor-start-body">{t("stepEditor.startBody")}</p>
         </section>
       ) : null}
       {stepCount > 0 ? (
         <section className="fb-outline-steps">
-          <h2 className="fb-trigger-heading">Steps</h2>
+          <h2 className="fb-trigger-heading">{t("stepEditor.steps")}</h2>
           <StepList />
         </section>
       ) : null}

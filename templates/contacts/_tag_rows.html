@@ -17,6 +17,7 @@ data-quality problem the case-insensitive unique index cannot catch, because
 "VIP" and "Priority" are distinct strings and one idea — and it belongs behind
 the menu with the other twice-a-year action.
 {% endcomment %}
+{% load i18n %}
 <div id="tag-rows"
      hx-get="{% url 'contacts:tag_rows' workspace_id=request.workspace.id %}"
      hx-trigger="tagsChanged from:body"
@@ -29,19 +30,21 @@ the menu with the other twice-a-year action.
 
       <div class="flex-1 min-w-0">
         <div class="list-row-title truncate">{{ tag.name }}</div>
-        <div class="list-row-meta">On {{ tag.contact_count }} contact{{ tag.contact_count|pluralize }}</div>
+        <div class="list-row-meta">{% blocktranslate count count=tag.contact_count %}On {{ count }} contact{% plural %}On {{ count }} contacts{% endblocktranslate %}</div>
       </div>
 
-      <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="renaming = true; merging = false; $nextTick(() => $refs.name.focus())">Rename</button>
+      <button type="button" class="btn-pill-secondary btn-pill-sm flex-shrink-0" @click="renaming = true; merging = false; $nextTick(() => $refs.name.focus())">{% translate "Rename" %}</button>
 
-      <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="More actions for {{ tag.name }}">
+      {% blocktranslate asvar tag_more_actions with name=tag.name %}More actions for {{ name }}{% endblocktranslate %}
+      <button type="button" class="btn-icon-round flex-shrink-0" @click="openMenu($event)" aria-haspopup="menu" :aria-expanded="menuOpen ? 'true' : 'false'" aria-label="{{ tag_more_actions }}">
         <svg width="17" height="17" fill="currentColor" stroke="none" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
       </button>
 
       <div x-show="menuOpen" x-cloak @click.away="menuOpen = false" :style="`top:${menuTop}px; left:${menuLeft}px;`" class="row-menu-panel fixed z-50 w-[200px]" role="menu">
-        <button type="button" class="row-menu-item" role="menuitem" @click="merging = true; renaming = false; menuOpen = false">Merge into another tag…</button>
+        <button type="button" class="row-menu-item" role="menuitem" @click="merging = true; renaming = false; menuOpen = false">{% translate "Merge into another tag…" %}</button>
         <div class="row-menu-sep"></div>
-        <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'contacts:tag_delete' workspace_id=request.workspace.id tag_id=tag.id %}" hx-confirm="Delete “{{ tag.name }}”? It will be removed from {{ tag.contact_count }} contact{{ tag.contact_count|pluralize }}." @click="menuOpen = false">Delete</button>
+        {% blocktranslate asvar tag_delete_confirm count count=tag.contact_count with name=tag.name %}Delete “{{ name }}”? It will be removed from {{ count }} contact.{% plural %}Delete “{{ name }}”? It will be removed from {{ count }} contacts.{% endblocktranslate %}
+        <button type="button" class="row-menu-item row-menu-item-danger" role="menuitem" hx-post="{% url 'contacts:tag_delete' workspace_id=request.workspace.id tag_id=tag.id %}" hx-confirm="{{ tag_delete_confirm }}" @click="menuOpen = false">{% translate "Delete" %}</button>
       </div>
 
       {% comment %}
@@ -49,20 +52,24 @@ the menu with the other twice-a-year action.
         under the row rather than colliding with the action buttons.
       {% endcomment %}
       <form x-show="renaming" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_rename' workspace_id=request.workspace.id tag_id=tag.id %}" @htmx:after-request="if (bbChanged($event, 'tagsChanged')) renaming = false">
-        <label class="sr-only" for="tag-name-{{ tag.id }}">Name</label>
+        <label class="sr-only" for="tag-name-{{ tag.id }}">{% translate "Name" %}</label>
         <input class="form-input-styled" id="tag-name-{{ tag.id }}" x-ref="name" type="text" name="name" value="{{ tag.name }}" maxlength="100" required style="width: 16rem;">
-        <button type="submit" class="btn-pill-secondary btn-pill-sm">Save</button>
-        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">Cancel</button>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Save" %}</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="renaming = false">{% translate "Cancel" %}</button>
       </form>
 
-      <form x-show="merging" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_merge' workspace_id=request.workspace.id tag_id=tag.id %}" hx-confirm="Merge “{{ tag.name }}” into the chosen tag? “{{ tag.name }}” is deleted and its {{ tag.contact_count }} contact{{ tag.contact_count|pluralize }} keep the other one." @htmx:after-request="if (bbChanged($event, 'tagsChanged')) merging = false">
-        <label class="sr-only" for="tag-merge-{{ tag.id }}">Merge {{ tag.name }} into</label>
-        <select class="form-input-styled bb-select" id="tag-merge-{{ tag.id }}" name="target_id" required style="width: 16rem;">
-          <option value="">Choose a tag…</option>
+      {% blocktranslate asvar tag_merge_confirm count count=tag.contact_count with name=tag.name %}Merge “{{ name }}” into the chosen tag? “{{ name }}” is deleted and its {{ count }} contact keep the other one.{% plural %}Merge “{{ name }}” into the chosen tag? “{{ name }}” is deleted and its {{ count }} contacts keep the other one.{% endblocktranslate %}
+      <form x-show="merging" x-cloak class="w-full order-last flex flex-wrap items-center gap-2 pt-3" hx-post="{% url 'contacts:tag_merge' workspace_id=request.workspace.id tag_id=tag.id %}" hx-confirm="{{ tag_merge_confirm }}" @htmx:after-request="if (bbChanged($event, 'tagsChanged')) merging = false">
+        {% blocktranslate asvar tag_merge_into_label with name=tag.name %}Merge {{ name }} into{% endblocktranslate %}
+        <label class="sr-only" for="tag-merge-{{ tag.id }}">{{ tag_merge_into_label }}</label>
+        <span class="bb-select-wrap" style="width: 16rem;">
+        <select class="form-input-styled bb-select" id="tag-merge-{{ tag.id }}" name="target_id" required>
+          <option value="">{% translate "Choose a tag…" %}</option>
           {% for other in tags %}{% if other.id != tag.id %}<option value="{{ other.id }}">{{ other.name }}</option>{% endif %}{% endfor %}
         </select>
-        <button type="submit" class="btn-pill-secondary btn-pill-sm">Merge</button>
-        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="merging = false">Cancel</button>
+        </span>
+        <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Merge" %}</button>
+        <button type="button" class="btn-pill-secondary btn-pill-sm" @click="merging = false">{% translate "Cancel" %}</button>
       </form>
     </div>
     {% endfor %}
@@ -73,12 +80,11 @@ the menu with the other twice-a-year action.
     primary action. It opens the same modal as the header's, by id.
   {% endcomment %}
   <div class="empty-state">
-    <p class="empty-state-title">No tags yet</p>
+    <p class="empty-state-title">{% translate "No tags yet" %}</p>
     <p class="empty-state-body">
-      A tag is how a flow says "this person asked about pricing", so a filter can find them again
-      later.
+      {% translate "A tag is how a flow says “this person asked about pricing”, so a filter can find them again later." %}
     </p>
-    <button type="button" class="btn-pill-secondary mt-4" @click="$modal('new-tag')">New tag</button>
+    <button type="button" class="btn-pill-secondary mt-4" @click="$modal('new-tag')">{% translate "New tag" %}</button>
   </div>
   {% endif %}
 </div>

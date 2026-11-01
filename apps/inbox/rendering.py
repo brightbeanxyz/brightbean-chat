@@ -62,7 +62,10 @@ from typing import Any
 
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
+from django.utils.functional import Promise
 from django.utils.timesince import timeuntil
+from django.utils.translation import gettext, ngettext
+from django.utils.translation import gettext_lazy as _
 
 from apps.common.validators import is_renderable_url, is_valid_hex_color
 from apps.inbox.codes import describe_inbox_failure
@@ -100,8 +103,8 @@ _MEDIA_KINDS = frozenset({"image", "audio", "video", "file"})
 
 #: What a retracted message says in the thread and in the list. Copy, written
 #: here, never anything derived from the payload — there is no payload left.
-DELETED_REASON = "This message was deleted."
-DELETED_PREVIEW = "[deleted]"
+DELETED_REASON = _("This message was deleted.")
+DELETED_PREVIEW = _("[deleted]")
 
 #: How much of a message the conversation list shows. Inbound text is capped at
 #: ``ingest.MAX_TEXT_CHARS`` (100k), so a list of a hundred rows would otherwise
@@ -133,7 +136,7 @@ class Image:
         two branches without this quietly demoted every image's alt text to the
         weaker of the two.
         """
-        return "Attached image"
+        return gettext("Attached image")
 
 
 @dataclass(frozen=True)
@@ -170,7 +173,7 @@ class Media:
         platform named, and an alt that promised "image" for the second case
         would be describing a guess.
         """
-        return "Attachment"
+        return gettext("Attachment")
 
 
 @dataclass(frozen=True)
@@ -278,7 +281,7 @@ class FailedScheduledReply:
     id: str
     preview: str
     due_at: Any
-    reason: str
+    reason: str | Promise
 
 
 @dataclass(frozen=True)
@@ -315,7 +318,7 @@ class RenderedMessage:
     #: The postback id or deep-link ref an inbound event carried, if any.
     button_id: str = ""
     ref: str = ""
-    reason: str = ""
+    reason: str | Promise = ""
 
     @property
     def is_inbound(self) -> bool:
@@ -377,9 +380,9 @@ def render_message(message: Message) -> RenderedMessage:
         # whose delivery URL was built a few lines above. ``apps.inbox.views``
         # refuses the same rows at the route, because a URL a reader already has
         # is not withdrawn by rendering it differently.
-        parts = [Tombstone(reason=DELETED_REASON)]
+        parts = [Tombstone(reason=str(DELETED_REASON))]
     elif not parts:
-        parts.append(Tombstone(reason="This message has no displayable content."))
+        parts.append(Tombstone(reason=gettext("This message has no displayable content.")))
     return RenderedMessage(
         message=message,
         parts=tuple(parts),
@@ -415,7 +418,7 @@ def preview_of(message: Message) -> str:
     """
     body = message.body if isinstance(message.body, dict) else {}
     if is_redacted(message, body):
-        return DELETED_PREVIEW
+        return str(DELETED_PREVIEW)
     return preview_of_body(body)
 
 
@@ -434,7 +437,7 @@ def preview_of_body(raw: Any) -> str:
     """
     body = raw if isinstance(raw, dict) else {}
     if body.get("deleted") is True:
-        return DELETED_PREVIEW
+        return str(DELETED_PREVIEW)
     raw_blocks = body.get("blocks")
     # One pass, remembering the best non-text answer seen. Text wins wherever it
     # appears in the block list, so a second full traversal would only be there
@@ -461,11 +464,11 @@ def preview_of_body(raw: Any) -> str:
 
 def _part(item: Any, index: int, message: Message) -> Part:
     if not isinstance(item, dict):
-        return Tombstone(reason="Unreadable content.")
+        return Tombstone(reason=gettext("Unreadable content."))
     kind = _text(item.get("type"))
     if kind == "text":
         text = _text(item.get("text"))
-        return Text(text=text) if text else Tombstone(reason="Empty message.")
+        return Text(text=text) if text else Tombstone(reason=gettext("Empty message."))
     if kind == "media":
         return _media_ref(item, index, message)
     if kind in _MEDIA_KINDS:
@@ -479,8 +482,8 @@ def _part(item: Any, index: int, message: Message) -> Part:
             if isinstance(cards, list)
             else ()
         )
-        return Gallery(cards=rendered) if rendered else Tombstone(reason="Empty gallery.")
-    return Tombstone(reason="Unsupported content.")
+        return Gallery(cards=rendered) if rendered else Tombstone(reason=gettext("Empty gallery."))
+    return Tombstone(reason=gettext("Unsupported content."))
 
 
 def _media(kind: str, item: dict[str, Any]) -> Part:
@@ -508,7 +511,7 @@ def _media_ref(item: dict[str, Any], index: int, message: Message) -> Part:
     written once, rather than a second vocabulary for the proxied case.
     """
     if not _text(item.get("media_id")):
-        return Tombstone(reason="An attachment was recorded without an identifier.")
+        return Tombstone(reason=gettext("An attachment was recorded without an identifier."))
     try:
         url = reverse(
             "inbox:media",
@@ -522,7 +525,7 @@ def _media_ref(item: dict[str, Any], index: int, message: Message) -> Part:
     except NoReverseMatch:
         # Unreachable while the route exists, and a tombstone rather than a
         # raise regardless: this module's contract is that a thread renders.
-        return Tombstone(reason="An attachment could not be linked.")
+        return Tombstone(reason=gettext("An attachment could not be linked."))
 
     caption = _text(item.get("caption"))
     kind = _text(item.get("media_kind"))
@@ -615,7 +618,7 @@ def failed_scheduled_reply(reply: Any) -> FailedScheduledReply:
         id=str(reply.pk),
         preview=preview_of_body(reply.body),
         due_at=reply.send_at,
-        reason=describe_inbox_failure(reply.error) if reply.error else "It could not be sent.",
+        reason=describe_inbox_failure(reply.error) if reply.error else gettext("It could not be sent."),
     )
 
 
@@ -641,20 +644,27 @@ def rule_summary(rule: Any, *, labels: Any, members: Any, connections: Any) -> R
     platform_labels = dict(Platform.choices)
     platforms = [str(platform_labels.get(value, value)) for value in channel.get("platforms") or []]
     if platforms:
-        conditions.append("Channel is " + _joined(platforms))
-    names = [connections.get(str(value), _MISSING) for value in channel.get("connection_ids") or []]
+        conditions.append(gettext("Channel is %(list)s") % {"list": _joined(platforms)})
+    names = [connections.get(str(value), str(_MISSING)) for value in channel.get("connection_ids") or []]
     if names:
-        conditions.append("Connection is " + _joined(names))
+        conditions.append(gettext("Connection is %(list)s") % {"list": _joined(names)})
 
     words = [str(item.get("text", "")) for item in document.get("keywords") or [] if isinstance(item, dict)]
     if words:
-        conditions.append("Message mentions " + _joined(words))
+        conditions.append(gettext("Message mentions %(list)s") % {"list": _joined(words)})
 
     contact = document.get("contact")
     if isinstance(contact, dict) and contact.get("rules"):
         count = len(contact["rules"])
-        mode = "all" if contact.get("match", "all") == "all" else "any"
-        conditions.append(f"Contact matches {mode} of {count} condition{'' if count == 1 else 's'}")
+        mode = gettext("all") if contact.get("match", "all") == "all" else gettext("any")
+        conditions.append(
+            ngettext(
+                "Contact matches %(mode)s of %(count)s condition",
+                "Contact matches %(mode)s of %(count)s conditions",
+                count,
+            )
+            % {"mode": mode, "count": count}
+        )
 
     actions: list[str] = []
     for item in rule.actions_json if isinstance(rule.actions_json, list) else []:
@@ -662,11 +672,15 @@ def rule_summary(rule: Any, *, labels: Any, members: Any, connections: Any) -> R
             continue
         kind = item.get("type")
         if kind == "add_label":
-            actions.append("Add label " + labels.get(str(item.get("label_id")), _MISSING))
+            actions.append(
+                gettext("Add label %(label)s") % {"label": labels.get(str(item.get("label_id")), str(_MISSING))}
+            )
         elif kind == "assign_to_member":
-            actions.append("Assign to " + members.get(str(item.get("user_id")), _MISSING))
+            actions.append(
+                gettext("Assign to %(member)s") % {"member": members.get(str(item.get("user_id")), str(_MISSING))}
+            )
         elif kind == "mark_done":
-            actions.append("Mark done")
+            actions.append(gettext("Mark done"))
 
     return RuleSummary(
         id=str(rule.pk),
@@ -680,20 +694,20 @@ def rule_summary(rule: Any, *, labels: Any, members: Any, connections: Any) -> R
 
 #: What a rule prints for an id that no longer resolves. Copy, like
 #: :attr:`Tombstone.reason`, and never the id itself.
-_MISSING = "(deleted)"
+_MISSING = _("(deleted)")
 
 
 def _joined(values: list[str]) -> str:
     """ "a, b or c" — the reader's conjunction, since every list here is an OR."""
     if len(values) == 1:
         return values[0]
-    return ", ".join(values[:-1]) + " or " + values[-1]
+    return gettext("%(list)s or %(last)s") % {"list": ", ".join(values[:-1]), "last": values[-1]}
 
 
 def _display_name(user: Any) -> str:
     if user is None:
-        return "someone who has left"
-    return getattr(user, "display_name", "") or getattr(user, "email", "") or "a teammate"
+        return gettext("someone who has left")
+    return getattr(user, "display_name", "") or getattr(user, "email", "") or gettext("a teammate")
 
 
 def short_age(when: datetime | None, *, now: datetime | None = None) -> str:
@@ -713,7 +727,7 @@ def short_age(when: datetime | None, *, now: datetime | None = None) -> str:
     now = now or timezone.now()
     delta = now - when
     if delta < timedelta(minutes=1):
-        return "now"
+        return gettext("now")
     if delta < timedelta(hours=1):
         return f"{int(delta.total_seconds() // 60)}m"
     local_now, local_then = timezone.localtime(now), timezone.localtime(when)
@@ -721,7 +735,7 @@ def short_age(when: datetime | None, *, now: datetime | None = None) -> str:
     if days == 0:
         return f"{int(delta.total_seconds() // 3600)}h"
     if days == 1:
-        return "Yesterday"
+        return gettext("Yesterday")
     if days < 7:
         return local_then.strftime("%a")
     if local_then.year == local_now.year:
@@ -754,9 +768,9 @@ def day_label(when: datetime, *, now: datetime | None = None) -> str:
     local_now, local_then = timezone.localtime(now or timezone.now()), timezone.localtime(when)
     days = (local_now.date() - local_then.date()).days
     if days == 0:
-        return "Today"
+        return gettext("Today")
     if days == 1:
-        return "Yesterday"
+        return gettext("Yesterday")
     if local_then.year == local_now.year:
         return f"{local_then.strftime('%a')} {local_then.day} {local_then.strftime('%b')}"
     return f"{local_then.day} {local_then.strftime('%b %Y')}"

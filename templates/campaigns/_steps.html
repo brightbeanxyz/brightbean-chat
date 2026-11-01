@@ -1,4 +1,4 @@
-{% comment %}
+{% load i18n %}{% comment %}
 The ordered steps, each with the number of people currently waiting on it.
 
 "Waiting" is where an active enrollment's `current_step` points — the rung it
@@ -10,11 +10,13 @@ each step saves independently, so a validation refusal on one cannot discard
 edits to another.
 {% endcomment %}
 <section>
-    <h2 class="section-eyebrow mb-2.5">Steps</h2>
+    <h2 class="section-eyebrow mb-2.5">{% translate "Steps" %}</h2>
 
     {% if not steps %}
     <div class="mb-4">
-    {% include "components/empty_state.html" with icon="sequences" title="No steps yet" body="A sequence with no steps completes the moment somebody subscribes to it." %}
+    {% translate "No steps yet" as no_steps_title %}
+    {% translate "A sequence with no steps completes the moment somebody subscribes to it." as no_steps_body %}
+    {% include "components/empty_state.html" with icon="sequences" title=no_steps_title body=no_steps_body %}
     </div>
     {% else %}
     <div class="card overflow-hidden mb-4">
@@ -26,24 +28,24 @@ edits to another.
                 <div class="flex-1 min-w-0">
                     <p class="list-row-title truncate">{{ step.flow.name }}</p>
                     <p class="text-xs mt-0.5" style="color: var(--text-tertiary);">
-                        Wait {{ step.delay_label }}{% if step.window.enabled %},
-                        {{ step.window.from }}–{{ step.window.to }}{% if step.window.use_contact_timezone %} in the contact's timezone{% endif %}{% endif %}
-                        · {{ step.waiting_count }} waiting
+                        {% blocktranslate with delay=step.delay_label %}Wait {{ delay }}{% endblocktranslate %}{% if step.window.enabled %},
+                        {{ step.window.from }}–{{ step.window.to }}{% if step.window.use_contact_timezone %} {% translate "in the contact's timezone" %}{% endif %}{% endif %}
+                        · {% blocktranslate count count=step.waiting_count %}{{ count }} waiting{% plural %}{{ count }} waiting{% endblocktranslate %}
                     </p>
                 </div>
                 {% if can_edit %}
                 <div class="flex items-center gap-2">
-                    <button type="button" class="btn-pill-secondary btn-pill-sm" @click="editing = !editing" :aria-expanded="editing ? 'true' : 'false'">Edit</button>
+                    <button type="button" class="btn-pill-secondary btn-pill-sm" @click="editing = !editing" :aria-expanded="editing ? 'true' : 'false'">{% translate "Edit" %}</button>
                     <button type="button" class="btn-icon-round"
                             hx-post="{% url 'campaigns:step_move' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
-                            hx-vals='{"direction": "up"}' hx-swap="none" aria-label="Move step up">↑</button>
+                            hx-vals='{"direction": "up"}' hx-swap="none" aria-label="{% translate 'Move step up' %}">↑</button>
                     <button type="button" class="btn-icon-round"
                             hx-post="{% url 'campaigns:step_move' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
-                            hx-vals='{"direction": "down"}' hx-swap="none" aria-label="Move step down">↓</button>
+                            hx-vals='{"direction": "down"}' hx-swap="none" aria-label="{% translate 'Move step down' %}">↓</button>
                     <button type="button" class="btn-danger-link ml-1"
                             hx-post="{% url 'campaigns:step_delete' workspace_id=request.workspace.id sequence_id=sequence.id step_id=step.id %}"
                             hx-swap="none"
-                            hx-confirm="Remove step {{ step.position }}? Anyone waiting on it moves to whatever takes its place.">Remove</button>
+                            hx-confirm="{% blocktranslate with position=step.position %}Remove step {{ position }}? Anyone waiting on it moves to whatever takes its place.{% endblocktranslate %}">{% translate "Remove" %}</button>
                 </div>
                 {% endif %}
             </div>
@@ -56,8 +58,8 @@ edits to another.
                 {% csrf_token %}
                 {% include "campaigns/_step_fields.html" with step=step %}
                 <div class="flex items-center gap-2 mt-3">
-                    <button type="submit" class="btn-pill-secondary btn-pill-sm">Save step</button>
-                    <button type="button" class="btn-link" @click="editing = false">Cancel</button>
+                    <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Save step" %}</button>
+                    <button type="button" class="btn-link" @click="editing = false">{% translate "Cancel" %}</button>
                 </div>
             </form>
             {% endif %}
@@ -69,7 +71,7 @@ edits to another.
     {% if can_edit %}
     <div class="card p-4" x-data="{ adding: false }">
         <button type="button" class="btn-pill-secondary btn-pill-sm" x-show="!adding" @click="adding = true">
-            {% include "partials/_nav_icon.html" with name="plus" icon_size=15 %} Add a step
+            {% include "partials/_nav_icon.html" with name="plus" icon_size=15 %} {% translate "Add a step" %}
         </button>
         <form x-show="adding" x-cloak
               hx-post="{% url 'campaigns:step_create' workspace_id=request.workspace.id sequence_id=sequence.id %}"
@@ -78,8 +80,8 @@ edits to another.
             {% csrf_token %}
             {% include "campaigns/_step_fields.html" %}
             <div class="flex items-center gap-2 mt-3">
-                <button type="submit" class="btn-pill-secondary btn-pill-sm">Add step</button>
-                <button type="button" class="btn-link" @click="adding = false">Cancel</button>
+                <button type="submit" class="btn-pill-secondary btn-pill-sm">{% translate "Add step" %}</button>
+                <button type="button" class="btn-link" @click="adding = false">{% translate "Cancel" %}</button>
             </div>
         </form>
     </div>

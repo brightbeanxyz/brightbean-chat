@@ -2,12 +2,23 @@
 
 import logging
 import smtplib
+from collections.abc import Callable
 from typing import Any
 
 from allauth.account.adapter import DefaultAccountAdapter
+from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from django.http import HttpRequest
+from django.shortcuts import render
+from django.utils.translation import gettext
+
+from apps.accounts.services import is_invite_only, is_sso, pending_invitation, signup_is_open
+from apps.members.services import MembershipError, accept_invitation
+from apps.members.signals_keys import PENDING_INVITE_SESSION_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +91,30 @@ class AccountAdapter(DefaultAccountAdapter):
             return
         super().add_message(request, level, message_template, message_context, extra_tags, message)
 
+    def is_open_for_signup(self, request: HttpRequest) -> bool:
+        # allauth asks this for the local form and, through the default
+        # SocialAccountAdapter, for a social login that is not invite-only; a
+        # refusal renders signup_closed.html.
+        return signup_is_open(request)
+
+    def save_user(self, request: HttpRequest, user: Any, form: Any, commit: bool = True) -> Any:
+        """Under ``SIGNUP=invite`` the account and the invitation are one transaction.
+
+        ``signup_is_open`` only reads the invitation, so on its own it cannot
+        stop a link shared with a second person: both pass it, the first spends
+        the invitation, and the second would be left with an account and,
+        through ``provision_on_signup``, an organization of their own. Accepting
+        here, with the address matched against the invited one (the form field
+        is read-only only in the browser), means a refusal leaves no account.
+
+        A social signup form also arrives here, but its adapter does this itself.
+        """
+        if not is_invite_only() or getattr(form, "sociallogin", None) is not None:
+            return super().save_user(request, user, form, commit)
+        return _create_user_and_accept_invitation(
+            request, lambda: super(AccountAdapter, self).save_user(request, user, form, commit)
+        )
+
     def send_mail(self, template_prefix: str, email: str, context: dict[str, Any]) -> None:
         try:
             super().send_mail(template_prefix, email, context)
@@ -94,16 +129,98 @@ class AccountAdapter(DefaultAccountAdapter):
             logger.exception("Failed to send account email (%s). Check the SMTP settings.", template_prefix)
 
 
+def _signup_closed(request: HttpRequest, reason: str) -> ImmediateHttpResponse:
+    return ImmediateHttpResponse(render(request, "account/signup_closed.html", {"reason": reason}, status=403))
+
+
+def _create_user_and_accept_invitation(request: HttpRequest, create_user: Callable[[], Any]) -> Any:
+    """Create the account and accept the pending invitation, or neither.
+
+    The one place both invite-only signups (the local form and a social login)
+    go through, so a fix to the race or to the refusal lands in both. The address
+    must be the invited one: the form field is read-only only in the browser, and
+    a provider's address is whatever it vouches for.
+    """
+    invitation = pending_invitation(request)
+    try:
+        if invitation is None:
+            raise MembershipError(gettext("An invitation is required to sign up."))
+        with transaction.atomic():
+            user = create_user()
+            accept_invitation(invitation, user, require_email_match=True)
+    except MembershipError as exc:
+        raise _signup_closed(request, str(exc)) from exc
+    except IntegrityError as exc:
+        # Two requests for one address (or identity) raced; the other one won.
+        logger.warning("Invite-only signup lost a uniqueness race")
+        raise _signup_closed(request, gettext("This account was just created. Try signing in again.")) from exc
+    request.session.pop(PENDING_INVITE_SESSION_KEY, None)
+    return user
+
+
 class SocialAccountAdapter(DefaultSocialAccountAdapter):
-    """Map a Google profile onto this project's single ``name`` field.
+    """Map a provider profile onto this project's single ``name`` field, and
+    decide who may be created through single sign-on.
 
     Ported from Studio's adapter minus its ``OAuthConnection`` bookkeeping —
     that model duplicates allauth's own ``SocialAccount`` table.
+
+    An OIDC provider may serve many tenants, so signing in there says who someone
+    is and nothing about which organization is theirs. With the default
+    ``OIDC_SIGNUP=invite``, an identity already linked (a ``SocialAccount`` row)
+    signs in without passing through here, and a new one is created only to
+    honour an invitation, to the address it was sent to — never with an
+    organization of its own, which Google sign-ups get. ``open`` restores that.
     """
+
+    def pre_social_login(self, request: HttpRequest, sociallogin: Any) -> None:
+        """Say why, when the invited address already belongs to a local account.
+
+        allauth would otherwise send the visitor to a signup form whose email
+        field is "already taken" — a dead end that names no way out. Linking is
+        deliberately not automatic (see the note beside SOCIALACCOUNT_ADAPTER in
+        settings), so the way out is to sign in locally and connect SSO.
+        """
+        if not is_sso(sociallogin):
+            return
+        if settings.OIDC_TRUST_EMAIL:
+            for address in sociallogin.email_addresses:
+                address.verified = True
+        if is_invite_only(sociallogin) and not sociallogin.is_existing:
+            addresses = [a.email for a in sociallogin.email_addresses if a.verified]
+            if addresses and get_user_model().objects.filter(email__iexact=addresses[0]).exists():
+                raise _signup_closed(
+                    request,
+                    gettext(
+                        "An account with this address already exists. Sign in with your password, "
+                        "accept the invitation, then connect %(name)s under your connected accounts."
+                    )
+                    % {"name": settings.OIDC_NAME},
+                )
+
+    def is_open_for_signup(self, request: HttpRequest, sociallogin: Any) -> bool:
+        if not is_invite_only(sociallogin):
+            return super().is_open_for_signup(request, sociallogin)
+        invitation = pending_invitation(request)
+        if invitation is None:
+            return False
+        invited = invitation.email.strip().lower()
+        return any(a.verified and a.email.strip().lower() == invited for a in sociallogin.email_addresses)
+
+    def save_user(self, request: HttpRequest, sociallogin: Any, form: Any = None) -> Any:
+        if not is_invite_only(sociallogin):
+            return super().save_user(request, sociallogin, form)
+        # The user and the membership are one transaction. ``ensure_provisioned``
+        # gives a fresh organization to anyone signed in without one, so a user
+        # left behind by a refused invitation would get exactly what this
+        # provider exists to withhold.
+        return _create_user_and_accept_invitation(
+            request, lambda: super(SocialAccountAdapter, self).save_user(request, sociallogin, form)
+        )
 
     def populate_user(self, request: Any, sociallogin: Any, data: dict[str, Any]) -> Any:
         user = super().populate_user(request, sociallogin, data)
-        full_name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip()
+        full_name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or (data.get("name") or "")
         if full_name and not user.name:
             user.name = full_name
         return user
