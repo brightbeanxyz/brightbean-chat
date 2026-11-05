@@ -8,11 +8,11 @@
 -r base.txt
 
 # Lint and format (ruff's S rules cover the Bandit checks — SECURITY-BASELINE §10)
-ruff==0.16.4
+ruff==0.17.3
 
 # Type checking
-mypy==2.3.1                # django-stubs' compatible-mypy extra caps this at <2.4
-django-stubs==6.1.0
+mypy==2.4.1                # django-stubs' compatible-mypy extra caps this at <2.4
+django-stubs==6.1.2
 
 # Tests
 #
@@ -21,7 +21,7 @@ django-stubs==6.1.0
 # the secure-by-default properties docs/self-hosting.md promises. Nothing at
 # runtime reads YAML, so it stays out of base.txt and out of the image.
 pyyaml==6.0.3
-pytest==9.1.1
+pytest==9.2.0
 pytest-django==4.14.0
 pytest-cov==7.1.0
 pytest-xdist==3.8.0        # CI runs the suite across the runner's 4 cores
